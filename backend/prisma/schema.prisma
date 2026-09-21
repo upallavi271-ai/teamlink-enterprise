@@ -572,6 +572,27 @@ model EmployeeRecord {
   raisedBy   String?  // DISCIPLINARY: who logged the case
   points     Int?     // RECOGNITION: award points, which drive the leaderboard
   aiNote     String?  // WEEKLY_IDEA: the AI review note recorded with the decision
+  // --- Knowledge Transfer -> AI Weekly Idea Contribution (type: WEEKLY_IDEA) ---
+  // All nullable / defaulted, so every other record type is unaffected.
+  weekStart        String?  // YYYY-MM-DD, the MONDAY of the week this idea counts toward
+  // How this idea was screened and scored. 'model' = the Anthropic model
+  // configured in Administration -> Integrations. 'fallback' = the
+  // deterministic text-similarity screen that runs when no key is configured
+  // (or the call failed) — it produces NO scores, ever. The two are recorded
+  // separately so a fallback result can never be mistaken for a model score.
+  aiMethod         String?  // 'model' | 'fallback'
+  aiModel          String?  // the model id, when aiMethod = 'model'
+  aiDuplicate      Boolean  @default(false)
+  aiDuplicateOf    String?  // EmployeeRecord.id of the idea this one duplicates
+  aiSimilarity     Int?     // 0-100 similarity against the matched idea
+  // The five named criteria. NULL means "not scored" and must render as such —
+  // never as a zero.
+  scoreOriginality Int?
+  scoreUsefulness  Int?
+  scoreImpact      Int?
+  scoreClarity     Int?
+  scoreFeasibility Int?
+  scoreTotal       Int?     // sum of the five, 5-50
   // Bill / receipt attached to the record (today: EXPENSE claims only — see
   // backend/src/utils/attachments.js). `billFile` is the name THIS SERVER
   // generated inside the upload directory; `billName` is only ever displayed,

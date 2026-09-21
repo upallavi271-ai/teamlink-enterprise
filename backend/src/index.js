@@ -31,6 +31,7 @@ const employeeRecordRouter = require('./routes/employeeRecords');
 const shiftPatternRoutes = require('./routes/shiftPatterns');
 const helpdeskRoutes = require('./routes/helpdesk');
 const assetInventoryRoutes = require('./routes/assetInventory');
+const weeklyIdeaRoutes = require('./routes/weeklyIdeas');
 const resignationRoutes = require('./routes/resignations');
 const hrmsDashboardRoutes = require('./routes/hrmsDashboard');
 const escalationRoutes = require('./routes/escalation');
@@ -132,7 +133,11 @@ app.use('/api/helpdesk', helpdeskRoutes);
 // as the employee-raised asset *request* list, which feeds Asset Approval.
 app.use('/api/asset-inventory', assetInventoryRoutes);
 app.use('/api/access-requests', employeeRecordRouter('ACCESS_REQUEST'));
-app.use('/api/weekly-ideas', employeeRecordRouter('WEEKLY_IDEA'));
+// Weekly ideas keep the same EmployeeRecord store (type: 'WEEKLY_IDEA') but
+// need AI duplicate screening and scoring on write, plus the quota and
+// leaderboard reads Knowledge Transfer shows — so they have their own router
+// rather than the generic one.
+app.use('/api/weekly-ideas', weeklyIdeaRoutes);
 app.use('/api/shift-patterns', shiftPatternRoutes);
 
 app.use((err, req, res, next) => {
