@@ -3,8 +3,13 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const { scopeOf } = require('../utils/scope');
-const { logAudit } = require('../utils/audit');
+const { logAudit, logFieldChanges, resolveFieldApprovals } = require('../utils/audit');
 const { sendCredentials, unguessablePasswordHash } = require('../utils/employeeInvite');
+// The designation -> role / product-access mapping. DATA in the
+// DesignationRole table, never a switch statement here: the same "TL" row
+// serves Medical, IT and everyone else, because the DEPARTMENT is the scope.
+const { mappingFor } = require('../utils/identity');
+const { toCsv, toXlsx, toPdf } = require('../utils/tabularExport');
 
 const ROLE_BY_DESIGNATION = {
   'Super Admin': 'SUPER_ADMIN', 'HR Admin': 'ADMIN', 'Manager': 'MANAGER', 'Assistant Manager': 'ASSISTANT_MANAGER',
@@ -12,6 +17,26 @@ const ROLE_BY_DESIGNATION = {
 };
 
 const router = express.Router();
+
+// NO ASYNC HANDLER IN THIS FILE CAN TAKE THE PROCESS DOWN.
+// Express 4 does not catch a rejected promise returned from a handler, so one
+// bad write (a foreign key, a date string in a DateTime column) becomes an
+// unhandled rejection and node exits. That has happened twice. Every handler
+// registered below is wrapped so a rejection becomes next(err) and the error
+// handler in index.js answers 500 instead.
+['get', 'post', 'put', 'patch', 'delete'].forEach((method) => {
+  const original = router[method].bind(router);
+  router[method] = (path, ...handlers) => original(path, ...handlers.map((h) => (
+    typeof h !== 'function' || h.length >= 4 ? h : function guarded(req, res, next) {
+      try {
+        const out = h(req, res, next);
+        if (out && typeof out.catch === 'function') out.catch(next);
+        return out;
+      } catch (err) { return next(err); }
+    }
+  )));
+});
+
 router.use(requireAuth);
 
 // STL/TL are themselves employees, scoped to their own department only. Manager
@@ -21,12 +46,29 @@ router.use(requireAuth);
 // Department scoping now comes from the resolved identity's scope, so an
 // STL with several departments really gets several departments.
 
-// Returns the requesting user's own department when their role is department-scoped,
-// or undefined when they have unrestricted (Super Admin/Admin) access.
-async function scopeDepartment(req) {
+// EVERY department the requesting user may reach, or `undefined` when their
+// role is unrestricted (Super Admin / Admin, or a Manager with no configured
+// list). This used to return departments[0] and throw the rest away, so an
+// STL or a Manager scoped to several departments saw one department's list
+// while assertInScope() below happily allowed all of theirs — the list and
+// the record check disagreed. One function now answers for both.
+function scopeDepartments(req) {
   const s = scopeOf(req.user);
   if (s.global) return undefined;
-  return s.departments[0] || '__no_department_assigned__';
+  return s.departments.length ? s.departments : ['__no_department_assigned__'];
+}
+
+// The Prisma `where` fragment for that scope. The list, the review queue, the
+// export and the import all spread this, so no surface can quietly skip it.
+function departmentWhere(req) {
+  const departments = scopeDepartments(req);
+  return departments === undefined ? {} : { department: { in: departments } };
+}
+
+// What a screen prints when it says "you are seeing X".
+function scopeLabel(req) {
+  const departments = scopeDepartments(req);
+  return departments === undefined ? 'All departments' : departments.join(', ');
 }
 
 async function assertInScope(req, employee) {
@@ -67,6 +109,38 @@ function toDate(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// --- THE PROFILE STATUS VOCABULARY ------------------------------------------
+// Six values, each meaning exactly one thing. The old three (Assigned /
+// Pending Review / Locked) could not tell "nobody has filled this in yet"
+// apart from "HR sent it back" or "HR has opened it for 48 hours", which is
+// the difference between three completely different things HR has to do.
+// Existing rows were migrated in place — see
+// prisma/migrations/..._empmgmt_status_unlock_grant_field_audit.
+const PROFILE_STATUS = {
+  INCOMPLETE: 'Profile Incomplete',
+  PENDING: 'Pending Review',
+  APPROVED: 'Approved',
+  LOCKED: 'Locked',
+  CHANGE_REQUESTED: 'Change Requested',
+  EDIT_GRANTED: 'Edit Access Granted',
+};
+const PROFILE_STATUSES = Object.values(PROFILE_STATUS);
+
+// DERIVED from the facts, in this order of precedence, so the badge can never
+// contradict what the server will actually let the employee do. Employee.
+// profileStage stores the same value at every transition; withComputed()
+// overrides the stored one with this, so a row written by an older code path
+// still renders correctly instead of showing a stale word.
+function profileStatusOf(e) {
+  if (!e) return PROFILE_STATUS.INCOMPLETE;
+  if (e.pendingChanges) return PROFILE_STATUS.PENDING;
+  if (e.isLocked) return PROFILE_STATUS.LOCKED;
+  if (e.unlockExpiresAt && new Date(e.unlockExpiresAt) > new Date()) return PROFILE_STATUS.EDIT_GRANTED;
+  if (e.reviewDecision === 'Rejected') return PROFILE_STATUS.CHANGE_REQUESTED;
+  if (e.reviewDecision === 'Approved') return PROFILE_STATUS.APPROVED;
+  return PROFILE_STATUS.INCOMPLETE;
+}
+
 const UNLOCK_REQUEST_LIMIT = 3;
 const UNLOCK_REQUEST_REASONS = [
   'Incorrect information entered', 'Address changed', 'Bank details need update',
@@ -84,6 +158,59 @@ const UNLOCK_REQUEST_REASONS = [
 // Whichever comes first wins.
 const UNLOCK_WINDOW_HOURS = Number(process.env.UNLOCK_WINDOW_HOURS || 48);
 
+// --- EDIT ACCESS IS NOT DATA SCOPE ------------------------------------------
+// Two different things share the word "access" and must never be conflated:
+//
+//   EDIT SCOPE        (Administration -> Users -> Edit scope)
+//     WHICH RECORDS a login may reach — departments, teams, clients. It is
+//     permanent until changed and it is about OTHER people's data.
+//     Stored on User.atsScopeDepartments / Teams / Clients.
+//
+//   GRANT EDIT ACCESS (Employee Management -> Grant Edit Access)
+//     TEMPORARILY reopens ONE employee's OWN locked profile so they can
+//     correct it. It expires, it is spent by submitting, and it is about
+//     that person's own record only.
+//     Stored on Employee.unlockExpiresAt + the unlockedBy/At/Reason record.
+//
+// Granting edit access never widens what anybody can see; changing edit scope
+// never unlocks anybody's profile.
+//
+// The section a grant is limited to. Recorded on the employee so "we opened
+// bank details only" is a fact on the record rather than a memory.
+const EDIT_ACCESS_SECTIONS = [
+  'All fields', 'Personal Information', 'Address', 'Emergency Contact',
+  'Work Details', 'Bank & Statutory Details',
+];
+
+// How long a grant may run. Configurable per grant (HR types the hours), with
+// a floor and a ceiling so nobody can grant 0 hours by accident or leave a
+// profile open for a year.
+const MIN_GRANT_HOURS = 1;
+const MAX_GRANT_HOURS = 24 * 30;
+function grantHours(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return UNLOCK_WINDOW_HOURS;
+  return Math.min(MAX_GRANT_HOURS, Math.max(MIN_GRANT_HOURS, Math.round(n)));
+}
+
+// The one place that writes an edit-access grant onto an employee, so every
+// route into that state records the same six facts the lifecycle asks for:
+// which employee, which section, why, when it starts, when it expires, and
+// who granted it.
+function grantEditAccessData({ actingUser, hours, reason, section }) {
+  const now = new Date();
+  return {
+    isLocked: false,
+    profileStage: PROFILE_STATUS.EDIT_GRANTED,
+    unlockExpiresAt: new Date(now.getTime() + hours * 60 * 60 * 1000),
+    unlockedAt: now,
+    unlockedById: actingUser && actingUser.id ? actingUser.id : null,
+    unlockedByName: (actingUser && actingUser.name) || null,
+    unlockGrantReason: reason ? String(reason).slice(0, 500) : null,
+    unlockGrantSection: EDIT_ACCESS_SECTIONS.includes(section) ? section : 'All fields',
+  };
+}
+
 // The single place that decides "may this person still edit their own
 // profile?". Called by every self-service write. It RE-LOCKS an expired
 // window rather than merely refusing, so the state on screen matches the
@@ -95,7 +222,7 @@ async function enforceEditWindow(employee) {
   if (employee.unlockExpiresAt && new Date(employee.unlockExpiresAt) < new Date()) {
     await prisma.employee.update({
       where: { id: employee.id },
-      data: { isLocked: true, profileStage: 'Locked', unlockExpiresAt: null },
+      data: { isLocked: true, profileStage: PROFILE_STATUS.LOCKED, unlockExpiresAt: null },
     });
     await logAudit({ action: 'Edit window expired — profile re-locked', entity: 'Employee', entityId: employee.id });
     return {
@@ -118,8 +245,14 @@ function completionPct(e) {
 }
 
 function withComputed(e) {
+  const profileStatus = profileStatusOf(e);
   return {
     ...e,
+    // Both names carry the SAME derived value. `profileStage` is what every
+    // existing screen already reads; `profileStatus` is the name the
+    // lifecycle uses. Neither can drift from the other.
+    profileStage: profileStatus,
+    profileStatus,
     profileCompletionPct: completionPct(e),
     onboardingTasks: e.onboardingTasks ? JSON.parse(e.onboardingTasks) : null,
     offboardingTasks: e.offboardingTasks ? JSON.parse(e.offboardingTasks) : null,
@@ -132,6 +265,10 @@ router.get('/me/config', (req, res) => {
     unlockRequestLimit: UNLOCK_REQUEST_LIMIT,
     unlockRequestReasons: UNLOCK_REQUEST_REASONS,
     unlockWindowHours: UNLOCK_WINDOW_HOURS,
+    profileStatuses: PROFILE_STATUSES,
+    // The sections an edit-access grant can be scoped to. HR picks one when
+    // granting, and it is recorded on the employee record.
+    editAccessSections: EDIT_ACCESS_SECTIONS,
   });
 });
 
@@ -173,7 +310,7 @@ router.put('/me', async (req, res) => {
     where: { id: employee.id },
     data: {
       pendingChanges: JSON.stringify(changes),
-      profileStage: 'Pending Review',
+      profileStage: PROFILE_STATUS.PENDING,
       // Submitting SPENDS the granted edit window — see UNLOCK_WINDOW_HOURS.
       unlockExpiresAt: null,
       // The previous decision is history now; the banner should show this
@@ -181,7 +318,18 @@ router.put('/me', async (req, res) => {
       reviewDecision: null, reviewNote: null, reviewedAt: null, reviewedByName: null,
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Profile submitted for review', entity: 'Employee', entityId: employee.id, toValue: `${changes.length} field(s)` });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Profile submitted for review',
+    entity: 'Employee', entityId: employee.id, toValue: `${changes.length} field(s)`,
+  });
+  // ONE AUDIT ROW PER FIELD, not one per submission: Employee · Field · Old
+  // Value · New Value · Changed By · Changed At, with Approval Status set to
+  // Pending until HR decides. resolveFieldApprovals() stamps the approver on
+  // these same rows, so the history shows who allowed each value through.
+  await logFieldChanges({
+    userId: req.user.id, actorName: req.user.name, entity: 'Employee', entityId: employee.id,
+    action: 'Profile field submitted', changes, approvalStatus: 'Pending',
+  });
   res.json(withComputed(updated));
 });
 
@@ -209,16 +357,14 @@ router.post('/me/unlock-request', async (req, res) => {
 // same way the employee list is: a TL reviews their own department's
 // submissions, never the company's.
 router.get('/review-queue', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
-  const where = {};
-  const scopedDept = await scopeDepartment(req);
-  if (scopedDept !== undefined) where.department = scopedDept;
+  const where = departmentWhere(req);
 
   const [submitted, unlocks] = await Promise.all([
     prisma.employee.findMany({ where: { ...where, pendingChanges: { not: null } }, orderBy: { updatedAt: 'asc' } }),
     prisma.employee.findMany({ where: { ...where, unlockRequestStatus: 'Pending' }, orderBy: { updatedAt: 'asc' } }),
   ]);
   res.json({
-    scope: scopedDept === undefined ? 'All departments' : scopedDept,
+    scope: scopeLabel(req),
     unlockRequestLimit: UNLOCK_REQUEST_LIMIT,
     unlockWindowHours: UNLOCK_WINDOW_HOURS,
     // May this caller actually decide, or only watch the queue? The engine
@@ -242,24 +388,16 @@ const EXPORT_COLUMNS = [
   ['department', 'Department'], ['team', 'Team'], ['designation', 'Designation'], ['location', 'Location'],
   ['branch', 'Branch'], ['employmentStatus', 'Employment Status'], ['employeeType', 'Employment Type'],
   ['dateOfJoining', 'Date of Joining'], ['reportingManagerName', 'Reporting Manager'],
-  ['profileStage', 'Profile Stage'], ['profileCompletionPct', 'Profile Completion %'],
+  ['profileStatus', 'Profile Status'], ['profileCompletionPct', 'Profile Completion %'],
   ['credentialsSentStatus', 'Sign-in Email'],
 ];
 
-// RFC 4180 quoting. A field is quoted when it holds a comma, a quote or a
-// newline, and an embedded quote is doubled — so a designation like
-// 'Engineer, Senior' cannot shift every later column.
-function csvCell(value) {
-  if (value === null || value === undefined) return '';
-  const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-router.get('/export.csv', requirePerm(null, 'hrms', 'Employee Management', 'export'), async (req, res) => {
-  const where = {};
-  const scopedDept = await scopeDepartment(req);
-  if (scopedDept !== undefined) where.department = scopedDept;
-  else if (req.query.department) where.department = req.query.department;
+// ONE query, ONE scope decision, THREE formats. CSV, Excel and PDF all come
+// out of buildExport() below, so a new format can never be the one that
+// forgets the department filter or the `export` permission.
+async function buildExport(req) {
+  const where = departmentWhere(req);
+  if (scopeDepartments(req) === undefined && req.query.department) where.department = req.query.department;
   if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
 
   const employees = await prisma.employee.findMany({
@@ -269,28 +407,56 @@ router.get('/export.csv', requirePerm(null, 'hrms', 'Employee Management', 'expo
     const c = withComputed(e);
     c.reportingManagerName = e.reportingManager ? e.reportingManager.name : '';
     c.dateOfJoining = e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : '';
-    return EXPORT_COLUMNS.map(([key]) => csvCell(c[key])).join(',');
+    return EXPORT_COLUMNS.map(([key]) => (c[key] === null || c[key] === undefined ? '' : c[key]));
   });
-  const csv = [EXPORT_COLUMNS.map(([, label]) => csvCell(label)).join(','), ...rows].join('\r\n');
+  const departments = scopeDepartments(req);
+  return {
+    headers: EXPORT_COLUMNS.map(([, label]) => label),
+    rows,
+    count: employees.length,
+    scopeLabel: scopeLabel(req),
+    suffix: departments === undefined ? 'all' : departments.join('-').replace(/[^\w-]+/g, '-').toLowerCase(),
+  };
+}
 
-  await logAudit({
-    userId: req.user.id, action: 'Employee list exported', entity: 'Employee',
-    toValue: `${employees.length} row(s), scope: ${scopedDept === undefined ? 'all departments' : scopedDept}`,
-  });
+async function sendExport(req, res, format) {
+  const { headers, rows, count, scopeLabel: label, suffix } = await buildExport(req);
   const stamp = new Date().toISOString().slice(0, 10);
-  const suffix = scopedDept === undefined ? 'all' : String(scopedDept).replace(/[^\w-]+/g, '-').toLowerCase();
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="employees-${suffix}-${stamp}.csv"`);
-  res.send(csv);
-});
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: `Employee list exported (${format.toUpperCase()})`, entity: 'Employee',
+    toValue: `${count} row(s), scope: ${label}`,
+  });
+  const filename = `employees-${suffix}-${stamp}.${format}`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    return res.send(toCsv(headers, rows));
+  }
+  if (format === 'xlsx') {
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(toXlsx(headers, rows, 'Employees'));
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  return res.send(toPdf(headers, rows, {
+    title: 'Employee Master',
+    subtitle: `${count} employee(s) · scope: ${label} · exported ${new Date().toLocaleString('en-GB')} by ${req.user.name || 'user'}`,
+  }));
+}
+
+// The `export` action is the permission — a role that may VIEW the list is
+// not automatically allowed to take a copy of it away. Every format carries
+// the same guard and the same scope.
+router.get('/export.csv', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'csv'));
+router.get('/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'xlsx'));
+router.get('/export.pdf', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'pdf'));
 
 router.get('/', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
-  const where = {};
+  const where = departmentWhere(req);
   if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
-  const scopedDept = await scopeDepartment(req);
-  if (scopedDept !== undefined) {
-    where.department = scopedDept; // department-scoped role: always restricted to their own department
-  } else if (req.query.department) {
+  // A department-scoped role is already restricted by departmentWhere(); the
+  // filter box may only narrow an unrestricted caller.
+  if (scopeDepartments(req) === undefined && req.query.department) {
     where.department = req.query.department;
   }
   const employees = await prisma.employee.findMany({ where, include: { reportingManager: true }, orderBy: { name: 'asc' } });
@@ -332,8 +498,14 @@ router.post('/', requirePerm(null, 'hrms', 'Employee Management', 'create'), asy
     const count = await prisma.employee.count();
     employeeCode = 'EMP-' + String(count + 1).padStart(4, '0');
   }
-  const scopedDept = await scopeDepartment(req);
-  if (scopedDept !== undefined) department = scopedDept; // department-scoped role: can only add to their own department
+  // A department-scoped role may only add into a department they hold. With
+  // several, the one they picked is honoured; anything else falls back to
+  // their first rather than silently creating the employee somewhere they
+  // cannot then see them.
+  const allowedDepts = scopeDepartments(req);
+  if (allowedDepts !== undefined) {
+    department = allowedDepts.includes(department) ? department : allowedDepts[0];
+  }
 
   let userId = null;
   if (role) {
@@ -479,8 +651,17 @@ router.patch('/:id/changes/approve', requirePerm(null, 'hrms', 'Employee Managem
     return res.status(400).json({ error: `Those changes could not be applied: ${String(err.message || err).split('\n').pop()}` });
   }
   await logAudit({
-    userId: req.user.id, action: 'Profile changes approved — profile locked', entity: 'Employee',
-    entityId: employee.id, toValue: `${changes.length} field(s) applied`,
+    userId: req.user.id, actorName: req.user.name, action: 'Profile changes approved — profile locked',
+    entity: 'Employee', entityId: employee.id, toValue: `${changes.length} field(s) applied`,
+    approvalStatus: 'Approved', approvedByName: req.user.name || null, approvedAt: new Date(),
+    reason: data.reviewNote || null,
+  });
+  // Stamp the verdict onto the per-field rows the employee's submission
+  // wrote, so the history shows Approval Status and the approver per field
+  // instead of leaving every row 'Pending' for ever.
+  await resolveFieldApprovals({
+    entity: 'Employee', entityId: employee.id, approvalStatus: 'Approved',
+    approvedByName: req.user.name || null, reason: data.reviewNote || null,
   });
   res.json(withComputed(updated));
 });
@@ -498,7 +679,9 @@ router.patch('/:id/changes/reject', requirePerm(null, 'hrms', 'Employee Manageme
     where: { id: req.params.id },
     data: {
       pendingChanges: null,
-      profileStage: 'Assigned',
+      // Sent back to the employee — that is a DIFFERENT state from "never
+      // filled in", and the badge now says so.
+      profileStage: PROFILE_STATUS.CHANGE_REQUESTED,
       isLocked: false,
       reviewDecision: 'Rejected',
       reviewNote: reason.slice(0, 500),
@@ -506,7 +689,15 @@ router.patch('/:id/changes/reject', requirePerm(null, 'hrms', 'Employee Manageme
       reviewedByName: req.user.name || null,
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Profile changes sent back for edit', entity: 'Employee', entityId: employee.id, toValue: reason.slice(0, 200) });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Profile changes sent back for edit',
+    entity: 'Employee', entityId: employee.id, toValue: reason.slice(0, 200),
+    approvalStatus: 'Rejected', approvedByName: req.user.name || null, approvedAt: new Date(), reason: reason.slice(0, 500),
+  });
+  await resolveFieldApprovals({
+    entity: 'Employee', entityId: employee.id, approvalStatus: 'Rejected',
+    approvedByName: req.user.name || null, reason: reason.slice(0, 500),
+  });
   res.json(withComputed(employee));
 });
 
@@ -518,24 +709,29 @@ router.patch('/:id/unlock-request/approve', requirePerm(null, 'hrms', 'Employee 
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!employee || employee.unlockRequestStatus !== 'Pending') return res.status(400).json({ error: 'No pending unlock request' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
-  const hours = Number(req.body && req.body.hours) > 0
-    ? Math.min(Number(req.body.hours), 24 * 14)
-    : UNLOCK_WINDOW_HOURS;
-  const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+  // Configurable, not a blanket 48 hours: HR types the window, picks the
+  // section and gives a reason, and all of it is recorded on the employee.
+  const hours = grantHours(req.body && req.body.hours);
+  const note = (req.body && req.body.note) ? String(req.body.note).slice(0, 500) : null;
+  const grant = grantEditAccessData({
+    actingUser: req.user, hours, section: req.body && req.body.section,
+    reason: note || employee.unlockRequestReason,
+  });
   const updated = await prisma.employee.update({
     where: { id: req.params.id },
     data: {
-      isLocked: false,
+      ...grant,
       unlockRequestStatus: 'Approved',
-      profileStage: 'Assigned',
-      unlockExpiresAt: expiresAt,
       unlockDecidedAt: new Date(),
-      unlockDecisionNote: (req.body && req.body.note) ? String(req.body.note).slice(0, 500) : null,
+      unlockDecisionNote: note,
     },
   });
   await logAudit({
-    userId: req.user.id, action: `Edit access granted for ${hours}h`, entity: 'Employee',
-    entityId: employee.id, toValue: expiresAt.toISOString(),
+    userId: req.user.id, actorName: req.user.name,
+    action: `Edit access granted for ${hours}h (${grant.unlockGrantSection})`,
+    entity: 'Employee', entityId: employee.id,
+    fromValue: 'Locked', toValue: grant.unlockExpiresAt.toISOString(),
+    reason: grant.unlockGrantReason, approvalStatus: 'Approved', approvedByName: req.user.name || null, approvedAt: new Date(),
   });
   res.json(withComputed(updated));
 });
@@ -565,19 +761,109 @@ router.patch('/:id/toggle-lock', requirePerm(null, 'hrms', 'Employee Management'
   const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
   const nextLocked = !existing.isLocked;
+  const hours = grantHours(req.body && req.body.hours);
   const employee = await prisma.employee.update({
     where: { id: req.params.id },
-    data: {
-      isLocked: nextLocked,
-      profileStage: nextLocked ? 'Locked' : 'Assigned',
-      unlockRequestStatus: nextLocked ? existing.unlockRequestStatus : null,
-      // An HR unlock is bounded exactly like an approved request, so no route
-      // into this state leaves a profile open indefinitely.
-      unlockExpiresAt: nextLocked ? null : new Date(Date.now() + UNLOCK_WINDOW_HOURS * 60 * 60 * 1000),
-    },
+    data: nextLocked
+      ? {
+        isLocked: true,
+        profileStage: PROFILE_STATUS.LOCKED,
+        unlockRequestStatus: existing.unlockRequestStatus,
+        unlockExpiresAt: null,
+      }
+      // An HR unlock is bounded and recorded exactly like an approved
+      // request, so no route into this state leaves a profile open
+      // indefinitely or without a name against it.
+      : {
+        ...grantEditAccessData({
+          actingUser: req.user, hours,
+          reason: (req.body && req.body.reason) || 'Unlocked directly by HR',
+          section: req.body && req.body.section,
+        }),
+        unlockRequestStatus: null,
+      },
   });
-  await logAudit({ userId: req.user.id, action: nextLocked ? 'Profile locked by HR' : 'Profile unlocked by HR', entity: 'Employee', entityId: employee.id });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: nextLocked ? 'Profile locked by HR' : `Profile unlocked by HR for ${hours}h`,
+    entity: 'Employee', entityId: employee.id,
+    reason: nextLocked ? null : ((req.body && req.body.reason) || 'Unlocked directly by HR'),
+  });
   res.json(withComputed(employee));
+});
+
+// --- GRANT EDIT ACCESS ------------------------------------------------------
+// HR reopening ONE employee's own locked profile, WITHOUT waiting for them to
+// ask. Distinct from Edit Scope (Administration -> Users), which changes which
+// records a login may reach and never touches a lock. See the note beside
+// EDIT_ACCESS_SECTIONS.
+//
+// Everything the lifecycle asks to be recorded is recorded: which employee,
+// which section, the reason, when access starts, when it expires and who
+// granted it.
+router.post('/:id/grant-edit-access', requirePerm(null, 'hrms', 'Employee Management', 'approve'), async (req, res) => {
+  const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, existing))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const reason = req.body && req.body.reason ? String(req.body.reason).trim() : '';
+  if (!reason) return res.status(400).json({ error: 'Say why you are opening this profile — it goes on the record.' });
+  const hours = grantHours(req.body && req.body.hours);
+  const section = req.body && req.body.section;
+  if (section && !EDIT_ACCESS_SECTIONS.includes(section)) {
+    return res.status(400).json({ error: `Unknown section. Choose one of: ${EDIT_ACCESS_SECTIONS.join(', ')}.` });
+  }
+  const grant = grantEditAccessData({ actingUser: req.user, hours, reason, section });
+  const employee = await prisma.employee.update({
+    where: { id: req.params.id },
+    data: { ...grant, unlockRequestStatus: existing.unlockRequestStatus === 'Pending' ? 'Approved' : null, unlockDecidedAt: new Date() },
+  });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: `Edit access granted for ${hours}h (${grant.unlockGrantSection})`,
+    entity: 'Employee', entityId: employee.id,
+    fromValue: existing.isLocked ? 'Locked' : profileStatusOf(existing),
+    toValue: grant.unlockExpiresAt.toISOString(), reason,
+    approvalStatus: 'Approved', approvedByName: req.user.name || null, approvedAt: new Date(),
+  });
+  res.json({ ...withComputed(employee), grantedHours: hours });
+});
+
+// --- THE FIELD-BY-FIELD HISTORY --------------------------------------------
+// Employee · Field · Old Value · New Value · Changed By · Changed At ·
+// Reason · Approval Status, newest first. Scoped like every other read of an
+// employee: a TL sees their own department's history, never the company's.
+router.get('/:id/audit', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (req.user.caps.hrmsSelfOnly && employee.userId !== req.user.id) {
+    return res.status(403).json({ error: "This isn't included in your role's permissions" });
+  }
+  if (!(await assertInScope(req, employee))) {
+    return res.status(403).json({ error: 'This record is outside your department scope' });
+  }
+  const rows = await prisma.auditLog.findMany({
+    where: { entity: 'Employee', entityId: req.params.id },
+    include: { user: { select: { name: true, email: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 300,
+  });
+  res.json({
+    employee: { id: employee.id, name: employee.name, employeeCode: employee.employeeCode },
+    entries: rows.map((r) => ({
+      id: r.id,
+      field: r.field || null,
+      label: r.fieldLabel || r.field || null,
+      action: r.action,
+      from: r.fromValue,
+      to: r.toValue,
+      changedBy: r.actorName || (r.user && r.user.name) || 'System',
+      changedAt: r.createdAt,
+      reason: r.reason || null,
+      approvalStatus: r.approvalStatus || null,
+      approvedBy: r.approvedByName || null,
+      approvedAt: r.approvedAt || null,
+    })),
+  });
 });
 
 // Pause/resume — toggles Active <-> On Probation, mirroring the reference app's
@@ -652,22 +938,37 @@ router.patch('/:id/offboarding/:index', requirePerm(null, 'hrms', 'Employee Mana
   res.json(withComputed(updated));
 });
 
-// --- Bulk import ------------------------------------------------------------
-// ALL OR NOTHING. Every row is validated against the database and against the
-// rest of the file BEFORE a single write happens; if any row fails, nothing is
-// written and the caller gets the line number and the reason for each failure.
-// A half-applied employee master is worse than a rejected file.
+// --- Bulk import: Validate -> Preview -> Confirm -> Import -------------------
+//
+// THREE STEPS, NOT ONE.
+//   1. VALIDATE  every row, against the database and against the rest of the
+//      file, before anything is written.
+//   2. PREVIEW   the split: Valid Records and Invalid Records, each invalid
+//      row naming the Row number, the Field, the Error and what was expected
+//      (e.g. "Row 8 - Department - Invalid department - one of IT, HR, ...").
+//      HR sees exactly what will land before agreeing to it.
+//   3. CONFIRM   and import, in ONE transaction. Still all-or-nothing: a
+//      half-applied employee master is worse than a rejected file.
 //
 // The importer's data scope is enforced here too: a department-scoped caller
-// (TL/STL) may only create employees in their own department, and a row naming
-// another one is an ERROR rather than being silently rewritten — quietly
-// moving somebody's department is exactly the kind of thing an import should
-// not do behind your back.
+// (TL/STL) may only create employees in a department they hold, and a row
+// naming another one is an ERROR rather than being silently rewritten —
+// quietly moving somebody's department is exactly the kind of thing an import
+// should not do behind your back.
 //
-// Import never creates logins. Sign-in details are issued deliberately, one
-// employee at a time, through POST /:id/send-credentials once HR has checked
-// the record — so a CSV can never mint accounts for a department the importer
-// cannot see.
+// LOGINS. The lifecycle requires an imported employee to keep the
+//   Employee -> User -> Login -> Product Access -> Role -> Scope
+// relationship wherever the workflow needs login access, so the import DOES
+// create logins when asked (`createLogins`). It does it the same way the Add
+// Employee form does and with the same safety:
+//   * role and product access are DERIVED from the designation through the
+//     DesignationRole table — never typed, never department-qualified;
+//   * data scope is the employee's department;
+//   * NO PASSWORD IS EVER GENERATED OR EMAILED. Each new login gets an
+//     unguessable hash and a single-use, expiring set-password link, exactly
+//     like POST /employees.
+// A caller who cannot see a department cannot import into it, so a CSV can
+// never mint accounts somewhere the importer has no reach.
 const IMPORT_COLUMNS = ['name', 'email', 'phone', 'department', 'designation', 'location'];
 
 function normalizeImportRow(raw) {
@@ -676,7 +977,7 @@ function normalizeImportRow(raw) {
   return row;
 }
 
-async function validateImport(rows, { scopedDept, allowedDepartments }) {
+async function validateImport(rows, { allowedDepartments, scopeDepts, createLogins, designations }) {
   const errors = [];
   const emailsSeen = new Map();
   const phonesSeen = new Map();
@@ -684,125 +985,297 @@ async function validateImport(rows, { scopedDept, allowedDepartments }) {
 
   const fileEmails = rows.map((r) => r.email).filter(Boolean);
   const filePhones = rows.map((r) => r.phone).filter(Boolean);
-  const [emailClashes, phoneClashes] = await Promise.all([
+  const [emailClashes, phoneClashes, userClashes] = await Promise.all([
     fileEmails.length ? prisma.employee.findMany({ where: { email: { in: fileEmails } }, select: { email: true, name: true, employeeCode: true } }) : [],
     filePhones.length ? prisma.employee.findMany({ where: { phone: { in: filePhones } }, select: { phone: true, name: true, employeeCode: true } }) : [],
+    fileEmails.length ? prisma.user.findMany({ where: { email: { in: fileEmails } }, select: { email: true, name: true } }) : [],
   ]);
   const byEmail = new Map(emailClashes.map((e) => [String(e.email).toLowerCase(), e]));
   const byPhone = new Map(phoneClashes.map((e) => [String(e.phone), e]));
+  const byUser = new Map(userClashes.map((u) => [String(u.email).toLowerCase(), u]));
+
+  const deptList = allowedDepartments.join(', ');
 
   rows.forEach((row, i) => {
     // Line 1 is the header, so the first data row is line 2 — which is the
     // line number the person's spreadsheet is showing them.
     const line = i + 2;
-    const fail = (message) => errors.push({ line, message, name: row.name || '' });
+    const before = errors.length;
+    // Field + expected value, so the preview can say
+    // "Row 8 — Department — Invalid department — one of IT, HR, ...".
+    const fail = (field, message, expected) => errors.push({
+      line, row: line, field, message, expected: expected || '', name: row.name || '',
+    });
 
-    if (!row.name) fail('Name is required.');
-    if (row.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(row.email)) fail(`"${row.email}" is not a valid email address.`);
-    if (row.phone && !/^\d{10}$/.test(row.phone.replace(/\s/g, ''))) fail(`Mobile "${row.phone}" should be 10 digits.`);
+    if (!row.name) fail('Name', 'Name is required.', 'a full name');
+    if (row.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(row.email)) {
+      fail('Email', `"${row.email}" is not a valid email address.`, 'name@example.com');
+    }
+    if (row.phone && !/^\d{10}$/.test(row.phone.replace(/\s/g, ''))) {
+      fail('Mobile', `Mobile "${row.phone}" should be 10 digits.`, '10 digits, e.g. 9876543210');
+    }
 
     if (row.email) {
       const key = row.email.toLowerCase();
-      if (emailsSeen.has(key)) fail(`Email ${row.email} also appears on line ${emailsSeen.get(key)} of this file.`);
+      if (emailsSeen.has(key)) fail('Email', `Email ${row.email} also appears on line ${emailsSeen.get(key)} of this file.`, 'a unique email address');
       else emailsSeen.set(key, line);
       const clash = byEmail.get(key);
-      if (clash) fail(`Email ${row.email} already belongs to ${clash.name} (${clash.employeeCode}).`);
+      if (clash) fail('Email', `Email ${row.email} already belongs to ${clash.name} (${clash.employeeCode}).`, 'an email not already on an employee');
+      const userClash = byUser.get(key);
+      if (userClash && createLogins) fail('Email', `${row.email} already has a login (${userClash.name}).`, 'an email with no existing login');
     }
     if (row.phone) {
-      if (phonesSeen.has(row.phone)) fail(`Mobile ${row.phone} also appears on line ${phonesSeen.get(row.phone)} of this file.`);
+      if (phonesSeen.has(row.phone)) fail('Mobile', `Mobile ${row.phone} also appears on line ${phonesSeen.get(row.phone)} of this file.`, 'a unique mobile number');
       else phonesSeen.set(row.phone, line);
       const clash = byPhone.get(row.phone);
-      if (clash) fail(`Mobile ${row.phone} already belongs to ${clash.name} (${clash.employeeCode}).`);
+      if (clash) fail('Mobile', `Mobile ${row.phone} already belongs to ${clash.name} (${clash.employeeCode}).`, 'a mobile not already on an employee');
     }
 
     let department = row.department || null;
-    if (scopedDept !== undefined) {
-      if (department && department !== scopedDept) {
-        fail(`You can only import into ${scopedDept}; this row says "${department}".`);
+    if (scopeDepts !== undefined) {
+      if (department && !scopeDepts.includes(department)) {
+        fail('Department', `Outside your scope — you can only import into ${scopeDepts.join(', ')}.`, scopeDepts.join(' or '));
       }
-      department = scopedDept;
+      if (!department) department = scopeDepts[0];
     } else if (department && allowedDepartments.length && !allowedDepartments.includes(department)) {
-      fail(`"${department}" is not a department in this organisation.`);
+      fail('Department', 'Invalid department', `one of ${deptList}`);
     }
 
-    prepared.push({ ...row, department });
+    // A login needs an email and a designation the DesignationRole table
+    // knows, because that is what supplies the role and the product access.
+    let mapping = null;
+    if (createLogins) {
+      if (!row.email) fail('Email', 'A login cannot be created without an email address.', 'name@example.com');
+      if (!row.designation) fail('Designation', 'A designation is required to derive the role and product access.', `one of ${designations.join(', ')}`);
+      else {
+        mapping = designations.find((d) => d.toLowerCase() === row.designation.toLowerCase()) || null;
+        if (!mapping) fail('Designation', `"${row.designation}" is not a designation this organisation maps to a role.`, `one of ${designations.join(', ')}`);
+      }
+    }
+
+    prepared.push({ ...row, department, line, valid: errors.length === before });
   });
 
   return { errors, prepared };
 }
 
-router.post('/bulk-import', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+// Shared by the preview and the import, so the preview can never describe a
+// different file from the one that lands.
+async function readImportRequest(req) {
   const raw = req.body.rows;
-  if (!Array.isArray(raw)) return res.status(400).json({ error: 'rows must be an array' });
-  if (!raw.length) return res.status(400).json({ error: 'That file has no data rows.' });
-  if (raw.length > 1000) return res.status(400).json({ error: 'Import at most 1000 rows at a time.' });
-  const dryRun = req.body.validateOnly === true;
+  if (!Array.isArray(raw)) return { error: 'rows must be an array' };
+  if (!raw.length) return { error: 'That file has no data rows.' };
+  if (raw.length > 1000) return { error: 'Import at most 1000 rows at a time.' };
 
   const rows = raw.map(normalizeImportRow);
-  const scopedDept = await scopeDepartment(req);
-  const departments = await prisma.department.findMany({ select: { name: true } });
+  const scopeDepts = scopeDepartments(req);
+  const [departments, designationRows] = await Promise.all([
+    prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
+    prisma.designationRole.findMany({ select: { designation: true }, orderBy: { designation: 'asc' } }),
+  ]);
+  const createLogins = req.body.createLogins === true;
   const { errors, prepared } = await validateImport(rows, {
-    scopedDept,
     allowedDepartments: departments.map((d) => d.name),
+    scopeDepts,
+    createLogins,
+    designations: designationRows.map((d) => d.designation),
   });
+  return { rows, errors, prepared, createLogins, scopeDepts };
+}
+
+function previewPayload({ rows, errors, prepared, createLogins, scopeDepts }) {
+  const invalidLines = new Set(errors.map((e) => e.line));
+  const valid = prepared.filter((r) => !invalidLines.has(r.line)).map((r) => ({
+    row: r.line,
+    name: r.name,
+    email: r.email || '',
+    phone: r.phone || '',
+    department: r.department || '',
+    designation: r.designation || '',
+    location: r.location || '',
+    willCreateLogin: createLogins && !!r.email,
+  }));
+  return {
+    ok: errors.length === 0,
+    rowCount: rows.length,
+    validCount: valid.length,
+    invalidCount: invalidLines.size,
+    valid,
+    invalid: errors,
+    errors, // the older shape, kept so nothing that already reads it breaks
+    createLogins,
+    scope: scopeDepts === undefined ? 'All departments' : scopeDepts.join(', '),
+    canImport: errors.length === 0 && valid.length > 0,
+    message: errors.length
+      ? `${errors.length} problem(s) across ${rows.length} row(s). Nothing will be imported until every row passes.`
+      : `${valid.length} row(s) ready to import${createLogins ? ' with logins' : ''}.`,
+  };
+}
+
+// STEP 2 — the preview. Read-only: it writes nothing, ever.
+router.post('/bulk-import/preview', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const parsed = await readImportRequest(req);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  res.json({ ...previewPayload(parsed), preview: true });
+});
+
+// STEP 3 — confirm and import.
+router.post('/bulk-import', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const parsed = await readImportRequest(req);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const { rows, errors, prepared, createLogins } = parsed;
+
+  // `validateOnly` is the old dry-run flag; it now returns the full preview.
+  if (req.body.validateOnly === true) {
+    return res.json({ ...previewPayload(parsed), validateOnly: true, preview: true, written: 0 });
+  }
 
   if (errors.length) {
     await logAudit({
-      userId: req.user.id, action: 'Bulk import rejected', entity: 'Employee',
+      userId: req.user.id, actorName: req.user.name, action: 'Bulk import rejected', entity: 'Employee',
       toValue: `${rows.length} row(s) read, ${errors.length} error(s), nothing written`,
     });
     return res.status(422).json({
-      ok: false,
+      ...previewPayload(parsed),
       written: 0,
-      rowCount: rows.length,
-      errors,
       message: `Nothing was imported. ${errors.length} problem(s) across ${rows.length} row(s) — fix the file and try again.`,
     });
   }
 
-  if (dryRun) {
-    return res.json({ ok: true, written: 0, rowCount: rows.length, errors: [], validateOnly: true, message: `${rows.length} row(s) look good.` });
+  // Employee codes are allocated up front and checked against the database,
+  // so a gap in the sequence cannot collide with an existing record.
+  const taken = new Set((await prisma.employee.findMany({ select: { employeeCode: true } })).map((e) => e.employeeCode));
+  let next = taken.size + 1;
+  const codeFor = () => {
+    let code = `EMP-${String(next).padStart(4, '0')}`;
+    while (taken.has(code)) { next += 1; code = `EMP-${String(next).padStart(4, '0')}`; }
+    taken.add(code);
+    next += 1;
+    return code;
+  };
+  const plan = prepared.map((r) => ({ ...r, employeeCode: codeFor() }));
+
+  // Role and product access are DERIVED from the designation, so an imported
+  // "TL" in Medical is role TL scoped to Medical — never a "Medical TL".
+  const mappings = new Map();
+  if (createLogins) {
+    // eslint-disable-next-line no-restricted-syntax
+    for (const r of plan) {
+      if (!mappings.has(r.designation)) {
+        // eslint-disable-next-line no-await-in-loop
+        mappings.set(r.designation, await mappingFor(r.designation));
+      }
+    }
   }
 
-  // One transaction: either every row lands or none does.
-  const seq = await prisma.employee.count();
-  const creates = prepared.map((r, i) => prisma.employee.create({
-    data: {
-      employeeCode: 'EMP-' + String(seq + i + 1).padStart(4, '0'),
-      name: r.name,
-      email: r.email || null,
-      phone: r.phone || null,
-      department: r.department,
-      designation: r.designation || null,
-      location: r.location || null,
-      onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
-    },
-  }));
+  let created = [];
   try {
-    await prisma.$transaction(creates);
+    // ONE transaction: either every row lands or none does. Interactive,
+    // because a login and its employee record must be created together and
+    // the employee needs the user's id.
+    created = await prisma.$transaction(async (tx) => {
+      const out = [];
+      // eslint-disable-next-line no-restricted-syntax
+      for (const r of plan) {
+        let userId = null;
+        if (createLogins && r.email) {
+          const mapping = mappings.get(r.designation) || null;
+          const atsRole = mapping && mapping.atsRole ? mapping.atsRole : null;
+          const role = atsRole || (mapping && mapping.accounts && !mapping.ats ? 'ACCOUNTANT' : 'EMPLOYEE');
+          // eslint-disable-next-line no-await-in-loop
+          const user = await tx.user.create({
+            data: {
+              name: r.name,
+              email: r.email,
+              // NEVER a generated password that somebody then has to email.
+              // eslint-disable-next-line no-await-in-loop
+              passwordHash: await unguessablePasswordHash(),
+              role,
+              username: r.email,
+              status: 'Active',
+              atsDepartment: r.department || null,
+              atsRole,
+              atsScopeDepartments: r.department || null,
+              hrmsAccess: mapping ? !!mapping.hrms : true,
+              atsAccess: mapping ? !!mapping.ats : false,
+              accountsAccess: mapping ? !!mapping.accounts : false,
+              landingWorkspace: (mapping && mapping.landing) || null,
+            },
+          });
+          userId = user.id;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const employee = await tx.employee.create({
+          data: {
+            employeeCode: r.employeeCode,
+            name: r.name,
+            email: r.email || null,
+            phone: r.phone || null,
+            department: r.department,
+            designation: r.designation || null,
+            location: r.location || null,
+            userId,
+            profileStage: PROFILE_STATUS.INCOMPLETE,
+            onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
+          },
+        });
+        out.push({ employee, userId });
+      }
+      return out;
+    }, { timeout: 120000 });
   } catch (err) {
-    await logAudit({ userId: req.user.id, action: 'Bulk import failed — rolled back', entity: 'Employee', toValue: String(err.message || err).slice(0, 200) });
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Bulk import failed — rolled back',
+      entity: 'Employee', toValue: String(err.message || err).slice(0, 200),
+    });
     return res.status(409).json({
-      ok: false, written: 0, rowCount: rows.length,
+      ok: false, written: 0, rowCount: rows.length, validCount: 0, invalidCount: rows.length, valid: [],
+      invalid: [{ line: 0, row: 0, field: '', message: `The database refused the file, so nothing was written: ${String(err.message || err).slice(0, 200)}`, expected: '' }],
       errors: [{ line: 0, message: `The database refused the file, so nothing was written: ${String(err.message || err).slice(0, 200)}` }],
       message: 'Nothing was imported.',
     });
   }
 
+  // The invitations go out AFTER the transaction commits, one at a time and
+  // each one guarded: a mail failure must not roll back employees that are
+  // already saved, and it must not reject into the process.
+  const invites = [];
+  if (createLogins) {
+    // eslint-disable-next-line no-restricted-syntax
+    for (const { employee, userId } of created) {
+      if (!userId) continue;
+      let outcome;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        outcome = await sendCredentials({ employee, userId, actingUser: req.user, req });
+      } catch (err) {
+        outcome = { sent: false, status: `Failed: ${String(err.message || err).slice(0, 200)}` };
+      }
+      invites.push({ name: employee.name, email: employee.email, status: outcome.status, sent: !!outcome.sent, link: outcome.link || null });
+    }
+  }
+
   await logAudit({
-    userId: req.user.id, action: 'Bulk import run', entity: 'Employee',
-    toValue: `${prepared.length} imported into ${scopedDept === undefined ? 'their own departments' : scopedDept}`,
+    userId: req.user.id, actorName: req.user.name, action: 'Bulk import run', entity: 'Employee',
+    toValue: `${created.length} imported${createLogins ? `, ${invites.length} login(s) created` : ''}, scope: ${scopeLabel(req)}`,
   });
   res.json({
     ok: true,
-    written: prepared.length,
+    written: created.length,
     rowCount: rows.length,
+    validCount: created.length,
+    invalidCount: 0,
+    valid: [],
+    invalid: [],
     errors: [],
-    // Kept for older callers that read `imported`. Nothing is ever "skipped"
-    // now — a row either imports or the whole file is refused.
-    imported: prepared.length,
+    // Kept for older callers that read `imported`.
+    imported: created.length,
     skipped: 0,
-    message: `${prepared.length} employee(s) imported. No logins were created — send sign-in details per employee once you've checked the records.`,
+    createLogins,
+    invites,
+    message: createLogins
+      ? `${created.length} employee(s) imported with logins. ${invites.filter((i) => i.sent).length} sign-in link(s) emailed — no password was generated or sent.`
+      : `${created.length} employee(s) imported. No logins were created — send sign-in details per employee once you've checked the records.`,
   });
 });
 

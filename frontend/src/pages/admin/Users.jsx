@@ -561,6 +561,7 @@ export default function Users() {
                         atsScopeTeams: u.atsScopeTeams || '',
                         atsScopeClients: u.atsScopeClients || '',
                       })}
+                      title="Which departments, teams and clients this login may reach — not their own profile lock"
                     >
                       Edit scope
                     </button>
@@ -616,9 +617,20 @@ export default function Users() {
           </>}
         >
           <div className="notice">
-            Data scope — what the API itself allows this login to fetch, not what the screen chooses to draw.
-            The server re-resolves it on every request, so a change here takes effect on their very next call,
-            without a re-login. Leave a list empty to fall back to the employee&apos;s own department and team.
+            <span>
+              <b>Data scope — which records this login may reach.</b> What the API itself allows them to fetch,
+              not what the screen chooses to draw. The server re-resolves it on every request, so a change here
+              takes effect on their very next call, without a re-login. Leave a list empty to fall back to the
+              employee&apos;s own department and team.
+            </span>
+          </div>
+          <div className="notice amber">
+            <span>
+              This is <b>not</b> <i>Grant Edit Access</i>. Editing scope changes which <i>other people&apos;s</i>
+              {' '}records this login can see and work on, permanently, until you change it again. Grant Edit Access
+              (HRMS → Employee Management) temporarily unlocks <i>this person&apos;s own profile</i> so they can
+              correct it, and expires. Neither one does the other&apos;s job.
+            </span>
           </div>
           <ScopeChecklist
             label="Departments"

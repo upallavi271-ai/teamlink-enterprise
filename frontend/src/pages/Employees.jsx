@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
 import { atsRoleLabel } from '../atsVocab';
+import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 
 // Administration -> Employee Management — the prototype's employeeMgmtView()
 // (line 9754) and openAddEmployeeModal() (line 2857).
@@ -47,7 +48,17 @@ export default function Employees() {
   const [importErrors, setImportErrors] = useState([]);
   const [importBusy, setImportBusy] = useState(false);
   const [importFileName, setImportFileName] = useState('');
-  const [exporting, setExporting] = useState(false);
+  // Validate -> PREVIEW -> Confirm -> Import. `importPreview` holds the
+  // server's split of the file; nothing is written while it is on screen.
+  const [importPreview, setImportPreview] = useState(null);
+  const [importCreateLogins, setImportCreateLogins] = useState(false);
+  const [exporting, setExporting] = useState('');
+  // GRANT EDIT ACCESS — temporarily reopening one employee's OWN profile.
+  // Deliberately NOT the same thing as Edit scope (which lives on
+  // Administration → Users and changes which records a login may reach).
+  const [grantFor, setGrantFor] = useState(null);
+  const [grantForm, setGrantForm] = useState({ hours: 48, section: 'All fields', reason: '' });
+  const [meConfig, setMeConfig] = useState(null);
   // The HR review surface: submitted profiles and unlock requests waiting on
   // a decision, both scoped by the server to what this caller may see.
   const [queue, setQueue] = useState(null);
@@ -70,6 +81,7 @@ export default function Employees() {
     load();
     api.get('/admin/employee-management/options').then((res) => setOptions(res.data)).catch(() => setOptions(null));
     api.get('/admin/departments').then((res) => setDepts(res.data)).catch(() => setDepts([]));
+    api.get('/employees/me/config').then((res) => setMeConfig(res.data)).catch(() => setMeConfig(null));
   }, []);
 
   async function run(fn, message) {
@@ -128,41 +140,68 @@ export default function Employees() {
     };
   }
 
-  // Nothing is written unless EVERY row passes. `validateOnly` runs the same
-  // server-side checks without writing, so HR can dry-run a file first.
-  async function runImport(validateOnly) {
-    setError(''); setNotice(''); setImportResult(null); setImportErrors([]);
+  // STEP 2 — PREVIEW. The server validates and returns the split (valid rows
+  // and, for each invalid one, Row · Field · Error · expected value). It
+  // writes nothing, so HR sees exactly what will land before agreeing to it.
+  async function previewImport() {
+    setError(''); setNotice(''); setImportResult(null); setImportErrors([]); setImportPreview(null);
     const parsed = parseCsv(csvText);
     if (!parsed.rows.length) { setError('That file has no data rows.'); return; }
     setImportBusy(true);
     try {
-      const res = await api.post('/employees/bulk-import', { rows: parsed.rows, validateOnly: !!validateOnly });
-      setImportResult(res.data);
-      if (!validateOnly) { setCsvText(''); setImportFileName(''); load(); }
+      const res = await api.post('/employees/bulk-import/preview', {
+        rows: parsed.rows, createLogins: importCreateLogins,
+      });
+      setImportPreview(res.data);
+      setImportErrors(res.data.invalid || []);
     } catch (err) {
       const data = err.response?.data;
-      setImportErrors(data?.errors || []);
-      setImportResult(data && data.errors ? data : null);
-      if (!data?.errors) setError(data?.error || 'The import could not be run.');
+      setImportErrors(data?.invalid || data?.errors || []);
+      if (!data?.errors && !data?.invalid) setError(data?.error || 'The file could not be checked.');
+    } finally { setImportBusy(false); }
+  }
+
+  // STEP 3 — CONFIRM. Still all-or-nothing on the server: one bad row and the
+  // whole file is refused, so the preview and the result cannot disagree.
+  async function confirmImport() {
+    setError(''); setNotice(''); setImportResult(null);
+    const parsed = parseCsv(csvText);
+    if (!parsed.rows.length) { setError('That file has no data rows.'); return; }
+    setImportBusy(true);
+    try {
+      const res = await api.post('/employees/bulk-import', {
+        rows: parsed.rows, createLogins: importCreateLogins,
+      });
+      setImportResult(res.data);
+      setImportPreview(null);
+      setImportErrors([]);
+      setCsvText(''); setImportFileName('');
+      load();
+    } catch (err) {
+      const data = err.response?.data;
+      setImportErrors(data?.invalid || data?.errors || []);
+      setImportPreview(data && (data.invalid || data.errors) ? data : null);
+      if (!data?.errors && !data?.invalid) setError(data?.error || 'The import could not be run.');
     } finally { setImportBusy(false); }
   }
 
   function readFile(file) {
     if (!file) return;
     setImportFileName(file.name);
-    setImportResult(null); setImportErrors([]);
+    setImportResult(null); setImportErrors([]); setImportPreview(null);
     const reader = new FileReader();
     reader.onload = () => setCsvText(String(reader.result || ''));
     reader.readAsText(file);
   }
 
-  // The server builds the CSV and scopes it: a TL downloads their own
-  // department, not the company. The browser only saves what comes back.
-  async function exportCsv() {
-    setError(''); setNotice(''); setExporting(true);
+  // The server builds the file and scopes it: a TL downloads their own
+  // department, not the company. The browser only saves what comes back, so
+  // CSV, Excel and PDF all carry the same rows and the same permission.
+  async function exportAs(format) {
+    setError(''); setNotice(''); setExporting(format);
     try {
-      const res = await api.get('/employees/export.csv', { responseType: 'blob' });
-      const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || 'employees.csv';
+      const res = await api.get(`/employees/export.${format}`, { responseType: 'blob' });
+      const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || `employees.${format}`;
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = url; a.download = name; document.body.appendChild(a); a.click();
@@ -170,7 +209,20 @@ export default function Employees() {
       setNotice(`Exported ${name} — scoped to what your role may see.`);
     } catch {
       setError('Export is not included in your role’s permissions.');
-    } finally { setExporting(false); }
+    } finally { setExporting(''); }
+  }
+
+  // Grant edit access from the row action. One employee, one window, one
+  // reason, all recorded.
+  async function submitGrant(e) {
+    e.preventDefault();
+    const ok = await run(
+      () => api.post(`/employees/${grantFor.id}/grant-edit-access`, {
+        hours: Number(grantForm.hours), section: grantForm.section, reason: grantForm.reason,
+      }),
+      `Edit access granted to ${grantFor.name} for ${grantForm.hours}h (${grantForm.section}).`,
+    );
+    if (ok) { setGrantFor(null); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }
   }
 
   async function submitTransfer(e) {
@@ -228,8 +280,10 @@ export default function Employees() {
             Employee master administration, login access and product roles. The HR record itself lives in HRMS → Employees.
           </div></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {/* main-only: CSV bulk import / export */}
-          <button className="btn" onClick={exportCsv} disabled={exporting}>{exporting ? 'Exporting…' : 'Export CSV'}</button>
+          {/* Three formats, one scoped query behind them. */}
+          <button className="btn" onClick={() => exportAs('csv')} disabled={!!exporting}>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</button>
+          <button className="btn" onClick={() => exportAs('xlsx')} disabled={!!exporting}>{exporting === 'xlsx' ? 'Exporting…' : 'Export Excel'}</button>
+          <button className="btn" onClick={() => exportAs('pdf')} disabled={!!exporting}>{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}</button>
           <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>
           <button className="btn btn-primary" onClick={() => setAdding({ ...EMPTY_NEW })}>Add Employee</button>
         </div>
@@ -320,9 +374,21 @@ export default function Employees() {
           <h3>Bulk import (CSV)</h3>
           <div className="small-muted" style={{ marginBottom: 8 }}>
             Header row required. Recognized columns: name, email, phone, department, designation, location.
-            <b> Nothing is written unless every row passes</b> — a file with one bad row is refused whole, with the
-            line number of each problem. Import never creates logins: send sign-in details per employee afterwards.
+            <b> Validate → Preview → Confirm → Import.</b> Checking the file writes nothing: you see the valid rows
+            and every problem, row by row, before you agree to anything. <b>Nothing is written unless every row
+            passes</b> — a file with one bad row is refused whole.
           </div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8, fontSize: 12.5 }}>
+            <input type="checkbox" style={{ width: 'auto', marginTop: 2 }}
+              checked={importCreateLogins}
+              onChange={(e) => { setImportCreateLogins(e.target.checked); setImportPreview(null); }} />
+            <span>
+              <b>Create logins for these employees</b> — one User and one login each, with the role, product access
+              and data scope derived from their designation and department. No password is generated or emailed:
+              each person gets a single-use, expiring link to set their own. Every row then needs an email address
+              and a known designation.
+            </span>
+          </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
             <input type="file" accept=".csv,text/csv" onChange={(e) => readFile(e.target.files?.[0])} />
             {importFileName && <span className="cell-muted" style={{ fontSize: 12 }}>{importFileName}</span>}
@@ -333,28 +399,123 @@ export default function Employees() {
             value={csvText} onChange={(e) => { setCsvText(e.target.value); setImportResult(null); setImportErrors([]); }}
           />
           <div style={{ marginTop: 8 }}>
-            <button className="btn btn-sm" disabled={importBusy} onClick={() => runImport(true)}>Check file</button>{' '}
-            <button className="btn btn-primary btn-sm" disabled={importBusy} onClick={() => runImport(false)}>Import</button>
+            <button className="btn btn-sm" disabled={importBusy} onClick={previewImport}>
+              {importBusy ? 'Checking…' : 'Check file & preview'}
+            </button>{' '}
+            <button className="btn btn-primary btn-sm" disabled={importBusy || !importPreview || !importPreview.canImport}
+              onClick={confirmImport}>
+              {importPreview && importPreview.canImport
+                ? `Confirm & import ${importPreview.validCount} row(s)`
+                : 'Confirm & import'}
+            </button>
+            {!importPreview && <span className="small-muted" style={{ marginLeft: 10 }}>Check the file first — the preview is what you confirm.</span>}
           </div>
-          {importErrors.length > 0 && (
+
+          {/* THE PREVIEW — valid records and invalid records, side by side. */}
+          {importPreview && (
+            <div style={{ marginTop: 12 }}>
+              <div className={importPreview.canImport ? 'notice' : 'notice amber'}>
+                {importPreview.message} Scope: {importPreview.scope}.
+              </div>
+
+              {importPreview.invalidCount > 0 && (
+                <>
+                  <div className="section-label">Invalid Records ({importPreview.invalidCount})</div>
+                  <div className="tbl-wrap">
+                    <table>
+                      <thead><tr><th style={{ width: 70 }}>Row</th><th style={{ width: 130 }}>Field</th><th>Error</th><th>Expected</th></tr></thead>
+                      <tbody>
+                        {importErrors.map((e, i) => (
+                          <tr key={i}>
+                            <td><b>{e.row || e.line || '—'}</b></td>
+                            <td>{e.field || '—'}</td>
+                            <td className="error-text" style={{ margin: 0 }}>{e.message}</td>
+                            <td className="cell-muted">{e.expected || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              <div className="section-label">Valid Records ({importPreview.validCount})</div>
+              {importPreview.validCount === 0
+                ? <div className="small-muted">No row in this file can be imported as it stands.</div>
+                : (
+                  <div className="tbl-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 70 }}>Row</th><th>Name</th><th>Email</th><th>Mobile</th>
+                          <th>Department</th><th>Designation</th><th>Location</th><th>Login</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.valid.map((r) => (
+                          <tr key={r.row}>
+                            <td className="cell-muted">{r.row}</td>
+                            <td><b>{r.name}</b></td>
+                            <td className="cell-muted">{r.email || '—'}</td>
+                            <td className="cell-muted">{r.phone || '—'}</td>
+                            <td className="cell-muted">{r.department || '—'}</td>
+                            <td className="cell-muted">{r.designation || '—'}</td>
+                            <td className="cell-muted">{r.location || '—'}</td>
+                            <td>{r.willCreateLogin
+                              ? <span className="status approved">Login + sign-in link</span>
+                              : <span className="cell-muted">Record only</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+            </div>
+          )}
+
+          {!importPreview && importErrors.length > 0 && (
             <div style={{ marginTop: 10 }}>
               <div className="error-text">
                 Nothing was imported. {importErrors.length} problem(s) — fix the file and try again.
               </div>
               <div className="tbl-wrap" style={{ marginTop: 6 }}>
                 <table>
-                  <thead><tr><th style={{ width: 90 }}>Line</th><th>Row</th><th>Problem</th></tr></thead>
+                  <thead><tr><th style={{ width: 70 }}>Row</th><th style={{ width: 130 }}>Field</th><th>Error</th><th>Expected</th></tr></thead>
                   <tbody>
                     {importErrors.map((e, i) => (
-                      <tr key={i}><td><b>{e.line || '—'}</b></td><td className="cell-muted">{e.name || '—'}</td><td>{e.message}</td></tr>
+                      <tr key={i}>
+                        <td><b>{e.row || e.line || '—'}</b></td>
+                        <td>{e.field || '—'}</td>
+                        <td>{e.message}</td>
+                        <td className="cell-muted">{e.expected || '—'}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
+
           {importResult && importResult.ok && (
             <div className="notice" style={{ marginTop: 8 }}>{importResult.message}</div>
+          )}
+          {importResult && importResult.invites && importResult.invites.length > 0 && (
+            <div className="tbl-wrap" style={{ marginTop: 8 }}>
+              <table>
+                <thead><tr><th>Employee</th><th>Email</th><th>Sign-in link</th></tr></thead>
+                <tbody>
+                  {importResult.invites.map((i, n) => (
+                    <tr key={n}>
+                      <td>{i.name}</td>
+                      <td className="cell-muted">{i.email}</td>
+                      <td className={i.sent ? 'cell-muted' : 'error-text'} style={{ margin: 0, wordBreak: 'break-all' }}>
+                        {i.status}{!i.sent && i.link ? ` — ${i.link}` : ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
@@ -406,9 +567,10 @@ export default function Employees() {
               <th>Employee ID</th><th>Name</th><th>Email</th><th>Mobile</th><th>Department</th><th>Designation</th>
               <th>Reporting Manager</th><th>STL</th><th>TL</th><th>Location</th><th>Joining Date</th><th>Employment Status</th>
               <th>HRMS Role</th><th>ATS Role</th><th>Accounts Role</th><th>Login Status</th><th>Last Login</th>
-              {/* main-only, appended after the prototype's eighteen: the profile
-                  lock / unlock workflow's state and how far the profile is filled. */}
-              <th>Profile Stage</th><th>Completion</th><th>Actions</th>
+              {/* main-only, appended after the prototype's eighteen: the data
+                  scope this login reaches, the profile lock / unlock
+                  workflow's state, and how far the profile is filled. */}
+              <th>Scope</th><th>Profile Status</th><th>Completion</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -430,10 +592,10 @@ export default function Employees() {
                 <td className="cell-muted">{productAccess(e, 'ats')}</td>
                 <td className="cell-muted">{productAccess(e, 'accounts')}</td>
                 <td><span className={`status ${e.loginStatus === 'Active' ? 'active' : 'rejected'}`}>{e.loginStatus}</span></td>
-                <td className="cell-muted">{e.lastLogin || '—'}</td>
+                <td className="cell-muted">{e.scope || '—'}</td>
                 <td>
-                  <span className={`status ${hrById[e.id]?.profileStage === 'Locked' ? 'active' : hrById[e.id]?.profileStage === 'Pending Review' ? 'pending' : ''}`}>
-                    {hrById[e.id]?.profileStage === 'Locked' ? '🔒 Locked' : (hrById[e.id]?.profileStage || '—')}
+                  <span className={`status ${STATUS_BADGE[hrById[e.id]?.profileStatus] || ''}`}>
+                    {hrById[e.id] ? statusLabel(hrById[e.id].profileStatus) : '—'}
                   </span>
                 </td>
                 <td className="cell-muted">{hrById[e.id] ? `${hrById[e.id].profileCompletionPct}%` : '—'}</td>
@@ -464,10 +626,26 @@ export default function Employees() {
                   )}
                   {/* main-only: transfer with an audit trail, the profile
                       lock / unlock workflow, probation pause and hard delete. */}
+                  {/* EDIT SCOPE — which records this login may reach. Lives on
+                      Administration → Users, and is deliberately NOT the same
+                      control as Grant Edit Access below. */}
+                  {e.userId && <><Link className="btn btn-sm" to="/admin/users" title="Change which departments, teams and clients this login can reach">Edit Scope</Link>{' '}</>}
+                  {/* REVIEW — only offered when something is actually waiting. */}
+                  {hrById[e.id]?.pendingChanges && (
+                    <><Link className="btn btn-sm btn-primary" to={`/employees/${e.id}`}>Review</Link>{' '}</>
+                  )}
+                  {/* GRANT EDIT ACCESS — temporarily reopens THIS employee's
+                      own locked profile. Never widens what they can see. */}
+                  {hrById[e.id]?.isLocked && (
+                    <><button className="btn btn-sm" title="Temporarily unlock this employee's own profile so they can correct it"
+                      onClick={() => { setGrantFor(e); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }}>
+                      Grant Edit Access
+                    </button>{' '}</>
+                  )}
                   {' '}<button className="btn btn-sm" onClick={() => { setTransferTarget(e); setTransferForm({ department: e.department || '', team: '', reason: '' }); }}>Transfer</button>{' '}
-                  <button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-lock`), `${e.name} profile ${hrById[e.id]?.isLocked ? 'unlocked' : 'locked'}.`)}>
-                    {hrById[e.id]?.isLocked ? 'Unlock' : 'Lock'}
-                  </button>{' '}
+                  {hrById[e.id]?.isLocked === false && (
+                    <><button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-lock`), `${e.name} profile locked.`)}>Lock</button>{' '}</>
+                  )}
                   <button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-pause`), `${e.name} updated.`)}>
                     {e.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}
                   </button>{' '}
@@ -479,7 +657,7 @@ export default function Employees() {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan="20" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
+              <tr><td colSpan="21" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
             )}
           </tbody>
         </table>
@@ -489,6 +667,50 @@ export default function Employees() {
         One Employee = One User = One Login. Assigning a role here changes product access on the employee&apos;s
         existing login — it never creates a second account.
       </div>
+      <div className="notice amber">
+        <span>
+          <b>Edit Scope</b> and <b>Grant Edit Access</b> are different things. <b>Edit Scope</b> (Administration →
+          Users) sets <i>which records</i> a login may reach — departments, teams and clients — and stays until
+          you change it. <b>Grant Edit Access</b> temporarily unlocks <i>that employee&apos;s own profile</i> so they
+          can correct it; it expires, it is spent when they submit, and it never lets them see anybody else.
+        </span>
+      </div>
+
+      {grantFor && (
+        <Modal
+          title={`Grant Edit Access — ${grantFor.name}`}
+          onClose={() => setGrantFor(null)}
+          foot={<>
+            <button className="btn" onClick={() => setGrantFor(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={!grantForm.reason.trim()} onClick={submitGrant}>Grant edit access</button>
+          </>}
+        >
+          <form onSubmit={submitGrant}>
+            <div className="small-muted" style={{ marginBottom: 10 }}>
+              This reopens <b>{grantFor.name}&apos;s own profile</b> for a bounded time so they can correct it. It does
+              not change which records they can see. Everything below is recorded against their record.
+            </div>
+            <div className="grid-2">
+              <label className="field">
+                <span>Section to open</span>
+                <select value={grantForm.section} onChange={(e) => setGrantForm({ ...grantForm, section: e.target.value })}>
+                  {(meConfig?.editAccessSections || ['All fields']).map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                <span>Access window (hours)</span>
+                <input type="number" min="1" max="720" value={grantForm.hours}
+                  onChange={(e) => setGrantForm({ ...grantForm, hours: e.target.value })} />
+              </label>
+            </div>
+            <label className="field">
+              <span>Reason</span>
+              <input required value={grantForm.reason} onChange={(e) => setGrantForm({ ...grantForm, reason: e.target.value })}
+                placeholder="e.g. Bank details changed after the branch merger" />
+            </label>
+          </form>
+        </Modal>
+      )}
 
       {resetFor && (
         <Modal

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin } from '../permissions';
+import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 
 
 const EDIT_FIELDS = [
@@ -30,10 +31,19 @@ export default function EmployeeDetail() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [credentials, setCredentials] = useState(null);
+  // GRANT EDIT ACCESS — temporarily reopening THIS employee's own profile.
+  // Nothing to do with Edit Scope (Administration -> Users), which changes
+  // which records a login may reach. See the note in routes/employees.js.
+  const [grant, setGrant] = useState({ open: false, hours: 48, section: 'All fields', reason: '' });
+  const [config, setConfig] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   function load() {
     api.get(`/employees/${id}`).then((res) => setEmployee(res.data));
     api.get('/admin/departments').then((res) => setDepts(res.data)).catch(() => setDepts([]));
+    api.get('/employees/me/config').then((res) => setConfig(res.data)).catch(() => setConfig(null));
+    api.get(`/employees/${id}/audit`).then((res) => setHistory(res.data.entries)).catch(() => setHistory([]));
   }
   useEffect(load, [id]);
 
@@ -88,7 +98,9 @@ export default function EmployeeDetail() {
     setError(''); setNotice(''); setBusy(action);
     try {
       const res = await api.patch(`/employees/${id}/unlock-request/${action}`,
-        action === 'reject' ? { reason: unlockNote } : { note: unlockNote || undefined });
+        action === 'reject'
+          ? { reason: unlockNote }
+          : { note: unlockNote || undefined, hours: Number(grant.hours), section: grant.section });
       setUnlockNote('');
       setNotice(action === 'approve'
         ? `Edit access granted until ${new Date(res.data.unlockExpiresAt).toLocaleString('en-GB')}.`
@@ -116,6 +128,23 @@ export default function EmployeeDetail() {
     load();
   }
 
+  // HR opening the profile without waiting to be asked. The window, the
+  // section and the reason are all recorded against the employee.
+  async function submitGrant(e) {
+    e.preventDefault();
+    setError(''); setNotice(''); setBusy('grant');
+    try {
+      const res = await api.post(`/employees/${id}/grant-edit-access`, {
+        hours: Number(grant.hours), section: grant.section, reason: grant.reason,
+      });
+      setNotice(`Edit access granted for ${res.data.grantedHours}h (${res.data.unlockGrantSection}) — expires ${new Date(res.data.unlockExpiresAt).toLocaleString('en-GB')}.`);
+      setGrant({ open: false, hours: 48, section: 'All fields', reason: '' });
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Edit access could not be granted.');
+    } finally { setBusy(''); }
+  }
+
   async function togglePause() {
     await api.patch(`/employees/${id}/toggle-pause`);
     load();
@@ -140,10 +169,19 @@ export default function EmployeeDetail() {
         <h1>{employee.name}</h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className={`status ${employee.employmentStatus === 'Active' ? 'priority-low' : ['Exited', 'Relieved'].includes(employee.employmentStatus) ? 'priority-high' : ''}`}>{employee.employmentStatus}</span>
-          <span className={`status ${employee.profileStage === 'Locked' ? 'priority-low' : employee.profileStage === 'Pending Review' ? 'priority-medium' : ''}`}>{employee.profileStage === 'Locked' ? '🔒 Locked' : employee.profileStage}</span>
+          <span className={`status ${STATUS_BADGE[employee.profileStatus] || ''}`}>{statusLabel(employee.profileStatus)}</span>
           {isAdmin && !editing && <button className="btn btn-sm" onClick={startEdit}>Edit</button>}
           {isAdmin && <button className="btn btn-sm" onClick={togglePause}>{employee.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}</button>}
-          {isAdmin && <button className="btn btn-sm" onClick={toggleLock}>{employee.isLocked ? 'Unlock' : 'Lock'}</button>}
+          {/* Grant Edit Access is the considered version of this button: a
+              window, a section and a reason, all recorded. Lock stays as the
+              immediate way to close a profile again. */}
+          {isHR && employee.isLocked && (
+            <button className="btn btn-sm btn-primary" onClick={() => setGrant((g) => ({ ...g, open: !g.open }))}>
+              Grant Edit Access
+            </button>
+          )}
+          {isAdmin && employee.isLocked === false && <button className="btn btn-sm" onClick={toggleLock}>Lock</button>}
+          {isAdmin && employee.isLocked === true && <button className="btn btn-sm" onClick={toggleLock}>Unlock now</button>}
           {isAdmin && employee.user && (
             <button className="btn btn-sm" disabled={busy === 'credentials'} onClick={sendCredentials}>
               {busy === 'credentials' ? 'Sending…' : 'Send sign-in details'}
@@ -165,6 +203,54 @@ export default function EmployeeDetail() {
               <br />{credentials.link}
             </div>
           )}
+        </div>
+      )}
+
+      {/* GRANT EDIT ACCESS — not Edit Scope. This reopens ONE employee's own
+          profile for a bounded time; it never widens what anybody can see. */}
+      {grant.open && isHR && (
+        <form className="card section" onSubmit={submitGrant} style={{ borderColor: 'var(--teal)' }}>
+          <h3>Grant edit access — {employee.name}</h3>
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            This temporarily unlocks <b>this employee&apos;s own profile</b> so they can correct it. It does not change
+            which records they can see — that is <b>Edit scope</b>, on Administration → Users.
+          </div>
+          <div className="grid-2">
+            <label className="field">
+              <span>Section to open</span>
+              <select value={grant.section} onChange={(e) => setGrant({ ...grant, section: e.target.value })}>
+                {(config?.editAccessSections || ['All fields']).map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Access window (hours)</span>
+              <input type="number" min="1" max="720" value={grant.hours}
+                onChange={(e) => setGrant({ ...grant, hours: e.target.value })} />
+            </label>
+          </div>
+          <label className="field">
+            <span>Reason (recorded against the employee)</span>
+            <input required value={grant.reason} onChange={(e) => setGrant({ ...grant, reason: e.target.value })}
+              placeholder="e.g. Bank details changed after the branch merger" />
+          </label>
+          <button className="btn btn-primary btn-sm" type="submit" disabled={busy === 'grant' || !grant.reason.trim()}>
+            {busy === 'grant' ? 'Granting…' : 'Grant edit access'}
+          </button>{' '}
+          <button className="btn btn-sm" type="button" onClick={() => setGrant({ ...grant, open: false })}>Cancel</button>
+        </form>
+      )}
+
+      {/* The recorded grant: which employee, which section, why, start, expiry
+          and who granted it. */}
+      {employee.unlockedAt && (
+        <div className="card section">
+          <h3 style={{ fontSize: 13 }}>Last edit-access grant</h3>
+          <div className="kv"><span className="k">Section</span><span>{employee.unlockGrantSection || 'All fields'}</span></div>
+          <div className="kv"><span className="k">Reason</span><span>{employee.unlockGrantReason || '—'}</span></div>
+          <div className="kv"><span className="k">Unlocked by</span><span>{employee.unlockedByName || '—'}</span></div>
+          <div className="kv"><span className="k">Unlocked at</span><span>{new Date(employee.unlockedAt).toLocaleString('en-GB')}</span></div>
+          <div className="kv"><span className="k">Access expires</span>
+            <span>{employee.unlockExpiresAt ? new Date(employee.unlockExpiresAt).toLocaleString('en-GB') : 'Closed (spent or re-locked)'}</span></div>
         </div>
       )}
 
@@ -233,8 +319,21 @@ export default function EmployeeDetail() {
                 <input value={unlockNote} onChange={(e) => setUnlockNote(e.target.value)}
                   placeholder="e.g. Approved — update the bank details only" />
               </label>
+              <div className="grid-2">
+                <label className="field">
+                  <span>Section to open</span>
+                  <select value={grant.section} onChange={(e) => setGrant({ ...grant, section: e.target.value })}>
+                    {(config?.editAccessSections || ['All fields']).map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Access window (hours)</span>
+                  <input type="number" min="1" max="720" value={grant.hours}
+                    onChange={(e) => setGrant({ ...grant, hours: e.target.value })} />
+                </label>
+              </div>
               <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => decideUnlock('approve')}>
-                Grant edit access (48h)
+                Grant edit access ({grant.hours}h)
               </button>{' '}
               <button className="btn btn-sm" disabled={!!busy || !unlockNote.trim()} onClick={() => decideUnlock('reject')}>
                 Decline with reason
@@ -410,6 +509,51 @@ export default function EmployeeDetail() {
         <div className="card section">
           <h3>Offboarding</h3>
           <button className="btn btn-sm" onClick={initiateOffboarding}>Initiate Offboarding</button>
+        </div>
+      )}
+
+      {/* AUDIT HISTORY — Employee · Field · Old Value · New Value ·
+          Changed By · Changed At · Reason · Approval Status, with the
+          approver recorded once HR has decided. */}
+      {isHR && (
+        <div className="card section">
+          <div className="page-head" style={{ marginBottom: 8 }}>
+            <h3 style={{ fontSize: 13 }}>Audit history {history ? `(${history.length})` : ''}</h3>
+            <button className="btn btn-sm" onClick={() => setShowHistory((s) => !s)}>
+              {showHistory ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          {showHistory && (history === null ? <div className="small-muted">Loading…</div> : history.length === 0
+            ? <div className="small-muted">Nothing recorded against this employee yet.</div>
+            : (
+              <div className="tbl-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Field</th><th>Old Value</th><th>New Value</th><th>Changed By</th>
+                      <th>Changed At</th><th>Reason</th><th>Approval Status</th><th>Approved By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((h) => (
+                      <tr key={h.id}>
+                        <td>{h.label || <span className="cell-muted">{h.action}</span>}</td>
+                        <td className="cell-muted">{h.from || '—'}</td>
+                        <td>{h.to || '—'}</td>
+                        <td className="cell-muted">{h.changedBy}</td>
+                        <td className="cell-muted">{new Date(h.changedAt).toLocaleString('en-GB')}</td>
+                        <td className="cell-muted">{h.reason || '—'}</td>
+                        <td>{h.approvalStatus
+                          ? <span className={`status ${h.approvalStatus === 'Approved' ? 'approved' : h.approvalStatus === 'Rejected' ? 'rejected' : 'pending'}`}>{h.approvalStatus}</span>
+                          : <span className="cell-muted">—</span>}</td>
+                        <td className="cell-muted">{h.approvedBy || '—'}
+                          {h.approvedAt ? ` · ${new Date(h.approvedAt).toLocaleDateString('en-GB')}` : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
         </div>
       )}
 

@@ -836,6 +836,15 @@ function shapeEmployeeMgmtRow(e) {
     productAccess: u ? productAccessOf(u) : null,
     atsRole: u ? u.atsRole : null,
     atsDepartment: u ? u.atsDepartment : null,
+    // DATA SCOPE — which records this login may reach. Shown as a column on
+    // Employee Management and edited on Administration → Users → Edit scope.
+    // It is NOT the profile lock: granting someone edit access to their own
+    // profile never changes this, and changing this never unlocks a profile.
+    scope: u
+      ? ([u.atsScopeDepartments, u.atsScopeTeams, u.atsScopeClients].filter(Boolean).join(' · ')
+        || u.atsDepartment
+        || (['SUPER_ADMIN', 'ADMIN'].includes(u.role) ? 'All departments' : 'Own department'))
+      : null,
     // "No login" is the prototype's own wording for an employee with no account.
     loginStatus: u ? (u.status || 'Active') : 'No login',
     lastLogin: u && u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : null,
