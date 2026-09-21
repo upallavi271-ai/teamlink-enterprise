@@ -360,9 +360,12 @@ tr.kidrow td:first-child{padding-left:26px;color:var(--ink-soft)}
 .sidebar-brand{padding:15px 14px 13px;gap:10px;align-items:flex-start}
 .sidebar-brand a{display:block;min-width:0;flex:1}
 .brand-lockup{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
-/* The mark is an SVG at its natural 1452:324 ratio — never stretched, never
-   upscaled from a bitmap, so it stays crisp at any zoom or pixel density. */
+/* The supplied artwork, at its natural 136x33 — never stretched and never
+   upscaled, which is what kept the old mark looking blurry. */
 .brand-mark{display:block;max-width:100%;height:auto;flex:none}
+/* The artwork is navy type on white, so on the dark sidebar it sits on a
+   white plate. Inverting or filtering it would change the brand colours. */
+.brand-plate{display:inline-block;background:#fff;border-radius:7px;padding:6px 9px;line-height:0}
 .sidebar-brand .b2{font-weight:500;font-size:11px;color:#9aa5c4;letter-spacing:.07em;
   text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   -webkit-font-smoothing:antialiased}

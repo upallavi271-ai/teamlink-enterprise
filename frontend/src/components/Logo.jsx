@@ -1,45 +1,46 @@
-import logoLight from '../assets/teamlink-logo-light.svg';
-import logoDark from '../assets/teamlink-logo.svg';
+import logoMark from '../assets/teamlink-logo.png';
 
 // ---------------------------------------------------------------------------
 // The TeamLink Consultants lockup.
 //
-// What was wrong: this app had NO logo asset at all. The sidebar's "brand" was
-// two lines of small, low-contrast text (11px #8b96b8 on #121c34) and the
-// login card drew a serif letter in a rounded box. Nothing was artwork, so
-// there was nothing crisp to look at — at 125%/150% Windows scaling or on a
-// HiDPI screen the small grey type is exactly what reads as blurry.
+// This is the client's own artwork, cropped to its bounding box and otherwise
+// untouched — the wordmark, the interlocking-rings glyph and every colour are
+// exactly the supplied file's. Nothing here recolours it: a CSS filter or a
+// redrawn "close enough" vector is how a logo stops being the logo.
 //
-// The fix is the real wordmark as VECTOR: an SVG (the "TeamLink Consultants"
-// wordmark with the interlocking-rings glyph) referenced at its natural
-// aspect ratio, 1452:324. Because it is SVG it is resolution-independent —
-// nothing is upscaled, so it stays sharp at any zoom or pixel density. Two
-// colourways ship: the navy original for light surfaces and a white/blue
-// variant for the dark sidebar, so the mark is never recoloured by a CSS
-// filter (which is what makes a logo look washed out).
+// It is a 136x33 bitmap, so it is rendered at its natural size and never
+// scaled up; upscaling is what made the old mark look blurry. The artwork has
+// a white background and near-black navy type, so on the dark sidebar it sits
+// on a white plate (.brand-plate) rather than being inverted.
+//
+// If a vector original (SVG) or a larger export turns up, drop it in beside
+// this file and swap the import — it will then be crisp at any size.
 // ---------------------------------------------------------------------------
 
-const ASPECT = 1452 / 324;
+const NATURAL_W = 136;
+const NATURAL_H = 33;
 
-export function TeamLinkMark({ width = 168, variant = 'light' }) {
-  const src = variant === 'light' ? logoLight : logoDark;
+export function TeamLinkMark({ width = NATURAL_W }) {
+  const w = Math.min(width, NATURAL_W); // never upscale
   return (
     <img
       className="brand-mark"
-      src={src}
+      src={logoMark}
       alt="TeamLink Consultants"
-      width={width}
-      height={Math.round(width / ASPECT)}
+      width={w}
+      height={Math.round((w / NATURAL_W) * NATURAL_H)}
       draggable="false"
     />
   );
 }
 
-// The sidebar lockup: the wordmark, with the product name under it.
-export default function Logo({ width = 168, variant = 'light' }) {
+// The sidebar lockup: the mark on its white plate, product name underneath.
+export default function Logo({ width = NATURAL_W, plate = true }) {
   return (
     <span className="brand-lockup">
-      <TeamLinkMark width={width} variant={variant} />
+      <span className={plate ? 'brand-plate' : undefined}>
+        <TeamLinkMark width={width} />
+      </span>
       <span className="b2">TeamLink.Enterprise</span>
     </span>
   );

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import { TeamLinkMark } from '../components/Logo.jsx';
 
 // Email and password. Nothing else.
 //
@@ -35,9 +36,10 @@ export default function Login() {
     <div className="login-shell">
       <form className="login-card" onSubmit={onSubmit}>
         <div className="logo-lockup">
-          <div className="mark">TL</div>
-          <div style={{ fontWeight: 600, fontSize: 16 }}>TeamLink Consultants</div>
-          <div className="small-muted">HRMS · TeamLink.Enterprise</div>
+          {/* The real artwork. The card is white, so it needs no plate and
+              the brand colours show exactly as supplied. */}
+          <TeamLinkMark width={168} />
+          <div className="small-muted" style={{ marginTop: 6 }}>HRMS · TeamLink.Enterprise</div>
         </div>
 
         <div className="small-muted" style={{ marginBottom: 16 }}>
