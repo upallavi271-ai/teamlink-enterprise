@@ -163,7 +163,10 @@ async function resolveIdentity(userId, preloaded = null) {
   // ------------------------------------------------------------------
   const productRole = (product, stored) => {
     if (!products[product]) return NO_ROLE;
-    return named(stored)
+    // An explicit 'NONE' on the user is a REFUSAL an administrator typed. It
+    // is not the same as an empty column, which simply falls back.
+    if (stored === NO_ROLE) return NO_ROLE;
+    return stored
       || (mapping ? named(mapping[`${product}Role`]) : null)
       || user.role
       || NO_ROLE;
@@ -173,13 +176,13 @@ async function resolveIdentity(userId, preloaded = null) {
   // The ATS role keeps its extra step: an external CLIENT / CANDIDATE login
   // carries no employee record and no designation, so its account kind is its
   // ATS role.
-  const atsRole = products.ats
-    ? (named(user.atsRole)
+  const atsRole = (!products.ats || user.atsRole === NO_ROLE)
+    ? NO_ROLE
+    : (user.atsRole
       || (mapping ? named(mapping.atsRole) : null)
       || (['CLIENT', 'CANDIDATE'].includes(user.role) ? user.role : null)
       || user.role
-      || NO_ROLE)
-    : NO_ROLE;
+      || NO_ROLE);
 
   // Scope. Stored overrides win; otherwise the employee's own department/team.
   const departments = csv(user.atsScopeDepartments).length

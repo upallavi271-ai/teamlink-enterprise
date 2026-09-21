@@ -8,6 +8,13 @@
 //
 // Every former `user.role === 'X'` / `ROLES.includes(user.role)` check in the
 // app now goes through can() or one of the named helpers below.
+//
+// ONE LOGIN, THREE PRODUCT ROLES. The matrix /auth/me sends is already the
+// EFFECTIVE one for this login: the server resolved each module against the
+// role for ITS product (HRMS by hrmsRole, ATS by atsRole, Accounts by
+// accountsRole) and the core modules against every role the login holds. So
+// can() below needs to know nothing about the three roles — it reads the one
+// answer the server gave, which is exactly the answer the API will enforce.
 // ---------------------------------------------------------------------------
 
 const PRODUCT_OF_MODULE = {
@@ -107,21 +114,73 @@ export const canExportReports = (user, feature) => can(user, null, 'reports', fe
 // Team-lead style oversight (the Recruiter & BDE screen, team pickers).
 export const hasTeamOversight = (user) => can(user, 'ats', 'recruiterbde', 'Team View', 'view');
 
+// --- The three product roles ----------------------------------------------
+// For LABELS and for the handful of screens that pick a layout by working
+// role (the ATS dashboards). Never for a permission decision — that is can().
+const NO_ROLE = 'NONE';
+const named = (v) => (v && v !== NO_ROLE ? v : null);
+
+export function productRole(user, product) {
+  if (!user || !(user.products || {})[product]) return null;
+  const stored = product === 'hrms' ? user.hrmsRole
+    : product === 'ats' ? user.atsRole
+      : user.accountsRole;
+  return named(stored) || user.role || null;
+}
+
+export function productRoles(user) {
+  return {
+    hrms: productRole(user, 'hrms'),
+    ats: productRole(user, 'ats'),
+    accounts: productRole(user, 'accounts'),
+  };
+}
+
+// --- Workflow actions (§17) ------------------------------------------------
+// Seeing a record does not mean acting on it, and being able to edit one does
+// not mean owning its current stage. The server resolves BOTH halves — the
+// matrix answer and the stage ownership — and sends the result as
+// user.workflow.allowedStages, so a button is drawn only for the login that
+// owns that move. Nothing here re-decides it.
+export const workflowStages = (user) => (user && user.workflow && user.workflow.allowedStages) || [];
+export const canMoveToStage = (user, stage) => workflowStages(user).includes(stage);
+
+// The named buttons for the stage a record is sitting at, already filtered to
+// the ones this login owns: Recruiter Review → Reject / Hold / Send to BDE;
+// With BDE → Share with Client; Shared with Client → Shortlist / Reject /
+// Interview Decision.
+export function workflowActionsAt(user, stage) {
+  const all = (user && user.workflow && user.workflow.stageActions) || {};
+  return (all[stage] || []).filter((a) => canMoveToStage(user, a.to));
+}
+
 // External logins, for the handful of places that genuinely differ (a client
 // signs an agreement; a candidate only ever sees themselves). These read the
 // resolved identity's scope, not a role string.
 export const isClientUser = (user) => !!(user && user.clientId && user.role === 'CLIENT');
 export const isCandidateUser = (user) => !!(user && user.role === 'CANDIDATE');
 
-// A short label for the role chip in the topbar. Product-aware: a Medical
-// Recruiter reads "Recruiter · Medical", not "Medical Recruiter" — the role and
-// the scope are separate things.
-export function workRoleLabel(user) {
-  if (!user) return '';
-  const pretty = (code) => (code || '')
+// A short label for the role chip in the topbar. Product-aware twice over:
+//   * it names the role for the workspace the user is actually IN, because a
+//     login that is an Employee in HRMS and a Recruiter in ATS has no single
+//     role to print; and
+//   * a Medical Recruiter reads "Recruiter · Medical", never "Medical
+//     Recruiter" — the role and the scope are separate things and no role
+//     name anywhere carries a department.
+export function prettyRole(code) {
+  return (code || '')
     .split('_').map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')
     .replace('Stl', 'STL').replace('Tl', 'TL').replace('Bde', 'BDE');
-  const role = pretty(user.atsRole || user.role);
+}
+
+export function workRoleLabel(user, workspace) {
+  if (!user) return '';
+  const ws = workspace || user.workspace;
+  const forWorkspace = ws === 'hrms' ? productRole(user, 'hrms')
+    : ws === 'accounts' ? productRole(user, 'accounts')
+      : ws === 'ats' ? productRole(user, 'ats')
+        : null;
+  const role = prettyRole(forWorkspace || user.atsRole || user.role);
   const scope = (user.atsScopeDepartments || user.department || '').split(',')[0];
   return scope && !['Super Admin', 'Admin'].includes(role) ? `${role} · ${scope}` : role;
 }

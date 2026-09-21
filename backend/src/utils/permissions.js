@@ -53,8 +53,8 @@ const ROLE_PRODUCTS = ['hrms', 'ats', 'accounts'];
 // product it actually holds, which is exactly what the engine used before,
 // so nothing loses access on day one.
 // ---------------------------------------------------------------------------
-const namedRole = (value) => (value && value !== NO_ROLE ? value : null);
-
+// 'NONE' is not a role to look up — it is a REFUSAL, stored. It is different
+// from null, which means "nobody has decided yet" and falls back.
 function roleForProduct(user, product) {
   if (!user || !ROLE_PRODUCTS.includes(product)) return null;
   const products = user.products || {};
@@ -62,7 +62,12 @@ function roleForProduct(user, product) {
   const stored = product === 'hrms' ? user.hrmsRole
     : product === 'ats' ? user.atsRole
       : user.accountsRole;
-  return namedRole(stored) || user.role || null;
+  // accountsRole = None refuses Accounts OUTRIGHT, whatever the HRMS or ATS
+  // role is and whatever the product boolean says. An unset column (null)
+  // is not a refusal: it falls back to the account-level role, which is what
+  // the engine resolved against before the three columns existed.
+  if (stored === NO_ROLE) return null;
+  return stored || user.role || null;
 }
 
 // The three product roles at a glance — what the Users screen renders and

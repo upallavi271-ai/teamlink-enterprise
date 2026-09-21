@@ -4,6 +4,10 @@ import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
 import Combo from '../components/Combo.jsx';
+// WORKFLOW ACTIONS ARE NOT VIEW/EDIT. The stages this login OWNS come from
+// the permission engine (/auth/me workflow.allowedStages) — seeing the
+// pipeline never implied being allowed to move a candidate through it.
+import { canMoveToStage } from '../permissions';
 
 import {
   ALL_STAGE_CODES, stageLabel, stageBadgeClass, priorityBadgeClass,
@@ -418,7 +422,8 @@ export default function RequirementDetail() {
                       <td>
                         {p.pipeline ? (
                           <Combo value={a.stage} onChange={(e) => setStage(a.id, e.target.value)}>
-                            {ALL_STAGE_CODES.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
+                            {ALL_STAGE_CODES.filter((s) => s === a.stage || canMoveToStage(user, s))
+                              .map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
                           </Combo>
                         ) : <span className="cell-muted">—</span>}
                       </td>

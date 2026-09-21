@@ -103,7 +103,24 @@ async function main() {
     { designation: 'Junior Developer', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 13 },
     { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 14 },
   ];
-  for (const row of DESIGNATION_ROLES) await prisma.designationRole.create({ data: row });
+  // DERIVATION STAYS IN THE TABLE, and the table carries ALL THREE product
+  // roles now. The rows above name only the ATS role because that is the one
+  // that varies; the HRMS and Accounts roles are derived by the same rule the
+  // engine and the prodrole migration use, so the three sources cannot drift.
+  //   designation -> { hrmsRole, atsRole, accountsRole }
+  // There is no compound role: "Medical Recruiter" is department=Medical +
+  // atsRole=RECRUITER, and no role name anywhere carries a department.
+  const NO_ROLE = 'NONE';
+  const impliedRoleOf = (r) => (r.atsRole
+    || (r.accounts && !r.ats ? 'ACCOUNTANT' : 'EMPLOYEE'));
+  const withProductRoles = (r) => ({
+    ...r,
+    hrmsRole: r.hrms ? impliedRoleOf(r) : NO_ROLE,
+    accountsRole: r.accounts ? impliedRoleOf(r) : NO_ROLE,
+  });
+  for (const row of DESIGNATION_ROLES) {
+    await prisma.designationRole.create({ data: withProductRoles(row) });
+  }
 
   // -------------------------------------------------------------------------
   // Demo logins. ONE EMPLOYEE = ONE USER = ONE LOGIN. Nobody here has a second
@@ -902,9 +919,13 @@ async function main() {
         email,
         username: username || email,
         passwordHash: password,
-        // DERIVED, every one of them:
+        // DERIVED, every one of them — including ALL THREE PRODUCT ROLES.
+        // `role` is the ACCOUNT-LEVEL role; hrmsRole / atsRole / accountsRole
+        // are what the permission engine resolves against, one per product.
         role,
-        atsRole: m.atsRole || null,
+        hrmsRole: m.hrms ? role : 'NONE',
+        atsRole: m.ats ? (m.atsRole || role) : 'NONE',
+        accountsRole: m.accounts ? role : 'NONE',
         hrmsAccess: !!m.hrms,
         atsAccess: !!m.ats,
         accountsAccess: !!m.accounts,
@@ -1071,14 +1092,16 @@ async function main() {
     data: {
       name: 'Ravi Teja (Orbit)', email: 'client@teamlink.com', username: 'client@teamlink.com',
       passwordHash: password, role: 'CLIENT', clientId: orbit.id, branch: 'Hyderabad',
-      hrmsAccess: false, atsAccess: true, accountsAccess: true, atsRole: 'CLIENT', landingWorkspace: 'client',
+      hrmsAccess: false, atsAccess: true, accountsAccess: true,
+      hrmsRole: 'NONE', atsRole: 'CLIENT', accountsRole: 'CLIENT', landingWorkspace: 'client',
     },
   });
   await prisma.user.create({
     data: {
       name: 'Anita Desai (Medivant)', email: 'clientb@teamlink.com', username: 'clientb@teamlink.com',
       passwordHash: password, role: 'CLIENT', clientId: medivant.id, branch: 'Bengaluru',
-      hrmsAccess: false, atsAccess: true, accountsAccess: true, atsRole: 'CLIENT', landingWorkspace: 'client',
+      hrmsAccess: false, atsAccess: true, accountsAccess: true,
+      hrmsRole: 'NONE', atsRole: 'CLIENT', accountsRole: 'CLIENT', landingWorkspace: 'client',
     },
   });
 
@@ -1308,6 +1331,28 @@ async function main() {
   console.log('');
   console.log('THE ROLE-BY-ROLE TEST ACCOUNTS (@teamlink.com), same password.');
   console.log('Every role below is DERIVED from department + designation — no compound');
+  // ---------------------------------------------------------------------
+  // ONE LOGIN, THREE PRODUCT ROLES — the final pass.
+  //
+  // The rows above set the ACCOUNT-LEVEL role column and the three product
+  // booleans. This derives hrmsRole / atsRole / accountsRole from them by the
+  // same rule the prodrole migration backfills an existing database with, so
+  // a freshly seeded database and a migrated one are identical:
+  //   product held -> the role already named for it, else the account role
+  //   product not held -> 'NONE', which the engine refuses outright.
+  // ---------------------------------------------------------------------
+  const keep = (v, fallback) => (v && v !== 'NONE' ? v : fallback);
+  for (const u of await prisma.user.findMany()) {
+    await prisma.user.update({
+      where: { id: u.id },
+      data: {
+        hrmsRole: u.hrmsAccess ? keep(u.hrmsRole, u.role) : 'NONE',
+        atsRole: u.atsAccess ? keep(u.atsRole, u.role) : 'NONE',
+        accountsRole: u.accountsAccess ? keep(u.accountsRole, u.role) : 'NONE',
+      },
+    });
+  }
+
   console.log('role such as "Medical Recruiter" is stored anywhere.');
   console.log('');
   console.log('  superadmin@teamlink.com               HR / Super Admin          -> SUPER_ADMIN, all departments');
