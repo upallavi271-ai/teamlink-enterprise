@@ -222,7 +222,10 @@ export default function Combo({
     document.body,
   ) : null;
 
-  const showClear = !disabled && !!current && !required;
+  // Only offer "clear" where empty is a value the field actually accepts: a
+  // dropdown with no blank option (the workspace switcher, Employment type)
+  // has no legal empty state, so clearing it would send junk to the handler.
+  const showClear = !disabled && !!current && !required && (!!blank || creatable);
 
   return (
     <div
