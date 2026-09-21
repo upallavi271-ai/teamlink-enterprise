@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { hasTeamOversight } from '../../permissions';
+import ProfileStatusBanner, { STATUS_BADGE, statusLabel } from '../../components/ProfileStatusBanner.jsx';
 
 // Only STL/TL are restricted to their own department — Manager/Assistant
 // Manager have cross-department oversight (matches backend/src/routes/employees.js).
@@ -89,7 +90,17 @@ export default function MyProfile() {
 
   return (
     <div>
-      <div className="page-head"><div><h1>My Profile</h1><div className="page-sub">{employee.name} · {employee.employeeCode} · {employee.department || 'No department yet'}</div></div></div>
+      <div className="page-head">
+        <div>
+          <h1>My Profile</h1>
+          <div className="page-sub">{employee.name} · {employee.employeeCode} · {employee.department || 'No department yet'}</div>
+        </div>
+        <span className={`status ${STATUS_BADGE[employee.profileStatus] || ''}`}>{statusLabel(employee.profileStatus)}</span>
+      </div>
+
+      {/* The same words the dashboard shows, from the same component — an
+          employee cannot be told two different things about one profile. */}
+      <ProfileStatusBanner variant="page" employee={employee} />
 
       {awaitingReview && (
         <div className="card section" style={{ borderColor: 'var(--warn)' }}>
@@ -112,12 +123,8 @@ export default function MyProfile() {
           <div className="small-muted" style={{ marginTop: 6 }}>Correct the details below and submit again.</div>
         </div>
       )}
-      {!awaitingReview && employee.reviewDecision === 'Approved' && employee.isLocked && (
-        <div className="notice" style={{ marginBottom: 12 }}>
-          HR approved your profile{employee.reviewedByName ? ` (${employee.reviewedByName})` : ''}
-          {employee.reviewedAt ? ` on ${new Date(employee.reviewedAt).toLocaleString('en-GB')}` : ''} and it is now locked.
-          {employee.reviewNote ? ` Note: ${employee.reviewNote}` : ''}
-        </div>
+      {!awaitingReview && employee.reviewDecision === 'Approved' && employee.isLocked && employee.reviewNote && (
+        <div className="notice" style={{ marginBottom: 12 }}>HR&apos;s note: {employee.reviewNote}</div>
       )}
       {employee.unlockRequestStatus === 'Rejected' && locked && (
         <div className="card section" style={{ borderColor: 'var(--warn)' }}>
@@ -125,11 +132,19 @@ export default function MyProfile() {
           <div className="kv"><span className="k">HR&apos;s reason</span><span>{employee.unlockDecisionNote || '—'}</span></div>
         </div>
       )}
+      {/* The grant is a RECORD, not just a deadline: who opened it, when,
+          why, and which section. The employee sees exactly what HR wrote. */}
       {windowOpen && (
-        <div className="notice" style={{ marginBottom: 12 }}>
-          🔓 HR granted you edit access until <b>{windowEndsAt.toLocaleString('en-GB')}</b>
-          {employee.unlockDecisionNote ? ` — ${employee.unlockDecisionNote}` : ''}. Submitting your changes
-          closes the window; so does the deadline, whichever comes first.
+        <div className="card section" style={{ borderColor: 'var(--teal)' }}>
+          <h3>🔓 Edit access granted</h3>
+          <div className="kv"><span className="k">Section opened</span><span>{employee.unlockGrantSection || 'All fields'}</span></div>
+          <div className="kv"><span className="k">Reason</span><span>{employee.unlockGrantReason || employee.unlockDecisionNote || '—'}</span></div>
+          <div className="kv"><span className="k">Granted by</span>
+            <span>{employee.unlockedByName || 'HR'}{employee.unlockedAt ? ` · ${new Date(employee.unlockedAt).toLocaleString('en-GB')}` : ''}</span></div>
+          <div className="kv"><span className="k">Access expires</span><span><b>{windowEndsAt.toLocaleString('en-GB')}</b></span></div>
+          <div className="small-muted" style={{ marginTop: 6 }}>
+            Submitting your changes closes the window; so does the deadline, whichever comes first.
+          </div>
         </div>
       )}
 
@@ -137,7 +152,7 @@ export default function MyProfile() {
         <div className="card section">
           <h3>Profile locked</h3>
           <div className="small-muted" style={{ marginBottom: 10 }}>
-            Your profile was approved by HR and is now locked. To make further changes, request edit access below.
+            Your employee profile has been approved and locked. To make further changes, request edit access below.
             {' '}({requestsLeft} of {config.unlockRequestLimit} requests remaining.) If HR agrees you get
             {' '}{config.unlockWindowHours || 48} hours to edit and re-submit — the profile locks again on approval.
           </div>
@@ -264,7 +279,7 @@ export default function MyProfile() {
           </div>
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>Employee</th><th>Code</th><th>Designation</th><th>Status</th><th>Profile Stage</th></tr></thead>
+              <thead><tr><th>Employee</th><th>Code</th><th>Designation</th><th>Status</th><th>Profile Status</th></tr></thead>
               <tbody>
                 {team.map((e) => (
                   <tr key={e.id} className="row-link">
@@ -272,7 +287,7 @@ export default function MyProfile() {
                     <td>{e.employeeCode}</td>
                     <td>{e.designation || '—'}</td>
                     <td><span className={`status ${e.employmentStatus === 'Active' ? 'priority-low' : ''}`}>{e.employmentStatus}</span></td>
-                    <td><span className={`status ${e.profileStage === 'Locked' ? 'priority-low' : e.profileStage === 'Pending Review' ? 'priority-medium' : ''}`}>{e.profileStage === 'Locked' ? '🔒 Locked' : e.profileStage}</span></td>
+                    <td><span className={`status ${STATUS_BADGE[e.profileStatus] || ''}`}>{statusLabel(e.profileStatus)}</span></td>
                   </tr>
                 ))}
                 {team.length === 0 && <tr><td colSpan="5" className="small-muted">No department employees yet.</td></tr>}

@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, QaRow } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
 
 const PERIODS = ['Today', 'This Week', 'This Month', 'This Quarter', 'This Year'];
 
@@ -229,6 +230,11 @@ export default function HrmsDashboard() {
   return (
     <div>
       <div className="page-head"><div><h1>HRMS Dashboard</h1><div className="page-sub">Employee &amp; Workforce Management</div></div></div>
+
+      {/* FIRST LOGIN. A new employee used to land here with nothing telling
+          them a profile was waiting to be filled in. The banner says so, and
+          routes them to the form; once HR approves it says that instead. */}
+      {!isHR && <ProfileStatusBanner variant="landing" />}
 
       {isHR ? <HrDashboard /> : <MyDashboard />}
 

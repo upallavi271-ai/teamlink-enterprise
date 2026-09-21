@@ -8,6 +8,7 @@ import {
 } from '../nav';
 import Logo from './Logo.jsx';
 import AiAssistant from './AiAssistant.jsx';
+import ProfileStatusBanner from './ProfileStatusBanner.jsx';
 
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
 // which tabs appear is decided entirely by the permission engine — see that
@@ -207,6 +208,12 @@ export default function Shell() {
         </div>
 
         <main>
+          {/* FIRST LOGIN. Whatever workspace this person lands in, if their
+              employee profile still needs them, they are told here. It
+              renders nothing once the profile is with HR or approved, and
+              nothing on the profile form itself — that page says it in
+              place, and saying it twice on one screen reads as a bug. */}
+          {pathname !== '/my-profile' && <ProfileStatusBanner variant="shell" />}
           <Outlet />
         </main>
 

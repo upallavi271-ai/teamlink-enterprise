@@ -434,6 +434,16 @@ model AuditLog {
   entityId  String?
   fromValue String?
   toValue   String?
+  // empmgmt: the field-level approval trail —
+  //   Employee · Field · Old Value · New Value · Changed By · Changed At ·
+  //   Reason · Approval Status (+ who approved it and when).
+  field          String?
+  fieldLabel     String?
+  reason         String?
+  approvalStatus String?   // Pending | Approved | Rejected | null (not a review)
+  approvedByName String?
+  approvedAt     DateTime?
+  actorName      String?   // snapshotted so a later rename cannot rewrite history
   createdAt DateTime @default(now())
 }
 
@@ -515,7 +525,16 @@ model Employee {
   offboardingStatus String?  // null | Serving Notice | Cleared
   offboardingTasks  String?  // JSON array of {task, completed}
   pendingChanges    String?  // JSON array of {field, from, to} awaiting HR approval
-  profileStage      String   @default("Assigned") // Assigned | Pending Review | Locked
+  // THE PROFILE STATUS VOCABULARY (empmgmt). Six unambiguous values:
+  //   Profile Incomplete | Pending Review | Approved | Locked |
+  //   Change Requested   | Edit Access Granted
+  // Older rows carried Assigned / Pending Review / Locked and were migrated
+  // in place by migrations/..._empmgmt_status_unlock_grant_field_audit.
+  // routes/employees.js profileStatusOf() DERIVES the value from the
+  // authoritative facts (pendingChanges / isLocked / reviewDecision /
+  // unlockExpiresAt) and every transition writes it back here, so the stored
+  // value and the computed one cannot drift.
+  profileStage      String   @default("Profile Incomplete")
   isLocked          Boolean  @default(false) // once HR approves the filled-in profile, the employee can no longer self-edit
   unlockRequestReason String? // reason selected when requesting edit access on a locked profile
   unlockRequestStatus String? // null | Pending | Approved | Rejected
@@ -533,6 +552,13 @@ model Employee {
   unlockDecisionNote  String?
   unlockDecidedAt     DateTime?
   unlockExpiresAt     DateTime?
+  // empmgmt: an edit-access grant is a RECORD, not just an expiry. Who
+  // unlocked this profile, when, why, and which section they opened.
+  unlockedById        String?
+  unlockedByName      String?
+  unlockedAt          DateTime?
+  unlockGrantReason   String?
+  unlockGrantSection  String?   // "All fields" or a named section
   // Honest record of the sign-in email: whether it was really transmitted.
   credentialsSentAt     DateTime?
   credentialsSentStatus String?  // Sent | Not sent — no provider | Failed: <provider reason>
