@@ -12,18 +12,45 @@ import Combo from '../../components/Combo.jsx';
 // identity: the "Create login" form picks an employee who has none yet and
 // attaches a login to that same record.
 //
-// ROLE MODEL.
-// Each login now carries THREE independent product-access booleans (HRMS /
-// ATS / Accounts) on the same account, an ATS working role derived from the
-// employee's designation, and a stored data scope. The HRMS / ATS / Accounts
-// columns below are therefore REAL and EDITABLE — a tick grants the product, a
-// select sets the ATS role, and Edit sets the department / team / client scope.
-// Changing any of them changes what the API itself allows, not just the UI.
+// ROLE MODEL — ONE LOGIN, THREE INDEPENDENT PRODUCT ROLES.
+//
+//   USER
+//    ├── HRMS Role      → Employee
+//    ├── ATS Role       → Recruiter
+//    └── Accounts Role  → None
+//
+// Each product carries its OWN role on the same account, and the permission
+// engine resolves the role for the product being asked about. Being an
+// Employee in HRMS does not deny Recruiter actions in ATS, and an Accounts
+// role of "No Access" refuses Accounts outright however senior the other two
+// are. All three selects below are REAL: changing one changes what the API
+// itself allows, not just what this screen draws.
+//
+// The row reads the way the model does: the EMPLOYEE first (ID, name, email,
+// mobile), then HRMS (role + scope), then ATS (role + department + STL + TL +
+// clients + requirements), then Accounts (role), then status and last login.
 
 const ROLES = Object.keys(ATS_ROLE_LABELS);
 const STATUSES = ['Active', 'Inactive', 'Suspended'];
 
-const ATS_WORK_ROLES = ['', 'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'CLIENT'];
+// The role vocabulary each product offers. It is the SAME catalog for all
+// three — that is the point of the product dimension: one role name can mean
+// different things in ATS and in HRMS, so the name is not reserved to one
+// product. '' is stored as 'NONE', an explicit "no role in this product",
+// which the engine refuses outright.
+//
+// ATS is the one exception: ACCOUNTANT and CANDIDATE are not ATS working
+// roles, and offering them would let an admin type a role the ATS matrix has
+// nothing to say about.
+const PRODUCT_WORK_ROLES = {
+  hrms: ['', ...ROLES],
+  ats: ['', ...ROLES.filter((r) => r !== 'ACCOUNTANT'), 'CANDIDATE'],
+  accounts: ['', ...ROLES],
+};
+
+// A stored 'NONE' and an absent role mean the same thing to this screen: the
+// product select shows "No Access".
+const shownRole = (value) => (value && value !== 'NONE' ? value : '');
 
 const EMPTY_FORM = {
   employeeId: '', name: '', email: '', username: '', password: '',
@@ -96,27 +123,24 @@ export default function Users() {
     }
   }
 
-  // Grant or revoke one product on this login. Never a second account.
-  function setProduct(u, product, value) {
-    const key = { hrms: 'hrmsAccess', ats: 'atsAccess', accounts: 'accountsAccess' }[product];
-    run(() => api.put(`/admin/users/${u.id}`, { [key]: value }),
-      `${u.name} — ${product.toUpperCase()} access ${value ? 'granted' : 'removed'} (same login).`);
-  }
+  // Set ONE product's role. Choosing a role grants that product; choosing
+  // "No Access" revokes it. The other two products are untouched — that is
+  // the whole point of the three-role model.
+  const PRODUCT_ACCESS_KEY = { hrms: 'hrmsAccess', ats: 'atsAccess', accounts: 'accountsAccess' };
+  const PRODUCT_ROLE_KEY = { hrms: 'hrmsRole', ats: 'atsRole', accounts: 'accountsRole' };
 
-  function setAtsRole(u, atsRole) {
-    run(() => api.put(`/admin/users/${u.id}`, { atsRole: atsRole || null, atsAccess: !!atsRole }),
-      `${u.name} — ATS role: ${atsRole || 'none'} (scope stays ${u.scope}).`);
-  }
-
-  function changeRole(u, role) {
-    // The change lands on the user's next login — it never creates a second account.
-    run(() => api.put(`/admin/users/${u.id}`, { role }),
-      `${u.name} — role: ${atsRoleLabel(u.role)} → ${atsRoleLabel(role)} (same login, no new account).`);
+  function setProductRole(u, product, role) {
+    run(() => api.put(`/admin/users/${u.id}`, {
+      [PRODUCT_ROLE_KEY[product]]: role || 'NONE',
+      [PRODUCT_ACCESS_KEY[product]]: !!role,
+    }),
+    `${u.name} — ${product.toUpperCase()} role: ${role ? atsRoleLabel(role) : 'No Access'} (their other products are unchanged).`);
   }
 
   async function saveEditing() {
     const ok = await run(
       () => api.put(`/admin/users/${editing.id}`, {
+        role: editing.role,
         branch: editing.branch,
         team: editing.team,
         atsDepartment: editing.atsDepartment || null,
@@ -286,15 +310,22 @@ export default function Users() {
       <div className="tbl-wrap">
         <table>
           <thead>
-            {/* The prototype's fifteen columns, in its order (usersView, line
-                9911). Username, Role and Actions are main-only and appended. */}
+            {/* Grouped exactly as the model reads: EMPLOYEE, then one group
+                per product, then the account. */}
             <tr>
-              <th>User ID</th><th>Employee ID</th><th>Employee Name</th>
-              <th>Department</th><th>Branch</th><th>Team</th>
-              <th>HRMS Role</th><th>ATS Role</th><th>Accounts Role</th>
-              <th>Status</th><th>Scope</th><th>Assigned Clients</th>
-              <th>Assigned Requirements</th><th>Assigned Team</th><th>Last Login</th>
-              <th>Username</th><th>Role</th><th>Actions</th>
+              <th colSpan="5">Employee</th>
+              <th colSpan="2">HRMS</th>
+              <th colSpan="6">ATS</th>
+              <th colSpan="1">Accounts</th>
+              <th colSpan="4">Account</th>
+            </tr>
+            <tr>
+              <th>User ID</th><th>Employee ID</th><th>Employee Name</th><th>Mobile</th><th>Branch</th>
+              <th>HRMS Role</th><th>Scope</th>
+              <th>ATS Role</th><th>Department</th><th>STL</th><th>TL</th>
+              <th>Assigned Clients</th><th>Assigned Requirements</th>
+              <th>Accounts Role</th>
+              <th>Status</th><th>Last Login</th><th>Username</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -308,32 +339,18 @@ export default function Users() {
                     : u.name}
                   <div className="small-muted" style={{ fontSize: 11 }}>{u.email}</div>
                 </td>
-                <td className="cell-muted">{u.department || '—'}</td>
+                <td className="cell-muted">{u.mobile || '—'}</td>
                 <td className="cell-muted">{u.branch || '—'}</td>
-                <td className="cell-muted">{u.team || '—'}</td>
-                {/* Real, editable product access — one login, three products. */}
+                {/* HRMS — its own role, and the scope that role reaches. */}
                 <td>
-                  <label className="small-muted" style={{ whiteSpace: 'nowrap' }}>
-                    <input type="checkbox" checked={!!u.products?.hrms} onChange={(e) => setProduct(u, 'hrms', e.target.checked)} />{' '}
-                    {u.products?.hrms ? 'HRMS' : 'No Access'}
-                  </label>
-                </td>
-                <td>
-                  <Combo style={{ minWidth: 120 }} value={u.atsRole || ''} onChange={(e) => setAtsRole(u, e.target.value)}>
-                    {ATS_WORK_ROLES.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
+                  <Combo style={{ minWidth: 120 }} value={shownRole(u.productRoles?.hrms)} onChange={(e) => setProductRole(u, 'hrms', e.target.value)}>
+                    {PRODUCT_WORK_ROLES.hrms.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
                   </Combo>
                 </td>
-                <td>
-                  <label className="small-muted" style={{ whiteSpace: 'nowrap' }}>
-                    <input type="checkbox" checked={!!u.products?.accounts} onChange={(e) => setProduct(u, 'accounts', e.target.checked)} />{' '}
-                    {u.products?.accounts ? 'Accounts' : 'No Access'}
-                  </label>
-                </td>
-                <td><span className={'status ' + statusClass(u.status)}>{u.status}</span></td>
                 <td className="cell-muted">
                   {u.scope}
                   {/* EDIT SCOPE lives on HRMS → Employee Management, on that
-                      screen''s own Scope column. One implementation; this is a
+                      screen's own Scope column. One implementation; this is a
                       link to it, never a second copy. */}
                   {u.employeeRecordId && (
                     <div>
@@ -344,19 +361,31 @@ export default function Users() {
                     </div>
                   )}
                 </td>
-                <td className="cell-muted">{u.assignedClients?.length ? u.assignedClients.join(', ') : '—'}</td>
-                <td className="cell-muted">{u.assignedRequirements}</td>
-                <td className="cell-muted">{u.team || u.atsDepartment || '—'}</td>
-                <td className="cell-muted">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
-                <td className="cell-muted">{u.username || '—'}</td>
+                {/* ATS — its own role, then the desk it works: department, the
+                    STL and TL above it, its clients and its requirements. */}
                 <td>
-                  <Combo style={{ minWidth: 130 }} value={u.role} onChange={(e) => changeRole(u, e.target.value)}>
-                    {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
+                  <Combo style={{ minWidth: 120 }} value={shownRole(u.productRoles?.ats ?? u.atsRole)} onChange={(e) => setProductRole(u, 'ats', e.target.value)}>
+                    {PRODUCT_WORK_ROLES.ats.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
                   </Combo>
                 </td>
+                <td className="cell-muted">{u.department || u.atsDepartment || '—'}</td>
+                <td className="cell-muted">{u.atsStl?.length ? u.atsStl.join(', ') : '—'}</td>
+                <td className="cell-muted">{u.atsTl?.length ? u.atsTl.join(', ') : '—'}</td>
+                <td className="cell-muted">{u.assignedClients?.length ? u.assignedClients.join(', ') : '—'}</td>
+                <td className="cell-muted">{u.assignedRequirements}</td>
+                {/* Accounts — its own role. "No Access" here is a refusal the
+                    API enforces, not a hidden menu. */}
+                <td>
+                  <Combo style={{ minWidth: 120 }} value={shownRole(u.productRoles?.accounts)} onChange={(e) => setProductRole(u, 'accounts', e.target.value)}>
+                    {PRODUCT_WORK_ROLES.accounts.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
+                  </Combo>
+                </td>
+                <td><span className={'status ' + statusClass(u.status)}>{u.status}</span></td>
+                <td className="cell-muted">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
+                <td className="cell-muted">{u.username || '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn btn-sm" onClick={() => setEditing({
-                    id: u.id, name: u.name, branch: u.branch || '', team: u.team || '',
+                    id: u.id, name: u.name, role: u.role, branch: u.branch || '', team: u.team || '',
                     atsDepartment: u.atsDepartment || '',
                     atsScopeDepartments: u.atsScopeDepartments || '',
                     atsScopeTeams: u.atsScopeTeams || '',
@@ -377,10 +406,13 @@ export default function Users() {
       </div>
 
       <div className="notice" style={{ marginTop: 14 }}>
-        Changing a role here takes effect on that user&apos;s next login — it never creates a second account.
-        An employee created in HRMS is linked to a user automatically; assigning an ATS or Accounts role adds
-        product access to that same login. HRMS, ATS and Accounts are shown here derived from the single stored
-        role; they become independently editable when the three-role split lands.
+        One login, three independent product roles. HRMS, ATS and Accounts each carry their own role on the
+        same account: someone can be an Employee in HRMS, a Recruiter in ATS and have no Accounts access at
+        all, and their HRMS role never denies their ATS actions. Setting a product to &quot;No Access&quot;
+        is a refusal the API enforces. The account-level role (Super Admin, Admin, or an external Client /
+        Candidate account) is set on Edit; it is what the Dashboard, Reports and Administration surfaces read.
+        Nothing here creates a second account, and no role ever carries a department in its name — a Medical
+        recruiter is department Medical with the ATS role Recruiter.
       </div>
 
       {editing && (
@@ -392,6 +424,16 @@ export default function Users() {
             <button className="btn btn-primary" onClick={saveEditing}>Save</button>
           </>}
         >
+          <div className="field"><label>Account-level role</label>
+            <Combo value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}>
+              {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
+            </Combo></div>
+          <div className="notice">
+            THE ACCOUNT-LEVEL ROLE, not a product role. It says what kind of account this is — Super Admin,
+            Admin, or an external Client / Candidate — and it is what the Dashboard, Reports and
+            Administration surfaces resolve against. HRMS, ATS and Accounts each carry their own role,
+            editable in their own column on the table.
+          </div>
           <div className="field"><label>Branch</label>
             <input value={editing.branch} onChange={(e) => setEditing({ ...editing, branch: e.target.value })} /></div>
           <div className="field"><label>Assigned team</label>

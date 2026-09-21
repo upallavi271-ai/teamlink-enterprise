@@ -5,10 +5,32 @@ const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const {
   ROLE_FEATURE_ACTIONS, ROLE_ACCESS_MODULES, CATALOG_ROLES, ROLE_SCOPE_DESC,
+  PRODUCTS, PRODUCT_OF_MODULE, productKeyOf, NO_ROLE,
   moduleById, sanitizeFeatures,
 } = require('../utils/roleAccess');
 const { mergeAccess, invalidateRoleAccess } = require('../utils/permissions');
-const { invalidateDesignationMap } = require('../utils/identity');
+
+// The Role Catalog is Product → Module → Feature → Action now. A module's
+// product is fixed (PRODUCT_OF_MODULE); what the product dimension buys is
+// that the SAME role name can carry different access in ATS than in HRMS,
+// because the row is stored per product. '*' rows are the pre-product rows
+// and are merged UNDER any product-specific row, so nothing saved before
+// this change loses effect.
+const productOf = (moduleId) => productKeyOf(moduleId);
+
+// 'NONE' is "no role in this product", never a role name to fall back from.
+const named = (v) => (v && v !== NO_ROLE ? v : null);
+
+// Find the pair of rows that decide one (role, module): the product-agnostic
+// '*' row and the module's own product row.
+function rowsFor(rows, role, moduleId) {
+  const key = productOf(moduleId);
+  const star = rows.find((r) => r.role === role && r.moduleId === moduleId && (r.product || '*') === '*');
+  const specific = key === '*' ? null
+    : rows.find((r) => r.role === role && r.moduleId === moduleId && r.product === key);
+  return [star, specific];
+}
+const { invalidateDesignationMap, normaliseMapping } = require('../utils/identity');
 const {
   ALL_ROLES, ATS_ROLES, productAccessOf, scopeLabelOf,
   designationRows, defaultProductAccessByRole,
@@ -57,7 +79,16 @@ function accessPatch(body) {
   if (body.hrmsAccess !== undefined || p.hrms !== undefined) data.hrmsAccess = !!(body.hrmsAccess ?? p.hrms);
   if (body.atsAccess !== undefined || p.ats !== undefined) data.atsAccess = !!(body.atsAccess ?? p.ats);
   if (body.accountsAccess !== undefined || p.accounts !== undefined) data.accountsAccess = !!(body.accountsAccess ?? p.accounts);
-  if (body.atsRole !== undefined) data.atsRole = body.atsRole || null;
+  // THE THREE PRODUCT ROLES, each editable on its own. Clearing one is
+  // 'NONE' — an explicit "no access to this product" — not null, which would
+  // fall back to the account-level role.
+  if (body.hrmsRole !== undefined) data.hrmsRole = body.hrmsRole || NO_ROLE;
+  if (body.atsRole !== undefined) data.atsRole = body.atsRole || NO_ROLE;
+  if (body.accountsRole !== undefined) data.accountsRole = body.accountsRole || NO_ROLE;
+  const pr = body.productRoles || {};
+  if (pr.hrms !== undefined) data.hrmsRole = pr.hrms || NO_ROLE;
+  if (pr.ats !== undefined) data.atsRole = pr.ats || NO_ROLE;
+  if (pr.accounts !== undefined) data.accountsRole = pr.accounts || NO_ROLE;
   if (body.atsScopeDepartments !== undefined) data.atsScopeDepartments = body.atsScopeDepartments || null;
   if (body.atsScopeTeams !== undefined) data.atsScopeTeams = body.atsScopeTeams || null;
   if (body.atsScopeClients !== undefined) data.atsScopeClients = body.atsScopeClients || null;
@@ -76,15 +107,43 @@ async function shapeUser(user) {
   const clientNames = [...new Set(requirements.map((r) => r.client?.name).filter(Boolean))];
   if (user.client?.name) clientNames.push(user.client.name);
 
+  // The ATS reporting chain this person sits under — the STL and the TL named
+  // on the requirements they are on. Distinct names only; a recruiter on four
+  // requirements for the same desk has one TL, not four.
+  const chainNames = async (ids) => {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (!unique.length) return [];
+    const rows = await prisma.user.findMany({ where: { id: { in: unique } }, select: { name: true } });
+    return rows.map((r) => r.name);
+  };
+  const [stlNames, tlNames] = await Promise.all([
+    chainNames(requirements.map((r) => r.stlId)),
+    chainNames(requirements.map((r) => r.tlId)),
+  ]);
+
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     username: user.username || user.email,
+    // The ACCOUNT-LEVEL role — Super Admin / Admin / the external account
+    // kinds. Not what any product resolves against.
     role: user.role,
     productAccess: productAccessOf(user),
     products: { hrms: !!user.hrmsAccess, ats: !!user.atsAccess, accounts: !!user.accountsAccess },
+    // ONE LOGIN, THREE PRODUCT ROLES — what the Users screen breaks down.
+    productRoles: {
+      hrms: user.hrmsAccess ? (named(user.hrmsRole) || user.role) : NO_ROLE,
+      ats: user.atsAccess ? (named(user.atsRole) || user.role) : NO_ROLE,
+      accounts: user.accountsAccess ? (named(user.accountsRole) || user.role) : NO_ROLE,
+    },
+    hrmsRole: user.hrmsAccess ? (named(user.hrmsRole) || user.role) : NO_ROLE,
+    accountsRole: user.accountsAccess ? (named(user.accountsRole) || user.role) : NO_ROLE,
     atsRole: user.atsRole || null,
+    // The ATS reporting chain, for the ATS column of the Users screen.
+    atsStl: [...new Set(stlNames)],
+    atsTl: [...new Set(tlNames)],
+    mobile: emp?.phone || null,
     atsScopeDepartments: user.atsScopeDepartments || '',
     atsScopeTeams: user.atsScopeTeams || '',
     atsScopeClients: user.atsScopeClients || '',
@@ -218,17 +277,27 @@ router.post('/users/:id/reset-password', requirePerm(null, 'administration', 'Us
 // "Medical TL" anywhere in the system, only department=Medical + designation=TL.
 router.get('/designation-roles', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   res.json({
-    rows: await designationRows(),
+    rows: (await designationRows()).map(normaliseMapping),
     atsRoles: ATS_ROLES,
+    // The vocabulary for the other two product-role columns.
+    hrmsRoles: [NO_ROLE, ...ALL_ROLES],
+    accountsRoles: [NO_ROLE, ...ALL_ROLES],
     designations: [...new Set((await prisma.employee.findMany({ select: { designation: true } }))
       .map((e) => e.designation).filter(Boolean))].sort(),
   });
 });
 
+// DERIVATION STAYS. A designation maps to ALL THREE product roles here, and
+// never to a compound name: there is no "Medical Recruiter" role, only
+// department=Medical + atsRole=RECRUITER.
 router.put('/designation-roles/:designation', requirePerm(null, 'administration', 'Users', 'configure'), async (req, res) => {
   const designation = decodeURIComponent(req.params.designation);
-  const { atsRole, hrms, ats, accounts, landing } = req.body;
+  const {
+    atsRole, hrmsRole, accountsRole, hrms, ats, accounts, landing,
+  } = req.body;
   if (atsRole && !ATS_ROLES.includes(atsRole)) return res.status(400).json({ error: 'Unknown ATS role' });
+  if (hrmsRole && hrmsRole !== NO_ROLE && !ALL_ROLES.includes(hrmsRole)) return res.status(400).json({ error: 'Unknown HRMS role' });
+  if (accountsRole && accountsRole !== NO_ROLE && !ALL_ROLES.includes(accountsRole)) return res.status(400).json({ error: 'Unknown Accounts role' });
   const data = {
     atsRole: atsRole || null,
     hrms: hrms !== undefined ? !!hrms : true,
@@ -236,6 +305,10 @@ router.put('/designation-roles/:designation', requirePerm(null, 'administration'
     accounts: accounts !== undefined ? !!accounts : false,
     landing: landing || null,
   };
+  // An explicit role wins; otherwise the row keeps deriving the same value
+  // the engine would have derived for it.
+  if (hrmsRole !== undefined) data.hrmsRole = hrmsRole || NO_ROLE;
+  if (accountsRole !== undefined) data.accountsRole = accountsRole || NO_ROLE;
   const row = await prisma.designationRole.upsert({
     where: { designation },
     create: { designation, ...data },
@@ -266,14 +339,25 @@ router.get('/role-catalog', requirePerm(null, 'administration', 'Role Catalog', 
 
   res.json(CATALOG_ROLES.map((role) => {
     const modules = ROLE_ACCESS_MODULES.map((m) => {
-      const merged = mergeAccess(role, m.id, rows.find((r) => r.role === role && r.moduleId === m.id));
-      return { id: m.id, label: m.label, enabled: merged.moduleEnabled };
+      const merged = mergeAccess(role, m.id, ...rowsFor(rows, role, m.id));
+      return {
+        id: m.id,
+        label: m.label,
+        // PRODUCT → MODULE. Which product this module's grid belongs to, so
+        // the catalog can group by product instead of listing ten modules
+        // flat and leaving the reader to guess.
+        product: productOf(m.id),
+        enabled: merged.moduleEnabled,
+      };
     });
     const enabled = modules.filter((m) => m.enabled);
     return {
       role,
       users: countFor(role),
       scope: ROLE_SCOPE_DESC[role] || '—',
+      // Which products this role reaches at all — the top level of
+      // Product → Module → Feature → Action.
+      products: PRODUCTS.map((p) => p.id).filter((p) => enabled.some((m) => m.product === p)),
       // Kept so anything still reading the old flat shape keeps working.
       access: enabled.length === ROLE_ACCESS_MODULES.length
         ? 'Full access to every module'
@@ -288,7 +372,13 @@ router.get('/role-catalog', requirePerm(null, 'administration', 'Role Catalog', 
 // login — a recruiter, an accountant, a candidate — could read the module/feature catalog.
 // It is guarded by the same feature its screen is now.
 router.get('/role-catalog/modules', requirePerm(null, 'administration', 'Role Catalog', 'view'), (req, res) => {
-  res.json({ actions: ROLE_FEATURE_ACTIONS, modules: ROLE_ACCESS_MODULES });
+  res.json({
+    actions: ROLE_FEATURE_ACTIONS,
+    // PRODUCT → MODULE → FEATURE → ACTION, in that order, as data.
+    products: PRODUCTS,
+    modules: ROLE_ACCESS_MODULES.map((m) => ({ ...m, product: productOf(m.id) })),
+    productOfModule: PRODUCT_OF_MODULE,
+  });
 });
 
 // One role's full matrix: every module, every feature, every action.
@@ -300,22 +390,27 @@ router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Ro
     role,
     scope: ROLE_SCOPE_DESC[role] || '—',
     actions: ROLE_FEATURE_ACTIONS,
+    products: PRODUCTS,
     modules: ROLE_ACCESS_MODULES.map((m) => ({
       id: m.id,
       label: m.label,
+      product: productOf(m.id),
       featureNames: m.features,
-      ...mergeAccess(role, m.id, rows.find((r) => r.moduleId === m.id)),
+      ...mergeAccess(role, m.id, ...rowsFor(rows, role, m.id)),
     })),
   });
 });
 
+// Writes land on the row for the MODULE'S OWN PRODUCT, so saving ATS access
+// for a role never touches what that same role name may do in HRMS.
 async function upsertRoleAccess(role, moduleId, patch) {
-  const rows = await prisma.roleAccess.findUnique({ where: { role_moduleId: { role, moduleId } } });
-  const current = mergeAccess(role, moduleId, rows);
+  const product = productOf(moduleId);
+  const all = await prisma.roleAccess.findMany({ where: { role, moduleId } });
+  const current = mergeAccess(role, moduleId, ...rowsFor(all, role, moduleId));
   const next = { ...current, ...patch };
   await prisma.roleAccess.upsert({
-    where: { role_moduleId: { role, moduleId } },
-    create: { role, moduleId, moduleEnabled: next.moduleEnabled, features: JSON.stringify(next.features) },
+    where: { role_product_moduleId: { role, product, moduleId } },
+    create: { role, product, moduleId, moduleEnabled: next.moduleEnabled, features: JSON.stringify(next.features) },
     update: { moduleEnabled: next.moduleEnabled, features: JSON.stringify(next.features) },
   });
   // The permission engine caches the matrix; an admin's edit must bite now.
@@ -331,7 +426,7 @@ router.put('/role-catalog/:role/modules/:moduleId', requirePerm(null, 'administr
   if (!mod) return res.status(404).json({ error: 'Unknown module' });
   if (typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
 
-  const before = mergeAccess(role, moduleId, await prisma.roleAccess.findUnique({ where: { role_moduleId: { role, moduleId } } }));
+  const before = mergeAccess(role, moduleId, ...rowsFor(await prisma.roleAccess.findMany({ where: { role, moduleId } }), role, moduleId));
   const next = await upsertRoleAccess(role, moduleId, { moduleEnabled: req.body.enabled });
   await logAudit({
     userId: req.user.id, action: 'Module access changed', entity: 'RoleAccess',

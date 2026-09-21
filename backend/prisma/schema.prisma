@@ -55,10 +55,26 @@ model User {
   atsAccess      Boolean  @default(false)
   accountsAccess Boolean  @default(false)
 
-  // ATS working role, DERIVED from the employee's designation via the
+  // ---------------------------------------------------------------------
+  // THREE INDEPENDENT PRODUCT ROLES. One login, three products, three roles.
+  //
+  //   USER
+  //    ├── HRMS Role      → hrmsRole      (e.g. EMPLOYEE)
+  //    ├── ATS Role       → atsRole       (e.g. RECRUITER)
+  //    └── Accounts Role  → accountsRole  (e.g. NONE)
+  //
+  // Being an Employee in HRMS must NOT deny Recruiter actions in ATS, so the
+  // permission engine resolves the role for the PRODUCT being asked about
+  // (utils/permissions.js roleForProduct) rather than reading `role`.
+  //
+  // 'NONE' (or null with the product boolean off) means "no access to this
+  // product". Each is DERIVED from the employee's designation via the
   // DesignationRole mapping table, or overridden per-user here. Never a
-  // department-qualified string like "Medical TL" — just "TL".
+  // department-qualified string like "Medical TL" — just "TL"; the department
+  // supplies the scope, never the role name.
+  hrmsRole       String?
   atsRole        String?
+  accountsRole   String?
   // Data scope. Comma-separated; empty/null means "the employee's own
   // department / team". STLs carry several departments here.
   atsScopeDepartments String?
@@ -1319,12 +1335,18 @@ model Notification {
 model RoleAccess {
   id            String   @id @default(cuid())
   role          String
+  // THE PRODUCT DIMENSION: Product → Module → Feature → Action.
+  // '*' is the product-agnostic row (dashboard, reports, administration, and
+  // every row written before products existed). A product-specific row is
+  // merged OVER the '*' row, so one role name can carry different access in
+  // ATS than it does in HRMS without inventing a second role name.
+  product       String   @default("*") // * | hrms | ats | accounts
   moduleId      String
   moduleEnabled Boolean  @default(false)
   features      String?  // JSON: { featureName: { view, create, edit, delete, approve, export, assign } }
   updatedAt     DateTime @updatedAt
 
-  @@unique([role, moduleId])
+  @@unique([role, product, moduleId])
 }
 
 // Company asset inventory — the prototype's Employee Services → Assets tab
@@ -1423,6 +1445,11 @@ model SyncLog {
 model DesignationRole {
   id          String   @id @default(cuid())
   designation String   @unique
+  // A designation derives ALL THREE product roles, not just the ATS one.
+  // "Accountant" is HRMS self-service + Accounts=ACCOUNTANT + ATS none;
+  // "Recruiter" is HRMS self-service + ATS=RECRUITER + Accounts NONE.
+  hrmsRole     String? // EMPLOYEE | TL | STL | MANAGER | … | NONE
+  accountsRole String? // ACCOUNTANT | MANAGER | ADMIN | … | NONE
   atsRole     String?  // RECRUITER | TL | STL | BDE | MANAGER | ASSISTANT_MANAGER | ADMIN | null
   hrms        Boolean  @default(true)
   ats         Boolean  @default(false)

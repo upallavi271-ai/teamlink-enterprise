@@ -20,7 +20,7 @@
 const crypto = require('crypto');
 const prisma = require('../db');
 const { FALLBACK_DESIGNATION_MAP } = require('./identity');
-const { CATALOG_ROLES } = require('./roleAccess');
+const { CATALOG_ROLES, NO_ROLE } = require('./roleAccess');
 
 const ALL_ROLES = [
   'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
@@ -36,11 +36,19 @@ const normalEmail = (email) => String(email || '').trim().toLowerCase();
 
 // The Users screen's product columns. Stored, editable booleans — never
 // derived from the role at read time.
+// One column per product, each naming THAT PRODUCT'S ROLE. "Yes" told the
+// reader nothing now that a login can be an Employee in one product and a
+// Recruiter in another.
 function productAccessOf(user) {
+  const shown = (held, role) => {
+    if (!held) return 'No Access';
+    const r = role && role !== NO_ROLE ? role : (user.role || null);
+    return r || 'Yes';
+  };
   return {
-    hrms: user.hrmsAccess ? 'Yes' : 'No Access',
-    ats: user.atsAccess ? (user.atsRole || 'Yes') : 'No Access',
-    accounts: user.accountsAccess ? 'Yes' : 'No Access',
+    hrms: shown(user.hrmsAccess, user.hrmsRole),
+    ats: shown(user.atsAccess, user.atsRole),
+    accounts: shown(user.accountsAccess, user.accountsRole),
   };
 }
 
@@ -101,6 +109,32 @@ function loginRoleFor(mapping) {
 }
 
 // ---------------------------------------------------------------------------
+// THE THREE PRODUCT ROLES A DESIGNATION DERIVES.
+//
+//   USER
+//    ├── HRMS Role      → hrmsRole
+//    ├── ATS Role       → atsRole
+//    └── Accounts Role  → accountsRole
+//
+// The mapping TABLE is the source: a row may name each role explicitly, and
+// where it does not, the role is the designation's implied login role for the
+// products it grants and 'NONE' for the products it does not. Every place
+// that creates a login writes these three columns through this one function.
+// It is never a compound name — "Medical Recruiter" is department=Medical +
+// atsRole=RECRUITER, and no role anywhere carries a department in it.
+// ---------------------------------------------------------------------------
+function productRolesForDesignation(mapping) {
+  const implied = loginRoleFor(mapping);
+  const named = (v) => (v && v !== NO_ROLE ? v : null);
+  const has = (p) => !!(mapping && mapping[p]);
+  return {
+    hrmsRole: has('hrms') ? (named(mapping.hrmsRole) || implied) : NO_ROLE,
+    atsRole: has('ats') ? (named(mapping && mapping.atsRole) || implied) : NO_ROLE,
+    accountsRole: has('accounts') ? (named(mapping.accountsRole) || implied) : NO_ROLE,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The wide Employee Management row: the HR record, its login and its reach.
 // ---------------------------------------------------------------------------
 const fmtDate = (d) => (d
@@ -131,6 +165,12 @@ function shapeEmployeeMgmtRow(e) {
     // record was created and changeable from Assign Roles.
     role: u ? u.role : null,
     productAccess: u ? productAccessOf(u) : null,
+    // ONE LOGIN, THREE PRODUCT ROLES.
+    productRoles: u ? {
+      hrms: u.hrmsAccess ? (u.hrmsRole || u.role) : NO_ROLE,
+      ats: u.atsAccess ? (u.atsRole || u.role) : NO_ROLE,
+      accounts: u.accountsAccess ? (u.accountsRole || u.role) : NO_ROLE,
+    } : null,
     atsRole: u ? u.atsRole : null,
     atsDepartment: u ? u.atsDepartment : null,
     // The three raw scope strings, so the Edit Scope editor on this screen can
@@ -177,6 +217,7 @@ async function liveVerification(email) {
 }
 
 module.exports = {
+  productRolesForDesignation,
   ALL_ROLES,
   ATS_ROLES,
   EMAIL_RE,

@@ -16,7 +16,7 @@ const { toCsv, toXlsx, toPdf } = require('../utils/tabularExport');
 // routes/admin.js with the routes; see utils/employeeAdmin.js for why.
 const {
   ALL_ROLES, EMAIL_RE, normalEmail,
-  designationRows, defaultProductAccessByRole, loginRoleFor,
+  designationRows, defaultProductAccessByRole, loginRoleFor, productRolesForDesignation,
   EMP_MGMT_INCLUDE, shapeEmployeeMgmtRow,
   OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS, OTP_PURPOSE, hashOtp, liveVerification,
 } = require('../utils/employeeAdmin');
@@ -577,6 +577,9 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     designations: rows.map((r) => ({
       designation: r.designation,
       atsRole: r.atsRole || null,
+      // What this designation grants in each product — the picker says it
+      // outright rather than leaving the reader to infer it from a tick.
+      productRoles: productRolesForDesignation(r),
       products: { hrms: !!r.hrms, ats: !!r.ats, accounts: !!r.accounts },
       landing: r.landing || null,
     })),
@@ -762,7 +765,8 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
       branch: b.location || null,
       team,
       atsDepartment: department,
-      atsRole: mapping && mapping.atsRole ? mapping.atsRole : null,
+      // All three product roles, derived from the designation mapping.
+      ...productRolesForDesignation(mapping),
       atsScopeDepartments: department,
       atsScopeTeams: team,
       hrmsAccess: mapping ? !!mapping.hrms : true,
@@ -861,7 +865,7 @@ router.post('/management/:id/create-login', requirePerm(null, 'hrms', 'Employee 
         role,
         username: employee.email,
         atsDepartment: employee.department,
-        atsRole: mapping && mapping.atsRole ? mapping.atsRole : null,
+        ...productRolesForDesignation(mapping),
         atsScopeDepartments: employee.department,
         atsScopeTeams: employee.team || null,
         hrmsAccess: mapping ? !!mapping.hrms : true,
@@ -1700,7 +1704,7 @@ router.post('/bulk-import', requirePerm(null, 'hrms', 'Employee Management', 'cr
               username: r.email,
               status: 'Active',
               atsDepartment: r.department || null,
-              atsRole,
+              ...productRolesForDesignation(mapping),
               atsScopeDepartments: r.department || null,
               hrmsAccess: mapping ? !!mapping.hrms : true,
               atsAccess: mapping ? !!mapping.ats : false,

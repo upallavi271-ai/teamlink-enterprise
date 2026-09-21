@@ -14,7 +14,37 @@ import { atsRoleLabel } from '../../atsVocab';
 // describe this app, so that is what this screen and
 // backend/src/utils/roleAccess.js implement.
 //
-// Role list -> Edit Access (module toggles) -> Configure (feature x action grid).
+// THE PRODUCT DIMENSION. The catalog reads
+//
+//   PRODUCT → MODULE → FEATURE → ACTION
+//
+// because a role name is not one thing any more: a login carries an HRMS
+// role, an ATS role and an Accounts role, and the engine resolves the one
+// belonging to the product the module sits in. Grants are therefore STORED
+// per product, so the same role name can mean one thing in ATS and another in
+// HRMS without anybody inventing a second role name for it.
+//
+// Role list -> Edit Access (product > module toggles) -> Configure
+// (feature x action grid).
+
+// The products, in the order the sidebar shows them. Modules carry their own
+// product from the API (`m.product`), so nothing here hard-codes which module
+// belongs where.
+const PRODUCT_LABEL = {
+  ats: 'ATS',
+  hrms: 'HRMS',
+  accounts: 'Accounts',
+  '*': 'Core — every product',
+};
+const PRODUCT_ORDER = ['ats', 'hrms', 'accounts', '*'];
+
+// What a product row means, said once.
+const PRODUCT_NOTE = {
+  ats: 'Resolved against this login’s ATS role.',
+  hrms: 'Resolved against this login’s HRMS role.',
+  accounts: 'Resolved against this login’s Accounts role. A login whose Accounts role is None is refused here outright.',
+  '*': 'Not part of any one product — resolved against every role the login holds, its account-level role included.',
+};
 
 export default function RoleCatalog() {
   const [roles, setRoles] = useState([]);
@@ -93,6 +123,12 @@ export default function RoleCatalog() {
 
   const mod = configuring && editing ? editing.modules.find((m) => m.id === configuring) : null;
 
+  // The module list, grouped by product — the top level of
+  // Product → Module → Feature → Action.
+  const byProduct = (modules) => PRODUCT_ORDER
+    .map((p) => [p, modules.filter((m) => (m.product || '*') === p)])
+    .filter(([, list]) => list.length);
+
   return (
     <div>
       <div className="page-head">
@@ -112,6 +148,14 @@ export default function RoleCatalog() {
               <b>{atsRoleLabel(r.role)} · {r.users} user{r.users === 1 ? '' : 's'}</b>
               <br />
               <span className="cell-muted" style={{ fontSize: 12 }}>{r.scope || '—'}</span>
+              <br />
+              {/* WHICH PRODUCTS this role reaches — the first level of the
+                  catalog, before any module. */}
+              <span className="cell-muted" style={{ fontSize: 12 }}>
+                Products: {(r.products || []).length
+                  ? (r.products || []).map((p) => PRODUCT_LABEL[p] || p).join(' · ')
+                  : 'none'}
+              </span>
             </span>
             <button className="btn btn-sm" onClick={() => openEditAccess(r.role)}>Edit Access</button>
           </div>
@@ -120,8 +164,11 @@ export default function RoleCatalog() {
       </div>
 
       <div className="notice" style={{ marginTop: 12 }}>
-        Page access is stored per role and edited here. NOTE: it is not yet enforced — no route or navigation
-        reads it. Enforcement is entangled with the deferred three-role split and lands with it.
+        Product → Module → Feature → Action. Everything here is ENFORCED: it is the same matrix the API
+        checks on every request and the sidebar renders from, so un-ticking a box refuses the call, not just
+        the button. Grants are stored per product, which is what lets one role name mean different things in
+        ATS and in HRMS — a login holds an HRMS role, an ATS role and an Accounts role, and each module is
+        answered by the role for its own product.
       </div>
 
       {editing && !configuring && (
@@ -132,19 +179,27 @@ export default function RoleCatalog() {
           foot={<button className="btn btn-primary" onClick={() => setEditing(null)}>Done</button>}
         >
           <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
-            Toggle module access, or click Configure for feature-level detail.
+            Product → Module → Feature → Action. Toggle module access, or click Configure for
+            feature-level detail. Each product&apos;s grants are stored separately, so what this role may do
+            in ATS is not what it may do in HRMS.
           </div>
-          {editing.modules.map((m) => (
-            <div className="assign-row" key={m.id}>
-              <label style={{ display: 'flex', gap: 9, alignItems: 'center', flex: 1, cursor: 'pointer' }}>
-                <input
-                  type="checkbox" style={{ width: 'auto' }}
-                  checked={!!m.moduleEnabled}
-                  onChange={(e) => toggleModule(m.id, e.target.checked)}
-                />
-                {m.label}
-              </label>
-              <button className="btn btn-sm" onClick={() => openConfigure(m.id)}>Configure →</button>
+          {byProduct(editing.modules).map(([product, modules]) => (
+            <div key={product} style={{ marginBottom: 14 }}>
+              <h3 style={{ margin: '0 0 2px' }}>{PRODUCT_LABEL[product] || product}</h3>
+              <div className="cell-muted" style={{ fontSize: 12, marginBottom: 6 }}>{PRODUCT_NOTE[product]}</div>
+              {modules.map((m) => (
+                <div className="assign-row" key={m.id}>
+                  <label style={{ display: 'flex', gap: 9, alignItems: 'center', flex: 1, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox" style={{ width: 'auto' }}
+                      checked={!!m.moduleEnabled}
+                      onChange={(e) => toggleModule(m.id, e.target.checked)}
+                    />
+                    {m.label}
+                  </label>
+                  <button className="btn btn-sm" onClick={() => openConfigure(m.id)}>Configure →</button>
+                </div>
+              ))}
             </div>
           ))}
         </Modal>
@@ -161,7 +216,9 @@ export default function RoleCatalog() {
           </>}
         >
           <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-            {mod.featureNames.length} feature(s) · {atsRoleLabel(editing.role)}
+            {PRODUCT_LABEL[mod.product || '*']} · {mod.featureNames.length} feature(s) · {atsRoleLabel(editing.role)}
+            <br />
+            {PRODUCT_NOTE[mod.product || '*']}
           </div>
           <div className="tbl-wrap">
             <table>
