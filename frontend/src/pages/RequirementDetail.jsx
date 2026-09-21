@@ -466,10 +466,10 @@ export default function RequirementDetail() {
                       <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
                       <td>{a.matchScore != null ? `${a.matchScore}%` : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
                       <td>
+                        {/* requestStage() routes Reject/Hold through the reason
+                            dialog; the filter keeps the list to the stages this
+                            login actually owns. */}
                         {p.pipeline ? (
-                          {/* requestStage() routes Reject/Hold through the
-                              reason dialog; the filter keeps the list to the
-                              stages this login actually owns. */}
                           <Combo value={a.stage} onChange={(e) => requestStage(a, e.target.value)}>
                             {ALL_STAGE_CODES.filter((s) => s === a.stage || canMoveToStage(user, s))
                               .map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
