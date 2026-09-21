@@ -95,6 +95,55 @@ here and printed by `npm run seed`; it is never shown anywhere in the UI.
 | `clientb@teamlink.test` | Client B — Medivant Healthcare | ATS + Accounts | Client, own company only |
 | `candidate@teamlink.test` | Candidate — Arjun Mehta | — | Candidate, own profile only |
 
+### Role-by-role test accounts (`@teamlink.com`)
+
+A second, wider set for walking every role in turn. Same password. These are
+**additional** — every `@teamlink.test` login above still works and still owns
+the demo data it always did. The two sets are separate people, not two logins
+for one: where a name appears in both (`accounts@`, `employee@`, `client@`,
+`clientb@`, `candidate@`) the domain is what tells them apart.
+
+Nothing here is hard-coded. The seed looks each designation up in the
+`DesignationRole` table — the same table `utils/identity.js` reads — and takes
+the role, the ATS role, the product access and the landing workspace from it;
+the **department** supplies the data scope. There is no compound role such as
+"Medical Recruiter" anywhere: that person is `department=Medical` +
+`designation=Recruiter`.
+
+| Login | Department / Designation | Derived role | Scope |
+| --- | --- | --- | --- |
+| `superadmin@teamlink.com` | HR / Super Admin | Super Admin | All departments |
+| `admin@teamlink.com` | HR / Admin | Admin | All departments |
+| `manager@teamlink.com` | Medical / Manager | Manager | Medical, IT, Manufacturing, Educational, BDE |
+| `asstmanager@teamlink.com` | IT / Assistant Manager | Assistant Manager | IT, Manufacturing |
+| `stl@teamlink.com` | Medical / STL | STL | Medical, IT |
+| `medicaltl@teamlink.com` | Medical / TL | TL | Medical · Medical Team-A |
+| `ittl@teamlink.com` | IT / TL | TL | IT · Section A |
+| `manufacturingtl@teamlink.com` | Manufacturing / TL | TL | Manufacturing |
+| `edutl@teamlink.com` | Educational / TL | TL | Educational |
+| `bdetl@teamlink.com` | BDE / TL | TL | BDE |
+| `medical1@teamlink.com` | Medical / Recruiter | Recruiter | the Medical requirements assigned to them |
+| `itrecruiter1@teamlink.com` | IT / Recruiter | Recruiter | the IT requirements assigned to them |
+| `manufacturingrecruiter1@teamlink.com` | Manufacturing / Recruiter | Recruiter | the Manufacturing requirements assigned to them |
+| `edu1@teamlink.com` | Educational / Recruiter | Recruiter | the Education requirements assigned to them |
+| `bde1@teamlink.com` | BDE / BDE | BDE | assigned clients — Vertex, Nalanda, Orbit |
+| `accounts@teamlink.com` | Accounts / Accountant | Accountant | Accounts + HRMS self-service |
+| `employee@teamlink.com` | HR / Employee | Employee | HRMS self-service only |
+| `client@teamlink.com` | Client A — Orbit Software | Client | own company only |
+| `clientb@teamlink.com` | Client B — Medivant Healthcare | Client | own company only |
+| `candidate@teamlink.com` | Candidate — Sharath Kamath | Candidate | own profile only |
+
+Each desk has work of its own — Medical, IT, Manufacturing, Education and BDE
+all carry requirements, candidates and a live pipeline, so a Manufacturing
+recruiter signing in sees Manufacturing work rather than an empty table.
+
+**Administration is Super Admin and Admin only.** Recruiter, TL, STL, Manager,
+BDE, Accountant, Employee, Client and Candidate get no Administration menu and
+a 403 from `/api/admin/*`, unless the administration module is deliberately
+granted to their role in Administration → Role Catalog. Employee Management is
+an HRMS feature and lives in the HRMS group, scoped: a TL opening it sees their
+own department's employees.
+
 After signing in you land on the workspace your products and working role imply
 — ATS, Accounts or HRMS self-service. A login with several products gets a
 workspace switcher in the top bar; it never asks you to choose a role.
@@ -107,7 +156,7 @@ workspace switcher in the top bar; it never asks you to choose a role.
 
 **Accounts** — dashboard with the financial-year period picker, the invoice register with ageing and saved views, Office / Business (bills, GST position, P&L), Bank & Reconciliation with a six-state matching workflow.
 
-**Administration** — Company Setup, Employee Management, Users, Role Catalog, Integrations and Job Portal Sync, Organization Structure, Notifications, Audit Logs, Profile.
+**Administration** (Super Admin / Admin only) — Company Setup, Departments & Teams, Users, Role Catalog, Integrations and Job Portal Sync, Organization Structure, Notifications, Audit Logs, Profile. Employee Management moved to the HRMS group, and owns Add Employee, Bulk Import, Export, the filters and Edit Scope; Users links to it for the first and the last of those rather than carrying a second copy.
 
 **Public** — a careers portal at `/careers`, plus a tokenised client agreement signing page.
 
