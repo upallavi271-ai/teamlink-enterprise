@@ -12,9 +12,15 @@ const { invalidateDesignationMap, FALLBACK_DESIGNATION_MAP } = require('../utils
 const {
   INTEGRATION_CATALOG, INTEGRATION_GROUPS, SYNC_ENTITIES, ORG_STRUCTURE_DEFAULT,
   COMPANY_POLICIES, COMPANY_DEFAULTS, EMP_TYPES, EMP_STATUSES, EMP_GENDERS,
-  EMP_MGMT_STATUS_FILTER, integrationById,
+  EMP_MGMT_STATUS_FILTER, integrationById, LIVE_CHANNELS,
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
+const { publicValuesFor, writeValues } = require('../utils/integrationStore');
+const { secretsConfigured, ENV_VAR: SECRET_ENV_VAR, NO_KEY_MESSAGE } = require('../utils/secrets');
+const mailer = require('../utils/mailer');
+const mailWorker = require('../utils/mailWorker');
+const aiAgent = require('../utils/aiAgent');
+const { senderIdentity } = require('../utils/candidateComms');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -877,15 +883,25 @@ async function integrationRow(id) {
   return row;
 }
 
+// SECRETS NEVER LEAVE THE SERVER.
+//
+// publicValuesFor() (utils/integrationStore.js) returns the non-secret fields
+// verbatim and replaces every credential field with a masked hint. This is the
+// only shaping function the integration routes use, so there is no path by
+// which a password or API key reaches a response body.
 function shapeIntegration(channel, row) {
-  let values = {};
-  try { values = row && row.values ? JSON.parse(row.values) : {}; } catch { values = {}; }
+  const { values, secretHints, secretFields } = publicValuesFor(channel, row);
   return {
     id: channel.id, name: channel.name, group: channel.group, glyph: channel.glyph,
     desc: channel.desc, fields: channel.fields,
     enabled: row ? row.enabled : false,
     state: row ? row.state : 'Not Connected',
     values,
+    secretHints,
+    secretFields,
+    // Whether this channel really talks to an outside system. Everything
+    // else on the screen is still Demo / Simulated and says so.
+    live: LIVE_CHANNELS.includes(channel.id),
     lastSync: row && row.lastSync ? new Date(row.lastSync).toLocaleString() : null,
     lastTest: row && row.lastTest ? new Date(row.lastTest).toLocaleString() : null,
     lastTestResult: row ? row.lastTestResult : null,
@@ -997,28 +1013,149 @@ router.get('/integrations/:id/history', requirePerm(null, 'administration', 'Int
   });
 });
 
-// Save & Connect — configuration only; the prototype never contacts a provider
-// and neither does this.
+// Save & Connect.
+//
+// Credentials go through utils/integrationStore.js: secret fields are
+// AES-256-GCM encrypted with the key in INTEGRATION_SECRET_KEY before they
+// touch the database, and a blank secret box means "leave the stored one
+// alone" (the modal never receives the plaintext, so blank cannot mean erase).
+// Nothing here logs a value — the audit row records only that the channel was
+// configured.
 router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
-  const incoming = req.body.values || {};
-  const values = {};
-  let filled = 0;
-  channel.fields.forEach(([label]) => {
-    const v = incoming[label] == null ? '' : String(incoming[label]);
-    values[label] = v;
-    if (v.trim()) filled += 1;
-  });
-  if (!filled) return res.status(400).json({ error: 'Enter at least one credential to connect this channel.' });
+  let written;
+  try {
+    written = await writeValues(channel.id, req.body.values || {});
+  } catch (err) {
+    if (err && err.code === 'NO_SECRET_KEY') return res.status(400).json({ error: NO_KEY_MESSAGE });
+    throw err;
+  }
+  if (!written.filled) return res.status(400).json({ error: 'Enter at least one credential to connect this channel.' });
   await integrationRow(channel.id);
   const row = await prisma.integration.update({
     where: { id: channel.id },
-    data: { values: JSON.stringify(values), enabled: true, connected: true, state: 'Connected', connectedAt: new Date(), error: null },
+    data: {
+      values: JSON.stringify(written.values),
+      enabled: true,
+      connected: true,
+      state: 'Connected',
+      connectedAt: new Date(),
+      error: null,
+    },
   });
-  await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Connected', by: req.user.name, result: 'OK (Demo)' } });
+  const live = LIVE_CHANNELS.includes(channel.id);
+  if (channel.id === 'email') {
+    // New credentials: drop the cached SMTP connection, and let the rows that
+    // were held as "recorded, not transmitted" queue up for real sending.
+    mailer.resetTransport();
+    await mailWorker.requeueHeldMessages();
+    mailWorker.kick();
+  }
+  if (channel.id === 'ai-claude') aiAgent.resetClient();
+  await prisma.integrationEvent.create({
+    data: {
+      integrationId: channel.id, action: 'Connected', by: req.user.name,
+      result: live ? 'Credentials saved (encrypted at rest)' : 'OK (Demo)',
+    },
+  });
   await logAudit({ userId: req.user.id, action: 'Integration configured', entity: 'Integration', entityId: channel.id, toValue: 'Connected' });
   res.json(shapeIntegration(channel, row));
+});
+
+/* --------------------------------------------------------------------------
+   EMAIL (SMTP) — the real channel.
+   -------------------------------------------------------------------------- */
+
+// Where the screen reads whether email is switched on, and what is waiting.
+router.get('/integrations/email/status', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  const cfg = await mailer.emailConfig();
+  const [queued, retrying, sent, failed, held] = await Promise.all([
+    prisma.candidateMessage.count({ where: { channel: 'Email', status: 'QUEUED' } }),
+    prisma.candidateMessage.count({ where: { channel: 'Email', status: 'RETRY' } }),
+    prisma.candidateMessage.count({ where: { channel: 'Email', status: 'SENT' } }),
+    prisma.candidateMessage.count({ where: { channel: 'Email', status: 'FAILED' } }),
+    prisma.candidateMessage.count({ where: { channel: 'Email', status: 'NOT_SENT_NO_PROVIDER' } }),
+  ]);
+  res.json({
+    configured: cfg.configured,
+    reason: cfg.reason || null,
+    host: cfg.host || null,
+    port: cfg.port || null,
+    secure: cfg.secure,
+    username: cfg.user || null,
+    fromAddress: cfg.fromAddress || null,
+    fromName: cfg.fromName || null,
+    secretKeyConfigured: secretsConfigured(),
+    secretKeyEnvVar: SECRET_ENV_VAR,
+    worker: mailWorker.status(),
+    queue: { queued, retrying, sent, failed, notSentNoProvider: held },
+  });
+});
+
+// "Send test email" — opens a real connection, authenticates, and sends. On
+// failure it reports the PROVIDER's error, not a generic one.
+router.post('/integrations/email/test-message', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const to = String(req.body.to || '').trim();
+  if (!to) return res.status(400).json({ error: 'Enter the address to send the test to.' });
+  const sender = await senderIdentity(req.user);
+  const result = await mailer.verifyAndSendTest({
+    to, senderEmail: sender.senderEmail, senderName: sender.senderName, by: req.user.name,
+  });
+  await prisma.integrationEvent.create({
+    data: {
+      integrationId: 'email', action: 'Test Connection', by: req.user.name,
+      result: result.ok ? `Test email accepted for ${to}` : `Failed (${result.stage || 'config'}) — ${result.error}`.slice(0, 480),
+    },
+  });
+  await prisma.integration.update({
+    where: { id: 'email' },
+    data: {
+      lastTest: new Date(),
+      lastTestResult: result.ok ? 'Test email sent' : `Failed — ${result.error}`.slice(0, 480),
+      error: result.ok ? null : String(result.error || '').slice(0, 480),
+    },
+  }).catch(() => {});
+  await logAudit({
+    userId: req.user.id, action: 'SMTP test email', entity: 'Integration', entityId: 'email',
+    toValue: result.ok ? `Sent to ${to}` : 'Failed',
+  });
+  if (!result.ok) return res.status(502).json({ error: result.error, stage: result.stage || 'config', notConfigured: !!result.notConfigured });
+  return res.json({ ok: true, to, providerRef: result.providerRef, response: result.response });
+});
+
+// Run the sending worker now. The interval loop does this on its own; this is
+// the "don't wait a minute" button and what the verification script calls.
+router.post('/integrations/email/worker/run', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const summary = await mailWorker.runOnce({});
+  await logAudit({
+    userId: req.user.id, action: 'Email worker run', entity: 'Integration', entityId: 'email',
+    toValue: `${summary.sent} sent / ${summary.retried} retrying / ${summary.failed} failed`,
+  });
+  res.json(summary);
+});
+
+/* --------------------------------------------------------------------------
+   AI ASSISTANT (Anthropic) — the real channel.
+   -------------------------------------------------------------------------- */
+router.post('/integrations/ai-claude/test-message', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const result = await aiAgent.testConnection();
+  await prisma.integrationEvent.create({
+    data: {
+      integrationId: 'ai-claude', action: 'Test Connection', by: req.user.name,
+      result: result.ok ? `Model ${result.model} answered` : `Failed — ${result.error}`.slice(0, 480),
+    },
+  });
+  await prisma.integration.update({
+    where: { id: 'ai-claude' },
+    data: {
+      lastTest: new Date(),
+      lastTestResult: result.ok ? `Model ${result.model} answered` : `Failed — ${result.error}`.slice(0, 480),
+      error: result.ok ? null : String(result.error || '').slice(0, 480),
+    },
+  }).catch(() => {});
+  if (!result.ok) return res.status(502).json({ error: result.error, notConfigured: !!result.notConfigured });
+  return res.json(result);
 });
 
 router.post('/integrations/:id/connect', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
@@ -1044,6 +1181,10 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const row = await integrationRow(channel.id);
   const next = await prisma.integration.update({ where: { id: channel.id }, data: { state: 'Not Connected', connected: false } });
+  // A live channel really stops: the cached connection is dropped and anything
+  // queued goes back to "recorded, not transmitted", which is true again.
+  if (channel.id === 'email') { mailer.resetTransport(); await mailWorker.runOnce({}); }
+  if (channel.id === 'ai-claude') aiAgent.resetClient();
   await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Disconnected', by: req.user.name, result: 'OK' } });
   await logAudit({ userId: req.user.id, action: 'Integration disconnected', entity: 'Integration', entityId: channel.id, fromValue: row.state, toValue: 'Not Connected' });
   res.json(shapeIntegration(channel, next));
@@ -1057,6 +1198,64 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result: 'Failed — not connected' } });
     return res.status(409).json({ error: `${channel.name}: not connected.` });
   }
+
+  // The two live channels really connect. Everything below them is still the
+  // prototype's deterministic simulation, and the screen labels it Demo.
+  if (channel.id === 'email') {
+    const cfg = await mailer.emailConfig();
+    let result;
+    if (!cfg.configured) result = `Not configured — ${cfg.reason}`;
+    else {
+      try {
+        // eslint-disable-next-line global-require
+        const nodemailer = require('nodemailer');
+        const probe = nodemailer.createTransport({
+          host: cfg.host,
+          port: cfg.port,
+          secure: cfg.secure,
+          tls: cfg.allowInsecure ? { rejectUnauthorized: false } : undefined,
+          connectionTimeout: 15000,
+          ...(cfg.user || cfg.pass ? { auth: { user: cfg.user, pass: cfg.pass } } : {}),
+        });
+        await probe.verify();
+        probe.close();
+        result = `Connected to ${cfg.host}:${cfg.port}`;
+      } catch (err) {
+        result = `Failed — ${mailer.providerError(err)}`;
+      }
+    }
+    const okReal = result.startsWith('Connected');
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: {
+        lastTest: new Date(),
+        lastTestResult: result.slice(0, 480),
+        error: okReal ? null : result.slice(0, 480),
+        ...(okReal ? {} : { state: 'Reconnect Required' }),
+      },
+    });
+    await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) } });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: okReal ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
+  if (channel.id === 'ai-claude') {
+    const probe = await aiAgent.testConnection();
+    const result = probe.ok ? `Model ${probe.model} answered` : `Failed — ${probe.error}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: {
+        lastTest: new Date(),
+        lastTestResult: result.slice(0, 480),
+        error: probe.ok ? null : result.slice(0, 480),
+        ...(probe.ok ? {} : { state: 'Reconnect Required' }),
+      },
+    });
+    await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) } });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
   // Deterministic, exactly like the prototype: the TeamLink portal always
   // answers, every other channel answers by a stable hash of its id.
   const ok = channel.id === 'jobportal' || detBool(`intg:${channel.id}`, 80);

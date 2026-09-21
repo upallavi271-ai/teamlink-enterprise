@@ -1387,8 +1387,15 @@ model CandidateMessage {
   senderSourceNote String?   // which record the address came from
   stageFrom     String?
   stageTo       String?
-  providerRef   String?      // filled by a real provider; always null here
-  sentAt        DateTime?    // filled by a real provider; always null here
+  providerRef   String?      // the provider's message id, once it accepted the message
+  sentAt        DateTime?    // when the provider accepted it — never set otherwise
+  // --- delivery bookkeeping (integr_message_delivery) ----------------------
+  // Written by utils/mailWorker.js only. A row with attempts > 0 has really
+  // been handed to a provider at least once.
+  attempts      Int          @default(0)
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime?    // set on a transient failure — the backoff
+  lastError     String?      // the provider's own words on the last failure
   createdAt     DateTime     @default(now())
 
   @@index([candidateId])

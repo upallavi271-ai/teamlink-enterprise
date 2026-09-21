@@ -18,6 +18,24 @@ import { can } from '../permissions';
 // are hidden to match, not to enforce.
 const list = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 
+// The message-delivery vocabulary, mirrored from backend/src/utils/mailWorker.js.
+// SENT means a provider accepted the message and returned a reference for it —
+// nothing else in this file may put that word on a row.
+const MESSAGE_STATUS_LABEL = {
+  NOT_SENT_NO_PROVIDER: 'Not sent — no provider',
+  QUEUED: 'Queued',
+  RETRY: 'Retrying',
+  SENT: 'Sent',
+  FAILED: 'Failed',
+};
+const MESSAGE_STATUS_CLASS = {
+  NOT_SENT_NO_PROVIDER: 'pending',
+  QUEUED: 'pending',
+  RETRY: 'pending',
+  SENT: 'active',
+  FAILED: 'rejected',
+};
+
 const dateTime = (value) => (value
   ? new Date(value).toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -475,13 +493,16 @@ export default function CandidateDetail() {
         <>
           <div className="notice amber">
             <span>
-              <b>Nothing on this tab was delivered.</b>
+              {c.communications.some((m) => m.status === 'SENT')
+                ? <b>Only rows marked Sent were accepted by the provider.</b>
+                : <b>Nothing on this tab has been delivered yet.</b>}
               {' '}
               {c.communicationsNote}
               {' '}
               Each row is the record of a message this app decided to send when a stage changed — the trigger,
-              the template, the recipient and the sending employee&rsquo;s own address — held until a real
-              provider is connected.
+              the template, the recipient and the sending employee&rsquo;s own address. A Sent row carries the
+              provider&rsquo;s own message reference; delivery to the inbox is not confirmed, because there is
+              no bounce/delivery webhook yet.
             </span>
           </div>
           <div className="tbl-wrap">
@@ -508,8 +529,14 @@ export default function CandidateDetail() {
                       {m.senderName && <div className="small-muted">{m.senderName}</div>}
                     </td>
                     <td>
-                      <span className="status pending">Not sent — no provider</span>
+                      <span className={`status ${MESSAGE_STATUS_CLASS[m.status] || 'pending'}`}>
+                        {MESSAGE_STATUS_LABEL[m.status] || m.status}
+                      </span>
                       {m.sentAt && <div className="small-muted">{dateTime(m.sentAt)}</div>}
+                      {m.providerRef && <div className="small-muted" title={m.providerRef}>ref {String(m.providerRef).slice(0, 28)}</div>}
+                      {m.status !== 'SENT' && m.statusDetail && (
+                        <div className="small-muted">{m.statusDetail}</div>
+                      )}
                     </td>
                   </tr>
                 ))}

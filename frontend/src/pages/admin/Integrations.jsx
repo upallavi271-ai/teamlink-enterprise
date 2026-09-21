@@ -11,12 +11,16 @@ import { JOB_PORTAL_URL } from '../JobPortalRedirect.jsx';
 // synchronisation (integJobPortalView, line 10394), which has its own status,
 // controls and sync log.
 //
-// Every channel except the Job Portal is Demo / Simulated, exactly as the
-// prototype says on each one. The Job Portal is real here: the platform serves
-// the TeamLink Job Portal itself at /job-portal/. What is NOT real yet is the
-// synchronisation — the portal is a self-contained app that keeps its data in
-// the browser, so "Sync" only re-reads this ATS. The screen says so plainly
-// rather than implying a live channel; see the SYNC SEAM note below.
+// WHAT IS REAL. Two channels really talk to the outside world and are badged
+// "Live": Email (SMTP), which nodemailer uses to send candidate messages, and
+// the AI Assistant (Anthropic), which answers free-text questions. Everything
+// else is still Demo / Simulated and keeps saying so. The Job Portal is real
+// but its synchronisation is not; see the SYNC SEAM note below.
+//
+// SECRETS ARE NEVER ON THIS PAGE. The server sends non-secret fields and, for
+// each credential field, a masked hint ("••••••a91f") in `secretHints` — never
+// the value. A blank credential box therefore means "leave the stored one
+// alone", which is what the placeholder says; typing "-" clears it.
 
 function stateClass(state) {
   if (state === 'Connected') return 'active';
@@ -32,12 +36,30 @@ export default function Integrations() {
   const [history, setHistory] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [mail, setMail] = useState(null); // GET /admin/integrations/email/status
+  const [testTo, setTestTo] = useState('');
+  const [sending, setSending] = useState(false);
 
   function load() {
     api.get('/admin/integrations').then((res) => setData(res.data)).catch(() => setError('Could not load the integration catalogue.'));
     api.get('/admin/integrations/job-portal').then((res) => setJp(res.data)).catch(() => setJp(null));
+    api.get('/admin/integrations/email/status').then((res) => setMail(res.data)).catch(() => setMail(null));
   }
   useEffect(load, []);
+
+  // Send test email — the proof that the SMTP configuration works. On failure
+  // it shows the PROVIDER's own error, not a generic one.
+  async function sendTestEmail() {
+    setError(''); setNotice(''); setSending(true);
+    try {
+      const res = await api.post('/admin/integrations/email/test-message', { to: testTo.trim() });
+      setNotice(`Test email accepted by the provider for ${res.data.to}${res.data.providerRef ? ` (ref ${res.data.providerRef})` : ''}.`);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The test email could not be sent.');
+      load();
+    } finally { setSending(false); }
+  }
 
   async function run(fn, message) {
     setError(''); setNotice('');
@@ -97,6 +119,18 @@ export default function Integrations() {
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
 
+      {tab === 'connections' && mail && <EmailPanel
+        mail={mail}
+        testTo={testTo}
+        setTestTo={setTestTo}
+        sending={sending}
+        onSend={sendTestEmail}
+        onRunWorker={() => run(
+          () => api.post('/admin/integrations/email/worker/run'),
+          (r) => `Worker: ${r.data.sent} sent, ${r.data.retried} retrying, ${r.data.failed} failed, ${r.data.held} held with no provider.`,
+        )}
+      />}
+
       {tab === 'connections' ? (
         <div className="panel panel-pad">
           <h3 style={{ fontSize: 14, marginBottom: 2 }}>Integrations</h3>
@@ -112,14 +146,25 @@ export default function Integrations() {
                 {items.map((c) => (
                   <div key={c.id}>
                     <div className="assign-row">
-                      <span style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flex: 1 }}>
+                      <span style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flex: 1, minWidth: 260 }}>
                         <span style={{ fontSize: 17, lineHeight: 1.2 }}>{c.glyph}</span>
                         <span><b>{c.name}</b><br />
                           <span className="cell-muted" style={{ fontSize: 11.5 }}>{c.desc}</span></span>
                       </span>
                       <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         <span className={`status ${stateClass(c.state)}`}>{c.state}</span>
-                        <span className="status pending">Demo</span>
+                        {c.live
+                          ? <span className="status active" title="This channel really contacts the provider.">Live</span>
+                          : <span className="status pending">Demo</span>}
+                        {c.lastTestResult && (
+                          <span
+                            className="cell-muted"
+                            title={`Last test ${c.lastTest} — ${c.lastTestResult}`}
+                            style={{ fontSize: 11, maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >
+                            Last test {c.lastTestResult}
+                          </span>
+                        )}
                         {c.lastSync && (
                           <span className="cell-muted" style={{ fontSize: 11 }}>
                             Last sync {c.lastSync} · {c.recordsSynced} ok / {c.recordsFailed} failed
@@ -127,8 +172,13 @@ export default function Integrations() {
                         )}
                         {c.state === 'Connected' ? (
                           <>
-                            <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/sync`), (r) => `${c.name}: ${r.data.synced} synced, ${r.data.failed} failed (Demo).`)}>Sync Now</button>
+                            {!c.live && (
+                              <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/sync`), (r) => `${c.name}: ${r.data.synced} synced, ${r.data.failed} failed (Demo).`)}>Sync Now</button>
+                            )}
                             <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/test`), (r) => `${c.name}: ${r.data.result}`)}>Test</button>
+                            {c.id === 'ai-claude' && (
+                              <button className="btn btn-sm" onClick={() => run(() => api.post('/admin/integrations/ai-claude/test-message'), (r) => `Claude replied: “${r.data.reply}” (${r.data.model}).`)}>Ask the model</button>
+                            )}
                             <button className="btn btn-sm btn-ghost" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/disconnect`), `${c.name} disconnected.`)}>Disconnect</button>
                           </>
                         ) : (
@@ -137,7 +187,17 @@ export default function Integrations() {
                           </button>
                         )}
                         <button className="btn btn-sm" onClick={() => openHistory(c)}>History</button>
-                        <button className="btn btn-sm" onClick={() => setConfiguring({ channel: c, values: Object.fromEntries(c.fields.map(([label, ph]) => [label, c.values[label] != null ? c.values[label] : ph])) })}>Configure →</button>
+                        {/* A secret field opens EMPTY — the server never sends
+                            the value, only a masked hint, and blank means
+                            "keep what is stored". */}
+                        <button className="btn btn-sm" onClick={() => setConfiguring({
+                          channel: c,
+                          values: Object.fromEntries(c.fields.map(([label, ph]) => [
+                            label,
+                            (c.secretFields || []).includes(label) ? '' : (c.values[label] || ph || ''),
+                          ])),
+                        })}
+                        >Configure →</button>
                       </span>
                     </div>
                     {c.error && <div className="cell-muted" style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--red)' }}>{c.error}</div>}
@@ -161,15 +221,26 @@ export default function Integrations() {
           </>}
         >
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>{configuring.channel.desc}</div>
-          {configuring.channel.fields.map(([label]) => (
-            <div className="field" key={label}><label>{label}</label>
-              <input
-                type="text" value={configuring.values[label] || ''}
-                onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}
-              /></div>
-          ))}
+          {configuring.channel.fields.map(([label, placeholder]) => {
+            const secret = (configuring.channel.secretFields || []).includes(label);
+            const hint = (configuring.channel.secretHints || {})[label];
+            return (
+              <div className="field" key={label}>
+                <label>{label}{secret && <span className="small-muted"> · stored encrypted, never shown</span>}</label>
+                <input
+                  type={secret ? 'password' : 'text'}
+                  autoComplete={secret ? 'new-password' : 'off'}
+                  placeholder={secret ? (hint ? `${hint} — leave blank to keep, “-” to clear` : placeholder || '') : (placeholder || '')}
+                  value={configuring.values[label] || ''}
+                  onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}
+                />
+              </div>
+            );
+          })}
           <div className="cell-muted" style={{ fontSize: 11.5, fontStyle: 'italic' }}>
-            Configuration only — this prototype never contacts the provider.
+            {configuring.channel.live
+              ? 'Credentials are encrypted on the server before they are stored and are never sent back to this page. This channel really contacts the provider once it is connected.'
+              : 'Configuration only — this channel is Demo / Simulated and never contacts the provider.'}
           </div>
         </Modal>
       )}
@@ -204,6 +275,82 @@ export default function Integrations() {
           ) : <div className="empty-mini">No sync runs yet.</div>}
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Email (SMTP) — the live channel's own card.
+//
+// It says three things a catalogue row cannot: whether email is actually
+// switched on right now, what the sending queue looks like, and — the whole
+// point — a Send test email box that proves the configuration end to end and
+// reports the provider's real error when it does not.
+// ---------------------------------------------------------------------------
+function EmailPanel({ mail, testTo, setTestTo, sending, onSend, onRunWorker }) {
+  const q = mail.queue || {};
+  return (
+    <div className="card section" style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 14 }}>
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <h3 style={{ fontSize: 14, marginBottom: 8 }}>
+            Email sending{' '}
+            <span className={`status ${mail.configured ? 'active' : 'pending'}`}>
+              {mail.configured ? 'Live' : 'Not configured'}
+            </span>
+          </h3>
+          {mail.configured ? (
+            <>
+              <div className="kv"><span className="k">SMTP</span><span>{mail.host}:{mail.port} · {mail.secure ? 'SSL/TLS' : 'STARTTLS or plain'}</span></div>
+              <div className="kv"><span className="k">Authenticated as</span><span>{mail.username || 'no credentials — open relay'}</span></div>
+              <div className="kv"><span className="k">Envelope sender</span><span>{mail.fromName ? `${mail.fromName} <${mail.fromAddress}>` : mail.fromAddress}</span></div>
+              <div className="kv"><span className="k">Header From</span><span>the sending employee&rsquo;s own address, with Reply-To to match</span></div>
+            </>
+          ) : (
+            <div className="cell-muted" style={{ fontSize: 12.5 }}>{mail.reason}</div>
+          )}
+          <div className="kv"><span className="k">Credential encryption</span>
+            <span>{mail.secretKeyConfigured
+              ? <>On — AES-256-GCM, key from <code>{mail.secretKeyEnvVar}</code></>
+              : <span style={{ color: 'var(--red)' }}>Off — set <code>{mail.secretKeyEnvVar}</code> in the backend environment before saving a password</span>}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ minWidth: 260, flex: '0 1 300px' }}>
+          <div className="field">
+            <label>Send test email to</label>
+            <input type="email" placeholder="you@example.com" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary btn-sm" disabled={sending || !testTo.trim()} onClick={onSend}>
+              {sending ? 'Sending…' : 'Send test email'}
+            </button>
+            <button className="btn btn-sm" onClick={onRunWorker}>Run sending worker</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="statbar" style={{ marginTop: 14 }}>
+        <div className="statitem"><div className="n">{q.queued || 0}</div><div className="l">Queued</div></div>
+        <div className="statitem"><div className="n">{q.retrying || 0}</div><div className="l">Retrying</div></div>
+        <div className="statitem"><div className="n">{q.sent || 0}</div><div className="l">Sent</div></div>
+        <div className="statitem"><div className="n">{q.failed || 0}</div><div className="l">Failed</div></div>
+        <div className="statitem"><div className="n">{q.notSentNoProvider || 0}</div><div className="l">Held — no provider</div></div>
+      </div>
+
+      {/* .notice is display:flex, so its content goes in ONE child element or
+          every <strong> becomes its own column. */}
+      <div className="notice amber" style={{ marginTop: 14 }}>
+        <span>
+          A candidate message is marked <strong>Sent</strong> only when the SMTP provider accepted it, and the row
+          keeps the provider&rsquo;s own message reference. Delivery to the inbox is <strong>not</strong> confirmed —
+          there is no bounce or delivery webhook yet. Messages go out with the sending employee&rsquo;s address in
+          the <code>From</code> header over an authenticated envelope sender, which needs SPF, DKIM and DMARC on
+          that employee&rsquo;s domain or the mail will be spam-foldered. SMS and WhatsApp still have no provider
+          and their rows stay &ldquo;recorded, not transmitted&rdquo;.
+        </span>
+      </div>
     </div>
   );
 }

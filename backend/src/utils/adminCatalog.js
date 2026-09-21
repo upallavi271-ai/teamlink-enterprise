@@ -12,9 +12,14 @@ const INTEGRATION_CATALOG = [
   { id: 'sms', name: 'SMS Gateway', group: 'Messaging', glyph: '\u{1F4F1}',
     desc: 'Transactional SMS for OTPs, interview alerts and offer notifications.',
     fields: [['Provider', ''], ['Sender ID (6 chars)', ''], ['API key', ''], ['DLT template ID', '']] },
+  // REAL. nodemailer talks to this host — see utils/mailer.js. The last two
+  // fields were added with the sending worker: "Encryption" chooses SSL vs
+  // STARTTLS (587/STARTTLS is the common case, 465/SSL the other), and the
+  // from-name is the display name on the envelope sender.
   { id: 'email', name: 'Email (SMTP)', group: 'Email', glyph: '✉️',
-    desc: 'Outbound email for offer letters, invoices, payslips and system notifications.',
-    fields: [['SMTP host', ''], ['Port', '587'], ['From address', ''], ['Username', ''], ['Password / app key', '']] },
+    desc: 'Outbound email for candidate messages, offer letters, invoices, payslips and system notifications.',
+    fields: [['SMTP host', ''], ['Port', '587'], ['From address', ''], ['Username', ''], ['Password / app key', ''],
+      ['Encryption (SSL / STARTTLS / None)', 'STARTTLS'], ['Default from name', '']] },
   { id: 'email-inbox', name: 'Shared Inbox (IMAP)', group: 'Email', glyph: '\u{1F4E5}',
     desc: 'Pull candidate replies and client mail into the requirement timeline.',
     fields: [['IMAP host', ''], ['Port', '993'], ['Mailbox address', ''], ['Password / app key', '']] },
@@ -72,9 +77,20 @@ const INTEGRATION_CATALOG = [
   { id: 'api', name: 'REST API Access', group: 'Developer', glyph: '\u{1F511}',
     desc: 'Issue API keys for external systems to read and write platform data.',
     fields: [['Key label', ''], ['Allowed IP range', ''], ['Scope (read / write)', 'read']] },
+  // REAL. The AI Assistant's free-text Q&A calls the Anthropic API with this
+  // key — see utils/aiAgent.js. The key stays on the server: it is encrypted
+  // at rest and is never included in any response.
+  { id: 'ai-claude', name: 'AI Assistant (Anthropic Claude)', group: 'AI', glyph: '\u{1F916}',
+    desc: 'Free-text questions in the AI Assistant, answered from this app’s own data — always inside the asking user’s permissions and scope.',
+    fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
+      ['Max answer tokens', '1500'], ['Questions per user per hour', '30']] },
 ];
 
-const INTEGRATION_GROUPS = ['Messaging', 'Email', 'Calling', 'Scheduling', 'Job Boards', 'Storage', 'Finance', 'Workforce', 'Developer'];
+const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling', 'Job Boards', 'Storage', 'Finance', 'Workforce', 'Developer'];
+
+// Channels this app really talks to. Everything else on the Integrations
+// screen is still Demo / Simulated and keeps saying so.
+const LIVE_CHANNELS = ['email', 'ai-claude'];
 
 const INTEGRATION_STATES = ['Not Connected', 'Connected', 'Expired', 'Reconnect Required'];
 
@@ -124,6 +140,7 @@ function integrationById(id) {
 module.exports = {
   INTEGRATION_CATALOG,
   INTEGRATION_GROUPS,
+  LIVE_CHANNELS,
   INTEGRATION_STATES,
   SYNC_ENTITIES,
   ORG_STRUCTURE_DEFAULT,

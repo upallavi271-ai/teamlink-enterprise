@@ -399,9 +399,31 @@ tr.kidrow td:first-child{padding-left:26px;color:var(--ink-soft)}
 .ai-fab-mark{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
   border-radius:50%;background:rgba(255,255,255,.18);font-size:9.5px;letter-spacing:.04em}
 .ai-fab-dot{background:var(--amber);color:#3b2a08;border-radius:20px;padding:0 7px;font-size:11px;line-height:17px}
-.ai-panel{position:fixed;right:20px;bottom:70px;z-index:120;width:334px;max-height:min(72vh,560px);
-  display:flex;flex-direction:column;background:var(--paper-raised);border:1px solid var(--line);
-  border-radius:12px;box-shadow:0 22px 60px rgba(21,33,31,.22);overflow:hidden}
+/* The panel DOCKS beside the page instead of floating over it: opening it puts
+   `ai-docked` on <body>, which reserves the same width in the content column,
+   so no table, button or form control is ever hidden underneath. */
+.ai-panel{position:fixed;top:0;right:0;bottom:0;z-index:120;width:var(--ai-dock);
+  display:flex;flex-direction:column;background:var(--paper-raised);border-left:1px solid var(--line);
+  box-shadow:-18px 0 50px rgba(21,33,31,.10);overflow:hidden}
+:root{--ai-dock:360px}
+body.ai-docked .content-col{padding-right:var(--ai-dock)}
+.ai-scrim{display:none}
+.ai-tabs{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--line);background:var(--paper)}
+.ai-tab{border:0;background:none;color:var(--ink-soft);font-size:12.5px;font-weight:600;padding:9px 10px;
+  border-bottom:2px solid transparent;display:inline-flex;align-items:center;gap:6px}
+.ai-tab.active{color:var(--ink);border-bottom-color:var(--navy)}
+.ai-tab-off{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+  background:var(--line);color:var(--ink-soft);border-radius:9px;padding:1px 6px}
+.ai-note{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px 11px;
+  font-size:12.5px;line-height:1.5;margin-bottom:10px}
+.ai-turn{font-size:12.5px;line-height:1.55;white-space:pre-wrap;border-radius:8px;padding:9px 11px;margin-bottom:8px}
+.ai-turn-user{background:var(--navy-tint);border:1px solid var(--line);margin-left:22px}
+.ai-turn-assistant{background:var(--paper);border:1px solid var(--line)}
+.ai-turn-error{border-color:var(--red);color:var(--red)}
+.ai-turn-tools{margin-top:6px;font-size:11px;word-break:break-word}
+.ai-ask{display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--line);background:var(--paper-raised)}
+.ai-ask input{flex:1;min-width:0;padding:7px 10px;border-radius:8px;border:1px solid var(--line);
+  background:var(--paper);color:var(--ink);font-size:12.5px}
 .ai-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;
   padding:13px 15px;border-bottom:1px solid var(--line)}
 .ai-title{font-family:'Newsreader',Georgia,serif;font-size:15px;font-weight:600}
@@ -417,8 +439,18 @@ tr.kidrow td:first-child{padding-left:26px;color:var(--ink-soft)}
 .ai-sug-sub{display:block;font-size:11.5px;color:var(--ink-soft);margin-top:2px}
 .ai-sug-slim{padding:6px 11px}
 .ai-foot{padding:10px 15px;border-top:1px solid var(--line);background:var(--paper);line-height:1.45}
+/* Narrow: there is no width to dock into, so the panel becomes a bottom sheet
+   with a scrim. The page keeps its full width and the sheet is dismissed by
+   tapping outside it, so nothing stays covered. */
+@media (max-width:1023px){
+  body.ai-docked .content-col{padding-right:0}
+  .ai-panel{top:auto;left:0;right:0;bottom:0;width:auto;height:min(78vh,620px);
+    border-left:0;border-top:1px solid var(--line);border-radius:14px 14px 0 0;
+    box-shadow:0 -14px 46px rgba(21,33,31,.24)}
+  .ai-scrim{display:block;position:fixed;inset:0;z-index:119;background:rgba(21,33,31,.34)}
+}
 @media (max-width:640px){
-  .ai-panel{left:12px;right:12px;width:auto;bottom:66px}
   .ai-fab{right:14px;bottom:14px}
   .ai-fab-label{display:none}
+  .ai-panel{height:min(82vh,640px)}
 }
