@@ -19,7 +19,6 @@ import Offers from './pages/ats/Offers.jsx';
 import Joining from './pages/ats/Joining.jsx';
 import InternalHiring from './pages/ats/InternalHiring.jsx';
 import Search from './pages/ats/Search.jsx';
-import Placeholder from './pages/ats/Placeholder.jsx';
 import AccountsDashboard from './pages/AccountsDashboard.jsx';
 
 import Employees from './pages/Employees.jsx';
@@ -124,64 +123,11 @@ export default function App() {
         <Route path="ats/search" element={<Search />} />
         <Route path="ats/dashboard" element={<AtsDashboard />} />
 
-        {/* ATS tabs whose own screen is still being built. They are routed
-            rather than left as dead links; each page says plainly that it is
-            a placeholder and links to where the work happens today. */}
-        <Route
-          path="ats/agreements"
-          element={(
-            <Placeholder
-              title="Agreements"
-              sub="Clients & Requirements — agreement lifecycle"
-              does={[
-                'Every client agreement in one list: Draft → Sent → Confirmed → Active.',
-                'Generate, send and resend the agreement document; track when the client viewed and e-signed it.',
-                'Flag requirements that cannot be activated because their agreement is not Active yet.',
-              ]}
-              links={[
-                { to: '/clients', label: 'Clients — agreement lives on the client record' },
-                { to: '/requirements', label: 'Requirements' },
-              ]}
-            />
-          )}
-        />
-        <Route
-          path="ats/job-portal"
-          element={(
-            <Placeholder
-              title="Job Portal / Integrations"
-              sub="Clients & Requirements — posting and inbound applications"
-              does={[
-                'Post a requirement to the TeamLink job portal and to the external boards.',
-                'Watch inbound applications land in the pipeline, with their source.',
-                'Connection health and last sync for each integration.',
-              ]}
-              links={[
-                { to: '/careers', label: 'Public job portal', external: true },
-                { to: '/admin/integrations', label: 'Integrations (Administration)' },
-                { to: '/reports/job-portal', label: 'Job Portal Reports' },
-              ]}
-            />
-          )}
-        />
-        <Route
-          path="ats/internal-hiring"
-          element={(
-            <Placeholder
-              title="Internal Hiring"
-              sub="Interviews & Joining — TeamLink's own openings"
-              does={[
-                "TeamLink's own vacancies, kept apart from client requirements.",
-                'Internal panel interviews and the offer / joining steps for a new employee.',
-                'Hand-off into HRMS once the new joiner is confirmed.',
-              ]}
-              links={[
-                { to: '/requirements', label: 'Requirements (internal openings are flagged here)' },
-                { to: '/employees', label: 'Employee Management' },
-              ]}
-            />
-          )}
-        />
+        {/* These three tabs have real screens now: Agreements ships with the
+            Clients & Requirements module, Job Portal / Integrations is the
+            Integrations screen, and Internal Hiring is routed above. */}
+        <Route path="ats/agreements" element={<Agreements />} />
+        <Route path="ats/job-portal" element={<Integrations />} />
 
         {/* Accounts */}
         <Route path="invoices" element={<Invoices />} />
