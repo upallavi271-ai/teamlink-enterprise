@@ -22,6 +22,9 @@ const mailer = require('../utils/mailer');
 const mailWorker = require('../utils/mailWorker');
 const aiAgent = require('../utils/aiAgent');
 const { senderIdentity } = require('../utils/candidateComms');
+// emplife: sign-in details go out from the acting HR user's own address, as a
+// single-use set-password link — never a password in a mail body.
+const { sendCredentials, unguessablePasswordHash } = require('../utils/employeeInvite');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -900,11 +903,27 @@ router.post('/employee-management', requirePerm(null, 'administration', 'Users',
   if (email) {
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) return res.status(409).json({ error: 'That email already has a login' });
+    // emplife: PERSIST the product access the Add Employee modal just promised.
+    // It rendered "HRMS → Yes · ATS → … · Accounts → …" for the chosen role off
+    // defaultProductAccessByRole(), but the create path never wrote the three
+    // booleans, so every newly created employee landed with all three false. A
+    // designation the mapping doesn't know (e.g. "Software Engineer") then had
+    // nothing to fall back on in utils/identity.js and the brand-new login was
+    // refused at sign-in with "no product access". Same source, now stored.
+    const defaults = (await defaultProductAccessByRole())[role || 'EMPLOYEE'] || {};
     const user = await prisma.user.create({
       data: {
+        hrmsAccess: defaults.hrms === 'Yes',
+        atsAccess: !!defaults.ats && defaults.ats !== 'No Access',
+        accountsAccess: defaults.accounts === 'Yes',
         name: String(name).trim(),
         email,
-        passwordHash: await bcrypt.hash(password && String(password).length >= 6 ? String(password) : 'teamlink123', 10),
+        // emplife: with no password typed the account gets an unguessable
+        // hash instead of a shared default, and the employee sets their own
+        // through the single-use link in the credentials email below.
+        passwordHash: password && String(password).length >= 6
+          ? await bcrypt.hash(String(password), 10)
+          : await unguessablePasswordHash(),
         role: role || 'EMPLOYEE',
         username: email,
         atsDepartment: atsDepartment || department || null,
@@ -933,7 +952,16 @@ router.post('/employee-management', requirePerm(null, 'administration', 'Users',
     include: EMP_MGMT_INCLUDE,
   });
   await logAudit({ userId: req.user.id, action: 'Employee created' + (userId ? ' with login' : ''), entity: 'Employee', entityId: employee.id, toValue: employee.employeeCode });
-  res.status(201).json(shapeEmployeeMgmtRow(employee));
+
+  // emplife: the sign-in details, emailed from the HR user who pressed the
+  // button. The result travels back on the response verbatim so the screen can
+  // say "not sent — no provider" rather than implying the employee was told.
+  let credentials = null;
+  if (userId) {
+    credentials = await sendCredentials({ employee, userId, actingUser: req.user, req });
+    await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: employee.id });
+  }
+  res.status(201).json({ ...shapeEmployeeMgmtRow(employee), credentials });
 });
 
 // Create Login — attaches a login to an employee who has none. Never a second
@@ -953,7 +981,10 @@ router.post('/employee-management/:id/create-login', requirePerm(null, 'administ
     const user = await prisma.user.create({
       data: {
         name: employee.name, email: employee.email,
-        passwordHash: await bcrypt.hash(password && String(password).length >= 6 ? String(password) : 'teamlink123', 10),
+        // emplife: see the Add Employee path — no shared default password.
+        passwordHash: password && String(password).length >= 6
+          ? await bcrypt.hash(String(password), 10)
+          : await unguessablePasswordHash(),
         role: role && ALL_ROLES.includes(role) ? role : 'EMPLOYEE',
         username: employee.email, atsDepartment: employee.department, branch: employee.branch || employee.location,
         team: employee.team, status: 'Active',
@@ -963,7 +994,12 @@ router.post('/employee-management/:id/create-login', requirePerm(null, 'administ
     await logAudit({ userId: req.user.id, action: 'User auto-created and linked to employee', entity: 'User', entityId: user.id, toValue: employee.employeeCode });
   }
   const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
-  res.json(shapeEmployeeMgmtRow(fresh));
+  // emplife: a login without sign-in details is a login nobody can use.
+  const credentials = fresh.userId
+    ? await sendCredentials({ employee: fresh, userId: fresh.userId, actingUser: req.user, req })
+    : null;
+  if (credentials) await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: fresh.id });
+  res.json({ ...shapeEmployeeMgmtRow(fresh), credentials });
 });
 
 // Activate / Deactivate the employee's login.

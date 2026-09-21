@@ -23,6 +23,13 @@ export default function EmployeeDetail() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [depts, setDepts] = useState([]);
+  // Review surface: a decision always carries a reason back to the employee.
+  const [reviewNote, setReviewNote] = useState('');
+  const [unlockNote, setUnlockNote] = useState('');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [credentials, setCredentials] = useState(null);
 
   function load() {
     api.get(`/employees/${id}`).then((res) => setEmployee(res.data));
@@ -63,13 +70,45 @@ export default function EmployeeDetail() {
   }
 
   async function decideChanges(action) {
-    await api.patch(`/employees/${id}/changes/${action}`);
-    load();
+    setError(''); setNotice(''); setBusy(action);
+    try {
+      await api.patch(`/employees/${id}/changes/${action}`,
+        action === 'reject' ? { reason: reviewNote } : { note: reviewNote || undefined });
+      setReviewNote('');
+      setNotice(action === 'approve'
+        ? 'Changes applied — the profile is now locked and the employee can no longer self-edit.'
+        : 'Sent back to the employee with your reason.');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'That decision could not be saved.');
+    } finally { setBusy(''); }
   }
 
   async function decideUnlock(action) {
-    await api.patch(`/employees/${id}/unlock-request/${action}`);
-    load();
+    setError(''); setNotice(''); setBusy(action);
+    try {
+      const res = await api.patch(`/employees/${id}/unlock-request/${action}`,
+        action === 'reject' ? { reason: unlockNote } : { note: unlockNote || undefined });
+      setUnlockNote('');
+      setNotice(action === 'approve'
+        ? `Edit access granted until ${new Date(res.data.unlockExpiresAt).toLocaleString('en-GB')}.`
+        : 'Request declined — the employee has been given your reason.');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'That decision could not be saved.');
+    } finally { setBusy(''); }
+  }
+
+  // Re-issue the single-use sign-in link. Any earlier link stops working.
+  async function sendCredentials() {
+    setError(''); setNotice(''); setCredentials(null); setBusy('credentials');
+    try {
+      const res = await api.post(`/employees/${id}/send-credentials`);
+      setCredentials(res.data.credentials);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The sign-in details could not be issued.');
+    } finally { setBusy(''); }
   }
 
   async function toggleLock() {
@@ -105,22 +144,80 @@ export default function EmployeeDetail() {
           {isAdmin && !editing && <button className="btn btn-sm" onClick={startEdit}>Edit</button>}
           {isAdmin && <button className="btn btn-sm" onClick={togglePause}>{employee.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}</button>}
           {isAdmin && <button className="btn btn-sm" onClick={toggleLock}>{employee.isLocked ? 'Unlock' : 'Lock'}</button>}
+          {isAdmin && employee.user && (
+            <button className="btn btn-sm" disabled={busy === 'credentials'} onClick={sendCredentials}>
+              {busy === 'credentials' ? 'Sending…' : 'Send sign-in details'}
+            </button>
+          )}
           {isAdmin && <button className="btn btn-sm" onClick={deleteEmployee}>Delete</button>}
         </div>
       </div>
 
+      {error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
+      {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
+      {credentials && (
+        <div className="notice" style={{ marginBottom: 12, borderColor: credentials.sent ? undefined : 'var(--warn)' }}>
+          <div><b>Sign-in details:</b> {credentials.status}</div>
+          {!credentials.sent && credentials.link && (
+            <div className="small-muted" style={{ marginTop: 6, wordBreak: 'break-all' }}>
+              Nothing was emailed. Pass this single-use link to {employee.name} yourself — it is shown once and
+              expires {credentials.expiresAt ? new Date(credentials.expiresAt).toLocaleString('en-GB') : 'shortly'}:
+              <br />{credentials.link}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* THE REVIEW SURFACE — field by field, from → to, with a reason on the
+          way back. Approving applies the values AND locks the profile; the
+          server is what refuses the employee's next edit, not a disabled input. */}
       {employee.pendingChanges && (
         <div className="card section" style={{ borderColor: 'var(--warn)' }}>
           <h3>Profile submitted — awaiting review</h3>
-          {employee.pendingChanges.map((c, i) => (
-            <div className="kv" key={i}><span className="k">{c.label}</span><span>{c.from || '—'} → {c.to}</span></div>
-          ))}
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            {employee.name} submitted {employee.pendingChanges.length} change(s). Approving writes them onto the
+            record and locks the profile — after that they can only edit again if you grant an unlock request.
+          </div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Field</th><th>Current</th><th>Submitted</th></tr></thead>
+              <tbody>
+                {employee.pendingChanges.map((c, i) => (
+                  <tr key={i}>
+                    <td>{c.label || c.field}</td>
+                    <td className="cell-muted">{c.from || '—'}</td>
+                    <td><b>{c.to}</b></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {isAdmin && (
             <div style={{ marginTop: 10 }}>
-              <button className="btn btn-primary btn-sm" onClick={() => decideChanges('approve')}>Approve (locks profile)</button>{' '}
-              <button className="btn btn-sm" onClick={() => decideChanges('reject')}>Send back</button>
+              <label className="field">
+                <span>Note to the employee (required when sending back)</span>
+                <input value={reviewNote} onChange={(e) => setReviewNote(e.target.value)}
+                  placeholder="e.g. IFSC code doesn't match the bank name" />
+              </label>
+              <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => decideChanges('approve')}>
+                Approve &amp; lock profile
+              </button>{' '}
+              <button className="btn btn-sm" disabled={!!busy || !reviewNote.trim()} onClick={() => decideChanges('reject')}>
+                Send back with reason
+              </button>
             </div>
           )}
+        </div>
+      )}
+
+      {!employee.pendingChanges && employee.reviewDecision && (
+        <div className="card section">
+          <h3 style={{ fontSize: 13 }}>Last profile review</h3>
+          <div className="kv"><span className="k">Decision</span>
+            <span className={`status ${employee.reviewDecision === 'Approved' ? 'priority-low' : 'priority-medium'}`}>{employee.reviewDecision}</span></div>
+          <div className="kv"><span className="k">By</span>
+            <span>{employee.reviewedByName || '—'}{employee.reviewedAt ? ` · ${new Date(employee.reviewedAt).toLocaleString('en-GB')}` : ''}</span></div>
+          {employee.reviewNote && <div className="kv"><span className="k">Note</span><span>{employee.reviewNote}</span></div>}
         </div>
       )}
 
@@ -128,13 +225,29 @@ export default function EmployeeDetail() {
         <div className="card section" style={{ borderColor: 'var(--warn)' }}>
           <h3>Edit access requested</h3>
           <div className="kv"><span className="k">Reason</span><span>{employee.unlockRequestReason}</span></div>
-          <div className="small-muted">Request {employee.unlockRequestCount} of 3 for this employee.</div>
+          <div className="small-muted">Request {employee.unlockRequestCount} of 3 for this employee (lifetime cap).</div>
           {isAdmin && (
             <div style={{ marginTop: 10 }}>
-              <button className="btn btn-primary btn-sm" onClick={() => decideUnlock('approve')}>Grant Edit Access</button>{' '}
-              <button className="btn btn-sm" onClick={() => decideUnlock('reject')}>Deny</button>
+              <label className="field">
+                <span>Note to the employee (required when declining)</span>
+                <input value={unlockNote} onChange={(e) => setUnlockNote(e.target.value)}
+                  placeholder="e.g. Approved — update the bank details only" />
+              </label>
+              <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => decideUnlock('approve')}>
+                Grant edit access (48h)
+              </button>{' '}
+              <button className="btn btn-sm" disabled={!!busy || !unlockNote.trim()} onClick={() => decideUnlock('reject')}>
+                Decline with reason
+              </button>
             </div>
           )}
+        </div>
+      )}
+
+      {!employee.isLocked && employee.unlockExpiresAt && new Date(employee.unlockExpiresAt) > new Date() && (
+        <div className="notice" style={{ marginBottom: 12 }}>
+          🔓 Edit access is open until <b>{new Date(employee.unlockExpiresAt).toLocaleString('en-GB')}</b>.
+          It closes when they submit, or at that time — whichever is first.
         </div>
       )}
 
@@ -266,6 +379,9 @@ export default function EmployeeDetail() {
             <div className="kv"><span className="k">Address</span><span>{[employee.addressLine1, employee.city, employee.state, employee.postalCode].filter(Boolean).join(', ') || employee.address || '—'}</span></div>
             <div className="kv"><span className="k">Emergency Contact</span><span>{employee.emergencyContactName || '—'} {employee.emergencyContactRelation ? `(${employee.emergencyContactRelation})` : ''} {employee.emergencyContactPhone ? `— ${employee.emergencyContactPhone}` : ''}</span></div>
             <div className="kv"><span className="k">Login Account</span><span>{employee.user ? `${employee.user.name} · ${employee.user.role}` : 'Not linked'}</span></div>
+            <div className="kv"><span className="k">Sign-in details</span>
+              <span>{employee.credentialsSentStatus || 'Not issued yet'}
+                {employee.credentialsSentAt ? ` · ${new Date(employee.credentialsSentAt).toLocaleString('en-GB')}` : ''}</span></div>
 
             <h3 style={{ fontSize: 13, margin: '14px 0 8px' }}>Bank & Statutory <span className="small-muted">(restricted)</span></h3>
             <div className="kv"><span className="k">Bank</span><span>{employee.bankName ? `${employee.bankName} · ${employee.bankAccountNumber || '—'}` : '—'}</span></div>

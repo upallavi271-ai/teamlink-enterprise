@@ -40,10 +40,18 @@ export default function Employees() {
   const [detail, setDetail] = useState(null);
   const [resetFor, setResetFor] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
-  // main-only: bulk CSV import and the department transfer trail.
+  // main-only: bulk CSV import/export and the department transfer trail.
   const [showImport, setShowImport] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [importResult, setImportResult] = useState(null);
+  const [importErrors, setImportErrors] = useState([]);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importFileName, setImportFileName] = useState('');
+  const [exporting, setExporting] = useState(false);
+  // The HR review surface: submitted profiles and unlock requests waiting on
+  // a decision, both scoped by the server to what this caller may see.
+  const [queue, setQueue] = useState(null);
+  const [credentials, setCredentials] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
   const [transferForm, setTransferForm] = useState({ department: '', team: '', reason: '' });
   const [error, setError] = useState('');
@@ -56,6 +64,7 @@ export default function Employees() {
     }).catch(() => setError('Employee Management is restricted to Super Admin and Admin.'));
     // main-only: profileStage / isLocked / completion come off the HR record.
     api.get('/employees').then((res) => setHr(res.data)).catch(() => setHr([]));
+    api.get('/employees/review-queue').then((res) => setQueue(res.data)).catch(() => setQueue(null));
   }
   useEffect(() => {
     load();
@@ -85,25 +94,83 @@ export default function Employees() {
 
   // main-only: the profile lock / unlock workflow and the offboarding states
   // this app tracks and the prototype has no counterpart for.
+  // RFC 4180 parsing — quoted fields may hold commas, newlines and doubled
+  // quotes. Splitting on "," alone silently shifted every later column of a
+  // row whose designation read "Engineer, Senior".
   function parseCsv(text) {
-    const lines = text.trim().split(/\r?\n/).filter(Boolean);
-    if (!lines.length) return [];
-    const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-    return lines.slice(1).map((line) => {
-      const cells = line.split(',');
-      const row = {};
-      headers.forEach((h, i) => { row[h] = (cells[i] || '').trim(); });
-      return row;
-    });
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+    const src = String(text).replace(/^﻿/, '');
+    for (let i = 0; i < src.length; i += 1) {
+      const ch = src[i];
+      if (quoted) {
+        if (ch === '"') {
+          if (src[i + 1] === '"') { cell += '"'; i += 1; } else quoted = false;
+        } else cell += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ',') { row.push(cell); cell = ''; }
+      else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+      else if (ch !== '\r') cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    const nonEmpty = rows.filter((r) => r.some((c) => String(c).trim() !== ''));
+    if (!nonEmpty.length) return { headers: [], rows: [] };
+    const headers = nonEmpty[0].map((h) => h.trim().toLowerCase());
+    return {
+      headers,
+      rows: nonEmpty.slice(1).map((cells) => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = (cells[i] || '').trim(); });
+        return obj;
+      }),
+    };
   }
 
-  async function runImport() {
+  // Nothing is written unless EVERY row passes. `validateOnly` runs the same
+  // server-side checks without writing, so HR can dry-run a file first.
+  async function runImport(validateOnly) {
+    setError(''); setNotice(''); setImportResult(null); setImportErrors([]);
     const parsed = parseCsv(csvText);
-    if (!parsed.length) return;
-    const res = await api.post('/employees/bulk-import', { rows: parsed });
-    setImportResult(res.data);
-    setCsvText('');
-    load();
+    if (!parsed.rows.length) { setError('That file has no data rows.'); return; }
+    setImportBusy(true);
+    try {
+      const res = await api.post('/employees/bulk-import', { rows: parsed.rows, validateOnly: !!validateOnly });
+      setImportResult(res.data);
+      if (!validateOnly) { setCsvText(''); setImportFileName(''); load(); }
+    } catch (err) {
+      const data = err.response?.data;
+      setImportErrors(data?.errors || []);
+      setImportResult(data && data.errors ? data : null);
+      if (!data?.errors) setError(data?.error || 'The import could not be run.');
+    } finally { setImportBusy(false); }
+  }
+
+  function readFile(file) {
+    if (!file) return;
+    setImportFileName(file.name);
+    setImportResult(null); setImportErrors([]);
+    const reader = new FileReader();
+    reader.onload = () => setCsvText(String(reader.result || ''));
+    reader.readAsText(file);
+  }
+
+  // The server builds the CSV and scopes it: a TL downloads their own
+  // department, not the company. The browser only saves what comes back.
+  async function exportCsv() {
+    setError(''); setNotice(''); setExporting(true);
+    try {
+      const res = await api.get('/employees/export.csv', { responseType: 'blob' });
+      const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || 'employees.csv';
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click();
+      a.remove(); URL.revokeObjectURL(url);
+      setNotice(`Exported ${name} — scoped to what your role may see.`);
+    } catch {
+      setError('Export is not included in your role’s permissions.');
+    } finally { setExporting(false); }
   }
 
   async function submitTransfer(e) {
@@ -113,8 +180,19 @@ export default function Employees() {
   }
 
   async function saveNew() {
-    const ok = await run(() => api.post('/admin/employee-management', adding), `${adding.name} created — employee record and login together.`);
-    if (ok) setAdding(null);
+    setError(''); setNotice(''); setCredentials(null);
+    try {
+      const res = await api.post('/admin/employee-management', adding);
+      setNotice(`${adding.name} created — employee record and login together.`);
+      // What actually happened to the sign-in email, verbatim from the server.
+      // When there is no SMTP provider this says so and hands over the link;
+      // it never implies the employee has been told.
+      setCredentials(res.data.credentials ? { ...res.data.credentials, name: adding.name } : null);
+      setAdding(null);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'That change could not be saved.');
+    }
   }
 
   async function saveRoles() {
@@ -150,7 +228,8 @@ export default function Employees() {
             Employee master administration, login access and product roles. The HR record itself lives in HRMS → Employees.
           </div></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {/* main-only: CSV bulk import */}
+          {/* main-only: CSV bulk import / export */}
+          <button className="btn" onClick={exportCsv} disabled={exporting}>{exporting ? 'Exporting…' : 'Export CSV'}</button>
           <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>
           <button className="btn btn-primary" onClick={() => setAdding({ ...EMPTY_NEW })}>Add Employee</button>
         </div>
@@ -159,20 +238,124 @@ export default function Employees() {
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
 
+      {credentials && (
+        <div className="card section" style={{ borderColor: credentials.sent ? undefined : 'var(--warn)' }}>
+          <h3 style={{ fontSize: 13 }}>Sign-in details for {credentials.name}</h3>
+          <div className={credentials.sent ? 'notice' : 'error-text'}>{credentials.status}</div>
+          {!credentials.sent && credentials.link && (
+            <div className="small-muted" style={{ marginTop: 8, wordBreak: 'break-all' }}>
+              <b>Nothing was emailed.</b> Connect an SMTP provider in Administration → Integrations, or pass this
+              single-use link on yourself. It is shown once and expires{' '}
+              {credentials.expiresAt ? new Date(credentials.expiresAt).toLocaleString('en-GB') : 'shortly'}:
+              <div style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}>{credentials.link}</div>
+            </div>
+          )}
+          <div className="small-muted" style={{ marginTop: 8 }}>
+            No password is ever emailed — the employee chooses their own through the link.
+          </div>
+          <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setCredentials(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {/* HR's review surface. Everything waiting on a decision, in one place;
+          the server scopes both queues to what this caller may see. */}
+      {queue && (queue.submitted.length > 0 || queue.unlockRequests.length > 0) && (
+        <div className="card section" style={{ borderColor: 'var(--warn)' }}>
+          <h3>Waiting for your review — {queue.scope}</h3>
+          {queue.submitted.length > 0 && (
+            <>
+              <div className="section-label">Profiles submitted for review ({queue.submitted.length})</div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Employee</th><th>Department</th><th>Fields changed</th><th>Submitted</th><th></th></tr></thead>
+                  <tbody>
+                    {queue.submitted.map((e) => (
+                      <tr key={e.id}>
+                        <td className="row-link"><Link to={`/employees/${e.id}`}>{e.name}</Link> <span className="cell-muted">{e.employeeCode}</span></td>
+                        <td className="cell-muted">{e.department || '—'}</td>
+                        <td className="cell-muted">
+                          {(e.pendingChanges || []).slice(0, 4).map((c) => c.label || c.field).join(', ')}
+                          {(e.pendingChanges || []).length > 4 ? ` +${e.pendingChanges.length - 4} more` : ''}
+                        </td>
+                        <td className="cell-muted">{new Date(e.updatedAt).toLocaleString('en-GB')}</td>
+                        <td><Link className="btn btn-sm btn-primary" to={`/employees/${e.id}`}>Review</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {queue.unlockRequests.length > 0 && (
+            <>
+              <div className="section-label" style={{ marginTop: 12 }}>Edit-access requests ({queue.unlockRequests.length})</div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Employee</th><th>Department</th><th>Reason</th><th>Request</th><th></th></tr></thead>
+                  <tbody>
+                    {queue.unlockRequests.map((e) => (
+                      <tr key={e.id}>
+                        <td className="row-link"><Link to={`/employees/${e.id}`}>{e.name}</Link> <span className="cell-muted">{e.employeeCode}</span></td>
+                        <td className="cell-muted">{e.department || '—'}</td>
+                        <td className="cell-muted">{e.unlockRequestReason || '—'}</td>
+                        <td className="cell-muted">{e.unlockRequestCount} of {queue.unlockRequestLimit}</td>
+                        <td><Link className="btn btn-sm btn-primary" to={`/employees/${e.id}`}>Decide</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {!queue.canDecide && (
+            <div className="small-muted" style={{ marginTop: 8 }}>
+              You can see this queue but approving is not included in your role&apos;s permissions.
+            </div>
+          )}
+        </div>
+      )}
+
       {showImport && (
         <div className="card section">
           <h3>Bulk import (CSV)</h3>
           <div className="small-muted" style={{ marginBottom: 8 }}>
             Header row required. Recognized columns: name, email, phone, department, designation, location.
-            Rows matching an existing employee&apos;s email are skipped as duplicates.
+            <b> Nothing is written unless every row passes</b> — a file with one bad row is refused whole, with the
+            line number of each problem. Import never creates logins: send sign-in details per employee afterwards.
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <input type="file" accept=".csv,text/csv" onChange={(e) => readFile(e.target.files?.[0])} />
+            {importFileName && <span className="cell-muted" style={{ fontSize: 12 }}>{importFileName}</span>}
           </div>
           <textarea
             rows="5" style={{ width: '100%', padding: 8, borderRadius: 7, border: '1px solid var(--line)', fontFamily: 'monospace', fontSize: 12.5 }}
             placeholder={'name,email,phone,department,designation,location\nAsha Rao,asha.rao@example.com,9876543210,IT,Software Engineer,Hyderabad'}
-            value={csvText} onChange={(e) => setCsvText(e.target.value)}
+            value={csvText} onChange={(e) => { setCsvText(e.target.value); setImportResult(null); setImportErrors([]); }}
           />
-          <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={runImport}>Import</button>
-          {importResult && <div className="small-muted" style={{ marginTop: 8 }}>Imported {importResult.imported}, skipped {importResult.skipped} duplicate/invalid row(s).</div>}
+          <div style={{ marginTop: 8 }}>
+            <button className="btn btn-sm" disabled={importBusy} onClick={() => runImport(true)}>Check file</button>{' '}
+            <button className="btn btn-primary btn-sm" disabled={importBusy} onClick={() => runImport(false)}>Import</button>
+          </div>
+          {importErrors.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div className="error-text">
+                Nothing was imported. {importErrors.length} problem(s) — fix the file and try again.
+              </div>
+              <div className="tbl-wrap" style={{ marginTop: 6 }}>
+                <table>
+                  <thead><tr><th style={{ width: 90 }}>Line</th><th>Row</th><th>Problem</th></tr></thead>
+                  <tbody>
+                    {importErrors.map((e, i) => (
+                      <tr key={i}><td><b>{e.line || '—'}</b></td><td className="cell-muted">{e.name || '—'}</td><td>{e.message}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {importResult && importResult.ok && (
+            <div className="notice" style={{ marginTop: 8 }}>{importResult.message}</div>
+          )}
         </div>
       )}
 
@@ -264,7 +447,17 @@ export default function Employees() {
                       <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/employee-management/${e.id}/toggle-login`), `${e.name} login ${e.loginStatus === 'Active' ? 'deactivated' : 'activated'}.`)}>
                         {e.loginStatus === 'Active' ? 'Deactivate' : 'Activate'}
                       </button>{' '}
-                      <button className="btn btn-sm btn-ghost" onClick={() => { setResetFor(e); setResetPassword(''); }}>Reset Password</button>
+                      <button className="btn btn-sm btn-ghost" onClick={() => { setResetFor(e); setResetPassword(''); }}>Reset Password</button>{' '}
+                      {/* Re-issues the single-use sign-in link and emails it
+                          from the acting HR user's own address. */}
+                      <button className="btn btn-sm" onClick={async () => {
+                        setError(''); setNotice(''); setCredentials(null);
+                        try {
+                          const res = await api.post(`/employees/${e.id}/send-credentials`);
+                          setCredentials({ ...res.data.credentials, name: e.name });
+                          load();
+                        } catch (err) { setError(err.response?.data?.error || 'Could not issue sign-in details.'); }
+                      }}>Send Sign-in</button>
                     </>
                   ) : (
                     <button className="btn btn-sm btn-primary" onClick={() => run(() => api.post(`/admin/employee-management/${e.id}/create-login`), `Login created for ${e.name}.`)}>Create Login</button>
@@ -511,8 +704,11 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
             <option>All departments</option>
             {options.departments.map((d) => <option key={d}>{d}</option>)}
           </select></div>
-        <div className="field"><label>Temporary password</label>
-          <input type="password" placeholder="at least 6 characters" value={form.password} onChange={(e) => set({ password: e.target.value })} /></div>
+        {/* Optional and discouraged. Leave it empty and the employee gets a
+            single-use link to choose their own password — no password is ever
+            emailed, and the account has no guessable default in the meantime. */}
+        <div className="field"><label>Temporary password (leave empty — recommended)</label>
+          <input type="password" placeholder="leave empty to email a set-password link" value={form.password} onChange={(e) => set({ password: e.target.value })} /></div>
       </div>
 
       {/* The prototype's neSummary(): what this person will actually be able to
