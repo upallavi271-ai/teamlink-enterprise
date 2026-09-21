@@ -8,6 +8,7 @@ import {
   CANDIDATE_GENDERS, CANDIDATE_NOTICE_PERIODS, CANDIDATE_AVAILABILITY, CANDIDATE_JOB_PREFERENCES,
   CANDIDATE_EMPLOYMENT_TYPES, CANDIDATE_WORK_MODES, CANDIDATE_EDUCATION,
   lifeStatusClass, protoDate, initials,
+  FOLLOWUP_STATUSES, followUpStatusClass,
 } from '../atsVocab';
 import {
   STAGE_GROUPS, CANDIDATE_VIEWS, matchesView, groupContents, groupBadgeClass,
@@ -37,7 +38,7 @@ const EMPTY = {
 const EMPTY_FILTERS = {
   search: '', department: '', clientId: '', requirementId: '', recruiter: '',
   tl: '', bde: '', location: '', source: '', stage: '', status: '',
-  appliedFrom: '', appliedTo: '',
+  appliedFrom: '', appliedTo: '', followUp: '',
 };
 
 export default function Candidates() {
@@ -52,6 +53,8 @@ export default function Candidates() {
     ...EMPTY_FILTERS,
     stage: searchParams.get('stage') ? `stage:${searchParams.get('stage')}` : '',
     status: searchParams.get('status') || '',
+    // The dashboard's "Follow-ups Due" / "Overdue Follow-ups" rows link here.
+    followUp: searchParams.get('followUp') || '',
   });
   const [showForm, setShowForm] = useState(false);
   const [duplicate, setDuplicate] = useState('');
@@ -70,14 +73,16 @@ export default function Candidates() {
   const qsStage = searchParams.get('stage') || '';
   const qsStatus = searchParams.get('status') || '';
   const qsView = searchParams.get('view') || '';
+  const qsFollowUp = searchParams.get('followUp') || '';
   useEffect(() => {
     setFilters((f) => ({
       ...f,
       stage: qsStage ? `stage:${qsStage}` : '',
       status: qsStatus,
+      followUp: qsFollowUp,
     }));
     if (qsView) setView(qsView);
-  }, [qsStage, qsStatus, qsView]);
+  }, [qsStage, qsStatus, qsView, qsFollowUp]);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
@@ -109,6 +114,14 @@ export default function Candidates() {
       if (filters.location && c.location !== filters.location) return false;
       if (filters.source && c.source !== filters.source) return false;
       if (filters.status && c.lifeStatus !== filters.status) return false;
+      // Follow-up status. The value can be a comma list (the dashboard links
+      // Due Today + Overdue as one row), and "Not set" is a real answer —
+      // an application nobody has committed a follow-up on is exactly what a
+      // lead is looking for.
+      if (filters.followUp) {
+        const wanted = filters.followUp.split(',').map((x) => x.trim()).filter(Boolean);
+        if (!wanted.includes(c.followUp ? c.followUp.status : 'Not set')) return false;
+      }
       // The Stage filter accepts either a whole visible stage ("group:interview")
       // or one precise underlying status ("stage:INTERVIEW_COMPLETED"), so
       // folding the pipeline never costs anyone the fine-grained filter.
@@ -547,6 +560,12 @@ export default function Candidates() {
               <option value="">All statuses</option>
               {LIFE_STATUSES.map((s) => <option key={s}>{s}</option>)}
             </Combo>
+            <Combo value={filters.followUp} onChange={(e) => setFilter({ followUp: e.target.value })}>
+              <option value="">All follow-ups</option>
+              <option value="Due Today,Overdue">Due now (today + overdue)</option>
+              {FOLLOWUP_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              <option value="Not set">Not set</option>
+            </Combo>
             <input type="date" title="Applied from" value={filters.appliedFrom} onChange={(e) => setFilter({ appliedFrom: e.target.value })} />
             <input type="date" title="Applied to" value={filters.appliedTo} onChange={(e) => setFilter({ appliedTo: e.target.value })} />
             <button className="btn btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
@@ -559,7 +578,7 @@ export default function Candidates() {
               <thead>
                 <tr>
                   <th>Candidate</th><th>Requirement</th><th>Client</th><th>Stage</th>
-                  <th>Owner</th><th>Next Action</th><th>Due</th><th>Status</th>
+                  <th>Owner</th><th>Next Action</th><th>Due</th><th>Follow-up</th><th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -588,6 +607,30 @@ export default function Candidates() {
                       {protoDate(c.dueDate)}
                       {c.overdue && <> <span className="status rejected">Overdue</span></>}
                     </td>
+                    {/* FOLLOW-UP — the real record, not the stage SLA in the
+                        Due column beside it. They are two different
+                        questions: Due is when the pipeline says this stage
+                        runs out, Follow-up is what a person committed to and
+                        when. Blank until somebody records one; a client or
+                        candidate login is served none of it. */}
+                    <td className="cell-muted">
+                      {c.followUp
+                        ? (
+                          <>
+                            <span className={`status ${followUpStatusClass(c.followUp.status)}`}>
+                              {c.followUp.status}
+                            </span>
+                            <div className="small-muted" style={{ marginTop: 3 }}>
+                              {c.followUp.nextAction || '—'}
+                            </div>
+                            <div className="small-muted">
+                              {`due ${protoDate(c.followUp.dueDate)}`}
+                              {c.followUp.daysOverdue > 0 && ` · ${c.followUp.daysOverdue}d late`}
+                            </div>
+                          </>
+                        )
+                        : <span className="small-muted">Not set</span>}
+                    </td>
                     <td>
                       {c.lifeStatus
                         ? <span className={`status ${lifeStatusClass(c.lifeStatus)}`}>{c.lifeStatus}</span>
@@ -596,7 +639,7 @@ export default function Candidates() {
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>No candidates match.</td></tr>
+                  <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>No candidates match.</td></tr>
                 )}
               </tbody>
             </table>

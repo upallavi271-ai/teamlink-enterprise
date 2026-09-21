@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import Modal, { SectionHead } from '../components/Modal.jsx';
+import RequirementForm from '../components/RequirementForm.jsx';
 import {
-  DEPTS, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
-  JOINING_TIMELINES, NOTICE_PERIODS_MAX, JOB_PREFERENCES, SALARY_TYPES, CURRENCIES,
-  POSTING_SOURCES, priorityBadgeClass,
+  DEPTS, LOCS, PRIORITIES, priorityBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive, REQUIREMENT_STATUS_CODES,
-  agreementStatusLabel, agreementIsActive,
+  agreementStatusLabel,
 } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { canRaiseRequirement } from '../permissions';
@@ -18,48 +16,6 @@ import Combo from '../components/Combo.jsx';
 // renderRequirementList() (6937), openRequirementsHtml() (6832),
 // agreementMonthHtml() (6906) and the Create Requirement modal
 // openAddRequirementModal() (6956) with its seven lettered sections.
-const EMPTY = {
-  type: 'Client Requirement',
-  title: '',
-  clientId: '',
-  department: DEPTS[0],
-  openings: 1,
-  priority: 'Medium',
-  closingDate: '',
-  jobDescription: '',
-  responsibilities: '',
-  qualifications: '',
-  education: 'Any Degree',
-  skills: '',
-  goodToHaveSkills: '',
-  employmentType: 'Full Time',
-  workMode: 'Work From Office',
-  location: LOCS[0],
-  preferredLocation: '',
-  expMin: 2,
-  expMax: 6,
-  relevantExperience: 2,
-  joiningTimeline: 'Within 15 Days',
-  noticePeriodMax: '30 Days',
-  jobPreference: 'Permanent',
-  salaryType: 'Annual CTC',
-  currency: 'INR',
-  salaryMin: '',
-  salaryMax: '',
-  // The assignment chain:
-  //   Requirement → Assigned TL → Assigned Recruiter(s) → BDE → Client
-  // These are user IDs, not names — they are what scope filters on.
-  recruiterId: '',
-  recruiterIds: [],
-  bdeId: '',
-  tlId: '',
-  stlId: '',
-  tl: '',
-  stl: '',
-  targetDate: '',
-  accountManager: '',
-  postingSources: [],
-};
 
 const MONTH = (value) => {
   if (!value) return null;
@@ -74,10 +30,7 @@ export default function Requirements() {
   const [requirements, setRequirements] = useState([]);
   const [clients, setClients] = useState([]);
   const [team, setTeam] = useState([]);
-  const [form, setForm] = useState(EMPTY);
   const [showForm, setShowForm] = useState(false);
-  const [preview, setPreview] = useState(false);
-  const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   // The prototype's three views: All Requirements / Open Requirements /
   // Agreement Report. They are sub-views of the Requirements TAB now — the
@@ -101,8 +54,6 @@ export default function Requirements() {
   });
   const activeFilterCount = Object.entries(filters).filter(([, v]) => v).length;
 
-  const internal = form.type === 'Internal Requirement';
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   function load() {
     const params = {};
@@ -118,7 +69,6 @@ export default function Requirements() {
     });
   }, []);
 
-  const selectedClient = clients.find((c) => c.id === form.clientId);
   // /requirements/assignable-people returns atsRole; the older /ats/team
   // fallback returns role. Read whichever the response carries.
   const roleOf = (t) => t.atsRole || t.role;
@@ -153,46 +103,6 @@ export default function Requirements() {
     return Object.entries(months).sort((a, b) => a[1].at - b[1].at);
   }, [clients]);
 
-  function payload(status) {
-    return {
-      ...form,
-      status,
-      internal,
-      clientId: form.clientId,
-      experience: `${form.expMin}-${form.expMax} yrs`,
-      relevantExperience: `${form.relevantExperience} yrs`,
-      preferredLocation: form.preferredLocation || 'Any',
-      salary: form.salaryMin && form.salaryMax ? `₹${form.salaryMin}L - ₹${form.salaryMax}L` : '—',
-      bdeId: internal ? '' : form.bdeId,
-      description: form.jobDescription,
-      postingSources: form.postingSources.join(', '),
-    };
-  }
-
-  async function save(mode) {
-    setError('');
-    setNotice('');
-    let res;
-    try {
-      res = await api.post('/requirements', payload(mode === 'draft' ? 'DRAFT' : 'OPEN'));
-    } catch (err) {
-      return setError(err.response?.data?.error || 'Could not save this requirement');
-    }
-    // The agreement gate parks a client requirement at Agreement Check rather
-    // than refusing the save — say so instead of pretending it went live.
-    if (res.data?.gateNote) setNotice(res.data.gateNote);
-    setForm(EMPTY);
-    setShowForm(false);
-    setPreview(false);
-    load();
-    return undefined;
-  }
-
-  const togglePostingSource = (name) => set({
-    postingSources: form.postingSources.includes(name)
-      ? form.postingSources.filter((s) => s !== name)
-      : [...form.postingSources, name],
-  });
 
   return (
     <div>
@@ -204,7 +114,7 @@ export default function Requirements() {
           </div>
         </div>
         {canRaiseRequirement(user) && (
-          <button className="btn btn-primary" onClick={() => { setForm(EMPTY); setError(''); setShowForm(true); }}>
+          <button className="btn btn-primary" onClick={() => { setNotice(''); setShowForm(true); }}>
             Add Requirement
           </button>
         )}
@@ -397,384 +307,21 @@ export default function Requirements() {
           )
       )}
 
-      {showForm && !preview && (
-        <Modal
-          title="Create Requirement"
-          size="xwide"
+      {showForm && (
+        <RequirementForm
+          mode="create"
+          clients={clients}
+          team={team}
           onClose={() => setShowForm(false)}
-          footer={(
-            <>
-              <button className="btn" onClick={() => setShowForm(false)}>Cancel</button>
-              <button className="btn" onClick={() => setPreview(true)}>Preview</button>
-              <button className="btn" onClick={() => save('draft')}>Save Draft</button>
-              <button className="btn" onClick={() => save('activate')}>Save &amp; Activate</button>
-              <button className="btn btn-primary" onClick={() => save('post')}>Save &amp; Post</button>
-            </>
-          )}
-        >
-          <SectionHead first>A. Basic Information</SectionHead>
-          <div className="grid-2">
-            <label className="field">
-              <span>Requirement ID</span>
-              <input disabled value="Assigned automatically on save" />
-            </label>
-            <label className="field">
-              <span>Requirement Type *</span>
-              <Combo value={form.type} onChange={(e) => set({ type: e.target.value })}>
-                {REQUIREMENT_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Job Title *</span>
-              <input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Senior Java Developer" />
-            </label>
-            <label className="field">
-              <span>Department *</span>
-              <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
-                {DEPTS.map((d) => <option key={d}>{d}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Number of Openings *</span>
-              <input type="number" min="1" value={form.openings} onChange={(e) => set({ openings: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>Priority *</span>
-              <Combo value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
-                {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Requirement Status</span>
-              <input disabled value="Draft (until activated)" />
-            </label>
-            <label className="field">
-              <span>Closing Date</span>
-              <input type="date" value={form.closingDate} onChange={(e) => set({ closingDate: e.target.value })} />
-            </label>
-          </div>
-
-          {!internal && (
-            <>
-              <SectionHead>B. Client Information</SectionHead>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Client *</span>
-                  <Combo value={form.clientId} onChange={(e) => set({ clientId: e.target.value })}>
-                    <option value="">— Select —</option>
-                    {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Agreement</span>
-                  <input disabled value={selectedClient?.agreementId || (selectedClient ? 'Not raised yet' : '')} />
-                </label>
-                <label className="field">
-                  <span>Agreement Status</span>
-                  <input disabled value={selectedClient ? agreementStatusLabel(selectedClient.agreementStatus) : ''} />
-                </label>
-                <label className="field">
-                  <span>Client Contact</span>
-                  <input
-                    disabled
-                    value={selectedClient
-                      ? [selectedClient.contactName, selectedClient.contactPhone].filter(Boolean).join(' · ') || '—'
-                      : ''}
-                  />
-                </label>
-              </div>
-              {selectedClient && (
-                agreementIsActive(selectedClient.agreementStatus)
-                  ? <div className="notice">Agreement is Active — this requirement can be activated and posted.</div>
-                  : (
-                    <div className="notice amber">
-                      Agreement is <b>{agreementStatusLabel(selectedClient.agreementStatus)}</b>. You can save this
-                      requirement as Draft, but it cannot be activated or posted until the agreement is Active.
-                    </div>
-                  )
-              )}
-            </>
-          )}
-
-          <SectionHead>C. Job Description</SectionHead>
-          <label className="field">
-            <span>Full Job Description *</span>
-            <textarea rows="3" value={form.jobDescription} onChange={(e) => set({ jobDescription: e.target.value })} />
-          </label>
-          <label className="field">
-            <span>Responsibilities</span>
-            <textarea rows="2" placeholder="One per line" value={form.responsibilities} onChange={(e) => set({ responsibilities: e.target.value })} />
-          </label>
-          <label className="field">
-            <span>Qualifications</span>
-            <textarea rows="2" value={form.qualifications} onChange={(e) => set({ qualifications: e.target.value })} />
-          </label>
-          <div className="grid-2">
-            <label className="field">
-              <span>Education</span>
-              <Combo creatable value={form.education} onChange={(e) => set({ education: e.target.value })}>
-                {EDUCATION_LEVELS.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Mandatory Skills * (comma separated)</span>
-              <input value={form.skills} placeholder="Java, Spring Boot, SQL" onChange={(e) => set({ skills: e.target.value })} />
-            </label>
-          </div>
-          <label className="field">
-            <span>Good-to-have Skills (comma separated)</span>
-            <input value={form.goodToHaveSkills} placeholder="AWS, Docker" onChange={(e) => set({ goodToHaveSkills: e.target.value })} />
-          </label>
-
-          <SectionHead>D. Job Conditions</SectionHead>
-          <div className="grid-2">
-            <label className="field">
-              <span>Employment Type *</span>
-              <Combo value={form.employmentType} onChange={(e) => set({ employmentType: e.target.value })}>
-                {EMPLOYMENT_TYPES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Work Mode *</span>
-              <Combo value={form.workMode} onChange={(e) => set({ workMode: e.target.value })}>
-                {WORK_MODES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Work Location *</span>
-              <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
-                {LOCS.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Preferred Location</span>
-              <Combo value={form.preferredLocation} onChange={(e) => set({ preferredLocation: e.target.value })}>
-                <option value="">Any</option>
-                {LOCS.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Minimum Experience (yrs) *</span>
-              <input type="number" min="0" value={form.expMin} onChange={(e) => set({ expMin: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>Maximum Experience (yrs)</span>
-              <input type="number" min="0" value={form.expMax} onChange={(e) => set({ expMax: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>Relevant Experience (yrs)</span>
-              <input type="number" min="0" value={form.relevantExperience} onChange={(e) => set({ relevantExperience: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>Joining Timeline *</span>
-              <Combo value={form.joiningTimeline} onChange={(e) => set({ joiningTimeline: e.target.value })}>
-                {JOINING_TIMELINES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Maximum Notice Period</span>
-              <Combo value={form.noticePeriodMax} onChange={(e) => set({ noticePeriodMax: e.target.value })}>
-                {NOTICE_PERIODS_MAX.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Job Preference</span>
-              <Combo value={form.jobPreference} onChange={(e) => set({ jobPreference: e.target.value })}>
-                {JOB_PREFERENCES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-          </div>
-
-          <SectionHead>E. Compensation</SectionHead>
-          <div className="grid-2">
-            <label className="field">
-              <span>Salary Type</span>
-              <Combo value={form.salaryType} onChange={(e) => set({ salaryType: e.target.value })}>
-                {SALARY_TYPES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Currency</span>
-              <Combo value={form.currency} onChange={(e) => set({ currency: e.target.value })}>
-                {CURRENCIES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Minimum Salary (₹L)</span>
-              <input type="number" step="0.5" placeholder="10" value={form.salaryMin} onChange={(e) => set({ salaryMin: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>Maximum Salary (₹L)</span>
-              <input type="number" step="0.5" placeholder="15" value={form.salaryMax} onChange={(e) => set({ salaryMax: e.target.value })} />
-            </label>
-          </div>
-
-          <SectionHead>F. Assignment</SectionHead>
-          <div className="cell-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
-            Requirement → Assigned TL → Assigned Recruiter(s) → BDE → Client. This chain is what decides who
-            can see this requirement: a recruiter sees the ones assigned to them, a TL the ones they lead,
-            a BDE their clients&apos;.
-          </div>
-          <div className="grid-2">
-            <label className="field">
-              <span>Assigned TL</span>
-              <Combo
-                value={form.tlId}
-                onChange={(e) => set({ tlId: e.target.value, tl: tls.find((t) => t.id === e.target.value)?.name || '' })}
-              >
-                <option value="">— Not assigned —</option>
-                {tls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Assigned Recruiter *</span>
-              <Combo value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
-                <option value="">— Not assigned —</option>
-                {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </Combo>
-            </label>
-            <label className="field">
-              <span>STL</span>
-              <Combo
-                value={form.stlId}
-                onChange={(e) => set({ stlId: e.target.value, stl: stls.find((t) => t.id === e.target.value)?.name || '' })}
-              >
-                <option value="">— None —</option>
-                {stls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </Combo>
-            </label>
-            {!internal && (
-              <label className="field">
-                <span>BDE</span>
-                <Combo value={form.bdeId} onChange={(e) => set({ bdeId: e.target.value })}>
-                  <option value="">— Not assigned —</option>
-                  {bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </Combo>
-              </label>
-            )}
-            <label className="field">
-              <span>Account Manager / BDE owner</span>
-              <input
-                value={form.accountManager}
-                placeholder={selectedClient?.accountManager || 'Defaults to the client account manager'}
-                onChange={(e) => set({ accountManager: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>Target Date</span>
-              <input type="date" value={form.targetDate} onChange={(e) => set({ targetDate: e.target.value })} />
-            </label>
-          </div>
-          <div className="field">
-            <span>Co-recruiters (a requirement can carry more than one)</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-              {recruiters.filter((r) => r.id !== form.recruiterId).map((r) => (
-                <label key={r.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: 'auto' }}
-                    checked={form.recruiterIds.includes(r.id)}
-                    onChange={() => set({
-                      recruiterIds: form.recruiterIds.includes(r.id)
-                        ? form.recruiterIds.filter((x) => x !== r.id)
-                        : [...form.recruiterIds, r.id],
-                    })}
-                  />
-                  {r.name}
-                </label>
-              ))}
-              {recruiters.length === 0 && <span className="cell-muted" style={{ fontSize: 12 }}>No recruiters in your scope.</span>}
-            </div>
-          </div>
-
-          <SectionHead>G. Job Posting</SectionHead>
-          <div className="field">
-            <span>Posting Sources</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-              {POSTING_SOURCES.map((name) => (
-                <label key={name} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: 'auto' }}
-                    checked={form.postingSources.includes(name)}
-                    onChange={() => togglePostingSource(name)}
-                  />
-                  {name}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="cell-muted" style={{ fontSize: 11.5 }}>
-            Posting Status, External Job ID and External URL are managed by the existing Job Posting lifecycle
-            (Draft → Ready to Post → Posted / Partially Posted / Failed → Paused → Closed) on the requirement
-            page after saving.
-          </div>
-
-          {error && <div className="error-text">{error}</div>}
-        </Modal>
-      )}
-
-      {showForm && preview && (
-        <Modal
-          title={`Preview — ${form.title || '(untitled)'}`}
-          size="xwide"
-          onClose={() => { setPreview(false); setShowForm(false); }}
-          footer={<button className="btn btn-primary" onClick={() => setPreview(false)}>← Back to form</button>}
-        >
-          <div className="section-label">Basic</div>
-          <div className="kv"><span className="k">Type</span><span>{form.type}</span></div>
-          {!internal && (
-            <div className="kv">
-              <span className="k">Client</span>
-              <span>{`${selectedClient?.name || '—'} · Agreement ${selectedClient ? agreementStatusLabel(selectedClient.agreementStatus) : '—'}`}</span>
-            </div>
-          )}
-          <div className="kv"><span className="k">Department</span><span>{form.department}</span></div>
-          <div className="kv"><span className="k">Openings / Priority</span><span>{`${form.openings} · ${form.priority}`}</span></div>
-          <div className="kv"><span className="k">Closing Date</span><span>{form.closingDate || '—'}</span></div>
-          <div className="section-label">Job Description</div>
-          <div className="cell-muted" style={{ fontSize: 12.5, whiteSpace: 'pre-line' }}>{form.jobDescription || '—'}</div>
-          {form.responsibilities && (
-            <>
-              <div className="section-label">Responsibilities</div>
-              <div className="cell-muted" style={{ fontSize: 12.5, whiteSpace: 'pre-line' }}>{form.responsibilities}</div>
-            </>
-          )}
-          {form.qualifications && (
-            <>
-              <div className="section-label">Qualifications</div>
-              <div className="cell-muted" style={{ fontSize: 12.5, whiteSpace: 'pre-line' }}>{form.qualifications}</div>
-            </>
-          )}
-          <div className="section-label">Skills</div>
-          <div className="kv"><span className="k">Mandatory</span><span>{form.skills || '—'}</span></div>
-          <div className="kv"><span className="k">Good-to-have</span><span>{form.goodToHaveSkills || '—'}</span></div>
-          <div className="section-label">Conditions</div>
-          <div className="kv"><span className="k">Employment / Mode</span><span>{`${form.employmentType} · ${form.workMode}`}</span></div>
-          <div className="kv"><span className="k">Location</span><span>{`${form.location} (preferred: ${form.preferredLocation || 'Any'})`}</span></div>
-          <div className="kv"><span className="k">Experience</span><span>{`${form.expMin}-${form.expMax} yrs (relevant ${form.relevantExperience} yrs)`}</span></div>
-          <div className="kv"><span className="k">Joining / Notice</span><span>{`${form.joiningTimeline} · max ${form.noticePeriodMax}`}</span></div>
-          <div className="kv"><span className="k">Job Preference</span><span>{form.jobPreference}</span></div>
-          <div className="section-label">Compensation</div>
-          <div className="kv">
-            <span className="k">{`${form.salaryType} (${form.currency})`}</span>
-            <span>{form.salaryMin && form.salaryMax ? `₹${form.salaryMin}L - ₹${form.salaryMax}L` : '—'}</span>
-          </div>
-          <div className="section-label">Assignment</div>
-          <div className="kv">
-            <span className="k">{`Recruiter / TL / STL${internal ? '' : ' / BDE'}`}</span>
-            <span>
-              {[
-                recruiters.find((r) => r.id === form.recruiterId)?.name || '—',
-                form.tl || '—',
-                form.stl || '—',
-                ...(internal ? [] : [bdes.find((b) => b.id === form.bdeId)?.name || '—']),
-              ].join(' · ')}
-            </span>
-          </div>
-          <div className="section-label">Posting Sources</div>
-          <div className="kv"><span className="k">Selected</span><span>{form.postingSources.join(', ') || 'None'}</span></div>
-        </Modal>
+          onSaved={(saved) => {
+            // The agreement gate parks a client requirement at Agreement Check
+            // rather than refusing the save — say so instead of pretending it
+            // went live.
+            if (saved?.gateNote) setNotice(saved.gateNote);
+            setShowForm(false);
+            load();
+          }}
+        />
       )}
     </div>
   );

@@ -9,6 +9,7 @@ const requirementRoutes = require('./routes/requirements');
 const jobPortalRoutes = require('./routes/jobPortal');
 const candidateRoutes = require('./routes/candidates');
 const applicationRoutes = require('./routes/applications');
+const followUpRoutes = require('./routes/followups');
 const dashboardRoutes = require('./routes/dashboard');
 const employeeRoutes = require('./routes/employees');
 const attendanceRoutes = require('./routes/attendance');
@@ -92,6 +93,8 @@ app.use('/api/requirements', requirementRoutes);
 app.use('/api/job-portal', jobPortalRoutes);
 app.use('/api/candidates', candidateRoutes);
 app.use('/api/applications', applicationRoutes);
+// followup_: the follow-up record, one per application. See routes/followups.js.
+app.use('/api/followups', followUpRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/attendance', attendanceRoutes);

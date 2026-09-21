@@ -333,6 +333,59 @@ export function lifeStatusClass(status) {
   if (status === 'Rejected') return 'rejected';
   return 'review';
 }
+// ---------------------------------------------------------------------------
+// FOLLOW-UPS — the Follow-up column, the candidate detail panel and the
+// dashboard rows all read this one vocabulary.
+//
+// The four statuses are DERIVED on the server from the due date
+// (backend/src/utils/followups.js), never stored, so nothing here has to
+// recompute them and the two cannot disagree.
+// ---------------------------------------------------------------------------
+export const FOLLOWUP_STATUSES = ['Upcoming', 'Due Today', 'Overdue', 'Completed'];
+export const CONTACT_MODES = ['Call', 'Email', 'WhatsApp', 'SMS', 'In Person', 'Video Call'];
+
+export function followUpStatusClass(status) {
+  if (status === 'Overdue') return 'rejected';
+  if (status === 'Due Today') return 'pending';
+  if (status === 'Completed') return 'active';
+  return 'new';
+}
+
+// ---------------------------------------------------------------------------
+// REJECTION AND HOLD REASONS.
+//
+// Recorded as a CATEGORY plus a detailed reason, and kept for ever on the
+// ApplicationStageEvent alongside who decided, their role and which SIDE they
+// were on. A rejected candidate is never deleted — nothing in this app
+// deletes a candidate or an application — so these read back in full.
+// ---------------------------------------------------------------------------
+export const REJECTION_REASON_CATEGORIES = [
+  'Skills Mismatch',
+  'Insufficient Experience',
+  'Salary Expectation',
+  'Notice Period',
+  'Location / Relocation',
+  'Communication',
+  'Interview Performance',
+  'Candidate Withdrew',
+  'Position Filled',
+  'Position Closed',
+  'Duplicate Profile',
+  'Background / Documentation',
+  'Other',
+];
+export const HOLD_REASON_CATEGORIES = [
+  'Awaiting Client Feedback',
+  'Requirement On Hold',
+  'Budget On Hold',
+  'Candidate Unavailable',
+  'Candidate Reconsidering',
+  'Documentation Pending',
+  'Better Fit Elsewhere',
+  'Other',
+];
+export const DECISION_SIDES = ['Internal', 'Client'];
+
 // The AI Interview column.
 export function aiStatusClass(status) {
   if (status === 'Completed') return 'active';

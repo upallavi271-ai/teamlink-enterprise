@@ -4,10 +4,12 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
   stageLabel, lifeStatusClass, aiStatusClass, protoDate, interviewStatusLabel,
+  followUpStatusClass, CONTACT_MODES,
 } from '../atsVocab';
 import { STAGE_GROUPS, groupContents, groupBadgeClass, groupIndexById } from '../pipelineView';
 import { can } from '../permissions';
 import Combo from '../components/Combo.jsx';
+import Modal from '../components/Modal.jsx';
 
 // The candidate record, in nine tabs:
 //   Overview · Application · AI Match · Pipeline History · Interviews ·
@@ -53,6 +55,11 @@ export default function CandidateDetail() {
   const [error, setError] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [docDraft, setDocDraft] = useState({ docType: 'Resume', name: '', note: '' });
+  // --- follow-ups. One thread per APPLICATION. -----------------------------
+  const [followUpDraft, setFollowUpDraft] = useState(null);
+  const [followUpThread, setFollowUpThread] = useState(null);
+  const [followUpSaving, setFollowUpSaving] = useState(false);
+  const [followUpError, setFollowUpError] = useState('');
 
   function load() {
     api.get(`/candidates/${id}`)
@@ -68,6 +75,73 @@ export default function CandidateDetail() {
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not add this candidate to the pipeline');
+    }
+  }
+
+  // The owner, the TL, the BDE and the sensible defaults all come from the
+  // SERVER — GET /followups/application/:id resolves them from the
+  // requirement's assignment chain and the stage's own SLA. Nothing here
+  // guesses who owns the call.
+  async function openFollowUp(application) {
+    setFollowUpError('');
+    setError('');
+    let data = null;
+    try {
+      const res = await api.get(`/followups/application/${application.id}`);
+      data = res.data;
+      setFollowUpThread({
+        title: application.requirement?.title || 'this application',
+        history: data.history || [],
+      });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not open the follow-up for this application');
+      return;
+    }
+    if (!data.canRecord) {
+      setError('A follow-up is recorded by its owner — you are not on this requirement’s assignment chain.');
+      return;
+    }
+    const current = data.current;
+    setFollowUpDraft({
+      applicationId: application.id,
+      requirementTitle: application.requirement?.title || 'this application',
+      ownerName: data.chain?.ownerName,
+      ownerRole: data.chain?.ownerRole,
+      tlName: data.chain?.tlName,
+      bdeName: data.chain?.bdeName,
+      contactMode: '',
+      nextAction: (current && current.nextAction) || data.suggestedNextAction || '',
+      dueDate: data.suggestedDueDate || '',
+      nextFollowUpAt: '',
+      notes: '',
+    });
+  }
+
+  async function saveFollowUp() {
+    if (!followUpDraft) return;
+    setFollowUpError('');
+    if (!followUpDraft.nextAction.trim()) { setFollowUpError('Say what is owed next.'); return; }
+    if (!followUpDraft.dueDate) { setFollowUpError('Pick a due date.'); return; }
+    setFollowUpSaving(true);
+    try {
+      await api.post('/followups', {
+        applicationId: followUpDraft.applicationId,
+        contactMode: followUpDraft.contactMode || undefined,
+        nextAction: followUpDraft.nextAction,
+        dueDate: followUpDraft.dueDate,
+        nextFollowUpAt: followUpDraft.nextFollowUpAt || undefined,
+        notes: followUpDraft.notes || undefined,
+      });
+      const applicationId = followUpDraft.applicationId;
+      const title = followUpDraft.requirementTitle;
+      setFollowUpDraft(null);
+      load();
+      const res = await api.get(`/followups/application/${applicationId}`);
+      setFollowUpThread({ title, history: res.data.history || [] });
+    } catch (err) {
+      setFollowUpError(err.response?.data?.error || 'Could not record this follow-up');
+    } finally {
+      setFollowUpSaving(false);
     }
   }
 
@@ -114,10 +188,19 @@ export default function CandidateDetail() {
   // The Application tab reads the candidate's current (most recent) application.
   const primary = applications.find((a) => a.id === c.latestApplicationId) || applications[0] || null;
   const canEditMaster = can(user, 'ats', 'candidates', 'Candidate Master', 'edit');
+  // A follow-up is an APPLICATION's, so the count is how many of this
+  // candidate's applications currently carry one — not a number on the
+  // candidate.
+  const followUpCount = applications.filter((a) => a.followUp).length;
+  const canRecordFollowUp = internal && can(user, 'ats', 'candidates', 'Applications', 'edit');
 
   const TABS = [
     ['overview', 'Overview'],
     ['application', 'Application'],
+    // Follow-ups are TeamLink's own operations — who inside this company owes
+    // which call. A client or candidate login is served none of it, so the
+    // tab is not offered either.
+    ...(internal ? [['followups', `Follow-ups (${followUpCount})`]] : []),
     ...(internal ? [['aimatch', 'AI Match']] : []),
     ['history', `Pipeline History (${history.length})`],
     ['interviews', `Interviews (${interviews.length})`],
@@ -320,6 +403,195 @@ export default function CandidateDetail() {
         </>
       )}
 
+      {/* --- FOLLOW-UPS -----------------------------------------------------
+          ONE FOLLOW-UP PER APPLICATION, never one per candidate. This tab is
+          the clearest place in the app where the candidate-master / application
+          separation shows: CAND0001 on three requirements has three rows here,
+          each with its own owner, its own next action and its own due date,
+          and none of them is stored on the candidate record.
+
+          The nine columns are the ones the brief names:
+            Owner · Owner Role · TL · BDE · Last Contacted · Next Action ·
+            Due Date · Next Follow-up · Status
+          Status is Upcoming / Due Today / Overdue / Completed, derived on the
+          server from the due date so it is never stale. --- */}
+      {tab === 'followups' && (
+        <>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Requirement</th><th>Client</th><th>Owner</th><th>Owner Role</th>
+                  <th>TL</th><th>BDE</th><th>Last Contacted</th><th>Next Action</th>
+                  <th>Due Date</th><th>Next Follow-up</th><th>Status</th>
+                  {canRecordFollowUp && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {applications.map((a) => {
+                  const f = a.followUp;
+                  return (
+                    <tr key={a.id}>
+                      <td><Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link></td>
+                      <td className="cell-muted">
+                        {a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'}
+                      </td>
+                      <td>{f?.ownerName || a.owner || '—'}</td>
+                      <td className="cell-muted">{f?.ownerRole || '—'}</td>
+                      <td className="cell-muted">{f?.tlName || a.requirement?.tl || '—'}</td>
+                      <td className="cell-muted">{f?.bdeName || a.requirement?.bde?.name || '—'}</td>
+                      <td className="cell-muted">{f?.lastContactedAt ? dateTime(f.lastContactedAt) : '—'}</td>
+                      <td>{f?.nextAction || <span className="small-muted">{a.nextAction || '—'}</span>}</td>
+                      <td className="cell-muted">{f?.dueDate ? protoDate(f.dueDate) : '—'}</td>
+                      <td className="cell-muted">{f?.nextFollowUpAt ? protoDate(f.nextFollowUpAt) : '—'}</td>
+                      <td>
+                        {f
+                          ? (
+                            <>
+                              <span className={`status ${followUpStatusClass(f.status)}`}>{f.status}</span>
+                              {f.daysOverdue > 0 && <div className="small-muted" style={{ marginTop: 3 }}>{`${f.daysOverdue} day(s) late`}</div>}
+                              {f.escalatedAdminAt
+                                ? <div className="small-muted">Escalated to Super Admin</div>
+                                : f.escalatedTlAt ? <div className="small-muted">Escalated to TL</div> : null}
+                            </>
+                          )
+                          : <span className="small-muted">Not set</span>}
+                      </td>
+                      {canRecordFollowUp && (
+                        <td>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => openFollowUp(a)}
+                          >
+                            {f ? 'Record follow-up' : 'Set follow-up'}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {applications.length === 0 && (
+                  <tr>
+                    <td colSpan={canRecordFollowUp ? 12 : 11} className="small-muted" style={{ padding: 16 }}>
+                      This candidate is in the master but not in any pipeline, so there is nothing to follow up on.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="small-muted" style={{ marginTop: 8 }}>
+            A follow-up belongs to the application, not to the person — the same candidate on two requirements
+            owes two follow-ups. Recording one closes the open one and opens the next, so the thread below keeps
+            its whole history. An overdue follow-up escalates to the TL, and then to a Super Admin; because this
+            app runs no scheduler, that is evaluated whenever this list or the dashboard is loaded.
+          </div>
+
+          {followUpThread && (
+            <>
+              <div className="section-label">{`Follow-up history — ${followUpThread.title}`}</div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Recorded</th><th>By</th><th>Mode</th><th>Action</th><th>Due</th><th>Notes</th><th>Completed</th></tr>
+                  </thead>
+                  <tbody>
+                    {followUpThread.history.map((h) => (
+                      <tr key={h.id}>
+                        <td className="cell-muted">{dateTime(h.createdAt)}</td>
+                        <td className="cell-muted">{h.createdByName || '—'}</td>
+                        <td className="cell-muted">{h.contactMode || '—'}</td>
+                        <td>{h.nextAction || '—'}</td>
+                        <td className="cell-muted">{protoDate(h.dueDate)}</td>
+                        <td className="cell-muted">{h.notes || '—'}</td>
+                        <td className="cell-muted">{h.completedAt ? dateTime(h.completedAt) : '—'}</td>
+                      </tr>
+                    ))}
+                    {followUpThread.history.length === 0 && (
+                      <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No follow-up recorded on this application yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Record a follow-up. Owner / Owner Role / TL / BDE are not typed in —
+          they are resolved from the requirement's assignment chain on the
+          server and snapshotted onto the row, so a later reassignment cannot
+          rewrite who owed the call. */}
+      {followUpDraft && (
+        <Modal
+          title={`Record a follow-up — ${followUpDraft.requirementTitle}`}
+          onClose={() => setFollowUpDraft(null)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setFollowUpDraft(null)}>Cancel</button>
+              <button className="btn btn-primary" disabled={followUpSaving} onClick={saveFollowUp}>
+                {followUpSaving ? 'Saving…' : 'Save follow-up'}
+              </button>
+            </>
+          )}
+        >
+          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>
+            {`Owner ${followUpDraft.ownerName || '—'} (${followUpDraft.ownerRole || '—'}) · `}
+            {`TL ${followUpDraft.tlName || '—'} · BDE ${followUpDraft.bdeName || '—'}`}
+          </div>
+          <div className="grid-2">
+            <label className="field">
+              <span>Contacted by</span>
+              <Combo
+                value={followUpDraft.contactMode}
+                onChange={(e) => setFollowUpDraft({ ...followUpDraft, contactMode: e.target.value })}
+              >
+                <option value="">— Not recorded —</option>
+                {CONTACT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+              </Combo>
+            </label>
+            <label className="field">
+              <span>Due Date *</span>
+              <input
+                type="date"
+                value={followUpDraft.dueDate}
+                onChange={(e) => setFollowUpDraft({ ...followUpDraft, dueDate: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Next Follow-up</span>
+              <input
+                type="date"
+                value={followUpDraft.nextFollowUpAt}
+                onChange={(e) => setFollowUpDraft({ ...followUpDraft, nextFollowUpAt: e.target.value })}
+              />
+            </label>
+          </div>
+          <label className="field">
+            <span>Next Action *</span>
+            <input
+              value={followUpDraft.nextAction}
+              placeholder="What is owed next?"
+              onChange={(e) => setFollowUpDraft({ ...followUpDraft, nextAction: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Notes</span>
+            <textarea
+              rows="3"
+              value={followUpDraft.notes}
+              placeholder="What happened on this contact"
+              onChange={(e) => setFollowUpDraft({ ...followUpDraft, notes: e.target.value })}
+            />
+          </label>
+          <div className="cell-muted" style={{ fontSize: 11.5 }}>
+            Saving records that contact happened now, closes the open follow-up on this application and opens
+            this one. Overdue follow-ups alert the TL, then a Super Admin.
+          </div>
+          {followUpError && <div className="error-text">{followUpError}</div>}
+        </Modal>
+      )}
+
       {/* --- AI Match. Internal only, and framed as what it is. --- */}
       {tab === 'aimatch' && (
         c.aiMatch ? (
@@ -427,15 +699,35 @@ export default function CandidateDetail() {
                       {h.role && <div className="small-muted">{h.role}</div>}
                     </td>
                     <td>
+                      {/* The PREVIOUS stage is part of the record, not only
+                          the new one — a rejection at Client Review and a
+                          rejection at first screening are different events. */}
+                      {h.fromStageLabel && (
+                        <div className="small-muted" style={{ marginBottom: 3 }}>{`from ${h.fromStageLabel}`}</div>
+                      )}
                       <span className={`status ${groupBadgeClass(h.toStage, null)}`}>{h.stageGroupLabel}</span>
                       <div className="small-muted" style={{ marginTop: 3 }}>{h.toStageLabel}</div>
                     </td>
                     <td>
                       {h.action}
                       {h.derived && <div className="small-muted">Derived from the application record — predates pipeline history</div>}
+                      {/* The full Rejected / Hold record. Reason category and
+                          the detailed reason are internal reasoning and the
+                          server withholds them from external logins, so this
+                          renders whatever it was actually served. */}
+                      {h.reasonCategory && (
+                        <div className="small-muted" style={{ marginTop: 3 }}>
+                          <b>{h.reasonCategory}</b>
+                          {h.reasonDetail ? ` — ${h.reasonDetail}` : ''}
+                        </div>
+                      )}
+                      {h.actorSide && <div className="small-muted" style={{ marginTop: 2 }}>{`Decided ${h.actorSide === 'Client' ? 'by the client' : 'internally'}`}</div>}
                     </td>
                     {internal && <td className="cell-muted">{h.comment || '—'}</td>}
-                    <td className="cell-muted">{h.requirementTitle}</td>
+                    <td className="cell-muted">
+                      {h.requirementTitleAtTime || h.requirementTitle}
+                      {h.clientName && <div className="small-muted">{h.clientName}</div>}
+                    </td>
                   </tr>
                 ))}
                 {history.length === 0 && (

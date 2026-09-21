@@ -15,6 +15,10 @@ const {
   stageIndex, matchesView, groupsWithDetail,
 } = require('../utils/pipelineView');
 const { TEMPLATES, commsNote } = require('../utils/candidateComms');
+// followup_: the follow-up record is an APPLICATION's, never a candidate's.
+// Nothing here writes one; the list and the detail page only READ the current
+// one so the Follow-up column and the Applications tab can show it.
+const { currentFollowUpsByApplication } = require('../utils/followups');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -135,7 +139,7 @@ async function findDuplicates({ email, phone, excludeId }) {
 // Stage | Owner | Next Action | Due | Status — Owner is a first-class column,
 // not something buried on the detail page. Owner / Next Action / Due are
 // derived from the stage so they can never drift.
-function decorate(candidate, { user, sharedIds = null } = {}) {
+function decorate(candidate, { user, sharedIds = null, followUps = null } = {}) {
   const kind = user ? viewerKind(user) : 'internal';
   const applications = user
     ? visibleApplications(user, candidate.applications, sharedIds)
@@ -158,6 +162,7 @@ function decorate(candidate, { user, sharedIds = null } = {}) {
       requirementId: null,
       clientName: null,
       clientId: null,
+      followUp: null,
     };
   }
   const requirement = latest.requirement || null;
@@ -189,6 +194,15 @@ function decorate(candidate, { user, sharedIds = null } = {}) {
     lifeStatus: applicationLifeStatus(latest),
     aiInterviewStatus: latest.aiInterviewStatus || 'Required',
     latestApplicationId: latest.id,
+    // --- followup_: the Follow-up column ------------------------------------
+    // The REAL follow-up on the candidate's most recent application, or null
+    // where none has been recorded yet. It is not derived from the stage SLA —
+    // that is the separate `dueDate` / `overdue` pair above, which is the
+    // pipeline's own clock. This one is what a person committed to.
+    //
+    // A CLIENT or CANDIDATE login is served none of it: who inside TeamLink
+    // owes which call is our own operations, not theirs.
+    followUp: kind === 'internal' ? ((followUps && followUps.get(latest.id)) || null) : null,
   };
 }
 
@@ -216,7 +230,12 @@ router.get('/', async (req, res) => {
   // sees only people SHARED with them on their own requirements; a recruiter
   // only people on requirements assigned to them; a TL only their department's.
   const { candidates, sharedIds } = await scopedCandidates(req.user);
-  let rows = candidates.map((c) => decorate(c, { user: req.user, sharedIds }));
+  // followup_: one query for every visible application's current follow-up,
+  // so the Follow-up column is real data rather than an em dash.
+  const followUps = await currentFollowUpsByApplication(
+    candidates.flatMap((c) => visibleApplications(req.user, c.applications, sharedIds).map((a) => a.id)),
+  );
+  let rows = candidates.map((c) => decorate(c, { user: req.user, sharedIds, followUps }));
   // Hold and Rejected are VIEWS over this same list, not separate modules —
   // so the server offers them as a query parameter on the one endpoint.
   if (req.query.view && req.query.view !== 'all') {
@@ -224,6 +243,13 @@ router.get('/', async (req, res) => {
   }
   if (req.query.stageGroup) {
     rows = rows.filter((r) => r.stageGroup === req.query.stageGroup);
+  }
+  // followup_: the dashboard's "Follow-ups Due" and "Overdue Follow-ups" rows
+  // link here. "Not set" is a real value — an application nobody has committed
+  // a follow-up on yet is exactly the thing a lead wants to find.
+  if (req.query.followUp) {
+    const wanted = String(req.query.followUp).split(',').map((x) => x.trim()).filter(Boolean);
+    rows = rows.filter((r) => wanted.includes(r.followUp ? r.followUp.status : 'Not set'));
   }
   return res.json(rows);
 });
@@ -327,7 +353,10 @@ async function loadInScope(req, res) {
   }
   const s = scopeOf(req.user);
   const sharedIds = await clientSharedApplicationIds(req.user, [candidate]);
-  const decorated = decorate(candidate, { user: req.user, sharedIds });
+  const followUps = await currentFollowUpsByApplication(
+    visibleApplications(req.user, candidate.applications, sharedIds).map((a) => a.id),
+  );
+  const decorated = decorate(candidate, { user: req.user, sharedIds, followUps });
   // Server-side scope. A candidate login reaches exactly one record — its own.
   // Everyone else reaches a candidate only through an application on a
   // requirement their scope covers; no such application means refused, not
@@ -341,7 +370,7 @@ async function loadInScope(req, res) {
     res.status(403).json(OUT_OF_SCOPE);
     return null;
   }
-  return { candidate, decorated, sharedIds };
+  return { candidate, decorated, sharedIds, followUps };
 }
 
 // --- AI Match --------------------------------------------------------------
@@ -476,6 +505,21 @@ async function pipelineHistoryFor(applications, kind) {
         // so it is withheld from every external login exactly like the Notes
         // tab is — from the candidate being discussed as well as the client.
         comment: kind === 'internal' ? e.comment : null,
+        // followup_: the full Rejected / Hold record. Requirement and client
+        // come from the SNAPSHOT on the event, falling back to the live
+        // relation for events written before those columns existed — so a
+        // renamed client cannot rewrite why someone was rejected.
+        requirementTitleAtTime: e.requirementTitle || ctx,
+        clientName: e.clientName
+          || (a.requirement && (a.requirement.internal ? 'TeamLink Internal' : a.requirement.client && a.requirement.client.name))
+          || null,
+        // WHICH SIDE the decision came from. Never inferred from the role at
+        // render time; it is recorded when the move is made.
+        actorSide: e.actorSide || null,
+        // Reason category and detailed reason are internal reasoning, held to
+        // the same rule as the comment above.
+        reasonCategory: kind === 'internal' ? e.reasonCategory : null,
+        reasonDetail: kind === 'internal' ? e.reasonDetail : null,
         derived: false,
       });
     });
@@ -486,7 +530,7 @@ async function pipelineHistoryFor(applications, kind) {
 router.get('/:id', async (req, res) => {
   const loaded = await loadInScope(req, res);
   if (!loaded) return undefined;
-  const { candidate, decorated, sharedIds } = loaded;
+  const { candidate, decorated, sharedIds, followUps } = loaded;
   const kind = viewerKind(req.user);
 
   // "Matching Requirements": open requirements this candidate is not already in
@@ -521,6 +565,11 @@ router.get('/:id', async (req, res) => {
     overdue: applicationIsOverdue(a),
     lifeStatus: applicationLifeStatus(a),
     interviewStatusLabel: a.interviewStatus ? interviewStatusLabel(a.interviewStatus) : null,
+    // followup_: EVERY application carries its OWN follow-up. This is the
+    // candidate-master-vs-application separation made visible: CAND0001 with
+    // three applications has three independent follow-up threads here, and
+    // none of them is a property of the candidate.
+    followUp: kind === 'internal' ? ((followUps && followUps.get(a.id)) || null) : null,
   }));
 
   const latest = [...rawApplications].sort((a, b) => String(b.id).localeCompare(String(a.id)))[0] || null;
