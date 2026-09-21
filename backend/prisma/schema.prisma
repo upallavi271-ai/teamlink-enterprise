@@ -67,6 +67,13 @@ model User {
   // Preferred landing workspace when several products are available.
   landingWorkspace    String?
 
+  // --- emplife: single-use "set your password" link -----------------------
+  // HR never emails a password. Creating an employee issues a one-time token;
+  // only its SHA-256 hash is stored, it expires, and it is burned on use.
+  setPasswordTokenHash String?
+  setPasswordExpiresAt DateTime?
+  setPasswordUsedAt    DateTime?
+
   // Login administration — the prototype's Users screen (usersView, line 9893).
   username       String?
   status         String   @default("Active") // Active | Inactive | Suspended
@@ -513,6 +520,22 @@ model Employee {
   unlockRequestReason String? // reason selected when requesting edit access on a locked profile
   unlockRequestStatus String? // null | Pending | Approved | Rejected
   unlockRequestCount  Int     @default(0) // lifetime count, capped (see UNLOCK_REQUEST_LIMIT)
+  // --- emplife: closing the review loop ----------------------------------
+  // What HR decided about the LAST submitted set of pendingChanges, so the
+  // employee is told the outcome instead of watching the banner disappear.
+  reviewDecision      String?   // null | Approved | Rejected
+  reviewNote          String?   // HR's reason — required on a rejection
+  reviewedAt          DateTime?
+  reviewedByName      String?
+  // What HR decided about the last unlock request, and how long the granted
+  // edit window lasts. After unlockExpiresAt the profile re-locks itself on
+  // the next self-service write (routes/employees.js enforceEditWindow).
+  unlockDecisionNote  String?
+  unlockDecidedAt     DateTime?
+  unlockExpiresAt     DateTime?
+  // Honest record of the sign-in email: whether it was really transmitted.
+  credentialsSentAt     DateTime?
+  credentialsSentStatus String?  // Sent | Not sent — no provider | Failed: <provider reason>
   reportingManagerId String?
   reportingManager    Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id])
   directReports       Employee[] @relation("ManagerReports")

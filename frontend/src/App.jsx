@@ -55,6 +55,7 @@ import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
 import JobDetail from './pages/JobDetail.jsx';
 import MyApplications from './pages/MyApplications.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
+import SetPassword from './pages/SetPassword.jsx';
 
 export default function App() {
   return (
@@ -77,6 +78,9 @@ export default function App() {
 
       {/* Client-facing agreement signing link — no login, token is the key */}
       <Route path="/agreement/:token" element={<AgreementSigning />} />
+
+      {/* New employee sign-in link — single-use, expiring, no login required */}
+      <Route path="/set-password/:token" element={<SetPassword />} />
 
       <Route
         path="/"

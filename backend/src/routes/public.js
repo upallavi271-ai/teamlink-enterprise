@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
+const { inspectSetPasswordToken, redeemSetPasswordToken } = require('../utils/employeeInvite');
 
 const {
   REQUIREMENT_LIVE_STATUSES, requirementIsLive, normalizeAgreementStatus, agreementIsSigned,
@@ -190,6 +191,30 @@ router.post('/agreement/:token/sign', async (req, res) => {
   });
 
   res.json({ message: 'Agreement signed', agreementId: updated.agreementId, signedAt: updated.agreementSignedAt });
+});
+
+// ---- Set your password (new employee sign-in link) -------------------------
+// The link HR's "your sign-in details" mail carries. Outside the login wall by
+// necessity — the employee has no password yet. The opaque, single-use,
+// expiring token is the only thing that grants access, and it grants exactly
+// one thing: setting that one login's password. See utils/employeeInvite.js;
+// no password is ever emailed, echoed or logged.
+
+router.get('/set-password/:token', async (req, res) => {
+  const info = await inspectSetPasswordToken(req.params.token);
+  if (!info.ok) return res.status(404).json({ error: info.reason });
+  res.json({ name: info.name, email: info.email, expiresAt: info.expiresAt });
+});
+
+router.post('/set-password/:token', async (req, res) => {
+  const result = await redeemSetPasswordToken(req.params.token, req.body && req.body.password);
+  if (!result.ok) {
+    return res.status(result.code === 'weak' ? 400 : 410).json({ error: result.reason });
+  }
+  // The audit trail records THAT a password was set, never the password.
+  const user = await prisma.user.findUnique({ where: { email: result.email } });
+  await logAudit({ userId: user ? user.id : null, action: 'Password set via sign-in link', entity: 'User', entityId: user ? user.id : null });
+  res.json({ message: 'Password set — you can sign in now.', email: result.email });
 });
 
 module.exports = router;

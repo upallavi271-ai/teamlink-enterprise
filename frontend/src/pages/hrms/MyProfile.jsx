@@ -82,6 +82,10 @@ export default function MyProfile() {
   const editable = !employee.isLocked && !awaitingReview;
   const requestsUsed = employee.unlockRequestCount || 0;
   const requestsLeft = Math.max(0, config.unlockRequestLimit - requestsUsed);
+  // The bounded window an approved unlock request grants. The server is what
+  // enforces it (routes/employees.js enforceEditWindow); this only says so.
+  const windowEndsAt = employee.unlockExpiresAt ? new Date(employee.unlockExpiresAt) : null;
+  const windowOpen = editable && windowEndsAt && windowEndsAt > new Date();
 
   return (
     <div>
@@ -97,12 +101,45 @@ export default function MyProfile() {
         </div>
       )}
 
+      {/* What HR decided. Previously the banner simply vanished and the
+          employee was left guessing why their submission had not stuck. */}
+      {!awaitingReview && employee.reviewDecision === 'Rejected' && (
+        <div className="card section" style={{ borderColor: 'var(--danger, var(--warn))' }}>
+          <h3>HR sent your profile back for edit</h3>
+          <div className="kv"><span className="k">Reason</span><span>{employee.reviewNote || '—'}</span></div>
+          <div className="kv"><span className="k">Reviewed by</span>
+            <span>{employee.reviewedByName || 'HR'}{employee.reviewedAt ? ` · ${new Date(employee.reviewedAt).toLocaleString('en-GB')}` : ''}</span></div>
+          <div className="small-muted" style={{ marginTop: 6 }}>Correct the details below and submit again.</div>
+        </div>
+      )}
+      {!awaitingReview && employee.reviewDecision === 'Approved' && employee.isLocked && (
+        <div className="notice" style={{ marginBottom: 12 }}>
+          HR approved your profile{employee.reviewedByName ? ` (${employee.reviewedByName})` : ''}
+          {employee.reviewedAt ? ` on ${new Date(employee.reviewedAt).toLocaleString('en-GB')}` : ''} and it is now locked.
+          {employee.reviewNote ? ` Note: ${employee.reviewNote}` : ''}
+        </div>
+      )}
+      {employee.unlockRequestStatus === 'Rejected' && locked && (
+        <div className="card section" style={{ borderColor: 'var(--warn)' }}>
+          <h3>Your last edit-access request was declined</h3>
+          <div className="kv"><span className="k">HR&apos;s reason</span><span>{employee.unlockDecisionNote || '—'}</span></div>
+        </div>
+      )}
+      {windowOpen && (
+        <div className="notice" style={{ marginBottom: 12 }}>
+          🔓 HR granted you edit access until <b>{windowEndsAt.toLocaleString('en-GB')}</b>
+          {employee.unlockDecisionNote ? ` — ${employee.unlockDecisionNote}` : ''}. Submitting your changes
+          closes the window; so does the deadline, whichever comes first.
+        </div>
+      )}
+
       {locked && (
         <div className="card section">
           <h3>Profile locked</h3>
           <div className="small-muted" style={{ marginBottom: 10 }}>
             Your profile was approved by HR and is now locked. To make further changes, request edit access below.
-            {' '}({requestsLeft} of {config.unlockRequestLimit} requests remaining)
+            {' '}({requestsLeft} of {config.unlockRequestLimit} requests remaining.) If HR agrees you get
+            {' '}{config.unlockWindowHours || 48} hours to edit and re-submit — the profile locks again on approval.
           </div>
           {employee.unlockRequestStatus === 'Pending' ? (
             <div className="status priority-medium">Edit access requested ({employee.unlockRequestReason}) — awaiting HR review</div>
