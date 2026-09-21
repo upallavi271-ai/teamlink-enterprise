@@ -12,13 +12,10 @@ import { canModule } from '../permissions';
 // click moves between real routes (each tab is bookmarkable and each still
 // answers on its own URL, which is what the nav links to).
 //
-// JOB PORTAL is another agent's screen this round. The tab is wired to
-// /job-portal, the in-app route they are adding; until that route exists the
-// link falls back to the public portal at /careers, which is the same content
-// without the internal chrome. When their route lands, delete the fallback and
-// leave the first entry — nothing else here has to change.
+// The ATS sidebar is flat again, matching the reference prototype, so this
+// strip is what keeps Agreements reachable — it is not listed in the nav.
 // ---------------------------------------------------------------------------
-export const JOB_PORTAL_PATH = '/careers';
+export const JOB_PORTAL_PATH = '/job-portal/';
 
 const TABS = [
   { key: 'clients', label: 'Clients', to: '/clients', module: 'clients' },

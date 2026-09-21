@@ -197,9 +197,9 @@ export default function Requirements() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Clients</h1>
+          <h1>Jobs / Requirements</h1>
           <div className="page-sub">
-            {`Requirements — ${requirements.length} requirement(s) in your scope`}
+            {`${requirements.length} requirement(s) in your scope`}
           </div>
         </div>
         {canRaiseRequirement(user) && (

@@ -41,11 +41,6 @@ export const SECTION_LABEL = {
 // A leaf with several perms needs all of them.
 const leaf = (to, label, perms, product) => ({ to, label, perms, product });
 
-// Internal-staff gate, reused by the tabs a client or candidate login has no
-// business seeing. It is a permission, not a role test: 'Matching Candidates'
-// is granted to every internal ATS role and to no external login.
-const INTERNAL = ['requirements', 'Matching Candidates', 'view'];
-
 export const HRMS_ITEMS = [
   leaf('/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
   leaf('/my-profile', 'My Profile', null),
@@ -56,57 +51,19 @@ export const HRMS_ITEMS = [
   leaf('/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
 ];
 
+// The reference prototype's ATS navigation is flat — six entries, no
+// sub-tabs (see SUBNAV.ats in teamlink-enterprise_69.html, line 2179).
+// Clients and Jobs / Requirements stay separate, and the calendar keeps its
+// own entry. The Agreements, Offers, Joining, Internal Hiring and Interview
+// Feedback screens still exist and are still routed — they are reachable by
+// URL and from the screens that link to them, just not listed here.
 export const ATS_ITEMS = [
   leaf('/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'),
-  {
-    id: 'clients-requirements',
-    label: 'Clients & Requirements',
-    children: [
-      leaf('/clients', 'Clients', [['clients', 'Client List', 'view']]),
-      leaf('/requirements', 'Requirements', [['requirements', 'Requirement List', 'view']]),
-      leaf('/ats/agreements', 'Agreements', [['clients', 'Agreement Lifecycle', 'view']]),
-      leaf('/ats/job-portal', 'Job Portal / Integrations', [['requirements', 'Job Posting', 'view'], INTERNAL]),
-    ],
-  },
-  {
-    id: 'candidates-pipeline',
-    label: 'Candidates & Pipeline',
-    children: [
-      leaf('/candidates', 'All Candidates', [['candidates', 'Candidate List', 'view']]),
-      leaf('/candidates?status=Active', 'Pipeline', [['candidates', 'Pipeline Stages', 'view']]),
-      leaf(
-        '/candidates?stage=NEW,AI_INTERVIEW_REQUIRED,AI_INTERVIEW_SCHEDULED,AI_INTERVIEW_COMPLETED,RECRUITER_REVIEW',
-        'Screening / Follow-ups',
-        [['candidates', 'Applications', 'view']],
-      ),
-      leaf('/candidates?stage=HOLD', 'Hold', [['candidates', 'Rejection & Hold', 'view']]),
-      leaf('/candidates?view=rejected', 'Rejected', [['candidates', 'Rejection & Hold', 'view']]),
-      leaf('/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED', 'Selected', [['candidates', 'Pipeline Stages', 'view']]),
-    ],
-  },
-  {
-    id: 'recruiter-bde',
-    label: 'Recruiter & BDE',
-    children: [
-      leaf('/ats/team?tab=recruiters', 'Recruiters', [['recruiterbde', 'Recruiter Workload', 'view']]),
-      leaf('/ats/team?tab=bdes', 'BDEs', [['recruiterbde', 'BDE Workload', 'view']]),
-      leaf('/ats/team?tab=assignments', 'Assignments', [['recruiterbde', 'Team View', 'view']]),
-      leaf('/ats/team?tab=workload', 'Workload', [['recruiterbde', 'Recruiter Workload', 'view']]),
-      leaf('/ats/team?tab=pending', 'Pending Actions', [['recruiterbde', 'Pending Actions', 'view']]),
-    ],
-  },
-  {
-    id: 'interviews-joining',
-    label: 'Interviews & Joining',
-    children: [
-      leaf('/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
-      leaf('/ats/calendar?tab=feedback', 'Interview Feedback', [['interviews', 'Interview Feedback', 'view']]),
-      leaf('/candidates?stage=SELECTED,OFFER', 'Offers', [['candidates', 'Pipeline Stages', 'view']]),
-      leaf('/candidates?stage=OFFER_ACCEPTED,JOINED,HIRED', 'Joining', [['candidates', 'Pipeline Stages', 'view']]),
-      leaf('/ats/internal-hiring', 'Internal Hiring', [['requirements', 'Create Requirement', 'create'], INTERNAL]),
-    ],
-  },
-  leaf('/reports/ats', 'Reports', [['reports', 'ATS Reports', 'view']]),
+  leaf('/requirements', 'Jobs / Requirements', [['requirements', 'Requirement List', 'view']]),
+  leaf('/clients', 'Clients', [['clients', 'Client List', 'view']]),
+  leaf('/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
+  leaf('/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
+  leaf('/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
 ];
 
 export const ACCOUNTS_ITEMS = [
