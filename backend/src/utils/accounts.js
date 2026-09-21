@@ -142,7 +142,8 @@ function dashRange(sel, today = new Date()) {
     all: false,
     from: `${months[0]}-01`,
     to: lastDayOf(months[months.length - 1]),
-    label: kind === 'FY' ? `FY ${year}–${String(year + 1).slice(2)}` : `${word} ${year}–${String(year + 1).slice(2)}`,
+    // "Financial year 2026-2027" is how the note under the filters names it.
+    label: kind === 'FY' ? `Financial year ${year}-${year + 1}` : `${word} ${year}–${String(year + 1).slice(2)}`,
     months,
   };
 }
@@ -153,6 +154,127 @@ const inRange = (dateStr, range) => {
   const d = String(dateStr).slice(0, 10);
   return d >= range.from && d <= range.to;
 };
+
+// The picker's own option list, so the Accounts Dashboard and the Invoice page
+// offer exactly the same periods. The current financial year is named as the
+// application names it rather than by its years.
+function periodOptions(today = new Date()) {
+  const fyNow = currentFy(today);
+  const out = [
+    { value: 'all', label: 'Every month on record' },
+    { value: `FY:${fyNow}`, label: 'Current Financial Year' },
+  ];
+  [fyNow, fyNow - 1, fyNow - 2].forEach((y) => {
+    const tag = `${y}–${String(y + 1).slice(2)}`;
+    if (y !== fyNow) out.push({ value: `FY:${y}`, label: `FY ${tag}` });
+    out.push({ value: `H1:${y}`, label: `Apr–Sep ${y}` });
+    out.push({ value: `H2:${y}`, label: `Oct–Mar ${tag}` });
+    out.push({ value: `Q1:${y}`, label: `Q1 Apr–Jun ${y}` });
+    out.push({ value: `Q2:${y}`, label: `Q2 Jul–Sep ${y}` });
+    out.push({ value: `Q3:${y}`, label: `Q3 Oct–Dec ${y}` });
+    out.push({ value: `Q4:${y}`, label: `Q4 Jan–Mar ${y + 1}` });
+    fyMonths(y).forEach((mk) => out.push({ value: `M:${mk}`, label: monthLabel(mk) }));
+  });
+  return out;
+}
+
+// The payment-status filter vocabulary. "Received" is the old tracker's word
+// for a fully settled invoice, so it picks the same rows as "Paid" — kept
+// because the team still asks for it. Overdue and Cancelled are this
+// application's own and have no equivalent in the tracker.
+const PAY_STATUS = ['All', 'Pending', 'Received', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'];
+const STATUS_ALIAS = { Received: 'Paid' };
+const statusMatch = (status, want) => !want || want === 'All' || status === (STATUS_ALIAS[want] || want);
+
+// "8.33%" — the application's own percentage text, never a bare number.
+const pctTxt = (p) => (p == null || p === '' || Number.isNaN(Number(p)) ? '—' : `${Number(p)}%`);
+
+// "Billing type" as the client agreement states it. Percentage of annual CTC is
+// the only basis this application models; a flat-fee invoice says so.
+function billingLabel(client, invoice) {
+  const pct = invoice && invoice.feePercent != null ? invoice.feePercent : (client ? client.agreementFeePercent : null);
+  if (pct != null && pct !== '') return `% of Annual CTC · ${pctTxt(pct)}`;
+  return 'Flat fee';
+}
+
+// The Client GSTIN cell, in its own words: the number when we hold it, else
+// whether the client is registered at all.
+function clientGstinText(client) {
+  const v = String((client && client.gst) || '').trim();
+  if (v) return { text: v, kind: 'number' };
+  if (client && String(client.state || '').trim()) return { text: 'registered · no number', kind: 'warn' };
+  return { text: 'Not registered', kind: 'plain' };
+}
+
+// Whether a client has never, always, or sometimes been charged GST — the
+// "By the client's whole history" half of the GST charged filter.
+function gstStance(invoices) {
+  const by = {};
+  invoices.forEach((i) => {
+    const c = (i.client && i.client.name) || null;
+    if (!c) return;
+    by[c] = by[c] || { y: 0, n: 0 };
+    if (Number(i.gst || 0) > 0.5) by[c].y += 1; else by[c].n += 1;
+  });
+  const out = {};
+  Object.keys(by).forEach((c) => {
+    const o = by[c];
+    out[c] = (o.y && o.n) ? 'mixed' : (o.y ? 'always' : 'never');
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The printable tax invoice: GST state codes for "Place Of Supply", and the
+// amount in words the document prints under its totals.
+// ---------------------------------------------------------------------------
+
+const GST_STATE = {
+  'jammu and kashmir': '01', 'himachal pradesh': '02', punjab: '03', chandigarh: '04', uttarakhand: '05',
+  haryana: '06', delhi: '07', rajasthan: '08', 'uttar pradesh': '09', bihar: '10', sikkim: '11',
+  'arunachal pradesh': '12', nagaland: '13', manipur: '14', mizoram: '15', tripura: '16', meghalaya: '17',
+  assam: '18', 'west bengal': '19', jharkhand: '20', odisha: '21', chhattisgarh: '22', 'madhya pradesh': '23',
+  gujarat: '24', 'daman and diu': '26', maharashtra: '27', 'andhra pradesh': '37', karnataka: '29', goa: '30',
+  lakshadweep: '31', kerala: '32', 'tamil nadu': '33', puducherry: '34', 'andaman and nicobar islands': '35',
+  telangana: '36', ladakh: '38',
+};
+
+function stateOf(text) {
+  const t = String(text || '').toLowerCase();
+  const hit = Object.keys(GST_STATE).find((s) => t.indexOf(s) >= 0);
+  return hit ? { name: hit.replace(/\b\w/g, (c) => c.toUpperCase()), code: GST_STATE[hit] } : null;
+}
+
+function placeOfSupply(clientText, companyState) {
+  const s = stateOf(clientText) || stateOf(companyState);
+  return s ? `${s.name} (${s.code})` : (companyState || '—');
+}
+
+const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven',
+  'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+const two = (n) => (n < 20 ? ONES[n] : `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ''}`);
+const three = (n) => (n >= 100 ? `${ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ` ${two(n % 100)}` : ''}` : two(n));
+
+// "Indian Rupee Three Lakh Five Thousand Only" — the wording the document uses.
+function wordsINR(amount) {
+  const neg = amount < 0;
+  const amt = Math.abs(Math.round((Number(amount) || 0) * 100) / 100);
+  const rupees = Math.floor(amt);
+  const paise = Math.round((amt - rupees) * 100);
+  const parts = [];
+  const cr = Math.floor(rupees / 10000000);
+  const lk = Math.floor((rupees % 10000000) / 100000);
+  const th = Math.floor((rupees % 100000) / 1000);
+  const rest = rupees % 1000;
+  if (cr) parts.push(`${three(cr)} Crore`);
+  if (lk) parts.push(`${three(lk)} Lakh`);
+  if (th) parts.push(`${three(th)} Thousand`);
+  if (rest) parts.push(three(rest));
+  let s = `${neg ? 'Minus ' : ''}Indian Rupee ${parts.join(' ').replace(/\s+/g, ' ').trim() || 'Zero'}`;
+  if (paise) s += ` and ${two(paise)} Paise`;
+  return `${s} Only`;
+}
 
 // ---------------------------------------------------------------------------
 // Receivables ageing, in the prototype's own bucket vocabulary.
@@ -165,6 +287,15 @@ function daysOverdue(dueDate, today = new Date()) {
   const d = new Date(dueDate);
   if (Number.isNaN(d.getTime())) return null;
   return Math.floor((today - d) / 86400000);
+}
+
+// "Invoice age" in the pending screens is days since the invoice was raised —
+// not days past its due date. An invoice not yet due still has an age.
+function invoiceAge(invoiceDate, today = new Date()) {
+  if (!invoiceDate) return null;
+  const d = new Date(String(invoiceDate).slice(0, 10));
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, Math.floor((today - d) / 86400000));
 }
 
 // 'Settled' is a sixth bucket the chips only show when something lands in it.
@@ -286,11 +417,23 @@ module.exports = {
   fyMonths,
   dashRange,
   inRange,
+  periodOptions,
+  PAY_STATUS,
+  STATUS_ALIAS,
+  statusMatch,
+  pctTxt,
+  billingLabel,
+  clientGstinText,
+  gstStance,
+  stateOf,
+  placeOfSupply,
+  wordsINR,
   monthLabel,
   lastDayOf,
   AGE_BUCKETS,
   ageBucket,
   daysOverdue,
+  invoiceAge,
   normName,
   clientFromNarration,
   allocPlan,

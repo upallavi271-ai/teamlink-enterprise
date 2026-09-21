@@ -4,7 +4,8 @@ const { requireAuth } = require('../middleware/auth');
 const { STAGE_CODES, stageLabel } = require('../utils/atsVocab');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
-  dashRange, inRange, currentFy, monthLabel, daysOverdue,
+  dashRange, inRange, currentFy, monthLabel, daysOverdue, invoiceAge,
+  periodOptions, PAY_STATUS, statusMatch,
 } = require('../utils/accounts');
 
 const router = express.Router();
@@ -14,7 +15,7 @@ router.use(requireAuth);
 // sitting unreconciled on the bank statement.
 router.get('/accounts', async (req, res) => {
   const [invoices, transactions, expenses] = await Promise.all([
-    prisma.invoice.findMany({ include: { client: true } }),
+    prisma.invoice.findMany({ include: { client: true, candidate: true, requirement: { include: { recruiter: true } } } }),
     prisma.bankTransaction.findMany({ orderBy: { date: 'desc' } }),
     prisma.officeExpense.findMany(),
   ]);
@@ -27,7 +28,8 @@ router.get('/accounts', async (req, res) => {
     .filter((i) => range.all || inRange(i.invoiceDate, range))
     .filter((i) => !req.query.client || req.query.client === 'All' || i.client?.name === req.query.client)
     .filter((i) => !req.query.department || req.query.department === 'All' || i.client?.ownerDepartment === req.query.department)
-    .filter((i) => !req.query.status || req.query.status === 'All' || deriveInvoiceStatus(i) === req.query.status)
+    // "Received and Paid mean the same thing — the whole invoice is in."
+    .filter((i) => statusMatch(deriveInvoiceStatus(i), req.query.status))
     .filter((i) => !q || [i.invoiceNumber, i.client?.name, i.client?.gst].join(' ').toLowerCase().includes(q));
   const scopedExpenses = expenses.filter((e) => range.all || inRange(e.expenseDate, range));
   const live = scoped.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled');
@@ -51,41 +53,134 @@ router.get('/accounts', async (req, res) => {
   });
   const overdueInvoices = live.filter((i) => invoiceOutstanding(i) > 0.5 && i.dueDate && daysOverdue(i.dueDate) > 0);
 
+  // Every receipt against the invoices in this period, newest first — the
+  // month's cash column, each client's last payment and its instalment count
+  // are all read off this one list.
+  const payments = await prisma.invoicePayment.findMany({
+    where: { invoiceId: { in: live.map((i) => i.id) } },
+    orderBy: { date: 'desc' },
+  });
+  const paysByInvoice = new Map();
+  payments.forEach((p) => {
+    if (!paysByInvoice.has(p.invoiceId)) paysByInvoice.set(p.invoiceId, []);
+    paysByInvoice.get(p.invoiceId).push(p);
+  });
+
   // Month-by-month, and client-by-client, inside the period.
-  const monthKeys = [...new Set(live.map((i) => String(i.invoiceDate || '').slice(0, 7)).filter(Boolean))].sort();
+  const monthKeys =[...new Set(live.map((i) => String(i.invoiceDate || '').slice(0, 7)).filter(Boolean))].sort();
   const byMonth = monthKeys.map((mk) => {
     const list = live.filter((i) => String(i.invoiceDate || '').slice(0, 7) === mk);
     const exp = scopedExpenses.filter((e) => String(e.expenseDate || '').slice(0, 7) === mk);
     const b = sum(list, (i) => Number(i.amount || 0));
     const sp = sum(exp, (e) => Number(e.monthlyAmount || 0) - Number(e.gstAmount || 0) - Number(e.tdsAmount || 0));
+    const gstM = sum(list, (i) => Number(i.gst || 0));
+    const tdsM = sum(list, (i) => Number(i.tds || 0));
+    // "Received" is grouped by invoice month; "Cash collected" is grouped by
+    // the actual payment date — same as the workbook.
+    const cash = ROUND(payments.filter((p) => String(p.date || '').slice(0, 7) === mk)
+      .reduce((s, p) => s + Number(p.amount || 0), 0));
     return {
       month: mk,
       label: monthLabel(mk),
       invoices: list.length,
+      joins: list.length,
+      drops: 0,
       billing: b,
-      gst: sum(list, (i) => Number(i.gst || 0)),
-      tds: sum(list, (i) => Number(i.tds || 0)),
+      gst: gstM,
+      invoiceValue: ROUND(b + gstM),
+      tds: tdsM,
       receivable: sum(list, invoiceTotal),
       received: sum(list, (i) => Number(i.receivedAmount || 0)),
       pending: ROUND(sum(list, invoiceTotal) - sum(list, (i) => Number(i.receivedAmount || 0))),
+      netProfit: ROUND(b - tdsM),
+      cash,
       spend: sp,
       profit: ROUND(b - sp),
     };
   });
 
+  // "Pending & received, client by client" — before GST, after GST, receivable,
+  // received, pending, what share is collected, and when they last paid.
   const clientMap = new Map();
   live.forEach((i) => {
     const k = i.client?.name || '—';
-    const cur = clientMap.get(k) || { client: k, invoices: 0, billing: 0, gst: 0, tds: 0, receivable: 0, received: 0, pending: 0 };
+    const cur = clientMap.get(k) || {
+      client: k, department: i.client?.ownerDepartment || '—', invoices: 0,
+      billing: 0, gst: 0, invoiceValue: 0, tds: 0, receivable: 0, received: 0, pending: 0,
+      parts: 0, noProof: 0, lastPayment: null,
+    };
     cur.invoices += 1;
     cur.billing = ROUND(cur.billing + Number(i.amount || 0));
     cur.gst = ROUND(cur.gst + Number(i.gst || 0));
+    cur.invoiceValue = ROUND(cur.billing + cur.gst);
     cur.tds = ROUND(cur.tds + Number(i.tds || 0));
     cur.receivable = ROUND(cur.receivable + invoiceTotal(i));
     cur.received = ROUND(cur.received + Number(i.receivedAmount || 0));
     cur.pending = ROUND(cur.receivable - cur.received);
+    (paysByInvoice.get(i.id) || []).forEach((p) => {
+      cur.parts += 1;
+      if (!p.reference) cur.noProof += 1;
+      if (!cur.lastPayment || String(p.date) > cur.lastPayment) cur.lastPayment = p.date;
+    });
     clientMap.set(k, cur);
   });
+  const byClient = [...clientMap.values()].map((c) => ({
+    ...c,
+    collectedPct: c.receivable > 0 ? Math.round((c.received / c.receivable) * 100) : 0,
+    settled: c.pending <= 0.5,
+  }));
+
+  // "Client × month pending" — the pending matrix, month columns being the
+  // invoice months. Only what is still owed appears.
+  const owing = live.filter((i) => invoiceOutstanding(i) > 0.5);
+  const matrixMonths = [...new Set(owing.map((i) => String(i.invoiceDate || '').slice(0, 7)).filter(Boolean))].sort();
+  const matrixMap = new Map();
+  owing.forEach((i) => {
+    const k = i.client?.name || '—';
+    const cur = matrixMap.get(k) || {
+      client: k, department: i.client?.ownerDepartment || '—', recruiters: {},
+      billing: 0, gst: 0, invoiceValue: 0, tds: 0, receivable: 0, paid: 0, parts: 0, total: 0, cells: {}, oldest: 0,
+    };
+    const mk = String(i.invoiceDate || '').slice(0, 7);
+    const out = invoiceOutstanding(i);
+    cur.billing = ROUND(cur.billing + Number(i.amount || 0));
+    cur.gst = ROUND(cur.gst + Number(i.gst || 0));
+    cur.invoiceValue = ROUND(cur.billing + cur.gst);
+    cur.tds = ROUND(cur.tds + Number(i.tds || 0));
+    cur.receivable = ROUND(cur.receivable + invoiceTotal(i));
+    cur.paid = ROUND(cur.paid + Number(i.receivedAmount || 0));
+    cur.parts += (paysByInvoice.get(i.id) || []).length;
+    cur.cells[mk] = ROUND((cur.cells[mk] || 0) + out);
+    cur.total = ROUND(cur.total + out);
+    const age = daysOverdue(i.dueDate);
+    if (age != null && age > cur.oldest) cur.oldest = age;
+    matrixMap.set(k, cur);
+  });
+  const pendingMatrix = [...matrixMap.values()].sort((a, b) => b.total - a.total);
+  const pendingRows = owing
+    .map((i) => {
+      const ps = paysByInvoice.get(i.id) || [];
+      const last = ps[0] || null;
+      return {
+        id: i.id,
+        candidate: i.candidate?.name || i.notes || '—',
+        client: i.client?.name || '—',
+        recruiter: i.requirement?.recruiter?.name || null,
+        invoiceNumber: i.invoiceNumber,
+        invoiceDate: i.invoiceDate,
+        age: invoiceAge(i.invoiceDate),
+        billing: ROUND(Number(i.amount || 0)),
+        gst: ROUND(Number(i.gst || 0)),
+        invoiceValue: ROUND(Number(i.amount || 0) + Number(i.gst || 0)),
+        tds: ROUND(Number(i.tds || 0)),
+        receivable: invoiceTotal(i),
+        received: ROUND(Number(i.receivedAmount || 0)),
+        pending: invoiceOutstanding(i),
+        status: deriveInvoiceStatus(i),
+        lastPaid: last ? { date: last.date, amount: last.amount, parts: ps.length, proof: !!last.reference } : null,
+      };
+    })
+    .sort((a, b) => (b.age || 0) - (a.age || 0));
 
   const catMap = new Map();
   scopedExpenses.forEach((e) => {
@@ -97,19 +192,6 @@ router.get('/accounts', async (req, res) => {
   });
 
   const fyNow = currentFy();
-  const periodOptions = [
-    { value: 'all', label: 'Every month on record' },
-    ...[fyNow, fyNow - 1, fyNow - 2].flatMap((y) => [
-      { value: `FY:${y}`, label: `FY ${y}–${String(y + 1).slice(2)}` },
-      { value: `H1:${y}`, label: `Apr–Sep ${y}` },
-      { value: `H2:${y}`, label: `Oct–Mar ${y}–${String(y + 1).slice(2)}` },
-      { value: `Q1:${y}`, label: `Q1 Apr–Jun ${y}` },
-      { value: `Q2:${y}`, label: `Q2 Jul–Sep ${y}` },
-      { value: `Q3:${y}`, label: `Q3 Oct–Dec ${y}` },
-      { value: `Q4:${y}`, label: `Q4 Jan–Mar ${y + 1}` },
-    ]),
-  ];
-
   const rows = invoices.map((i) => ({
     id: i.id,
     invoiceNumber: i.invoiceNumber,
@@ -127,11 +209,12 @@ router.get('/accounts', async (req, res) => {
   const unreconciled = transactions.filter((t) => ['Unmatched', 'Matched'].includes(txnState(t)));
 
   res.json({
-    period: { sel: req.query.period || `FY:${fyNow}`, ...range, options: periodOptions },
+    period: { sel: req.query.period || `FY:${fyNow}`, ...range, options: periodOptions() },
     filterOptions: {
       clients: [...new Set(invoices.map((i) => i.client?.name).filter(Boolean))].sort(),
+      clientsEver: new Set(invoices.map((i) => i.client?.name).filter(Boolean)).size,
       departments: [...new Set(invoices.map((i) => i.client?.ownerDepartment).filter(Boolean))].sort(),
-      statuses: ['All', 'Pending', 'Partially Paid', 'Overdue', 'Paid'],
+      statuses: PAY_STATUS,
     },
     showing: { invoices: live.length, of: invoices.length },
     // The prototype's dashboard KPI strip, in its own words and its own order.
@@ -156,7 +239,9 @@ router.get('/accounts', async (req, res) => {
       expensePaid,
       expensePending,
       expenseCount: scopedExpenses.length,
-      profitAfterExpenses: ROUND(billing - tds - expenseNet),
+      // The "Office expenses" tile is cash already out, and profit after
+      // expenses nets off that same figure — money not yet paid is not spent.
+      profitAfterExpenses: ROUND(billing - tds - expensePaid),
     },
     gstPosition: {
       charged: gst,
@@ -169,7 +254,19 @@ router.get('/accounts', async (req, res) => {
       unclaimableValue: sum(scopedExpenses.filter((e) => Number(e.gstAmount || 0) > 0.5 && String(e.vendorGstin || '').trim().length < 10), (e) => Number(e.gstAmount || 0)),
     },
     byMonth,
-    byClient: [...clientMap.values()].sort((a, b) => b.receivable - a.receivable),
+    byClient: byClient.sort((a, b) => b.pending - a.pending || b.received - a.received),
+    // Client × month pending, and every open row oldest first. (The flat
+    // `pending` count further down is the older Accountant home tile.)
+    pendingMatrix: {
+      months: matrixMonths,
+      monthLabels: matrixMonths.map(monthLabel),
+      clients: pendingMatrix,
+      rows: pendingRows,
+      total: ROUND(pendingMatrix.reduce((s, c) => s + c.total, 0)),
+      openRows: pendingRows.length,
+      oldest: pendingRows.length ? Math.max(0, ...pendingRows.map((r) => r.age || 0)) : null,
+      largest: pendingMatrix[0] ? { client: pendingMatrix[0].client, total: pendingMatrix[0].total } : null,
+    },
     spendByCategory: [...catMap.values()].sort((a, b) => b.net - a.net),
     invoices: rows.length,
     pending: rows.filter((i) => i.status === 'Pending').length,

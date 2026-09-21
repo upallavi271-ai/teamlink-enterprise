@@ -952,6 +952,26 @@ model Company {
   // headquarters line and the list of employment policies.
   hq       String?
   policies String? // JSON array of policy names, each shown with an Active chip
+
+  // Everything the printable tax invoice prints in its letterhead, its "Place
+  // of Supply" line and its payment notes. Filled in once; every invoice and
+  // receipt then carries it. (Accounts — acctdash_invoice_document.)
+  legalName     String?
+  tagline       String?
+  gstin         String?
+  sac           String? // HSN/SAC printed against every line
+  city          String?
+  state         String?
+  pin           String?
+  logoUrl       String?
+  bankName      String?
+  accountName   String?
+  accountNumber String?
+  ifsc          String?
+  branch        String?
+  accountType   String?
+  upi           String?
+  invoiceTerms  String? // "Due on Receipt", "Net 30" — printed as Terms
 }
 
 model Notification {
