@@ -4,7 +4,7 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
-  sectionLabel, groupsForUser, flattenGroups, sectionOf, scoreMatch,
+  sectionLabel, mayRenderSection, groupsForUser, flattenGroups, sectionOf, scoreMatch,
 } from '../nav';
 import Logo from './Logo.jsx';
 import AiAssistant from './AiAssistant.jsx';
@@ -215,7 +215,15 @@ export default function Shell() {
               nothing on the profile form itself — that page says it in
               place, and saying it twice on one screen reads as a bug. */}
           {pathname !== '/my-profile' && <ProfileStatusBanner variant="shell" />}
-          <Outlet />
+          {/* An external login that types the URL of an internal screen gets a
+              plain refusal rather than the screen's chrome — see
+              mayRenderSection() in ../nav.js for why. */}
+          {mayRenderSection(user, pathname) ? <Outlet /> : (
+            <div className="card">
+              <h1>Not available</h1>
+              <div className="page-sub">This area is not part of your access.</div>
+            </div>
+          )}
         </main>
 
         <footer>

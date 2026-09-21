@@ -5,6 +5,7 @@ build/
 .env
 *.log
 backend/prisma/dev.db
+backend/prisma/aiagent-test.db
 backend/prisma/dev.db-journal
 ~$*.md
 uploads/

@@ -5,6 +5,7 @@ const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
 const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
+const { applicationWhere } = require('../utils/scope');
 const { groupLabelOfStage } = require('../utils/pipelineView');
 const { recordStageCommunications } = require('../utils/candidateComms');
 // Hiring Type, the invoice-on-joining path and the internal-hire path all live
@@ -49,7 +50,12 @@ const STAGE_OWNERS = {
 };
 
 router.get('/', async (req, res) => {
-  const where = {};
+  // STEP 6 OF THE ENGINE — DATA SCOPE. This list had the module guard above
+  // but no scope fragment, so it answered every signed-in login with the whole
+  // pipeline: a Candidate calling GET /api/applications got all nineteen
+  // applications, other people's names included, while GET /api/candidates
+  // correctly returned only their own. Same helper every other list spreads.
+  const where = { ...applicationWhere(req.user) };
   if (req.query.requirementId) where.requirementId = req.query.requirementId;
   if (req.query.candidateId) where.candidateId = req.query.candidateId;
   if (req.query.stage) where.stage = req.query.stage;

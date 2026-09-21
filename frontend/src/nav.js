@@ -69,6 +69,36 @@ export function sectionLabel(section, user) {
   return SECTION_LABEL[section] || 'Dashboard';
 }
 
+// ---------------------------------------------------------------------------
+// May this login RENDER this URL at all?
+//
+// The routes in App.jsx are not individually permission-guarded: any signed-in
+// user who types a path gets the screen's chrome, and only the data behind it
+// is refused by the API. For a member of staff that is harmless. For a Client
+// or a Candidate it is not — typing /hrms or /employees printed internal
+// vocabulary ("HRMS Dashboard", "HRMS Role") at somebody outside the company.
+//
+// So this narrows EXTERNAL logins only, and nothing else: an internal login's
+// behaviour is unchanged. An external login may render the sections whose
+// product they actually hold, plus their own Notifications and Profile.
+// ---------------------------------------------------------------------------
+const ALWAYS_OPEN_PATHS = ['/admin/notifications', '/admin/profile'];
+
+export function mayRenderSection(user, pathname) {
+  if (!isExternalUser(user)) return true;
+  if (ALWAYS_OPEN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return true;
+  const products = user?.products || {};
+  switch (sectionOf(pathname)) {
+    case 'hrms': return !!products.hrms;
+    case 'accounts': return !!products.accounts;
+    case 'ats': return !!products.ats;
+    // Administration proper — Users, Role Catalog, Employee Management and the
+    // rest — is never an outsider's screen.
+    case 'admin': return false;
+    default: return true;
+  }
+}
+
 // leaf: { to, label, perms: [[module, feature, action], ...], product }
 // A leaf with several perms needs all of them.
 const leaf = (to, label, perms, product) => ({ to, label, perms, product });
