@@ -743,6 +743,75 @@ model BankTransaction {
   clientName       String?
   importBatch      String?
   ignoredReason    String?
+
+  // Bank & Reconciliation depth, from the accounting application.
+  // A statement line belongs to one bank account; "excluded" keeps a line on
+  // file but out of the uncategorised count; the category fields are what the
+  // categorisation panel filed a debit (or a non-invoice credit) as.
+  bankAccountId    String?
+  excluded         Boolean  @default(false)
+  category         String?
+  categoryKind     String?  // expense | hand | transfer | other
+  vendor           String?
+  counterparty     String?
+  excess           Float?   // part of a credit that was more than the client owed
+  importFile       String?
+}
+
+// A bank account or credit card. Each one keeps its own statement, its own
+// opening balance and its own running balance.
+model BankAccount {
+  id        String   @id @default(cuid())
+  bank      String
+  name      String?
+  accNo     String?
+  ifsc      String?
+  branch    String?
+  openBal   Float    @default(0)
+  openDate  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// A narration rule the app learnt: "Save & remember this narration".
+model BankRule {
+  id        String   @id @default(cuid())
+  match     String
+  category  String
+  vendor    String?
+  gstRate   Float?
+  kind      String   @default("expense") // expense | hand | transfer
+  createdAt DateTime @default(now())
+}
+
+// The balance log: what the bank actually showed on a date, typed in by hand.
+model BankMark {
+  id            String   @id @default(cuid())
+  bankAccountId String?
+  date          String
+  kind          String   @default("Bank balance on that date")
+  balance       Float?
+  cleared       Float?
+  match         String?
+  note          String?
+  recordedBy    String?
+  createdAt     DateTime @default(now())
+}
+
+// Every statement that has ever been imported, with its file and its period.
+model BankImport {
+  id            String   @id @default(cuid())
+  bankAccountId String?
+  date          String
+  file          String?
+  recordedBy    String?
+  lines         Int      @default(0)
+  skipped       Int      @default(0)
+  credits       Float    @default(0)
+  debits        Float    @default(0)
+  fromDate      String?
+  toDate        String?
+  createdAt     DateTime @default(now())
 }
 
 model OfficeExpense {
