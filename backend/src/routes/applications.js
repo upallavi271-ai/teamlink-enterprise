@@ -5,6 +5,7 @@ const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
 const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
+const { applicationWhere, scopeOf, CLIENT_SHARED_STAGES } = require('../utils/scope');
 const { groupLabelOfStage } = require('../utils/pipelineView');
 const { recordStageCommunications } = require('../utils/candidateComms');
 // Hiring Type, the invoice-on-joining path and the internal-hire path all live
@@ -48,11 +49,22 @@ const STAGE_OWNERS = {
   HOLD: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
 };
 
+// Every other application read goes through applicationWhere(); this one did
+// not, so any ATS login got the whole table — a client could list another
+// client's candidates. The query filters below only ever NARROW the scoped
+// set; they can never widen it.
 router.get('/', async (req, res) => {
-  const where = {};
+  const scope = scopeOf(req.user);
+  const where = { ...applicationWhere(req.user) };
+  // Reaching a client's requirement is not enough for a CLIENT login: the
+  // profile must actually have been shared with them. Same gate as
+  // routes/candidates.js.
+  if (scope.role === 'CLIENT' || scope.atsRole === 'CLIENT') {
+    where.stage = { in: CLIENT_SHARED_STAGES };
+  }
   if (req.query.requirementId) where.requirementId = req.query.requirementId;
   if (req.query.candidateId) where.candidateId = req.query.candidateId;
-  if (req.query.stage) where.stage = req.query.stage;
+  if (req.query.stage && !where.stage) where.stage = req.query.stage;
   const applications = await prisma.application.findMany({
     where,
     include: { candidate: true, requirement: { include: { client: true } } },
