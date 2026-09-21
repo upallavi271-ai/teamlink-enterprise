@@ -111,6 +111,14 @@ const DEFAULT_RULES = [
   // requireRole(...RAISE_ROLES) on POST /, PUT /:id, activate, toggle-status, generate-jd
   { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: SET.RAISE },
   { module: 'requirements', features: ['Requirement Detail'], actions: ['edit', 'approve'], roles: SET.RAISE },
+  // ASSIGN is its own action: the assignment chain (TL -> Recruiter(s) -> BDE)
+  // is what drives scope, so handing it out is a lead's decision, not a
+  // side-effect of being able to edit. A BDE assigns the client side of it.
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE, 'BDE'] },
+  // A recruiter EDITS the requirements they are assigned — routes/requirements.js
+  // narrows this to records they are actually named on (VIEW != EDIT).
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['edit'], roles: ['RECRUITER'] },
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['export'], roles: SET.MATCHING },
   { module: 'requirements', features: ['Job Posting'], actions: ['create', 'edit'], roles: SET.RAISE },
   { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: SET.MATCHING },
   { module: 'requirements', features: ['Requirement Pipeline'], actions: ['view'], roles: SET.MATCHING },
@@ -125,6 +133,10 @@ const DEFAULT_RULES = [
   // requireRole('CLIENT','SUPER_ADMIN','ADMIN') — the client confirms/e-signs
   { module: 'clients', features: ['Agreement Lifecycle'], actions: ['approve'], roles: ['SUPER_ADMIN', 'ADMIN', 'CLIENT'] },
   { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: SET.ADMIN },
+  // ASSIGN on a client = setting its Account Manager / BDE owner. EXPORT is
+  // the client directory download. Both separate from EDIT, per VIEW != EDIT.
+  { module: 'clients', features: ['Client Detail'], actions: ['assign'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
+  { module: 'clients', features: ['Client List'], actions: ['export'], roles: SET.MATCHING },
 
   // --- ATS: Candidates & Pipeline ---------------------------------------
   { module: 'candidates', features: '*', actions: ['view'], roles: [...SET.PIPELINE, 'CLIENT', 'CANDIDATE'] },

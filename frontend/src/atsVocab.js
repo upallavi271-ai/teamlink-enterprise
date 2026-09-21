@@ -59,27 +59,64 @@ export function stageLabel(code) {
 export const LIFE_STATUSES = ['Active', 'On Hold', 'Rejected', 'Closed'];
 
 // Requirement status is stored as a code but shown the prototype's way.
+// Requirement workflow:
+//   Draft → Agreement Check → Open → Recruiter Assigned → Sourcing
+//     → Candidates Available → On Hold / Closed
+export const REQUIREMENT_STATUS_CODES = [
+  'DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING',
+  'CANDIDATES_AVAILABLE', 'ON_HOLD', 'CLOSED',
+];
 export const REQUIREMENT_STATUS_LABELS = {
   DRAFT: 'Draft',
+  AGREEMENT_CHECK: 'Agreement Check',
   OPEN: 'Open',
+  RECRUITER_ASSIGNED: 'Recruiter Assigned',
+  SOURCING: 'Sourcing',
+  CANDIDATES_AVAILABLE: 'Candidates Available',
   ON_HOLD: 'On Hold',
   CLOSED: 'Closed',
 };
+// A requirement past the agreement gate and neither parked nor finished.
+export const REQUIREMENT_LIVE_STATUSES = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
+export const requirementIsLive = (status) => REQUIREMENT_LIVE_STATUSES.includes(status);
 export function requirementStatusLabel(code) {
   return REQUIREMENT_STATUS_LABELS[code] || code || '—';
 }
+export function requirementBadgeClass(code) {
+  if (code === 'CLOSED') return 'rejected';
+  if (code === 'ON_HOLD') return 'pending';
+  if (['DRAFT', 'AGREEMENT_CHECK'].includes(code)) return 'new';
+  if (code === 'CANDIDATES_AVAILABLE') return 'shortlist';
+  return 'active';
+}
 
+// Agreement workflow:
+//   Draft → Sent → Viewed → Client Confirmation Pending → Signed → Active,
+//   with Expired and Rejected terminal. CONFIRMED / CANCELLED are the
+//   pre-clireq spellings and are still rendered, never written.
+export const AGREEMENT_STATUS_CODES = [
+  'DRAFT', 'SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING', 'SIGNED', 'ACTIVE', 'EXPIRED', 'REJECTED',
+];
 export const AGREEMENT_STATUS_LABELS = {
   DRAFT: 'Draft',
   SENT: 'Sent',
-  CONFIRMED: 'Confirmed',
+  VIEWED: 'Viewed',
+  CLIENT_CONFIRMATION_PENDING: 'Client Confirmation Pending',
+  SIGNED: 'Signed',
   ACTIVE: 'Active',
-  CANCELLED: 'Cancelled',
   EXPIRED: 'Expired',
+  REJECTED: 'Rejected',
+  CONFIRMED: 'Signed',
+  CANCELLED: 'Rejected',
 };
+export const normalizeAgreementStatus = (code) =>
+  ({ CONFIRMED: 'SIGNED', CANCELLED: 'REJECTED' }[code] || code || 'DRAFT');
+export const agreementIsSigned = (code) => ['SIGNED', 'ACTIVE'].includes(normalizeAgreementStatus(code));
+export const agreementIsActive = (code) => normalizeAgreementStatus(code) === 'ACTIVE';
 export function agreementStatusLabel(code) {
   return AGREEMENT_STATUS_LABELS[code] || code || '—';
 }
+export const PORTAL_SYNC_STATUSES = ['Not Synced', 'Pending', 'Synced', 'Failed'];
 
 // Labels are the prototype's exact strings from its Users administration
 // catalog (line 9895). See backend/src/utils/atsVocab.js for why this app's
@@ -216,7 +253,8 @@ export function priorityBadgeClass(priority) {
 export function agreementBadgeClass(code) {
   const label = AGREEMENT_STATUS_LABELS[code] || code;
   if (label === 'Active') return 'active';
-  if (label === 'Cancelled' || label === 'Expired') return 'rejected';
+  if (label === 'Signed') return 'approved';
+  if (['Cancelled', 'Expired', 'Rejected'].includes(label)) return 'rejected';
   return 'pending';
 }
 

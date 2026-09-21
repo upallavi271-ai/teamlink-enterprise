@@ -14,7 +14,7 @@ const {
   COMPANY_POLICIES, COMPANY_DEFAULTS, EMP_TYPES, EMP_STATUSES, EMP_GENDERS,
   EMP_MGMT_STATUS_FILTER, integrationById,
 } = require('../utils/adminCatalog');
-const { DEPTS, LOCS } = require('../utils/atsVocab');
+const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -907,7 +907,7 @@ async function jobPortalStats() {
   const [candidates, applications, requirements, needsMapping, failed] = await Promise.all([
     prisma.candidate.count({ where: { source: 'Job Portal' } }),
     prisma.application.count({ where: { candidate: { source: 'Job Portal' } } }),
-    prisma.requirement.count({ where: { status: 'OPEN', postingSources: { contains: 'Job Portal' } } }),
+    prisma.requirement.count({ where: { status: { in: REQUIREMENT_LIVE_STATUSES }, postingSources: { contains: 'Job Portal' } } }),
     // A portal candidate who never landed on a requirement still needs mapping.
     prisma.candidate.count({ where: { source: 'Job Portal', applications: { none: {} } } }),
     prisma.syncLog.count({ where: { status: 'Failed' } }),
@@ -1090,7 +1090,7 @@ router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integ
   } else {
     // External boards are simulated, but the counts derive from real postings.
     const posted = await prisma.requirement.findMany({ where: { postingSources: { contains: channel.name } }, select: { status: true } });
-    synced = posted.filter((r) => r.status === 'OPEN').length;
+    synced = posted.filter((r) => requirementIsLive(r.status)).length;
     failed = posted.filter((r) => r.status === 'DRAFT').length;
   }
   const next = await prisma.integration.update({

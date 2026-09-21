@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requirementWhere, applicationWhere, scopeOf } = require('../utils/scope');
-const { STAGE_CODES, stageLabel } = require('../utils/atsVocab');
+const { STAGE_CODES, stageLabel, REQUIREMENT_LIVE_STATUSES } = require('../utils/atsVocab');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
   dashRange, inRange, currentFy, monthLabel, daysOverdue, invoiceAge,
@@ -296,7 +296,7 @@ router.get('/', async (req, res) => {
     activeEmployees, pendingLeave, invoicesPending, invoicesOverdue,
     stageGroups, recruiters,
   ] = await Promise.all([
-    prisma.requirement.count({ where: { ...reqScope, status: 'OPEN' } }),
+    prisma.requirement.count({ where: { ...reqScope, status: { in: REQUIREMENT_LIVE_STATUSES } } }),
     count({ stage: 'RECRUITER_REVIEW' }),
     count({ stage: 'WITH_BDE' }),
     count({ stage: { in: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'] } }),

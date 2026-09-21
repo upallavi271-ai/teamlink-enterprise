@@ -8,7 +8,7 @@ const { logAudit } = require('../utils/audit');
 const { computeMatch } = require('../utils/matching');
 const {
   applicationOwner, applicationNextAction, applicationDueDate, applicationIsOverdue,
-  applicationLifeStatus, stageLabel, interviewStatusLabel,
+  applicationLifeStatus, stageLabel, interviewStatusLabel, REQUIREMENT_LIVE_STATUSES,
 } = require('../utils/atsVocab');
 const {
   CANDIDATE_VIEWS, groupIdOfStage, groupLabelOfStage, stageDetail,
@@ -497,7 +497,7 @@ router.get('/:id', async (req, res) => {
   let matchingRequirements = [];
   if (kind === 'internal') {
     const open = await prisma.requirement.findMany({
-      where: { status: 'OPEN', ...requirementWhere(req.user) },
+      where: { status: { in: REQUIREMENT_LIVE_STATUSES }, ...requirementWhere(req.user) },
       include: { client: true },
     });
     matchingRequirements = open

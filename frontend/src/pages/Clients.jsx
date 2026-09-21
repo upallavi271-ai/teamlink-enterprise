@@ -5,10 +5,11 @@ import Modal from '../components/Modal.jsx';
 import {
   agreementStatusLabel, agreementBadgeClass, DEPTS, LOCS, INDIAN_STATES, CLIENT_INDUSTRIES, CLIENT_STATUSES,
   CLIENT_TYPES, CLIENT_PRIORITIES, COMM_MODES, BUSINESS_TYPES, PAYMENT_TERMS,
-  INVOICE_TRIGGERS, AGREEMENT_TEMPLATES, RISK_FLAGS,
+  INVOICE_TRIGGERS, AGREEMENT_TEMPLATES, RISK_FLAGS, requirementIsLive,
 } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
+import ClientModuleTabs from '../components/ClientModuleTabs.jsx';
 
 // The prototype's Add Client modal (openAddClientModal, line 7296) is five
 // tabs; switchAddClientTab() names them in this order.
@@ -44,6 +45,10 @@ const EMPTY = {
   agreementStart: today(), agreementEnd: nextYear(),
   commChannels: 'Email,WhatsApp',
   riskFlag: 'None', riskNotes: '',
+  // Client Code is assigned by the server (CLI0001 …) when left blank.
+  clientCode: '',
+  billingContactName: '', billingContactDesignation: '', billingContactEmail: '', billingContactPhone: '',
+  recruitmentContactName: '', recruitmentContactDesignation: '', recruitmentContactEmail: '', recruitmentContactPhone: '',
 };
 
 export default function Clients() {
@@ -87,8 +92,9 @@ export default function Clients() {
     api.get('/requirements').then((res) => setRequirements(res.data)).catch(() => setRequirements([]));
   }, []);
 
+  // "Open" means live — past the agreement gate, neither parked nor closed.
   const openCount = (clientId) =>
-    requirements.filter((r) => r.clientId === clientId && r.status === 'OPEN').length;
+    requirements.filter((r) => r.clientId === clientId && requirementIsLive(r.status)).length;
 
   async function save(createAgreement) {
     setError('');
@@ -108,12 +114,17 @@ export default function Clients() {
       <div className="page-head">
         <div>
           <h1>Clients</h1>
-          <div className="page-sub">{clients.length} client accounts</div>
+          <div className="page-sub">
+            {`Clients · Requirements · Agreements · Job Portal — ${clients.length} client account(s) in your scope`}
+          </div>
         </div>
         {can(user, 'ats', 'clients', 'Add Client', 'create') && (
           <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Client</button>
         )}
       </div>
+
+      {/* Clients and Requirements are one module now — this is its tab strip. */}
+      <ClientModuleTabs active="clients" />
 
       {showForm && (
       <Modal
@@ -409,6 +420,48 @@ export default function Clients() {
                 <span>Communication Preferences (comma separated)</span>
                 <input value={form.commChannels} onChange={(e) => set({ commChannels: e.target.value })} />
               </label>
+
+              {/* The two contacts the client profile carries besides the
+                  primary/secondary commercial contacts: who is invoiced, and
+                  who the recruitment conversation actually runs through. */}
+              <div className="section-label">Billing Contact</div>
+              <div className="grid-2">
+                <label className="field">
+                  <span>Name</span>
+                  <input value={form.billingContactName} onChange={(e) => set({ billingContactName: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Designation</span>
+                  <input value={form.billingContactDesignation} onChange={(e) => set({ billingContactDesignation: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Email</span>
+                  <input type="email" value={form.billingContactEmail} onChange={(e) => set({ billingContactEmail: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Phone</span>
+                  <input value={form.billingContactPhone} onChange={(e) => set({ billingContactPhone: e.target.value })} />
+                </label>
+              </div>
+              <div className="section-label">Recruitment Contact</div>
+              <div className="grid-2">
+                <label className="field">
+                  <span>Name</span>
+                  <input value={form.recruitmentContactName} onChange={(e) => set({ recruitmentContactName: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Designation</span>
+                  <input value={form.recruitmentContactDesignation} onChange={(e) => set({ recruitmentContactDesignation: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Email</span>
+                  <input type="email" value={form.recruitmentContactEmail} onChange={(e) => set({ recruitmentContactEmail: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Phone</span>
+                  <input value={form.recruitmentContactPhone} onChange={(e) => set({ recruitmentContactPhone: e.target.value })} />
+                </label>
+              </div>
             </>
           )}
 
@@ -460,23 +513,30 @@ export default function Clients() {
         <table>
           <thead>
             <tr>
-              <th>Client</th><th>Industry</th><th>Location</th>
-              <th>Account Manager</th><th>Agreement</th><th>Open Requirements</th>
+              <th>Client Code</th><th>Client</th><th>Industry</th><th>Business Type</th><th>Location</th>
+              <th>GST</th><th>TDS</th><th>Account Manager</th><th>BDE</th>
+              <th>Agreement</th><th>Expiry</th><th>Open Requirements</th>
             </tr>
           </thead>
           <tbody>
             {clients.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
+                <td><b>{c.clientCode || '—'}</b></td>
                 <td>{c.name}</td>
-                <td>{c.industry || '—'}</td>
-                <td>{c.location || '—'}</td>
-                <td>{c.accountManager || '—'}</td>
+                <td className="cell-muted">{c.industry || '—'}</td>
+                <td className="cell-muted">{c.businessType || '—'}</td>
+                <td className="cell-muted">{c.location || '—'}</td>
+                <td className="cell-muted">{c.gst || '—'}</td>
+                <td className="cell-muted">{c.tdsPercent != null ? `${c.tdsPercent}%` : '—'}</td>
+                <td className="cell-muted">{c.accountManager || '—'}</td>
+                <td className="cell-muted">{c.bdeOwner || '—'}</td>
                 <td><span className={`status ${agreementBadgeClass(c.agreementStatus)}`}>{agreementStatusLabel(c.agreementStatus)}</span></td>
+                <td className="cell-muted">{c.agreementEnd || '—'}</td>
                 <td>{openCount(c.id)}</td>
               </tr>
             ))}
             {clients.length === 0 && (
-              <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
+              <tr><td colSpan="12" className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
             )}
           </tbody>
         </table>

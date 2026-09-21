@@ -30,7 +30,13 @@ async function main() {
   const orbit = await prisma.client.create({
     data: {
       name: 'Orbit Software Solutions', legalName: 'Orbit Software Solutions Pvt. Ltd.',
+      clientCode: 'CLI0001',
       industry: 'IT', location: 'Hyderabad', state: 'Telangana', country: 'India',
+      houseNumber: 'Plot 42', street: 'Cyber Towers Road', area: 'HITEC City', pincode: '500081',
+      billingContactName: 'Sudha Reddy', billingContactDesignation: 'Finance Manager',
+      billingContactEmail: 'ap@orbit.com', billingContactPhone: '9100000011',
+      recruitmentContactName: 'Ravi Teja', recruitmentContactDesignation: 'Head of Talent',
+      recruitmentContactEmail: 'hr@orbit.com', recruitmentContactPhone: '9100000001',
       ownerDepartment: 'IT', clientType: 'Direct', priority: 'High', status: 'Active',
       businessType: 'Private Limited', website: 'https://orbitsoftware.example',
       contactName: 'Ravi Teja', contactDesignation: 'Head of Talent',
@@ -54,7 +60,15 @@ async function main() {
   const medivant = await prisma.client.create({
     data: {
       name: 'Medivant Healthcare', legalName: 'Medivant Healthcare Pvt. Ltd.',
+      clientCode: 'CLI0002',
       industry: 'Healthcare', location: 'Bengaluru', state: 'Karnataka', country: 'India',
+      houseNumber: '7th Floor', street: 'Residency Road', area: 'Ashok Nagar', pincode: '560025',
+      businessType: 'Private Limited',
+      agreementStart: '2026-09-15', agreementEnd: '2027-09-14',
+      billingContactName: 'Rahul Menon', billingContactDesignation: 'Accounts Lead',
+      billingContactEmail: 'accounts@medivant.com', billingContactPhone: '9100000012',
+      recruitmentContactName: 'Anita Desai', recruitmentContactDesignation: 'HR Manager',
+      recruitmentContactEmail: 'hr@medivant.com', recruitmentContactPhone: '9100000002',
       ownerDepartment: 'Medical', clientType: 'Direct', priority: 'Medium', status: 'Active',
       contactName: 'Anita Desai', contactDesignation: 'HR Manager',
       contactEmail: 'hr@medivant.com', contactPhone: '9100000002',
@@ -214,7 +228,11 @@ async function main() {
       jobDescription: 'Build and own core Java services for the Orbit platform team, working across Spring Boot microservices and the SQL data layer.',
       responsibilities: 'Design and ship Spring Boot microservices\nOwn service reliability and on-call for your area\nReview peers’ code and raise the team’s engineering bar',
       qualifications: 'Bachelor’s degree in Computer Science or equivalent practical experience.',
+      reqCode: 'REQ-0001',
       clientId: orbit.id, department: 'IT', priority: 'High', recruiterId: recruiter.id, bdeId: bde.id,
+      // The assignment chain: Requirement -> TL -> Recruiter(s) -> BDE -> Client.
+      tlId: tl.id, stlId: multiProduct.id, accountManager: 'Kiran Kumar',
+      targetDate: '2026-11-15', portalSyncStatus: 'Synced',
       skills: 'Java, Spring Boot, Microservices, SQL', goodToHaveSkills: 'AWS, Docker',
       experience: '4-7 yrs', relevantExperience: '4 yrs', openings: 2,
       education: 'B.Tech', employmentType: 'Full Time', workMode: 'Hybrid',
@@ -232,7 +250,10 @@ async function main() {
       clientId: medivant.id, department: 'Medical', priority: 'Medium',
       // Medical work: Kiran (Medical Recruiter) owns it, Divya (Medical TL)
       // oversees it. An IT recruiter must never see this requirement.
+      reqCode: 'REQ-0002',
       recruiterId: recruiterMedical.id, bdeId: bde.id, tl: 'Divya Rao', stl: 'Priya Nambiar',
+      tlId: tlMedical.id, stlId: multiProduct.id, accountManager: 'Meera Iyer',
+      targetDate: '2026-11-30',
       skills: 'Clinical Trials, GCP, Regulatory Affairs', goodToHaveSkills: 'Data Analysis',
       experience: '3-6 yrs', relevantExperience: '3 yrs',
       education: 'B.Sc', employmentType: 'Full Time', workMode: 'Work From Office',
@@ -247,8 +268,10 @@ async function main() {
     data: {
       title: 'Data Analyst',
       jobDescription: 'Own reporting and analysis across the Medivant clinical operations group.',
-      clientId: medivant.id, department: 'Medical', priority: 'Low', status: 'DRAFT',
-      recruiterId: recruiterMedical.id, tl: 'Divya Rao',
+      reqCode: 'REQ-0003',
+      clientId: medivant.id, department: 'Medical', priority: 'Low', status: 'AGREEMENT_CHECK',
+      recruiterId: recruiterMedical.id, tl: 'Divya Rao', tlId: tlMedical.id,
+      accountManager: 'Meera Iyer', targetDate: '2026-12-15',
       skills: 'SQL, Excel, Data Analysis, Python', goodToHaveSkills: 'Machine Learning',
       experience: '2-4 yrs', relevantExperience: '2 yrs',
       education: 'Any Degree', employmentType: 'Full Time', workMode: 'Work From Office',
@@ -257,10 +280,45 @@ async function main() {
       salaryType: 'Annual CTC', currency: 'INR', salary: '₹8L - ₹12L',
     },
   });
+  // REQ-0004 — the worked example of the assignment chain:
+  //   Requirement -> Assigned TL -> Assigned Recruiter(s) -> BDE -> Client
+  //   REQ-0004 Java Developer, Client Orbit
+  //     TL: Divya Rao · Recruiter: Kiran Kumar · BDE: Sanjay Mehta
+  //
+  // Note that Kiran and Divya sit in the MEDICAL department while this is an
+  // IT requirement for Orbit. That is deliberate: it is the ASSIGNMENT, not
+  // the department, that puts this requirement in Kiran's scope, which is
+  // exactly what utils/scope.js now enforces.
+  await prisma.requirement.create({
+    data: {
+      title: 'Java Developer',
+      reqCode: 'REQ-0004',
+      description: 'Second Java squad for Orbit — assigned across departments.',
+      jobDescription: 'Join Orbit’s second Java squad building payment and settlement services on Spring Boot.',
+      responsibilities: 'Ship and own Spring Boot services\nPartner with the payments domain team',
+      qualifications: 'Bachelor’s degree in Computer Science or equivalent practical experience.',
+      clientId: orbit.id, department: 'IT', priority: 'High', status: 'RECRUITER_ASSIGNED',
+      tlId: tlMedical.id, tl: 'Divya Rao',
+      recruiterId: recruiterMedical.id,
+      recruiterIds: recruiter.id, // Arun Nair joins as a co-recruiter
+      bdeId: bde.id, stlId: multiProduct.id, stl: 'Priya Nambiar',
+      accountManager: 'Kiran Kumar',
+      skills: 'Java, Spring Boot, Kafka, SQL', goodToHaveSkills: 'AWS, Kubernetes',
+      experience: '5-8 yrs', relevantExperience: '5 yrs', openings: 3,
+      education: 'B.Tech', employmentType: 'Full Time', workMode: 'Hybrid',
+      location: 'Hyderabad', preferredLocation: 'Hyderabad',
+      joiningTimeline: 'Within 30 Days', noticePeriodMax: '60 Days', jobPreference: 'Permanent',
+      salaryType: 'Annual CTC', currency: 'INR', salary: '₹18L - ₹26L',
+      closingDate: '2026-12-31', targetDate: '2026-12-01', portalSyncStatus: 'Pending',
+      postingSources: 'Job Portal, Naukri',
+    },
+  });
+
   // An internal TeamLink opening — no client, so it needs no agreement.
   await prisma.requirement.create({
     data: {
       title: 'Talent Acquisition Executive',
+      reqCode: 'REQ-0005',
       jobDescription: 'Internal TeamLink hiring — own end-to-end recruitment for our own delivery teams.',
       clientId: orbit.id, internal: true, department: 'HR', priority: 'Medium',
       recruiterId: recruiter.id,

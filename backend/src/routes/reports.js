@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
 } = require('../utils/accounts');
+const { requirementIsLive } = require('../utils/atsVocab');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -14,7 +15,7 @@ router.get('/ats', async (req, res) => {
     const apps = c.requirements.flatMap((r) => r.applications);
     return {
       client: c.name,
-      open: c.requirements.filter((r) => r.status === 'OPEN').length,
+      open: c.requirements.filter((r) => requirementIsLive(r.status)).length,
       inPipeline: apps.filter((a) => !['JOINED', 'HIRED', 'REJECTED'].includes(a.stage)).length,
       selected: apps.filter((a) => a.stage === 'SELECTED').length,
       joined: apps.filter((a) => ['JOINED', 'HIRED'].includes(a.stage)).length,

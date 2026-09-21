@@ -6,10 +6,12 @@ import {
   DEPTS, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
   JOINING_TIMELINES, NOTICE_PERIODS_MAX, JOB_PREFERENCES, SALARY_TYPES, CURRENCIES,
   POSTING_SOURCES, priorityBadgeClass,
-  requirementStatusLabel, agreementStatusLabel,
+  requirementStatusLabel, requirementBadgeClass, requirementIsLive, REQUIREMENT_STATUS_CODES,
+  agreementStatusLabel, agreementIsActive,
 } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { canRaiseRequirement } from '../permissions';
+import ClientModuleTabs from '../components/ClientModuleTabs.jsx';
 
 // The prototype's Jobs / Requirements screen: requirementListShell() (6917),
 // renderRequirementList() (6937), openRequirementsHtml() (6832),
@@ -43,10 +45,18 @@ const EMPTY = {
   currency: 'INR',
   salaryMin: '',
   salaryMax: '',
+  // The assignment chain:
+  //   Requirement → Assigned TL → Assigned Recruiter(s) → BDE → Client
+  // These are user IDs, not names — they are what scope filters on.
   recruiterId: '',
+  recruiterIds: [],
   bdeId: '',
+  tlId: '',
+  stlId: '',
   tl: '',
   stl: '',
+  targetDate: '',
+  accountManager: '',
   postingSources: [],
 };
 
@@ -67,59 +77,60 @@ export default function Requirements() {
   const [showForm, setShowForm] = useState(false);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState('');
-  // The prototype's three tabs: All Requirements / Open Requirements / Agreement Report.
+  const [notice, setNotice] = useState('');
+  // The prototype's three views: All Requirements / Open Requirements /
+  // Agreement Report. They are sub-views of the Requirements TAB now — the
+  // module's own tab strip (Clients · Requirements · Agreements · Job Portal)
+  // sits above them.
   const [view, setView] = useState('all');
-  // "All Requirements" filter row: search, client, status.
-  const [search, setSearch] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  // "Open Requirements" filter row: department, client, recruiter, priority.
-  const [openFilters, setOpenFilters] = useState({ dept: '', client: '', recruiter: '', priority: '' });
+
+  // ONE consistent filter set across both list views, exactly as specified:
+  //   Department · Client · Location · Recruiter · TL · BDE · Status ·
+  //   Priority · Date Range
+  // Applied SERVER-SIDE (GET /requirements?…), so a filter can only narrow
+  // what the signed-in user is already allowed to see.
+  const [filters, setFilters] = useState({
+    search: '', department: '', clientId: '', location: '',
+    recruiterId: '', tlId: '', bdeId: '', status: '', priority: '', from: '', to: '',
+  });
+  const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
+  const clearFilters = () => setFilters({
+    search: '', department: '', clientId: '', location: '',
+    recruiterId: '', tlId: '', bdeId: '', status: '', priority: '', from: '', to: '',
+  });
+  const activeFilterCount = Object.entries(filters).filter(([, v]) => v).length;
 
   const internal = form.type === 'Internal Requirement';
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const setOpenFilter = (patch) => setOpenFilters((f) => ({ ...f, ...patch }));
 
   function load() {
-    api.get('/requirements').then((res) => setRequirements(res.data));
+    const params = {};
+    Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
+    api.get('/requirements', { params }).then((res) => setRequirements(res.data));
   }
+  useEffect(load, [filters]);
   useEffect(() => {
-    load();
     api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
-    api.get('/ats/team').then((res) => setTeam(res.data)).catch(() => setTeam([]));
+    // The assignment picker's source — scoped server-side.
+    api.get('/requirements/assignable-people').then((res) => setTeam(res.data)).catch(() => {
+      api.get('/ats/team').then((r) => setTeam(r.data)).catch(() => setTeam([]));
+    });
   }, []);
 
   const selectedClient = clients.find((c) => c.id === form.clientId);
-  const recruiters = team.filter((t) => t.role === 'RECRUITER');
-  const bdes = team.filter((t) => t.role === 'BDE');
-  const tls = team.filter((t) => t.role === 'TL');
-  const stls = team.filter((t) => t.role === 'STL');
+  // /requirements/assignable-people returns atsRole; the older /ats/team
+  // fallback returns role. Read whichever the response carries.
+  const roleOf = (t) => t.atsRole || t.role;
+  const recruiters = team.filter((t) => roleOf(t) === 'RECRUITER');
+  const bdes = team.filter((t) => roleOf(t) === 'BDE');
+  const tls = team.filter((t) => roleOf(t) === 'TL');
+  const stls = team.filter((t) => roleOf(t) === 'STL');
 
   const clientNameOf = (r) => (r.internal ? 'TeamLink Internal' : r.client?.name || '—');
 
-  const rows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return requirements.filter((r) => {
-      if (q && !(`${r.title} ${r.skills || ''}`.toLowerCase().includes(q))) return false;
-      if (clientFilter && clientNameOf(r) !== clientFilter) return false;
-      if (statusFilter && requirementStatusLabel(r.status) !== statusFilter) return false;
-      return true;
-    });
-  }, [requirements, search, clientFilter, statusFilter]);
-
-  const openRows = useMemo(() => requirements.filter((r) => {
-    if (r.status !== 'OPEN') return false;
-    if (openFilters.dept && r.department !== openFilters.dept) return false;
-    if (openFilters.client && clientNameOf(r) !== openFilters.client) return false;
-    if (openFilters.recruiter && r.recruiter?.name !== openFilters.recruiter) return false;
-    if (openFilters.priority && r.priority !== openFilters.priority) return false;
-    return true;
-  }), [requirements, openFilters]);
-
-  const usedClientNames = useMemo(
-    () => [...new Set(requirements.map(clientNameOf))].sort(),
-    [requirements],
-  );
+  // The server already applied every filter; these are just the two views.
+  const rows = requirements;
+  const openRows = useMemo(() => requirements.filter((r) => requirementIsLive(r.status)), [requirements]);
 
   // The prototype's agreementMonthReport() — counts derived from each client's
   // own agreement milestones, months with no activity are not shown.
@@ -159,15 +170,21 @@ export default function Requirements() {
 
   async function save(mode) {
     setError('');
+    setNotice('');
+    let res;
     try {
-      await api.post('/requirements', payload(mode === 'draft' ? 'DRAFT' : 'OPEN'));
+      res = await api.post('/requirements', payload(mode === 'draft' ? 'DRAFT' : 'OPEN'));
     } catch (err) {
       return setError(err.response?.data?.error || 'Could not save this requirement');
     }
+    // The agreement gate parks a client requirement at Agreement Check rather
+    // than refusing the save — say so instead of pretending it went live.
+    if (res.data?.gateNote) setNotice(res.data.gateNote);
     setForm(EMPTY);
     setShowForm(false);
     setPreview(false);
     load();
+    return undefined;
   }
 
   const togglePostingSource = (name) => set({
@@ -180,8 +197,10 @@ export default function Requirements() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Jobs / Requirements</h1>
-          <div className="page-sub">{requirements.length} requirements</div>
+          <h1>Clients</h1>
+          <div className="page-sub">
+            {`Requirements — ${requirements.length} requirement(s) in your scope`}
+          </div>
         </div>
         {canRaiseRequirement(user) && (
           <button className="btn btn-primary" onClick={() => { setForm(EMPTY); setError(''); setShowForm(true); }}>
@@ -190,79 +209,118 @@ export default function Requirements() {
         )}
       </div>
 
+      {/* Clients and Requirements are one module now — this is its tab strip. */}
+      <ClientModuleTabs active="requirements" />
+
+      {notice && <div className="notice amber">{notice}</div>}
+
       <div className="tabs" style={{ marginBottom: 12 }}>
         <div className={`tab${view === 'all' ? ' active' : ''}`} onClick={() => setView('all')}>All Requirements</div>
         <div className={`tab${view === 'open' ? ' active' : ''}`} onClick={() => setView('open')}>Open Requirements</div>
         <div className={`tab${view === 'agreements' ? ' active' : ''}`} onClick={() => setView('agreements')}>Agreement Report</div>
       </div>
 
-      {view === 'all' && (
+      {/* ONE filter set, shared by both list views, applied server-side:
+          Department · Client · Location · Recruiter · TL · BDE · Status ·
+          Priority · Date Range. */}
+      {view !== 'agreements' && (
         <>
           <div className="filter-row">
-            <input type="text" placeholder="Search title or skill…" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
+            <input
+              type="text"
+              placeholder="Search title, skill or REQ id…"
+              value={filters.search}
+              onChange={(e) => setFilter({ search: e.target.value })}
+            />
+            <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+              <option value="">All departments</option>
+              {DEPTS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <select value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
               <option value="">All clients</option>
-              {clients.map((c) => <option key={c.id}>{c.name}</option>)}
-              <option>TeamLink Internal</option>
+              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
+              <option value="">All locations</option>
+              {LOCS.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+            <select value={filters.recruiterId} onChange={(e) => setFilter({ recruiterId: e.target.value })}>
+              <option value="">All recruiters</option>
+              {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <select value={filters.tlId} onChange={(e) => setFilter({ tlId: e.target.value })}>
+              <option value="">All TLs</option>
+              {tls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <select value={filters.bdeId} onChange={(e) => setFilter({ bdeId: e.target.value })}>
+              <option value="">All BDEs</option>
+              {bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
               <option value="">All statuses</option>
-              <option>Open</option>
-              <option>On Hold</option>
-              <option>Closed</option>
+              <option value="LIVE">Live (open → candidates available)</option>
+              {REQUIREMENT_STATUS_CODES.map((s) => <option key={s} value={s}>{requirementStatusLabel(s)}</option>)}
             </select>
+            <select value={filters.priority} onChange={(e) => setFilter({ priority: e.target.value })}>
+              <option value="">All priorities</option>
+              {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <input type="date" title="Created from" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} />
+            <input type="date" title="Created to" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
+            {activeFilterCount > 0 && (
+              <button className="btn btn-sm btn-ghost" onClick={clearFilters}>{`Clear ${activeFilterCount} filter(s)`}</button>
+            )}
           </div>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Requirement</th><th>Client</th><th>Location</th><th>Experience</th>
-                  <th>Priority</th><th>Openings</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
-                    <td>{r.title}</td>
-                    <td>{clientNameOf(r)}</td>
-                    <td>{r.location || '—'}</td>
-                    <td>{r.experience || '—'}</td>
-                    <td><span className={`status ${priorityBadgeClass(r.priority)}`}>{r.priority}</span></td>
-                    <td>{r.openings}</td>
-                    <td><span className="status active">{requirementStatusLabel(r.status)}</span></td>
-                  </tr>
-                ))}
-                {rows.length === 0 && (
-                  <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No requirements match.</td></tr>
-                )}
-              </tbody>
-            </table>
+          <div className="cell-muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+            Filters run on the server against your own scope — they narrow what you may see, never widen it.
           </div>
         </>
       )}
 
+      {view === 'all' && (
+        <div className="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Requirement ID</th><th>Job Title</th><th>Client</th><th>Department</th><th>Location</th>
+                <th>Experience</th><th>Recruiter</th><th>TL</th><th>BDE</th>
+                <th>Priority</th><th>Openings</th><th>Target Date</th><th>Portal Sync</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
+                  <td><b>{r.reqCode || r.id.slice(0, 8)}</b></td>
+                  <td>{r.title}</td>
+                  <td className="cell-muted">{clientNameOf(r)}</td>
+                  <td className="cell-muted">{r.department || '—'}</td>
+                  <td className="cell-muted">{r.location || '—'}</td>
+                  <td className="cell-muted">{r.experience || '—'}</td>
+                  <td className="cell-muted">
+                    {r.recruiter?.name || '—'}
+                    {r.coRecruiterNames?.length ? ` +${r.coRecruiterNames.length}` : ''}
+                  </td>
+                  <td className="cell-muted">{r.tlName || r.tl || '—'}</td>
+                  <td className="cell-muted">{r.bde?.name || '—'}</td>
+                  <td><span className={`status ${priorityBadgeClass(r.priority)}`}>{r.priority}</span></td>
+                  <td>{r.openings}</td>
+                  <td className="cell-muted">{r.targetDate || r.closingDate || '—'}</td>
+                  <td className="cell-muted">{r.portalSyncStatus || 'Not Synced'}</td>
+                  <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>No requirements match.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {view === 'open' && (
         <>
-          <div className="filter-row">
-            <select value={openFilters.dept} onChange={(e) => setOpenFilter({ dept: e.target.value })}>
-              <option value="">All departments</option>
-              {DEPTS.map((d) => <option key={d}>{d}</option>)}
-            </select>
-            <select value={openFilters.client} onChange={(e) => setOpenFilter({ client: e.target.value })}>
-              <option value="">All clients</option>
-              {usedClientNames.map((c) => <option key={c}>{c}</option>)}
-            </select>
-            <select value={openFilters.recruiter} onChange={(e) => setOpenFilter({ recruiter: e.target.value })}>
-              <option value="">All recruiters</option>
-              {recruiters.map((r) => <option key={r.id}>{r.name}</option>)}
-            </select>
-            <select value={openFilters.priority} onChange={(e) => setOpenFilter({ priority: e.target.value })}>
-              <option value="">All priorities</option>
-              {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-            </select>
-            <span className="cell-muted" style={{ alignSelf: 'center', fontSize: 12 }}>
-              {openRows.length} open requirement(s)
-            </span>
+          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            {`${openRows.length} live requirement(s) — Open, Recruiter Assigned, Sourcing or Candidates Available.`}
           </div>
           <div className="tbl-wrap">
             <table>
@@ -276,7 +334,7 @@ export default function Requirements() {
               <tbody>
                 {openRows.map((r) => (
                   <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
-                    <td><b>{r.id}</b></td>
+                    <td><b>{r.reqCode || r.id.slice(0, 8)}</b></td>
                     <td>{r.title}</td>
                     <td className="cell-muted">{clientNameOf(r)}</td>
                     <td className="cell-muted">{r.department || '—'}</td>
@@ -288,12 +346,12 @@ export default function Requirements() {
                       <span className="link-btn">{r.matchingCandidates ?? 0}</span>
                     </td>
                     <td className="cell-muted">{r.recruiter?.name || '—'}</td>
-                    <td className="cell-muted">{r.tl || '—'}</td>
+                    <td className="cell-muted">{r.tlName || r.tl || "—"}</td>
                     <td className="cell-muted">{r.bde?.name || '—'}</td>
                     <td className="cell-muted">{r.priority || '—'}</td>
                     <td className="cell-muted">{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
                     <td className="cell-muted">{r.closingDate || '—'}</td>
-                    <td><span className="status active">{requirementStatusLabel(r.status)}</span></td>
+                    <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
                   </tr>
                 ))}
                 {openRows.length === 0 && (
@@ -425,7 +483,7 @@ export default function Requirements() {
                 </label>
               </div>
               {selectedClient && (
-                selectedClient.agreementStatus === 'ACTIVE'
+                agreementIsActive(selectedClient.agreementStatus)
                   ? <div className="notice">Agreement is Active — this requirement can be activated and posted.</div>
                   : (
                     <div className="notice amber">
@@ -551,26 +609,37 @@ export default function Requirements() {
           </div>
 
           <SectionHead>F. Assignment</SectionHead>
+          <div className="cell-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+            Requirement → Assigned TL → Assigned Recruiter(s) → BDE → Client. This chain is what decides who
+            can see this requirement: a recruiter sees the ones assigned to them, a TL the ones they lead,
+            a BDE their clients&apos;.
+          </div>
           <div className="grid-2">
             <label className="field">
-              <span>Recruiter *</span>
+              <span>Assigned TL</span>
+              <select
+                value={form.tlId}
+                onChange={(e) => set({ tlId: e.target.value, tl: tls.find((t) => t.id === e.target.value)?.name || '' })}
+              >
+                <option value="">— Not assigned —</option>
+                {tls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Assigned Recruiter *</span>
               <select value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
                 <option value="">— Not assigned —</option>
                 {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </label>
             <label className="field">
-              <span>TL</span>
-              <select value={form.tl} onChange={(e) => set({ tl: e.target.value })}>
-                <option value="">— Not assigned —</option>
-                {tls.map((t) => <option key={t.id}>{t.name}</option>)}
-              </select>
-            </label>
-            <label className="field">
               <span>STL</span>
-              <select value={form.stl} onChange={(e) => set({ stl: e.target.value })}>
+              <select
+                value={form.stlId}
+                onChange={(e) => set({ stlId: e.target.value, stl: stls.find((t) => t.id === e.target.value)?.name || '' })}
+              >
                 <option value="">— None —</option>
-                {stls.map((t) => <option key={t.id}>{t.name}</option>)}
+                {stls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </label>
             {!internal && (
@@ -582,6 +651,39 @@ export default function Requirements() {
                 </select>
               </label>
             )}
+            <label className="field">
+              <span>Account Manager / BDE owner</span>
+              <input
+                value={form.accountManager}
+                placeholder={selectedClient?.accountManager || 'Defaults to the client account manager'}
+                onChange={(e) => set({ accountManager: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Target Date</span>
+              <input type="date" value={form.targetDate} onChange={(e) => set({ targetDate: e.target.value })} />
+            </label>
+          </div>
+          <div className="field">
+            <span>Co-recruiters (a requirement can carry more than one)</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
+              {recruiters.filter((r) => r.id !== form.recruiterId).map((r) => (
+                <label key={r.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: 'auto' }}
+                    checked={form.recruiterIds.includes(r.id)}
+                    onChange={() => set({
+                      recruiterIds: form.recruiterIds.includes(r.id)
+                        ? form.recruiterIds.filter((x) => x !== r.id)
+                        : [...form.recruiterIds, r.id],
+                    })}
+                  />
+                  {r.name}
+                </label>
+              ))}
+              {recruiters.length === 0 && <span className="cell-muted" style={{ fontSize: 12 }}>No recruiters in your scope.</span>}
+            </div>
           </div>
 
           <SectionHead>G. Job Posting</SectionHead>

@@ -51,10 +51,24 @@ function scopeOf(user) {
 }
 
 // --- Requirements ----------------------------------------------------------
-// Recruiter: own assigned requirements. TL: own department (and team where the
-// requirement records one). STL: assigned departments. BDE: own clients and own
-// assigned requirements. Client: own company. Candidate: none (they reach
-// requirements only through their own applications).
+// THE ASSIGNMENT CHAIN IS THE SCOPE.
+//
+//   Requirement -> Assigned TL -> Assigned Recruiter(s) -> BDE -> Client
+//
+// Recruiter: the requirements they are assigned — primary `recruiterId` or a
+//   member of the comma-separated `recruiterIds` co-recruiter list.
+// TL: the requirements they lead (`tlId`) plus their department's, which is
+//   what "their team's" means for a TL who leads a desk rather than one req.
+// STL: the same, one level up (`stlId` + assigned departments).
+// BDE: their clients and the requirements they own (`bdeId`).
+// Client: their own company, and never TeamLink's internal openings.
+// Candidate: none — they reach requirements through their own applications.
+//
+// `recruiterIds` is matched with `contains` on a delimited string. The ids are
+// cuids, so a substring collision is not a practical concern, but the value is
+// stored comma-delimited WITH surrounding commas trimmed and `matches()` below
+// implements `contains` identically, so a list query and a single-record check
+// can never disagree.
 function requirementWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
@@ -66,14 +80,22 @@ function requirementWhere(user) {
     case 'CANDIDATE':
       return { id: '__none__' };
     case 'RECRUITER':
-      return { recruiterId: s.userId };
+      return { OR: [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }] };
     case 'BDE': {
       const or = [{ bdeId: s.userId }];
       if (s.clientIds.length) or.push({ clientId: { in: s.clientIds } });
       return { OR: or };
     }
-    case 'TL':
-    case 'STL':
+    case 'TL': {
+      const or = [{ tlId: s.userId }];
+      if (s.departments.length) or.push({ department: { in: s.departments } });
+      return { OR: or };
+    }
+    case 'STL': {
+      const or = [{ stlId: s.userId }];
+      if (s.departments.length) or.push({ department: { in: s.departments } });
+      return { OR: or };
+    }
     case 'MANAGER':
     case 'ASSISTANT_MANAGER':
       // Department-scoped. A Manager with no configured departments is global
@@ -83,6 +105,20 @@ function requirementWhere(user) {
       // Employees / accountants with no ATS working role see no requirements.
       return { id: '__none__' };
   }
+}
+
+// Is this user personally named on this requirement's assignment chain? Used
+// for the EDIT / ASSIGN split: a TL can SEE a requirement in their department
+// without being the person who may re-assign or edit it.
+function isAssignedTo(user, requirement) {
+  const s = scopeOf(user);
+  if (!requirement) return false;
+  const co = csv(requirement.recruiterIds);
+  return requirement.recruiterId === s.userId
+    || co.includes(s.userId)
+    || requirement.tlId === s.userId
+    || requirement.stlId === s.userId
+    || requirement.bdeId === s.userId;
 }
 
 // --- Clients ---------------------------------------------------------------
@@ -98,8 +134,16 @@ function clientWhere(user) {
       ? { id: { in: s.clientIds } }
       : { requirements: { some: requirementWhere(user) } };
   }
-  // Other internal staff reach the client directory — it is the backing list
-  // for creating a requirement, and it carries no other client's candidates.
+  // A recruiter is scoped by their ASSIGNMENT, here as everywhere else: the
+  // clients they actually hold a requirement for. They cannot raise a
+  // requirement (see permissions.js SET.RAISE), so they have no reason to
+  // browse the directory of clients they do not work on.
+  if (s.atsRole === 'RECRUITER') {
+    return { requirements: { some: requirementWhere(user) } };
+  }
+  // TL / STL / Manager reach the client directory — they CAN raise a
+  // requirement, and it is the backing list for doing so. It carries no other
+  // client's candidates, and each client's detail is still scope-checked.
   return {};
 }
 
@@ -194,6 +238,12 @@ function matches(record, where) {
     if (value && typeof value === 'object' && Array.isArray(value.in)) {
       return value.in.includes(record[key]);
     }
+    // `{ contains }` — the co-recruiter list. Same semantics as the Prisma
+    // filter above it, so a record the list query returns is a record the
+    // single-record check accepts, and vice versa.
+    if (value && typeof value === 'object' && typeof value.contains === 'string') {
+      return String(record[key] || '').includes(value.contains);
+    }
     if (value && typeof value === 'object') return true; // nested relation — checked by the query
     return record[key] === value;
   });
@@ -207,6 +257,7 @@ module.exports = {
   CONFIGURABLE_GLOBAL_ROLES,
   scopeOf,
   requirementWhere,
+  isAssignedTo,
   clientWhere,
   applicationWhere,
   candidateWhere,
