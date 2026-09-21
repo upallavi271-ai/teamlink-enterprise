@@ -6,6 +6,7 @@ const { inspectSetPasswordToken, redeemSetPasswordToken } = require('../utils/em
 
 const {
   REQUIREMENT_LIVE_STATUSES, requirementIsLive, normalizeAgreementStatus, agreementIsSigned,
+  PORTAL_APPLICATION_SOURCE,
 } = require('../utils/atsVocab');
 
 const router = express.Router();
@@ -27,6 +28,13 @@ router.get('/jobs', async (req, res) => {
       client: j.client.name,
       location: j.client.location,
       postedAt: j.createdAt,
+      // Whether someone in the ATS has PUBLISHED this requirement to the job
+      // portal. Reported, deliberately NOT used as a filter: this feed has
+      // always listed every live requirement, and narrowing it now would
+      // empty the careers list on any database seeded before publishing
+      // existed. See the migration's backfill and JobPortalWorkspace.jsx,
+      // which both say the same thing.
+      published: !!j.portalPublished,
     }))
   );
 });
@@ -75,7 +83,21 @@ router.post('/jobs/:id/apply', async (req, res) => {
     return res.status(409).json({ error: 'You have already applied to this job' });
   }
 
-  const application = await prisma.application.create({ data: { candidateId: candidate.id, requirementId: job.id, stage: 'NEW' } });
+  // SOURCE IS STAMPED, NOT INFERRED. An application that arrives through this
+  // form carries source = "TeamLink Job Portal" on the APPLICATION, which is
+  // what the internal Job Portal workspace lists and what "Import to ATS"
+  // checks (routes/jobPortal.js). Reading it off the candidate instead would
+  // mis-attribute every later application by the same person.
+  const application = await prisma.application.create({
+    data: {
+      candidateId: candidate.id,
+      requirementId: job.id,
+      stage: 'NEW',
+      source: PORTAL_APPLICATION_SOURCE,
+      firstSource: PORTAL_APPLICATION_SOURCE,
+      applicationMethod: 'Auto-Apply',
+    },
+  });
   await prisma.syncLog.create({
     data: { entity: 'Applications', status: 'Success', reason: `${candidate.name} → ${job.title}`, recordRef: application.id },
   });

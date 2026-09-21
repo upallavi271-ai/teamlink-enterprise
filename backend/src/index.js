@@ -6,6 +6,7 @@ const cors = require('cors');
 const authRoutes = require('./routes/auth');
 const clientRoutes = require('./routes/clients');
 const requirementRoutes = require('./routes/requirements');
+const jobPortalRoutes = require('./routes/jobPortal');
 const candidateRoutes = require('./routes/candidates');
 const applicationRoutes = require('./routes/applications');
 const dashboardRoutes = require('./routes/dashboard');
@@ -85,6 +86,10 @@ app.use('/job-portal', express.static(JOB_PORTAL_DIR, { index: 'index.html' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/requirements', requirementRoutes);
+// The Job Portal WORKSPACE API. Its own mount, but not its own module: every
+// route inside is guarded on a feature of `requirements`, which is where the
+// Job Portal lives in the navigation too (Jobs / Requirements -> Job Portal).
+app.use('/api/job-portal', jobPortalRoutes);
 app.use('/api/candidates', candidateRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/dashboard', dashboardRoutes);

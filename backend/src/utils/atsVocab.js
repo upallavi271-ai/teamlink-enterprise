@@ -283,6 +283,19 @@ function requirementStatusLabel(code) {
 
 // --- Job portal sync -------------------------------------------------------
 const PORTAL_SYNC_STATUSES = ['Not Synced', 'Pending', 'Synced', 'Failed'];
+
+// The value written onto Application.source when an application comes in
+// through a job-portal form rather than a recruiter keying it in. ONE
+// canonical string, and a wider match list so rows written before this name
+// existed (Candidate.source has said 'Job Portal' since the first seed) are
+// still recognised as portal intake rather than quietly disappearing from the
+// workspace.
+const PORTAL_APPLICATION_SOURCE = 'TeamLink Job Portal';
+// Deliberately NOT 'TeamLink Website': that is Candidate.source's default, so
+// treating it as portal intake would count every seeded candidate as an
+// arriving application and the workspace's numbers would be a lie.
+const PORTAL_APPLICATION_SOURCES = ['TeamLink Job Portal', 'Job Portal'];
+const isPortalSource = (value) => PORTAL_APPLICATION_SOURCES.includes(String(value || ''));
 const EDUCATION_LEVELS = [
   'Any Degree', 'B.Tech', 'B.E', 'MCA', 'MBA', 'M.Tech', 'MBBS', 'B.Pharm', 'B.Sc', 'M.Sc', 'Diploma', 'Other',
 ];
@@ -448,6 +461,9 @@ module.exports = {
   requirementIsLive,
   requirementStatusLabel,
   PORTAL_SYNC_STATUSES,
+  PORTAL_APPLICATION_SOURCE,
+  PORTAL_APPLICATION_SOURCES,
+  isPortalSource,
   DEPTS,
   LOCS,
   REQUIREMENT_TYPES,

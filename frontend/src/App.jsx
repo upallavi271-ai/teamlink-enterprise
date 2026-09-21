@@ -6,6 +6,8 @@ import Dashboard from './pages/Dashboard.jsx';
 
 import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
+import JobPortalWorkspace from './pages/ats/JobPortalWorkspace.jsx';
+import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
 import Agreements from './pages/Agreements.jsx';
@@ -113,7 +115,16 @@ export default function App() {
 
         {/* ATS */}
         <Route path="requirements" element={<Requirements />} />
+        {/* The INTERNAL Job Portal workspace, inside Jobs / Requirements.
+            A static segment, so it is matched ahead of requirements/:id.
+            Reaching it without requirements/Job Portal Workspace/view gets an
+            empty screen and a 403 from every call it makes. */}
+        <Route path="requirements/job-portal" element={<JobPortalWorkspace />} />
         <Route path="requirements/:id" element={<RequirementDetail />} />
+        {/* The CLIENT-facing view is a DIFFERENT screen on a different route
+            with a different permission (requirements/Client Job Portal), so a
+            client can never land on the internal workspace above. */}
+        <Route path="client-portal" element={<ClientJobPortal />} />
         {/* Clients · Requirements · Agreements · Job Portal are one module;
             each tab keeps its own route so it stays bookmarkable. Job Portal
             is another agent's screen — see components/ClientModuleTabs.jsx. */}

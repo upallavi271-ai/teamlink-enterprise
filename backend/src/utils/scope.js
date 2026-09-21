@@ -121,6 +121,25 @@ function isAssignedTo(user, requirement) {
     || requirement.bdeId === s.userId;
 }
 
+// --- Job Portal ------------------------------------------------------------
+// The portal adds NO new scope rule. A user's portal rows are their
+// requirement rows — requirementWhere() above, unchanged — optionally
+// narrowed to the ones actually published. That is deliberate: if portal
+// visibility had its own rule it could drift away from requirement
+// visibility, and a Medical recruiter would end up seeing IT postings in one
+// screen and not the other.
+//
+// A CLIENT's client-portal view is requirementWhere()'s client branch (own
+// company, never TeamLink's internal openings) with the publish flag REPORTED
+// per row rather than used as a filter: the client wants to know which of
+// their requirements are out, which is not the same as hiding the ones that
+// are not. `publishedOnly` exists for the one caller that does need it —
+// scoped Sync, which can only push out what has actually been published.
+function portalRequirementWhere(user, { publishedOnly = false } = {}) {
+  const base = requirementWhere(user);
+  return publishedOnly ? { ...base, portalPublished: true } : base;
+}
+
 // --- Clients ---------------------------------------------------------------
 function clientWhere(user) {
   const s = scopeOf(user);
@@ -257,6 +276,7 @@ module.exports = {
   CONFIGURABLE_GLOBAL_ROLES,
   scopeOf,
   requirementWhere,
+  portalRequirementWhere,
   isAssignedTo,
   clientWhere,
   applicationWhere,

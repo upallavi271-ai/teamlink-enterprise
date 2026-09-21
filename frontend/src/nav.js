@@ -59,6 +59,16 @@ export const HRMS_ITEMS = [
 export const ATS_ITEMS = [
   leaf('/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'),
   leaf('/requirements', 'Jobs / Requirements', [['requirements', 'Requirement List', 'view']]),
+  // NO "Job Portal" ENTRY HERE, DELIBERATELY. The Job Portal is not a
+  // top-level ATS module; it is a workspace INSIDE Jobs / Requirements —
+  //   Jobs / Requirements → Job Portal → Publish → Sync → Applications
+  //   → Import to ATS → Candidate Pipeline
+  // — so it is reached from the Clients · Requirements · Agreements · Job
+  // Portal tab strip (components/ClientModuleTabs.jsx), which is what "inside
+  // Jobs / Requirements" means in this navigation. That strip picks the
+  // internal workspace or the client-facing view from the SAME permission
+  // matrix the API enforces, so the ATS sidebar stays flat, exactly as the
+  // reference prototype has it.
   leaf('/clients', 'Clients', [['clients', 'Client List', 'view']]),
   leaf('/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
   leaf('/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
@@ -142,7 +152,7 @@ export function flattenGroups(groups) {
 // title / breadcrumb name the right section.
 const SECTION_OF_PATH = [
   [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile)/, 'hrms'],
-  [/^\/(ats|requirements|clients|candidates)/, 'ats'],
+  [/^\/(ats|requirements|clients|candidates|client-portal)/, 'ats'],
   [/^\/(accounts|invoices|bank|office)/, 'accounts'],
   [/^\/reports/, 'reports'],
   [/^\/(admin|employees)/, 'admin'],
