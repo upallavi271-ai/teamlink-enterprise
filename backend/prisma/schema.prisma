@@ -572,6 +572,14 @@ model EmployeeRecord {
   raisedBy   String?  // DISCIPLINARY: who logged the case
   points     Int?     // RECOGNITION: award points, which drive the leaderboard
   aiNote     String?  // WEEKLY_IDEA: the AI review note recorded with the decision
+  // Bill / receipt attached to the record (today: EXPENSE claims only — see
+  // backend/src/utils/attachments.js). `billFile` is the name THIS SERVER
+  // generated inside the upload directory; `billName` is only ever displayed,
+  // never used to build a path. The bytes live outside the repository.
+  billFile   String?  // 32 hex chars + a whitelisted extension
+  billName   String?  // sanitised original filename, for display only
+  billMime   String?  // image/png | image/jpeg | image/webp | application/pdf
+  billSize   Int?     // bytes
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
@@ -1007,6 +1015,11 @@ model Course {
   title    String
   category String?  // Onboarding | ATS | Compliance | Soft Skills
   duration String?
+  // LMS screen columns. `mandatory` drives the Mandatory tag on a course row;
+  // `passMark` is the percentage a learner must score to certify. Both are
+  // plain ADD COLUMNs (migration 20260921170000_lms_course_and_expense_bill).
+  mandatory Boolean @default(false)
+  passMark  Int     @default(70)
   createdAt DateTime @default(now())
 
   assignments CourseAssignment[]
@@ -1019,6 +1032,9 @@ model CourseAssignment {
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id])
   completed  Boolean  @default(false)
+  // When the learner finished — what the Certifications screen dates a
+  // certificate by. Null for an enrollment still in progress.
+  completedAt DateTime?
   assignedAt DateTime @default(now())
 
   @@unique([courseId, employeeId])

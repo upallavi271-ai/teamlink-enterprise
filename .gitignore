@@ -7,3 +7,5 @@ build/
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
 ~$*.md
+uploads/
+.teamlink-uploads/

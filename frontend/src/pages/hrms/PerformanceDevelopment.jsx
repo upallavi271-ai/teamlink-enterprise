@@ -5,7 +5,6 @@ import KT from './KT.jsx';
 import Disciplinary from './Disciplinary.jsx';
 import Lms from './Lms.jsx';
 import Performance from './Performance.jsx';
-import OrgStructure from './OrgStructure.jsx';
 import Projects from './Projects.jsx';
 
 export default function PerformanceDevelopment() {
@@ -19,7 +18,6 @@ export default function PerformanceDevelopment() {
         { key: 'kt', label: 'Knowledge Transfer', element: <KT /> },
         { key: 'disciplinary', label: 'Disciplinary Actions', element: <Disciplinary /> },
         { key: 'lms', label: 'LMS', element: <Lms /> },
-        { key: 'org', label: 'Org Structure', element: <OrgStructure /> },
         { key: 'projects', label: 'Projects', element: <Projects /> },
         { key: 'reports', label: 'Reports', element: <Performance /> },
       ]}

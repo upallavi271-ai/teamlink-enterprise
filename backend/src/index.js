@@ -119,7 +119,9 @@ app.use('/api/disciplinary', employeeRecordRouter('DISCIPLINARY', { createRoles:
 app.use('/api/shift-roster', employeeRecordRouter('SHIFT'));
 app.use('/api/timesheet', employeeRecordRouter('TIMESHEET'));
 app.use('/api/assets', employeeRecordRouter('ASSET', { createRoles: true }));
-app.use('/api/expenses', employeeRecordRouter('EXPENSE'));
+// Expense & Travel Claims carry a real bill/receipt — the one record type with
+// a stored attachment today (see backend/src/utils/attachments.js).
+app.use('/api/expenses', employeeRecordRouter('EXPENSE', { attachments: true }));
 app.use('/api/helpdesk', helpdeskRoutes);
 // Company asset inventory (Employee Services → Assets). /api/assets above stays
 // as the employee-raised asset *request* list, which feeds Asset Approval.

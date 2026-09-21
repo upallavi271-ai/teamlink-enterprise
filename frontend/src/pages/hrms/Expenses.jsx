@@ -15,6 +15,11 @@ export default function Expenses() {
       dateLabel="Date"
       showAmount
       amountLabel="Amount (₹)"
+      // A claim carries its actual bill: a real upload, stored server-side
+      // outside the repository, downloadable only by someone who can already
+      // see the claim. See backend/src/utils/attachments.js.
+      showAttachment
+      attachmentLabel="Bill / Receipt"
       statuses={['Pending', 'Approved', 'Reimbursed', 'Rejected']}
       decisions={['Approved', 'Reimbursed', 'Rejected']}
     />

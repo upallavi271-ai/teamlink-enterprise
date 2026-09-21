@@ -784,11 +784,21 @@ async function main() {
   // HRMS long tail
   await prisma.performanceReview.create({ data: { employeeId: empDivya.id, period: '2026-H1', score: 82, band: 'High', recommendation: 'Recommended', notes: 'Consistently exceeds targets.' } });
 
-  const courseOnboarding = await prisma.course.create({ data: { title: 'New Hire Orientation', category: 'Onboarding', duration: '2h' } });
-  const coursePosh = await prisma.course.create({ data: { title: 'POSH Awareness', category: 'Compliance', duration: '1h' } });
-  await prisma.courseAssignment.create({ data: { courseId: courseOnboarding.id, employeeId: empMeera.id, completed: true } });
+  // LMS — the prototype's four courses. Compliance and onboarding courses are
+  // mandatory and certify at a higher pass mark; the rest sit at the default 70.
+  const courseOnboarding = await prisma.course.create({ data: { title: 'New Hire Orientation', category: 'Onboarding', duration: '2h', mandatory: true, passMark: 70 } });
+  const coursePosh = await prisma.course.create({ data: { title: 'POSH Awareness', category: 'Compliance', duration: '1h', mandatory: true, passMark: 80 } });
+  const courseRecruiting = await prisma.course.create({ data: { title: 'Recruitment Fundamentals', category: 'ATS', duration: '3h', mandatory: false, passMark: 70 } });
+  const courseComms = await prisma.course.create({ data: { title: 'Client Communication Standards', category: 'Soft Skills', duration: '1.5h', mandatory: false, passMark: 65 } });
+  const done = (d) => new Date(d);
+  await prisma.courseAssignment.create({ data: { courseId: courseOnboarding.id, employeeId: empMeera.id, completed: true, completedAt: done('2026-04-18') } });
   await prisma.courseAssignment.create({ data: { courseId: coursePosh.id, employeeId: empMeera.id, completed: false } });
-  await prisma.courseAssignment.create({ data: { courseId: coursePosh.id, employeeId: empKiran.id, completed: true } });
+  await prisma.courseAssignment.create({ data: { courseId: coursePosh.id, employeeId: empKiran.id, completed: true, completedAt: done('2026-05-06') } });
+  // Medical desk learning, so a Medical TL's scoped view has real figures.
+  await prisma.courseAssignment.create({ data: { courseId: courseRecruiting.id, employeeId: empKiran.id, completed: false } });
+  await prisma.courseAssignment.create({ data: { courseId: courseRecruiting.id, employeeId: empDivya.id, completed: true, completedAt: done('2026-03-11') } });
+  await prisma.courseAssignment.create({ data: { courseId: coursePosh.id, employeeId: empDivya.id, completed: false } });
+  await prisma.courseAssignment.create({ data: { courseId: courseComms.id, employeeId: empArun.id, completed: false } });
 
   const project1 = await prisma.project.create({ data: { name: 'Client Portal Revamp', status: 'Active' } });
   await prisma.projectAssignment.create({ data: { projectId: project1.id, employeeId: empDivya.id, role: 'Lead' } });

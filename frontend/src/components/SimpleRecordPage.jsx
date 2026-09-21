@@ -26,6 +26,14 @@ export default function SimpleRecordPage({
   statuses = ['Open', 'In Progress', 'Resolved'],
   decisions = null, // e.g. ['Approved', 'Rejected'] to show decision buttons for HR roles
   createByHrOnly = false, // when true, only HR roles see the create form (e.g. assigning goals/assets)
+  // When true the record can carry a real uploaded bill/receipt: the file is
+  // POSTed as multipart to `${apiPath}/:id/bill` and stored on the server
+  // OUTSIDE the repository (backend/src/utils/attachments.js). Every other
+  // "document" in this app is still a filename typed into a box; this is the
+  // first screen that stores bytes, and it is meant to be the pattern the
+  // others adopt.
+  showAttachment = false,
+  attachmentLabel = 'Bill / Receipt',
 }) {
   const { user } = useAuth();
   const isHR = hasHrmsAdmin(user);
@@ -33,6 +41,9 @@ export default function SimpleRecordPage({
   const [employees, setEmployees] = useState([]);
   const emptyForm = { employeeId: '', title: '', detail: '', date: '', amount: '', hours: '', category: '', priority: 'Medium', location: '', progressPct: 0 };
   const [form, setForm] = useState(emptyForm);
+  const [file, setFile] = useState(null);
+  const [fileKey, setFileKey] = useState(0); // resets the <input type="file">
+  const [error, setError] = useState('');
 
   function load() {
     api.get(apiPath).then((res) => setRecords(res.data));
@@ -40,8 +51,40 @@ export default function SimpleRecordPage({
   }
   useEffect(load, [apiPath]);
 
+  // Mirrors the server's limits so the common mistakes are caught before a
+  // 5MB upload crosses the wire. The server enforces them regardless.
+  const MAX_BILL_BYTES = 5 * 1024 * 1024;
+  const BILL_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+
+  async function uploadBill(recordId, chosen) {
+    const body = new FormData();
+    body.append('file', chosen);
+    // No explicit Content-Type: the browser has to set the multipart boundary.
+    await api.post(`${apiPath}/${recordId}/bill`, body);
+  }
+
+  // Fetch the bill through the API (the download route is authenticated and
+  // scope-checked) and hand the bytes to the browser as a save.
+  async function downloadBill(r) {
+    setError('');
+    try {
+      const res = await api.get(`${apiPath}/${r.id}/bill`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = r.billName || 'bill';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Could not download that file.');
+    }
+  }
+
   async function submit(e) {
     e.preventDefault();
+    setError('');
     const payload = { title: form.title, detail: form.detail };
     if (createByHrOnly) payload.employeeId = form.employeeId;
     if (showDate) payload.date = form.date;
@@ -51,8 +94,29 @@ export default function SimpleRecordPage({
     if (showPriority) payload.priority = form.priority;
     if (showLocation) payload.location = form.location;
     if (showProgress) payload.progressPct = form.progressPct;
-    await api.post(apiPath, payload);
+    if (showAttachment && file) {
+      if (file.size > MAX_BILL_BYTES) { setError('That file is larger than 5MB.'); return; }
+      if (!BILL_TYPES.includes(file.type)) { setError('Only PNG, JPEG, WebP images and PDF files can be attached.'); return; }
+    }
+    let created;
+    try {
+      created = (await api.post(apiPath, payload)).data;
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not save that record.');
+      return;
+    }
+    if (showAttachment && file) {
+      try {
+        await uploadBill(created.id, file);
+      } catch (err) {
+        // The claim saved; only the file failed. Say which, rather than
+        // leaving the user guessing why the row has no bill on it.
+        setError(`${err.response?.data?.error || 'The file could not be uploaded.'} The claim was saved without it.`);
+      }
+    }
     setForm(emptyForm);
+    setFile(null);
+    setFileKey((k) => k + 1);
     load();
   }
 
@@ -114,7 +178,24 @@ export default function SimpleRecordPage({
             {showAmount && <label className="field"><span>{amountLabel}</span><input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></label>}
             {showHours && <label className="field"><span>Hours</span><input type="number" step="0.5" value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} /></label>}
             {showProgress && <label className="field"><span>Progress (%)</span><input type="number" min="0" max="100" value={form.progressPct} onChange={(e) => setForm({ ...form, progressPct: e.target.value })} /></label>}
+            {showAttachment && (
+              <label className="field">
+                <span>{attachmentLabel}</span>
+                <input
+                  key={fileKey}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,application/pdf"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                />
+              </label>
+            )}
           </div>
+          {showAttachment && (
+            <div className="small-muted" style={{ marginBottom: 8 }}>
+              PNG, JPEG, WebP or PDF, up to 5MB. The file is stored on the server and only people who can see this claim can download it.
+            </div>
+          )}
+          {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
           <button className="btn btn-primary btn-sm" type="submit">Submit</button>
         </form>
       )}
@@ -133,6 +214,7 @@ export default function SimpleRecordPage({
               {showAmount && <th>Amount</th>}
               {showHours && <th>Hours</th>}
               {showProgress && <th>Progress</th>}
+              {showAttachment && <th>{attachmentLabel}</th>}
               <th>Status</th>
               {isHR && decisions && <th></th>}
             </tr>
@@ -152,6 +234,16 @@ export default function SimpleRecordPage({
                 {showProgress && (
                   <td>
                     <span style={{ cursor: 'pointer' }} onClick={() => updateProgress(r.id, r.progressPct)}>{r.progressPct ?? 0}%</span>
+                  </td>
+                )}
+                {showAttachment && (
+                  <td>
+                    {r.billFile ? (
+                      <button type="button" className="link-btn" onClick={() => downloadBill(r)}>
+                        {r.billName || 'Download'}
+                        <span className="small-muted"> ({Math.max(1, Math.round((r.billSize || 0) / 1024))} KB)</span>
+                      </button>
+                    ) : <span className="small-muted">—</span>}
                   </td>
                 )}
                 <td><span className="status">{r.status}</span></td>

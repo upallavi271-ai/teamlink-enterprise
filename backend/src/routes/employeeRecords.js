@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const attachments = require('../utils/attachments');
 
 
 // Backs the ~11 similarly-shaped HRMS self-service areas (KT, Targets,
@@ -12,9 +13,24 @@ const { logAudit } = require('../utils/audit');
 // `createRoles: true` means only someone with HRMS Employee Management reach
 // may raise this record type for another employee; the decision (approve/
 // reject) always needs hrms/Employee Services/approve from the engine.
-function employeeRecordRouter(type, { createRoles = null } = {}) {
+// `attachments: true` adds the bill/receipt upload + download pair, today only
+// for EXPENSE claims (see utils/attachments.js).
+function employeeRecordRouter(type, { createRoles = null, attachments: withFiles = false } = {}) {
   const router = express.Router();
   router.use(requireAuth);
+
+  // The record, if this user may reach it at all — exactly the rule the list
+  // and the free-form patch below already apply, in one place so the upload
+  // and the download cannot drift from it.
+  async function reachable(req, id) {
+    const record = await prisma.employeeRecord.findUnique({ where: { id } });
+    if (!record || record.type !== type) return { error: 404 };
+    if (req.user.caps.hrmsSelfOnly) {
+      const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+      if (!own || record.employeeId !== own.id) return { error: 403 };
+    }
+    return { record };
+  }
 
   router.get('/', async (req, res) => {
     const where = { type };
@@ -94,6 +110,60 @@ function employeeRecordRouter(type, { createRoles = null } = {}) {
     const record = await prisma.employeeRecord.update({ where: { id: req.params.id }, data });
     res.json(record);
   });
+
+  if (withFiles) {
+    // --- Bill / receipt upload -------------------------------------------
+    // No express.json() here: the body is multipart and is read straight off
+    // the socket by utils/attachments.js, which aborts past the size cap.
+    router.post('/:id/bill', async (req, res, next) => {
+      try {
+        const { record, error } = await reachable(req, req.params.id);
+        if (error === 404) return res.status(404).json({ error: 'Record not found' });
+        if (error === 403) return res.status(403).json({ error: "This isn't included in your role's permissions" });
+
+        let parsed;
+        try {
+          parsed = await attachments.parseMultipart(req);
+        } catch (err) {
+          return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'Could not read the upload.' });
+        }
+        let stored;
+        try {
+          stored = attachments.store(parsed.file);
+        } catch (err) {
+          return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'Could not store the upload.' });
+        }
+        // Replacing a bill removes the old bytes rather than orphaning them.
+        if (record.billFile) attachments.remove(record.billFile);
+        const updated = await prisma.employeeRecord.update({ where: { id: record.id }, data: stored });
+        await logAudit({
+          userId: req.user.id, action: `${type} bill uploaded`,
+          entity: 'EmployeeRecord', entityId: record.id, toValue: stored.billName,
+        });
+        return res.json(updated);
+      } catch (err) { return next(err); }
+    });
+
+    // --- Bill / receipt download ------------------------------------------
+    // Same scope check as the claim itself. The path is rebuilt from the
+    // stored name only after utils/attachments.js has re-validated it, so the
+    // id in the URL can never reach a file outside the upload directory.
+    router.get('/:id/bill', async (req, res, next) => {
+      try {
+        const { record, error } = await reachable(req, req.params.id);
+        if (error === 404) return res.status(404).json({ error: 'Record not found' });
+        if (error === 403) return res.status(403).json({ error: "This isn't included in your role's permissions" });
+        if (!record.billFile) return res.status(404).json({ error: 'No bill attached to this claim' });
+        const full = attachments.resolveStored(record.billFile);
+        if (!full) return res.status(404).json({ error: 'The attached file is no longer on the server' });
+        res.setHeader('Content-Type', record.billMime || 'application/octet-stream');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        // `attachment` — a stored PDF or image is never rendered in-page.
+        res.setHeader('Content-Disposition', `attachment; filename="${attachments.safeDisplayName(record.billName)}"`);
+        return res.sendFile(full);
+      } catch (err) { return next(err); }
+    });
+  }
 
   return router;
 }

@@ -8,12 +8,10 @@ import Documents from './Documents.jsx';
 import ShiftRoster from './ShiftRoster.jsx';
 import Timesheet from './Timesheet.jsx';
 import Expenses from './Expenses.jsx';
-import AccessManagement from './AccessManagement.jsx';
-import WeeklyIdeas from './WeeklyIdeas.jsx';
 
 // The prototype's five Employee Services tabs, each with its own page head
 // (servicesView, line 4466). The remaining self-service areas main carries —
-// documents, shift roster, timesheet, expenses, access and ideas — follow them.
+// documents, shift roster, timesheet and expenses — follow them.
 const PROTO_TABS = [
   ['helpdesk', 'Help Desk', 'Helpdesk', 'Track and resolve employee IT/HR/Admin/Grievance/Facilities/Payroll tickets.'],
   ['assets', 'Assets', 'Asset Management', 'Company asset inventory, allocation, transfers, maintenance and audit.'],
@@ -27,8 +25,6 @@ const EXTRA_TABS = [
   ['shift', 'Shift Roster', 'Shift & Roster', 'Shift patterns and who is rostered on which day.', ShiftRoster],
   ['timesheet', 'Timesheet', 'Timesheet', 'Hours logged against tasks.', Timesheet],
   ['expenses', 'Expense Claims', 'Expense & Travel Claims', 'Claims, approvals and reimbursement.', Expenses],
-  ['access', 'Access Management', 'Access Management', 'System and resource access requests.', AccessManagement],
-  ['ideas', 'Weekly Ideas', 'Weekly Ideas', 'Weekly idea contributions and their review.', WeeklyIdeas],
 ];
 
 export default function EmployeeServices() {
