@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 async function main() {
   const password = await bcrypt.hash('password123', 10);
 
-  const departmentNames = ['IT', 'HR', 'R&D', 'QA', 'Manufacturing', 'Medical', 'Educational', 'BDE'];
+  const departmentNames = ['IT', 'HR', 'R&D', 'QA', 'Manufacturing', 'Medical', 'Educational', 'BDE', 'Accounts'];
   const departmentsByName = {};
   for (const name of departmentNames) {
     departmentsByName[name] = await prisma.department.create({ data: { name } });
@@ -855,6 +855,435 @@ async function main() {
     ],
   });
 
+  // ===========================================================================
+  // THE ROLE-BY-ROLE TEST ACCOUNTS  (@teamlink.com)
+  //
+  // The @teamlink.test logins above are UNCHANGED and keep working — the
+  // README documents them and they are what the existing demo data is wired
+  // to. These are ADDITIONAL, on a different domain, so nothing collides:
+  // `email` is unique, and `.com` and `.test` are different addresses. Where a
+  // name overlaps (accounts@, employee@, client@, clientb@, candidate@) the
+  // two are separate people with separate records, not two logins for one.
+  //
+  // ONE EMPLOYEE = ONE USER = ONE LOGIN for every staff account below, and
+  // NOTHING IS HARD-CODED: staffLogin() looks the designation up in
+  // DESIGNATION_ROLES — the same table utils/identity.js reads — and takes the
+  // role, the ATS role, the three product booleans and the landing workspace
+  // from it. The DEPARTMENT supplies the data scope. There is no "Medical
+  // Recruiter" role anywhere: that person is department=Medical +
+  // designation=Recruiter, which the engine resolves to RECRUITER scoped to
+  // Medical.
+  // ===========================================================================
+  const designationByName = Object.fromEntries(DESIGNATION_ROLES.map((d) => [d.designation, d]));
+
+  // The login's role code for a designation — the same rule the API uses
+  // (utils/employeeAdmin.js loginRoleFor).
+  function roleForDesignation(name) {
+    const m = designationByName[name];
+    if (!m) return 'EMPLOYEE';
+    if (m.atsRole) return m.atsRole;
+    if (m.accounts && !m.ats) return 'ACCOUNTANT';
+    return 'EMPLOYEE';
+  }
+
+  let staffSeq = 10; // EMP-001 .. EMP-010 are taken above.
+  async function staffLogin({
+    email, name, department, team, designation, location = 'Hyderabad',
+    scopeDepartments, scopeClients, username,
+  }) {
+    const m = designationByName[designation];
+    if (!m) throw new Error(`Seed: no DesignationRole row for "${designation}"`);
+    const role = roleForDesignation(designation);
+    staffSeq += 1;
+    const employeeCode = `EMP-${String(staffSeq).padStart(4, '0')}`;
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        username: username || email,
+        passwordHash: password,
+        // DERIVED, every one of them:
+        role,
+        atsRole: m.atsRole || null,
+        hrmsAccess: !!m.hrms,
+        atsAccess: !!m.ats,
+        accountsAccess: !!m.accounts,
+        landingWorkspace: m.landing || null,
+        // The DEPARTMENT is the scope.
+        atsDepartment: department,
+        atsScopeDepartments: scopeDepartments || department,
+        atsScopeTeams: team || null,
+        atsScopeClients: scopeClients || null,
+        branch: location,
+        team: team || null,
+        status: 'Active',
+      },
+    });
+    const employee = await prisma.employee.create({
+      data: {
+        userId: user.id, employeeCode, name, email,
+        department, team: team || null, designation, location,
+        dateOfJoining: new Date('2024-01-08'), employmentStatus: 'Active',
+        employeeType: 'Full-time', onboardingTasks: tasks(6),
+        profileStage: 'Locked', isLocked: true,
+      },
+    });
+    return { user, employee, role };
+  }
+
+  // Two more teams so the Manufacturing and Education desks are real.
+  await prisma.team.createMany({
+    data: [
+      { name: 'Manufacturing Team-A', departmentId: departmentsByName['Manufacturing'].id },
+      { name: 'Education Team-A', departmentId: departmentsByName['Educational'].id },
+    ],
+  });
+
+  // --- Leadership ------------------------------------------------------------
+  const cSuperAdmin = await staffLogin({
+    email: 'superadmin@teamlink.com', name: 'Aarti Deshpande', department: 'HR',
+    team: 'Leadership', designation: 'Super Admin',
+  });
+  const cAdmin = await staffLogin({
+    email: 'admin@teamlink.com', name: 'Nikhil Joshi', department: 'HR',
+    team: 'Leadership', designation: 'Admin',
+  });
+  // A Manager's scope is CONFIGURED, not automatically global: these
+  // departments only, which is what utils/scope.js then enforces.
+  const cManager = await staffLogin({
+    email: 'manager@teamlink.com', name: 'Shalini Pillai', department: 'Medical',
+    designation: 'Manager', scopeDepartments: 'Medical,IT,Manufacturing,Educational,BDE',
+  });
+  const cAsstManager = await staffLogin({
+    email: 'asstmanager@teamlink.com', name: 'Rohit Bansal', department: 'IT',
+    designation: 'Assistant Manager', scopeDepartments: 'IT,Manufacturing',
+  });
+  const cStl = await staffLogin({
+    email: 'stl@teamlink.com', name: 'Ganesh Iyer', department: 'Medical',
+    designation: 'STL', scopeDepartments: 'Medical,IT',
+  });
+
+  // --- Team leads. Same designation, different department = different scope --
+  const cMedicalTl = await staffLogin({
+    email: 'medicaltl@teamlink.com', name: 'Sunita Raj', department: 'Medical',
+    team: 'Medical Team-A', designation: 'TL',
+  });
+  const cItTl = await staffLogin({
+    email: 'ittl@teamlink.com', name: 'Harish Gupta', department: 'IT',
+    team: 'Section A', designation: 'TL',
+  });
+  const cMfgTl = await staffLogin({
+    email: 'manufacturingtl@teamlink.com', name: 'Prakash Naidu', department: 'Manufacturing',
+    team: 'Manufacturing Team-A', designation: 'TL', location: 'Pune',
+  });
+  const cEduTl = await staffLogin({
+    email: 'edutl@teamlink.com', name: 'Latha Menon', department: 'Educational',
+    team: 'Education Team-A', designation: 'TL', location: 'Bengaluru',
+  });
+  const cBdeTl = await staffLogin({
+    email: 'bdetl@teamlink.com', name: 'Imran Qureshi', department: 'BDE',
+    team: 'Business Development', designation: 'TL', location: 'Bengaluru',
+  });
+
+  // --- Recruiters and the BDE ------------------------------------------------
+  const cMedical1 = await staffLogin({
+    email: 'medical1@teamlink.com', name: 'Anjali Verma', department: 'Medical',
+    team: 'Medical Team-A', designation: 'Recruiter',
+  });
+  const cIt1 = await staffLogin({
+    email: 'itrecruiter1@teamlink.com', name: 'Vivek Sharma', department: 'IT',
+    team: 'Section A', designation: 'Recruiter',
+  });
+  const cMfg1 = await staffLogin({
+    email: 'manufacturingrecruiter1@teamlink.com', name: 'Deepa Kulkarni',
+    department: 'Manufacturing', team: 'Manufacturing Team-A', designation: 'Recruiter', location: 'Pune',
+  });
+  const cEdu1 = await staffLogin({
+    email: 'edu1@teamlink.com', name: 'Farhan Shaikh', department: 'Educational',
+    team: 'Education Team-A', designation: 'Recruiter', location: 'Bengaluru',
+  });
+
+  // --- The two new client accounts the BDE owns ------------------------------
+  const vertex = await prisma.client.create({
+    data: {
+      name: 'Vertex Industrial Manufacturing', legalName: 'Vertex Industrial Manufacturing Pvt. Ltd.',
+      clientCode: 'CLI0003', industry: 'Manufacturing', location: 'Pune', state: 'Maharashtra', country: 'India',
+      ownerDepartment: 'Manufacturing', clientType: 'Direct', priority: 'High', status: 'Active',
+      businessType: 'Private Limited',
+      contactName: 'Mahesh Kadam', contactDesignation: 'Plant HR Head',
+      contactEmail: 'hr@vertexmfg.example', contactPhone: '9100000003',
+      recruitmentContactName: 'Mahesh Kadam', recruitmentContactEmail: 'hr@vertexmfg.example',
+      recruitmentContactPhone: '9100000003',
+      billingContactName: 'Snehal Pawar', billingContactEmail: 'ap@vertexmfg.example', billingContactPhone: '9100000013',
+      accountManager: 'Imran Qureshi', bdeOwner: 'Nandita Rao',
+      gst: '27AAAAA1113A1Z5', tdsPercent: 10, gstPercent: 18,
+      agreementFeePercent: 8.5, guaranteePeriod: '60 Days',
+      agreementId: 'AGR0003', agreementStatus: 'ACTIVE', agreementRequired: 'Yes',
+      agreementTemplate: 'Standard Recruitment / Staffing',
+      agreementStart: '2026-07-01', agreementEnd: '2027-06-30',
+      agreementActivatedAt: new Date('2026-07-01'), agreementSignedAt: new Date('2026-06-28'),
+      agreementSignedBy: 'Mahesh Kadam', agreementSignedByTitle: 'Plant HR Head',
+      esignToken: 'ESN-SEEDVERTEX003', riskFlag: 'None',
+    },
+  });
+  const nalanda = await prisma.client.create({
+    data: {
+      name: 'Nalanda Learning Group', legalName: 'Nalanda Learning Group Pvt. Ltd.',
+      clientCode: 'CLI0004', industry: 'Education', location: 'Bengaluru', state: 'Karnataka', country: 'India',
+      ownerDepartment: 'Educational', clientType: 'Direct', priority: 'Medium', status: 'Active',
+      businessType: 'Private Limited',
+      contactName: 'Revathi Nair', contactDesignation: 'Academic Director',
+      contactEmail: 'hr@nalanda.example', contactPhone: '9100000004',
+      recruitmentContactName: 'Revathi Nair', recruitmentContactEmail: 'hr@nalanda.example',
+      recruitmentContactPhone: '9100000004',
+      billingContactName: 'Arun Shetty', billingContactEmail: 'ap@nalanda.example', billingContactPhone: '9100000014',
+      accountManager: 'Imran Qureshi', bdeOwner: 'Nandita Rao',
+      gst: '29AAAAA1114A1Z5', tdsPercent: 10, gstPercent: 18,
+      agreementFeePercent: 7.5, guaranteePeriod: '30 Days',
+      agreementId: 'AGR0004', agreementStatus: 'ACTIVE', agreementRequired: 'Yes',
+      agreementTemplate: 'Standard Recruitment / Staffing',
+      agreementStart: '2026-08-01', agreementEnd: '2027-07-31',
+      agreementActivatedAt: new Date('2026-08-01'), agreementSignedAt: new Date('2026-07-30'),
+      agreementSignedBy: 'Revathi Nair', agreementSignedByTitle: 'Academic Director',
+      esignToken: 'ESN-SEEDNALANDA004', riskFlag: 'None',
+    },
+  });
+
+  // A BDE is scoped to the CLIENTS assigned to them, not to a department.
+  const cBde1 = await staffLogin({
+    email: 'bde1@teamlink.com', name: 'Nandita Rao', department: 'BDE',
+    team: 'Business Development', designation: 'BDE', location: 'Bengaluru',
+    scopeClients: `${vertex.id},${nalanda.id},${orbit.id}`,
+  });
+
+  // --- Accounts and plain HRMS self-service ---------------------------------
+  const cAccountant = await staffLogin({
+    email: 'accounts@teamlink.com', name: 'Suresh Pattnaik', department: 'Accounts',
+    team: 'Accounts', designation: 'Accountant',
+  });
+  const cEmployee = await staffLogin({
+    email: 'employee@teamlink.com', name: 'Kavya Reddy', department: 'HR',
+    designation: 'Employee',
+  });
+
+  // --- External logins: no employee record, scope pinned to one row ---------
+  await prisma.user.create({
+    data: {
+      name: 'Ravi Teja (Orbit)', email: 'client@teamlink.com', username: 'client@teamlink.com',
+      passwordHash: password, role: 'CLIENT', clientId: orbit.id, branch: 'Hyderabad',
+      hrmsAccess: false, atsAccess: true, accountsAccess: true, atsRole: 'CLIENT', landingWorkspace: 'client',
+    },
+  });
+  await prisma.user.create({
+    data: {
+      name: 'Anita Desai (Medivant)', email: 'clientb@teamlink.com', username: 'clientb@teamlink.com',
+      passwordHash: password, role: 'CLIENT', clientId: medivant.id, branch: 'Bengaluru',
+      hrmsAccess: false, atsAccess: true, accountsAccess: true, atsRole: 'CLIENT', landingWorkspace: 'client',
+    },
+  });
+
+  // --- Requirements, one desk at a time -------------------------------------
+  // A Manufacturing recruiter with no Manufacturing requirement proves nothing,
+  // so every department above gets work of its own. A RECRUITER's scope is the
+  // ASSIGNMENT (recruiterId / recruiterIds); a TL's is their tlId plus their
+  // department; a BDE's is their assigned clients.
+  const reqCommon = {
+    employmentType: 'Full Time', jobPreference: 'Permanent', salaryType: 'Annual CTC',
+    currency: 'INR', noticePeriodMax: '30 Days', joiningTimeline: 'Within 30 Days',
+    stlId: cStl.user.id, stl: cStl.user.name,
+  };
+  const cReqMed1 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0006', title: 'Staff Nurse — ICU',
+      jobDescription: 'Run ICU shifts for a 200-bed multi-specialty group, owning patient charting and handover.',
+      clientId: medivant.id, department: 'Medical', priority: 'High', openings: 4,
+      recruiterId: cMedical1.user.id, tlId: cMedicalTl.user.id, tl: cMedicalTl.user.name,
+      bdeId: cBde1.user.id, accountManager: cMedicalTl.user.name,
+      skills: 'Critical Care, Patient Monitoring, BLS', experience: '2-5 yrs', relevantExperience: '2 yrs',
+      education: 'B.Sc Nursing', workMode: 'Work From Office', location: 'Hyderabad', preferredLocation: 'Hyderabad',
+      salary: '₹4L - ₹6L', targetDate: '2026-11-20',
+    },
+  });
+  const cReqMed2 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0007', title: 'Pharmacovigilance Associate',
+      jobDescription: 'Own adverse-event intake, triage and regulatory reporting for the clinical group.',
+      clientId: medivant.id, department: 'Medical', priority: 'Medium', openings: 2,
+      recruiterId: cMedical1.user.id, tlId: cMedicalTl.user.id, tl: cMedicalTl.user.name,
+      skills: 'Pharmacovigilance, Argus, MedDRA', experience: '2-4 yrs', relevantExperience: '2 yrs',
+      education: 'B.Pharm', workMode: 'Hybrid', location: 'Hyderabad', preferredLocation: 'Hyderabad',
+      salary: '₹5L - ₹8L', targetDate: '2026-12-05',
+    },
+  });
+  const cReqIt1 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0008', title: 'React Frontend Engineer',
+      jobDescription: 'Build Orbit’s customer console in React, owning the design-system components end to end.',
+      clientId: orbit.id, department: 'IT', priority: 'High', openings: 3,
+      recruiterId: cIt1.user.id, tlId: cItTl.user.id, tl: cItTl.user.name,
+      bdeId: cBde1.user.id, accountManager: cItTl.user.name,
+      skills: 'React, TypeScript, CSS, REST', goodToHaveSkills: 'Vite, Testing Library',
+      experience: '3-6 yrs', relevantExperience: '3 yrs',
+      education: 'B.Tech', workMode: 'Hybrid', location: 'Hyderabad', preferredLocation: 'Hyderabad',
+      salary: '₹12L - ₹18L', targetDate: '2026-11-25',
+    },
+  });
+  const cReqIt2 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0009', title: 'DevOps Engineer',
+      jobDescription: 'Own Orbit’s build, deploy and observability pipeline across AWS and Kubernetes.',
+      clientId: orbit.id, department: 'IT', priority: 'Medium', openings: 1,
+      recruiterId: cIt1.user.id, tlId: cItTl.user.id, tl: cItTl.user.name,
+      skills: 'AWS, Kubernetes, Terraform, CI/CD', experience: '4-8 yrs', relevantExperience: '4 yrs',
+      education: 'B.Tech', workMode: 'Remote', location: 'Hyderabad', preferredLocation: 'Anywhere',
+      salary: '₹16L - ₹24L', targetDate: '2026-12-20',
+    },
+  });
+  const cReqMfg1 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0010', title: 'CNC Production Supervisor',
+      jobDescription: 'Supervise a two-shift CNC machining line, owning output, scrap rate and shop-floor safety.',
+      clientId: vertex.id, department: 'Manufacturing', priority: 'High', openings: 2,
+      recruiterId: cMfg1.user.id, tlId: cMfgTl.user.id, tl: cMfgTl.user.name,
+      bdeId: cBde1.user.id, accountManager: cMfgTl.user.name,
+      skills: 'CNC, Lean Manufacturing, Shop Floor Safety', experience: '5-9 yrs', relevantExperience: '5 yrs',
+      education: 'B.E Mechanical', workMode: 'Work From Office', location: 'Pune', preferredLocation: 'Pune',
+      salary: '₹7L - ₹11L', targetDate: '2026-11-18',
+    },
+  });
+  const cReqMfg2 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0011', title: 'Quality Inspector — Castings',
+      jobDescription: 'Inspect incoming and in-process castings against drawing tolerance and raise NCRs.',
+      clientId: vertex.id, department: 'Manufacturing', priority: 'Medium', openings: 3,
+      recruiterId: cMfg1.user.id, tlId: cMfgTl.user.id, tl: cMfgTl.user.name,
+      skills: 'QA/QC, GD&T, Metrology', experience: '2-5 yrs', relevantExperience: '2 yrs',
+      education: 'Diploma Mechanical', workMode: 'Work From Office', location: 'Pune', preferredLocation: 'Pune',
+      salary: '₹3L - ₹5L', targetDate: '2026-12-10',
+    },
+  });
+  const cReqEdu1 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0012', title: 'Senior Physics Faculty',
+      jobDescription: 'Teach senior-secondary Physics and own the board-exam revision programme.',
+      clientId: nalanda.id, department: 'Educational', priority: 'High', openings: 2,
+      recruiterId: cEdu1.user.id, tlId: cEduTl.user.id, tl: cEduTl.user.name,
+      bdeId: cBde1.user.id, accountManager: cEduTl.user.name,
+      skills: 'Physics, Curriculum Design, Classroom Management', experience: '3-8 yrs', relevantExperience: '3 yrs',
+      education: 'M.Sc Physics', workMode: 'Work From Office', location: 'Bengaluru', preferredLocation: 'Bengaluru',
+      salary: '₹6L - ₹10L', targetDate: '2026-11-28',
+    },
+  });
+  const cReqEdu2 = await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0013', title: 'Academic Counsellor',
+      jobDescription: 'Run admissions counselling for the Bengaluru campuses and own the enrolment funnel.',
+      clientId: nalanda.id, department: 'Educational', priority: 'Medium', openings: 4,
+      recruiterId: cEdu1.user.id, tlId: cEduTl.user.id, tl: cEduTl.user.name,
+      skills: 'Counselling, Admissions, CRM', experience: '1-4 yrs', relevantExperience: '1 yrs',
+      education: 'Any Degree', workMode: 'Work From Office', location: 'Bengaluru', preferredLocation: 'Bengaluru',
+      salary: '₹3L - ₹5L', targetDate: '2026-12-15',
+    },
+  });
+  // The BDE desk's own hiring — internal, so it needs no client agreement. It
+  // is what puts a requirement in the BDE TL's department scope.
+  await prisma.requirement.create({
+    data: {
+      ...reqCommon, reqCode: 'REQ-0014', title: 'Business Development Executive — South',
+      jobDescription: 'Open new staffing accounts across Karnataka and Tamil Nadu for TeamLink.',
+      clientId: orbit.id, internal: true, department: 'BDE', priority: 'High', openings: 2,
+      tlId: cBdeTl.user.id, tl: cBdeTl.user.name, bdeId: cBde1.user.id,
+      skills: 'Client Acquisition, Staffing Sales, Negotiation', experience: '2-6 yrs', relevantExperience: '2 yrs',
+      education: 'Any Degree', workMode: 'Hybrid', location: 'Bengaluru', preferredLocation: 'Bengaluru',
+      salary: '₹5L - ₹9L', targetDate: '2026-11-30',
+    },
+  });
+
+  // --- Candidates and applications, so every desk has a live pipeline -------
+  const candDefs = [
+    ['Nurse Anila Thomas', 'anila.thomas@example.com', '9000001001', 'Critical Care, Patient Monitoring, BLS', 4, 'Hyderabad', cReqMed1, 'RECRUITER_REVIEW', 86],
+    ['Joseph Mathew', 'joseph.mathew@example.com', '9000001002', 'Critical Care, BLS, ACLS', 3, 'Hyderabad', cReqMed1, 'SHARED_WITH_CLIENT', 81],
+    ['Swetha Bala', 'swetha.bala@example.com', '9000001003', 'Pharmacovigilance, Argus, MedDRA', 3, 'Hyderabad', cReqMed2, 'NEW', 78],
+    ['Nikhil Rao', 'nikhil.rao@example.com', '9000001004', 'React, TypeScript, CSS, REST', 5, 'Hyderabad', cReqIt1, 'INTERVIEW_SCHEDULED', 92],
+    ['Tanvi Shah', 'tanvi.shah@example.com', '9000001005', 'React, TypeScript, Vite', 4, 'Pune', cReqIt1, 'RECRUITER_REVIEW', 87],
+    ['Ashok Pillai', 'ashok.pillai@example.com', '9000001006', 'AWS, Kubernetes, Terraform, CI/CD', 7, 'Bengaluru', cReqIt2, 'NEW', 83],
+    ['Ramesh Jadhav', 'ramesh.jadhav@example.com', '9000001007', 'CNC, Lean Manufacturing, Shop Floor Safety', 8, 'Pune', cReqMfg1, 'RECRUITER_REVIEW', 89],
+    ['Sunil Gaikwad', 'sunil.gaikwad@example.com', '9000001008', 'CNC, Production Planning', 6, 'Pune', cReqMfg1, 'SHARED_WITH_CLIENT', 80],
+    ['Meenal Deshmukh', 'meenal.deshmukh@example.com', '9000001009', 'QA/QC, GD&T, Metrology', 3, 'Pune', cReqMfg2, 'NEW', 76],
+    ['Dr. Kavitha Suresh', 'kavitha.suresh@example.com', '9000001010', 'Physics, Curriculum Design', 9, 'Bengaluru', cReqEdu1, 'RECRUITER_REVIEW', 90],
+    ['Naveen Kumar', 'naveen.kumar@example.com', '9000001011', 'Physics, Classroom Management', 4, 'Bengaluru', cReqEdu1, 'NEW', 77],
+    ['Pooja Hegde', 'pooja.hegde@example.com', '9000001012', 'Counselling, Admissions, CRM', 2, 'Bengaluru', cReqEdu2, 'RECRUITER_REVIEW', 74],
+  ];
+  for (const [nm, em, ph, sk, yrs, loc, req, stage, score] of candDefs) {
+    // eslint-disable-next-line no-await-in-loop
+    const c = await prisma.candidate.create({
+      data: {
+        name: nm, email: em, phone: ph, source: 'Naukri', firstSource: 'Naukri',
+        skills: sk, experienceYears: yrs, relevantExperienceYears: Math.max(1, yrs - 1),
+        location: loc, preferredLocation: loc, noticePeriod: '30 Days',
+        availability: 'Available after notice period', jobPreference: 'Permanent',
+        preferredEmploymentType: 'Full Time', profileStatus: 'Active',
+        resumeName: `${nm.replace(/\W+/g, '_')}.pdf`, resumeScore: score,
+      },
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.application.create({
+      data: {
+        candidateId: c.id, requirementId: req.id, stage,
+        matchScore: score, resumeScore: score, source: 'Naukri', firstSource: 'Naukri',
+        applicationMethod: 'Manual',
+      },
+    });
+  }
+
+  // The candidate login — external, no employee record, pinned to their own
+  // candidate row by utils/scope.js.
+  const cCandidate = await prisma.candidate.create({
+    data: {
+      name: 'Sharath Kamath', email: 'candidate@teamlink.com', phone: '9000001099',
+      source: 'TeamLink Website', firstSource: 'TeamLink Website',
+      skills: 'React, TypeScript, Node.js', experienceYears: 4, relevantExperienceYears: 3,
+      location: 'Hyderabad', preferredLocation: 'Hyderabad', noticePeriod: 'Immediate',
+      availability: 'Available immediately', jobPreference: 'Permanent',
+      preferredEmploymentType: 'Full Time', profileStatus: 'Active',
+      resumeName: 'Sharath_Kamath.pdf', resumeScore: 85,
+    },
+  });
+  await prisma.application.create({
+    data: {
+      candidateId: cCandidate.id, requirementId: cReqIt1.id, stage: 'RECRUITER_REVIEW',
+      matchScore: 85, resumeScore: 85, source: 'TeamLink Website', firstSource: 'TeamLink Website',
+      applicationMethod: 'Self Apply',
+    },
+  });
+  await prisma.user.create({
+    data: {
+      name: 'Sharath Kamath', email: 'candidate@teamlink.com', username: 'candidate@teamlink.com',
+      passwordHash: password, role: 'CANDIDATE', candidateId: cCandidate.id,
+      hrmsAccess: false, atsAccess: true, accountsAccess: false, atsRole: 'CANDIDATE',
+      landingWorkspace: 'candidate',
+    },
+  });
+
+  // A little HRMS substance for the new logins, so HRMS is not empty for them.
+  await prisma.attendance.createMany({
+    data: [cMedical1, cIt1, cMfg1, cEdu1, cAccountant, cEmployee].map((s) => ({
+      employeeId: s.employee.id, date: today, status: 'Present', checkIn: '09:05', checkOut: '18:15',
+    })),
+  });
+  await prisma.leaveRequest.create({
+    data: {
+      employeeId: cMfg1.employee.id, type: 'Casual Leave', fromDate: '2026-10-02', toDate: '2026-10-02',
+      days: 1, reason: 'Personal', status: 'Pending',
+    },
+  });
+  await prisma.leaveRequest.create({
+    data: {
+      employeeId: cEdu1.employee.id, type: 'Sick Leave', fromDate: '2026-09-18', toDate: '2026-09-18',
+      days: 1, reason: 'Fever', status: 'Pending',
+    },
+  });
+
   await prisma.auditLog.create({ data: { userId: admin.id, action: 'Demo data seeded', entity: 'System' } });
 
   console.log('Seed complete.');
@@ -876,6 +1305,31 @@ async function main() {
   console.log('  client@teamlink.test      Client A (Orbit)         — own company only');
   console.log('  clientb@teamlink.test     Client B (Medivant)      — own company only');
   console.log('  candidate@teamlink.test   Candidate (Arjun Mehta)  — own profile only');
+  console.log('');
+  console.log('THE ROLE-BY-ROLE TEST ACCOUNTS (@teamlink.com), same password.');
+  console.log('Every role below is DERIVED from department + designation — no compound');
+  console.log('role such as "Medical Recruiter" is stored anywhere.');
+  console.log('');
+  console.log('  superadmin@teamlink.com               HR / Super Admin          -> SUPER_ADMIN, all departments');
+  console.log('  admin@teamlink.com                    HR / Admin                -> ADMIN, all departments');
+  console.log('  manager@teamlink.com                  Medical / Manager         -> MANAGER, Medical+IT+Manufacturing+Educational+BDE');
+  console.log('  asstmanager@teamlink.com              IT / Assistant Manager    -> ASSISTANT_MANAGER, IT+Manufacturing');
+  console.log('  stl@teamlink.com                      Medical / STL             -> STL, Medical+IT');
+  console.log('  medicaltl@teamlink.com                Medical / TL              -> TL, Medical (Medical Team-A)');
+  console.log('  ittl@teamlink.com                     IT / TL                   -> TL, IT (Section A)');
+  console.log('  manufacturingtl@teamlink.com          Manufacturing / TL        -> TL, Manufacturing');
+  console.log('  edutl@teamlink.com                    Educational / TL          -> TL, Educational');
+  console.log('  bdetl@teamlink.com                    BDE / TL                  -> TL, BDE');
+  console.log('  medical1@teamlink.com                 Medical / Recruiter       -> RECRUITER, assigned Medical reqs');
+  console.log('  itrecruiter1@teamlink.com             IT / Recruiter            -> RECRUITER, assigned IT reqs');
+  console.log('  manufacturingrecruiter1@teamlink.com  Manufacturing / Recruiter -> RECRUITER, assigned Manufacturing reqs');
+  console.log('  edu1@teamlink.com                     Educational / Recruiter   -> RECRUITER, assigned Education reqs');
+  console.log('  bde1@teamlink.com                     BDE / BDE                 -> BDE, assigned clients (Vertex, Nalanda, Orbit)');
+  console.log('  accounts@teamlink.com                 Accounts / Accountant     -> ACCOUNTANT, Accounts + HRMS self-service');
+  console.log('  employee@teamlink.com                 HR / Employee             -> EMPLOYEE, HRMS self-service only');
+  console.log('  client@teamlink.com                   Client A (Orbit)          -> own company only');
+  console.log('  clientb@teamlink.com                  Client B (Medivant)       -> own company only');
+  console.log('  candidate@teamlink.com                Candidate (Sharath K.)    -> own profile only');
 }
 
 main()

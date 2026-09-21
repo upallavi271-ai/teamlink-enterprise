@@ -6,43 +6,88 @@ import { atsRoleLabel } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
 
-// Administration -> Employee Management — the prototype's employeeMgmtView()
-// (line 9754) and openAddEmployeeModal() (line 2857).
+// HRMS -> Employee Management — the prototype's employeeMgmtView() (line 9754)
+// and openAddEmployeeModal() (line 2857).
 //
-// Employee *account* administration, distinct from the HR record: this screen
-// owns login access, product roles and scope. One Employee = One User = One
-// Login. Eighteen columns, three filters, and per-row View / Assign Roles /
-// Activate-Deactivate / Reset Password / Create Login.
+// THE ONE PLACE employee administration happens. Add Employee, Bulk Import,
+// Export, the filters and Edit Scope all live here; Administration -> Users
+// links to this screen for the first and the last of those rather than
+// carrying a second copy of either. One Employee = One User = One Login.
 //
-// ROLE MODEL: main carries one User.role. The prototype's three product roles
-// are shown here derived and read-only (backend utils/roleAccess.js
-// PRODUCT_ACCESS); the Assign Roles modal edits the single stored role and the
-// department scope. That split is deliberately deferred — see schema.prisma.
-//
-// MAIN-ONLY, KEPT: the employee name links into the full HR record, where the
-// profile lock / unlock workflow lives.
+// Everything is scoped by the SERVER (/api/employees/management, guarded by
+// `hrms / Employee Management / <action>`), so a TL opening this screen gets
+// their own department's employees — not an empty table and not the company.
+// The `caps` the list returns say what this caller may actually do, and the
+// API still refuses anything the screen mistakenly offers.
 
 const EMPTY_NEW = {
-  name: '', dateOfBirth: '', gender: '—',
+  employeeId: '', name: '', dateOfBirth: '', gender: '—',
   email: '', phone: '', location: '',
   department: '', designation: '', reportingManagerId: '', stl: '', tl: '', team: '',
   dateOfJoining: new Date().toISOString().slice(0, 10), employeeType: 'Full Time', employmentStatus: 'Active',
-  role: 'EMPLOYEE', atsDepartment: '', password: '',
+  password: '',
 };
+
+// The email one-time code that gates Add Employee. `configured: false` is an
+// honest state, not an error: no channel, no code, and the form says so.
+const EMPTY_OTP = { sending: false, sent: false, code: '', verified: false, message: '', error: '' };
+
+function csvList(value) {
+  return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+// One checkbox list, used three times by the scope editor. MOVED here with
+// Edit Scope from Administration -> Users; there is no second copy of it.
+function ScopeChecklist({ label, hint, options, value, onChange, empty }) {
+  const selected = csvList(value);
+  function toggle(name, on) {
+    const next = on ? [...selected, name] : selected.filter((s) => s !== name);
+    onChange([...new Set(next)].join(','));
+  }
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <div className="small-muted" style={{ marginBottom: 6 }}>{hint}</div>
+      {options.length === 0
+        ? <div className="empty-mini">{empty}</div>
+        : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
+            {options.map((o) => (
+              <label key={o.value} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, fontWeight: 400 }}>
+                <input
+                  type="checkbox"
+                  style={{ width: 'auto' }}
+                  checked={selected.includes(o.value)}
+                  onChange={(e) => toggle(o.value, e.target.checked)}
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
 
 export default function Employees() {
   const [rows, setRows] = useState([]);
+  const [caps, setCaps] = useState({});
+  const [scopeText, setScopeText] = useState('');
   const [hr, setHr] = useState([]); // the HR record side: profile stage, lock, completion
   const [options, setOptions] = useState(null);
   const [employeeIds, setEmployeeIds] = useState([]);
-  const [depts, setDepts] = useState([]);
-  const [filters, setFilters] = useState({ q: '', dept: '', status: '' });
+  const [filters, setFilters] = useState({
+    q: '', dept: '', designation: '', role: '', status: '', login: '',
+  });
   const [adding, setAdding] = useState(null);
+  const [otp, setOtp] = useState(EMPTY_OTP);
   const [roleTarget, setRoleTarget] = useState(null);
+  // EDIT SCOPE — which records a login may reach. MOVED here from
+  // Administration -> Users; this is the only implementation.
+  const [scopeFor, setScopeFor] = useState(null);
   const [detail, setDetail] = useState(null);
   const [resetFor, setResetFor] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
-  // main-only: bulk CSV import/export and the department transfer trail.
   const [showImport, setShowImport] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [importResult, setImportResult] = useState(null);
@@ -55,8 +100,8 @@ export default function Employees() {
   const [importCreateLogins, setImportCreateLogins] = useState(false);
   const [exporting, setExporting] = useState('');
   // GRANT EDIT ACCESS — temporarily reopening one employee's OWN profile.
-  // Deliberately NOT the same thing as Edit scope (which lives on
-  // Administration → Users and changes which records a login may reach).
+  // Deliberately NOT the same thing as Edit scope, which changes which
+  // records a login may reach and now sits on the Scope column below.
   const [grantFor, setGrantFor] = useState(null);
   const [grantForm, setGrantForm] = useState({ hours: 48, section: 'All fields', reason: '' });
   const [meConfig, setMeConfig] = useState(null);
@@ -70,18 +115,22 @@ export default function Employees() {
   const [notice, setNotice] = useState('');
 
   function load() {
-    api.get('/admin/employee-management').then((res) => {
-      setRows(res.data);
-      setEmployeeIds(res.data.map((r) => ({ id: r.id, name: r.name })));
-    }).catch(() => setError('Employee Management is restricted to Super Admin and Admin.'));
-    // main-only: profileStage / isLocked / completion come off the HR record.
+    api.get('/employees/management').then((res) => {
+      setRows(res.data.rows || []);
+      setCaps(res.data.caps || {});
+      setScopeText(res.data.scope || '');
+      setEmployeeIds((res.data.rows || []).map((r) => ({ id: r.id, name: r.name })));
+    }).catch((err) => setError(err.response?.data?.error || 'Employee Management is not included in your role’s permissions.'));
+    // profileStage / isLocked / completion come off the HR record.
     api.get('/employees').then((res) => setHr(res.data)).catch(() => setHr([]));
     api.get('/employees/review-queue').then((res) => setQueue(res.data)).catch(() => setQueue(null));
   }
+  function loadOptions() {
+    api.get('/employees/management/options').then((res) => setOptions(res.data)).catch(() => setOptions(null));
+  }
   useEffect(() => {
     load();
-    api.get('/admin/employee-management/options').then((res) => setOptions(res.data)).catch(() => setOptions(null));
-    api.get('/admin/departments').then((res) => setDepts(res.data)).catch(() => setDepts([]));
+    loadOptions();
     api.get('/employees/me/config').then((res) => setMeConfig(res.data)).catch(() => setMeConfig(null));
   }, []);
 
@@ -97,21 +146,26 @@ export default function Employees() {
     const q = filters.q.trim().toLowerCase();
     if (q && !`${e.name} ${e.employeeCode} ${e.email || ''}`.toLowerCase().includes(q)) return false;
     if (filters.dept && e.department !== filters.dept) return false;
+    if (filters.designation && e.designation !== filters.designation) return false;
+    if (filters.role && (e.role || '') !== filters.role) return false;
     if (filters.status && (e.employmentStatus || 'Active') !== filters.status) return false;
+    if (filters.login && e.loginStatus !== filters.login) return false;
     return true;
   }), [rows, filters]);
 
   const rowDepts = useMemo(() => [...new Set(rows.map((e) => e.department).filter(Boolean))].sort(), [rows]);
+  const rowDesignations = useMemo(() => [...new Set(rows.map((e) => e.designation).filter(Boolean))].sort(), [rows]);
+  const rowRoles = useMemo(() => [...new Set(rows.map((e) => e.role).filter(Boolean))].sort(), [rows]);
   const hrById = useMemo(() => Object.fromEntries(hr.map((e) => [e.id, e])), [hr]);
-  const transferTeams = depts.find((d) => d.name === transferForm.department)?.teams || [];
+  const deptTree = options?.departmentTree || [];
+  const transferTeams = deptTree.find((d) => d.name === transferForm.department)?.teams || [];
+  const filtersOn = Object.values(filters).some(Boolean);
 
-  // main-only: the profile lock / unlock workflow and the offboarding states
-  // this app tracks and the prototype has no counterpart for.
   // RFC 4180 parsing — quoted fields may hold commas, newlines and doubled
   // quotes. Splitting on "," alone silently shifted every later column of a
   // row whose designation read "Engineer, Senior".
   function parseCsv(text) {
-    const rows = [];
+    const out = [];
     let row = [];
     let cell = '';
     let quoted = false;
@@ -124,11 +178,11 @@ export default function Employees() {
         } else cell += ch;
       } else if (ch === '"') quoted = true;
       else if (ch === ',') { row.push(cell); cell = ''; }
-      else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+      else if (ch === '\n') { row.push(cell); out.push(row); row = []; cell = ''; }
       else if (ch !== '\r') cell += ch;
     }
-    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
-    const nonEmpty = rows.filter((r) => r.some((c) => String(c).trim() !== ''));
+    if (cell !== '' || row.length) { row.push(cell); out.push(row); }
+    const nonEmpty = out.filter((r) => r.some((c) => String(c).trim() !== ''));
     if (!nonEmpty.length) return { headers: [], rows: [] };
     const headers = nonEmpty[0].map((h) => h.trim().toLowerCase());
     return {
@@ -232,25 +286,62 @@ export default function Employees() {
     if (ok) setTransferTarget(null);
   }
 
+  // --- Add Employee ---------------------------------------------------------
+  // A code goes to the address BEFORE the account exists. Where no SMTP
+  // channel is configured the button says so and nothing is sent — the form
+  // never pretends otherwise.
+  const emailReady = !!options?.email?.configured;
+
+  function openAdd() {
+    setOtp(EMPTY_OTP);
+    setCredentials(null);
+    setAdding({ ...EMPTY_NEW, department: options?.departments?.length === 1 ? options.departments[0] : '' });
+  }
+
+  async function sendOtp() {
+    setOtp({ ...EMPTY_OTP, sending: true });
+    try {
+      const res = await api.post('/employees/management/email-otp/send', { email: adding.email });
+      if (!res.data.configured) { setOtp({ ...EMPTY_OTP, message: res.data.message }); return; }
+      setOtp({
+        ...EMPTY_OTP, sent: true,
+        message: `A 6-digit code was emailed to ${adding.email}. It expires in ${res.data.ttlMinutes} minutes.`,
+      });
+    } catch (err) {
+      setOtp({ ...EMPTY_OTP, error: err.response?.data?.error || 'That code could not be sent.' });
+    }
+  }
+
+  async function verifyOtp() {
+    try {
+      await api.post('/employees/management/email-otp/verify', { email: adding.email, code: otp.code });
+      setOtp((o) => ({ ...o, verified: true, error: '', message: 'Email verified.' }));
+    } catch (err) {
+      setOtp((o) => ({ ...o, error: err.response?.data?.error || 'That code could not be checked.' }));
+    }
+  }
+
   async function saveNew() {
     setError(''); setNotice(''); setCredentials(null);
     try {
-      const res = await api.post('/admin/employee-management', adding);
-      setNotice(`${adding.name} created — employee record and login together.`);
+      const res = await api.post('/employees/management', adding);
+      setNotice(`${res.data.name} (${res.data.employeeCode}) created — employee record and login together.`
+        + ` Role ${atsRoleLabel(res.data.login.role)}${res.data.login.atsRole ? ` · ATS ${atsRoleLabel(res.data.login.atsRole)}` : ''}`
+        + ` · scope ${res.data.login.scope}. Email ${res.data.emailChannel}.`);
       // What actually happened to the sign-in email, verbatim from the server.
       // When there is no SMTP provider this says so and hands over the link;
       // it never implies the employee has been told.
-      setCredentials(res.data.credentials ? { ...res.data.credentials, name: adding.name } : null);
-      setAdding(null);
-      load();
+      setCredentials(res.data.credentials ? { ...res.data.credentials, name: res.data.name } : null);
+      setAdding(null); setOtp(EMPTY_OTP);
+      load(); loadOptions();
     } catch (err) {
-      setError(err.response?.data?.error || 'That change could not be saved.');
+      setError(err.response?.data?.error || 'That employee could not be created.');
     }
   }
 
   async function saveRoles() {
     const ok = await run(
-      () => api.put(`/admin/employee-management/${roleTarget.id}/roles`, {
+      () => api.put(`/employees/management/${roleTarget.id}/roles`, {
         role: roleTarget.role, atsDepartment: roleTarget.atsDepartment, stl: roleTarget.stl, tl: roleTarget.tl,
       }),
       `${roleTarget.name} — roles updated on the same login (${roleTarget.userId}).`,
@@ -258,14 +349,30 @@ export default function Employees() {
     if (ok) setRoleTarget(null);
   }
 
+  // --- Edit scope -----------------------------------------------------------
+  // Scope is re-resolved from the database on EVERY request
+  // (backend/src/middleware/auth.js), so saving here changes what that user can
+  // fetch on their very next call — no re-login, no cache to wait out.
+  async function saveScope() {
+    const ok = await run(
+      () => api.put(`/employees/management/${scopeFor.id}/scope`, {
+        atsScopeDepartments: scopeFor.atsScopeDepartments || '',
+        atsScopeTeams: scopeFor.atsScopeTeams || '',
+        atsScopeClients: scopeFor.atsScopeClients || '',
+      }),
+      `${scopeFor.name} — scope saved. It applies to their next request.`,
+    );
+    if (ok) setScopeFor(null);
+  }
+
   async function openDetail(id) {
     setError('');
-    try { setDetail((await api.get(`/admin/employee-management/${id}`)).data); } catch { setError('Could not open that employee.'); }
+    try { setDetail((await api.get(`/employees/management/${id}`)).data); } catch { setError('Could not open that employee.'); }
   }
 
   async function submitReset(e) {
     e.preventDefault();
-    const ok = await run(() => api.post(`/admin/employee-management/${resetFor.id}/reset-password`, { password: resetPassword }),
+    const ok = await run(() => api.post(`/employees/management/${resetFor.id}/reset-password`, { password: resetPassword }),
       `Password reset for ${resetFor.name}. Share it out of band — it is never shown again.`);
     if (ok) { setResetFor(null); setResetPassword(''); }
   }
@@ -274,19 +381,22 @@ export default function Employees() {
 
   return (
     <div>
-      <div className="breadcrumb">Administration / Employee Management</div>
+      <div className="breadcrumb">HRMS / Employee Management</div>
       <div className="page-head">
         <div><h1>Employee Management</h1>
           <div className="page-sub">
-            Employee master administration, login access and product roles. The HR record itself lives in HRMS → Employees.
+            Employee master administration, login access, product roles and data scope — all of it here.
+            {scopeText ? <> You are seeing <b>{scopeText}</b>.</> : null}
           </div></div>
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Three formats, one scoped query behind them. */}
-          <button className="btn" onClick={() => exportAs('csv')} disabled={!!exporting}>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</button>
-          <button className="btn" onClick={() => exportAs('xlsx')} disabled={!!exporting}>{exporting === 'xlsx' ? 'Exporting…' : 'Export Excel'}</button>
-          <button className="btn" onClick={() => exportAs('pdf')} disabled={!!exporting}>{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}</button>
-          <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>
-          <button className="btn btn-primary" onClick={() => setAdding({ ...EMPTY_NEW })}>Add Employee</button>
+          {caps.export !== false && <>
+            <button className="btn" onClick={() => exportAs('csv')} disabled={!!exporting}>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</button>
+            <button className="btn" onClick={() => exportAs('xlsx')} disabled={!!exporting}>{exporting === 'xlsx' ? 'Exporting…' : 'Export Excel'}</button>
+            <button className="btn" onClick={() => exportAs('pdf')} disabled={!!exporting}>{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}</button>
+          </>}
+          {caps.create !== false && <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>}
+          {caps.create !== false && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
         </div>
       </div>
 
@@ -528,7 +638,7 @@ export default function Employees() {
             <label className="field"><span>Department</span>
               <Combo creatable required value={transferForm.department} onChange={(e) => setTransferForm({ ...transferForm, department: e.target.value, team: '' })}>
                 <option value="">Select department</option>
-                {depts.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                {deptTree.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
               </Combo></label>
             {transferTeams.length > 0 && (
               <label className="field"><span>Team</span>
@@ -545,6 +655,9 @@ export default function Employees() {
         </form>
       )}
 
+      {/* FILTERS — search, department, designation, role, employment status and
+          login status. They narrow what the server already scoped; they never
+          widen it. */}
       <div className="filter-row">
         <input
           type="text" placeholder="Search name, ID or email…"
@@ -554,10 +667,27 @@ export default function Employees() {
           <option value="">All departments</option>
           {rowDepts.map((d) => <option key={d}>{d}</option>)}
         </Combo>
+        <Combo value={filters.designation} onChange={(e) => setFilters((f) => ({ ...f, designation: e.target.value }))}>
+          <option value="">All designations</option>
+          {rowDesignations.map((d) => <option key={d}>{d}</option>)}
+        </Combo>
+        <Combo value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
+          <option value="">All roles</option>
+          {rowRoles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
+        </Combo>
         <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">All statuses</option>
           {(options?.statusFilter || ['Active', 'Notice Period', 'Relieved', 'Inactive']).map((s) => <option key={s}>{s}</option>)}
         </Combo>
+        <Combo value={filters.login} onChange={(e) => setFilters((f) => ({ ...f, login: e.target.value }))}>
+          <option value="">Any login state</option>
+          <option>Active</option>
+          <option>Inactive</option>
+          <option>No login</option>
+        </Combo>
+        {filtersOn && (
+          <button className="btn btn-sm" onClick={() => setFilters({ q: '', dept: '', designation: '', role: '', status: '', login: '' })}>Clear</button>
+        )}
         <span className="cell-muted" style={{ alignSelf: 'center', fontSize: 12 }}>{filtered.length} employee(s)</span>
       </div>
 
@@ -565,13 +695,14 @@ export default function Employees() {
         <table>
           <thead>
             <tr>
-              <th>Employee ID</th><th>Name</th><th>Email</th><th>Mobile</th><th>Department</th><th>Designation</th>
-              <th>Reporting Manager</th><th>STL</th><th>TL</th><th>Location</th><th>Joining Date</th><th>Employment Status</th>
-              <th>HRMS Role</th><th>ATS Role</th><th>Accounts Role</th><th>Login Status</th><th>Last Login</th>
-              {/* main-only, appended after the prototype's eighteen: the data
-                  scope this login reaches, the profile lock / unlock
-                  workflow's state, and how far the profile is filled. */}
-              <th>Scope</th><th>Profile Status</th><th>Completion</th><th>Actions</th>
+              {/* The ten the screen is specified to carry, in order, then the
+                  master columns the prototype's table also shows. */}
+              <th>Employee ID</th><th>Name</th><th>Department</th><th>Designation</th><th>Role</th>
+              <th>Email</th><th>Status</th><th>Profile Status</th><th>Scope</th>
+              <th>Mobile</th><th>Team</th><th>Reporting Manager</th><th>STL</th><th>TL</th>
+              <th>Location</th><th>Joining Date</th>
+              <th>HRMS</th><th>ATS</th><th>Accounts</th><th>Login Status</th><th>Last Login</th><th>Completion</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -579,35 +710,63 @@ export default function Employees() {
               <tr key={e.id}>
                 <td><b>{e.employeeCode}</b></td>
                 <td className="row-link"><Link to={`/employees/${e.id}`}>{e.name}</Link></td>
-                <td className="cell-muted">{e.email || '—'}</td>
-                <td className="cell-muted">{e.phone || '—'}</td>
                 <td className="cell-muted">{e.department || '—'}</td>
                 <td className="cell-muted">{e.designation || '—'}</td>
-                <td className="cell-muted">{e.reportingManager || '—'}</td>
-                <td className="cell-muted">{e.stl || '—'}</td>
-                <td className="cell-muted">{e.tl || '—'}</td>
-                <td className="cell-muted">{e.location || '—'}</td>
-                <td className="cell-muted">{e.joiningDate || '—'}</td>
+                {/* ROLE — derived from the designation when the record was
+                    created, never a compound "Medical Recruiter". */}
+                <td className="cell-muted">{e.role ? atsRoleLabel(e.role) : '—'}</td>
+                <td className="cell-muted">{e.email || '—'}</td>
                 <td><span className={`status ${(e.employmentStatus || 'Active') === 'Active' ? 'active' : 'pending'}`}>{e.employmentStatus || 'Active'}</span></td>
-                <td className="cell-muted">{productAccess(e, 'hrms')}</td>
-                <td className="cell-muted">{productAccess(e, 'ats')}</td>
-                <td className="cell-muted">{productAccess(e, 'accounts')}</td>
-                <td><span className={`status ${e.loginStatus === 'Active' ? 'active' : 'rejected'}`}>{e.loginStatus}</span></td>
-                <td className="cell-muted">{e.scope || '—'}</td>
                 <td>
                   <span className={`status ${STATUS_BADGE[hrById[e.id]?.profileStatus] || ''}`}>
                     {hrById[e.id] ? statusLabel(hrById[e.id].profileStatus) : '—'}
                   </span>
                 </td>
+                {/* SCOPE — and Edit Scope, which lives here now. */}
+                <td className="cell-muted">
+                  {e.scope || '—'}
+                  {e.userId && caps.assign && (
+                    <div>
+                      <button
+                        className="link-btn"
+                        title="Which departments, teams and clients this login may reach — not their own profile lock"
+                        onClick={() => setScopeFor({
+                          id: e.id,
+                          name: e.name,
+                          role: e.role,
+                          atsScopeDepartments: e.atsScopeDepartments || '',
+                          atsScopeTeams: e.atsScopeTeams || '',
+                          atsScopeClients: e.atsScopeClients || '',
+                        })}
+                      >
+                        Edit scope
+                      </button>
+                    </div>
+                  )}
+                </td>
+                <td className="cell-muted">{e.phone || '—'}</td>
+                <td className="cell-muted">{e.team || '—'}</td>
+                <td className="cell-muted">{e.reportingManager || '—'}</td>
+                <td className="cell-muted">{e.stl || '—'}</td>
+                <td className="cell-muted">{e.tl || '—'}</td>
+                <td className="cell-muted">{e.location || '—'}</td>
+                <td className="cell-muted">{e.joiningDate || '—'}</td>
+                <td className="cell-muted">{productAccess(e, 'hrms')}</td>
+                <td className="cell-muted">{productAccess(e, 'ats')}</td>
+                <td className="cell-muted">{productAccess(e, 'accounts')}</td>
+                <td><span className={`status ${e.loginStatus === 'Active' ? 'active' : 'rejected'}`}>{e.loginStatus}</span></td>
+                <td className="cell-muted">{e.lastLogin || '—'}</td>
                 <td className="cell-muted">{hrById[e.id] ? `${hrById[e.id].profileCompletionPct}%` : '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn btn-sm" onClick={() => openDetail(e.id)}>View</button>{' '}
-                  <button className="btn btn-sm" onClick={() => (e.userId
-                    ? setRoleTarget({ ...e, role: e.role, atsDepartment: e.atsDepartment || '', stl: e.stl || '', tl: e.tl || '' })
-                    : setError('Create a login for this employee first.'))}>Assign Roles</button>{' '}
-                  {e.userId ? (
+                  {caps.edit && (
+                    <><button className="btn btn-sm" onClick={() => (e.userId
+                      ? setRoleTarget({ ...e, role: e.role, atsDepartment: e.atsDepartment || '', stl: e.stl || '', tl: e.tl || '' })
+                      : setError('Create a login for this employee first.'))}>Assign Roles</button>{' '}</>
+                  )}
+                  {caps.edit && (e.userId ? (
                     <>
-                      <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/employee-management/${e.id}/toggle-login`), `${e.name} login ${e.loginStatus === 'Active' ? 'deactivated' : 'activated'}.`)}>
+                      <button className="btn btn-sm" onClick={() => run(() => api.post(`/employees/management/${e.id}/toggle-login`), `${e.name} login ${e.loginStatus === 'Active' ? 'deactivated' : 'activated'}.`)}>
                         {e.loginStatus === 'Active' ? 'Deactivate' : 'Activate'}
                       </button>{' '}
                       <button className="btn btn-sm btn-ghost" onClick={() => { setResetFor(e); setResetPassword(''); }}>Reset Password</button>{' '}
@@ -620,45 +779,46 @@ export default function Employees() {
                           setCredentials({ ...res.data.credentials, name: e.name });
                           load();
                         } catch (err) { setError(err.response?.data?.error || 'Could not issue sign-in details.'); }
-                      }}>Send Sign-in</button>
+                      }}>Send Sign-in</button>{' '}
                     </>
                   ) : (
-                    <button className="btn btn-sm btn-primary" onClick={() => run(() => api.post(`/admin/employee-management/${e.id}/create-login`), `Login created for ${e.name}.`)}>Create Login</button>
-                  )}
-                  {/* main-only: transfer with an audit trail, the profile
-                      lock / unlock workflow, probation pause and hard delete. */}
-                  {/* EDIT SCOPE — which records this login may reach. Lives on
-                      Administration → Users, and is deliberately NOT the same
-                      control as Grant Edit Access below. */}
-                  {e.userId && <><Link className="btn btn-sm" to="/admin/users" title="Change which departments, teams and clients this login can reach">Edit Scope</Link>{' '}</>}
+                    <><button className="btn btn-sm btn-primary" onClick={() => run(() => api.post(`/employees/management/${e.id}/create-login`), `Login created for ${e.name}.`)}>Create Login</button>{' '}</>
+                  ))}
                   {/* REVIEW — only offered when something is actually waiting. */}
                   {hrById[e.id]?.pendingChanges && (
                     <><Link className="btn btn-sm btn-primary" to={`/employees/${e.id}`}>Review</Link>{' '}</>
                   )}
                   {/* GRANT EDIT ACCESS — temporarily reopens THIS employee's
                       own locked profile. Never widens what they can see. */}
-                  {hrById[e.id]?.isLocked && (
+                  {caps.approve !== false && hrById[e.id]?.isLocked && (
                     <><button className="btn btn-sm" title="Temporarily unlock this employee's own profile so they can correct it"
                       onClick={() => { setGrantFor(e); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }}>
                       Grant Edit Access
                     </button>{' '}</>
                   )}
-                  {' '}<button className="btn btn-sm" onClick={() => { setTransferTarget(e); setTransferForm({ department: e.department || '', team: '', reason: '' }); }}>Transfer</button>{' '}
-                  {hrById[e.id]?.isLocked === false && (
+                  {caps.assign && (
+                    <><button className="btn btn-sm" onClick={() => { setTransferTarget(e); setTransferForm({ department: e.department || '', team: '', reason: '' }); }}>Transfer</button>{' '}</>
+                  )}
+                  {caps.configure && hrById[e.id]?.isLocked === false && (
                     <><button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-lock`), `${e.name} profile locked.`)}>Lock</button>{' '}</>
                   )}
-                  <button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-pause`), `${e.name} updated.`)}>
-                    {e.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}
-                  </button>{' '}
-                  <button className="btn btn-sm btn-ghost" onClick={() => {
-                    if (!confirm(`Permanently delete ${e.name}? This removes their attendance, leave, payslip and other records too. This can't be undone.`)) return;
-                    run(() => api.delete(`/employees/${e.id}`), `${e.name} deleted.`);
-                  }}>Delete</button>
+                  {caps.configure && (
+                    <><button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-pause`), `${e.name} updated.`)}>
+                      {e.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}
+                    </button>{' '}</>
+                  )}
+                  {caps.delete && (
+                    <button className="btn btn-sm btn-ghost" onClick={() => {
+                      // eslint-disable-next-line no-alert
+                      if (!confirm(`Permanently delete ${e.name}? This removes their attendance, leave, payslip and other records too. This can't be undone.`)) return;
+                      run(() => api.delete(`/employees/${e.id}`), `${e.name} deleted.`);
+                    }}>Delete</button>
+                  )}
                 </td>
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan="21" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
+              <tr><td colSpan="23" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
             )}
           </tbody>
         </table>
@@ -670,10 +830,10 @@ export default function Employees() {
       </div>
       <div className="notice amber">
         <span>
-          <b>Edit Scope</b> and <b>Grant Edit Access</b> are different things. <b>Edit Scope</b> (Administration →
-          Users) sets <i>which records</i> a login may reach — departments, teams and clients — and stays until
-          you change it. <b>Grant Edit Access</b> temporarily unlocks <i>that employee&apos;s own profile</i> so they
-          can correct it; it expires, it is spent when they submit, and it never lets them see anybody else.
+          <b>Edit Scope</b> and <b>Grant Edit Access</b> are different things. <b>Edit Scope</b> (on the Scope
+          column above) sets <i>which records</i> a login may reach — departments, teams and clients — and stays
+          until you change it. <b>Grant Edit Access</b> temporarily unlocks <i>that employee&apos;s own profile</i> so
+          they can correct it; it expires, it is spent when they submit, and it never lets them see anybody else.
         </span>
       </div>
 
@@ -735,8 +895,72 @@ export default function Employees() {
       {adding && options && (
         <AddEmployeeModal
           form={adding} setForm={setAdding} options={options} employees={employeeIds}
-          onClose={() => setAdding(null)} onSave={saveNew}
+          otp={otp} setOtp={setOtp} emailReady={emailReady} sendOtp={sendOtp} verifyOtp={verifyOtp}
+          onClose={() => { setAdding(null); setOtp(EMPTY_OTP); }} onSave={saveNew}
         />
+      )}
+
+      {/* EDIT SCOPE — moved here from Administration → Users, which now links
+          to this screen instead of carrying a second copy. */}
+      {scopeFor && options && (
+        <Modal
+          title={`Edit scope — ${scopeFor.name}`}
+          size="wide"
+          onClose={() => setScopeFor(null)}
+          foot={<>
+            <button className="btn" onClick={() => setScopeFor(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveScope}>Save scope</button>
+          </>}
+        >
+          <div className="notice">
+            <span>
+              <b>Data scope — which records this login may reach.</b> What the API itself allows them to fetch,
+              not what the screen chooses to draw. The server re-resolves it on every request, so a change here
+              takes effect on their very next call, without a re-login. Leave a list empty to fall back to the
+              employee&apos;s own department and team.
+            </span>
+          </div>
+          <div className="notice amber">
+            <span>
+              This is <b>not</b> <i>Grant Edit Access</i>. Editing scope changes which <i>other people&apos;s</i>
+              {' '}records this login can see and work on, permanently, until you change it again. Grant Edit Access
+              temporarily unlocks <i>this person&apos;s own profile</i> so they can correct it, and expires. Neither
+              one does the other&apos;s job.
+            </span>
+          </div>
+          <ScopeChecklist
+            label="Departments"
+            hint="Every list the engine scopes by department — requirements, clients, employees, tasks."
+            options={deptTree.map((d) => ({ value: d.name, label: d.name }))}
+            value={scopeFor.atsScopeDepartments}
+            onChange={(v) => setScopeFor({ ...scopeFor, atsScopeDepartments: v })}
+            empty="No departments are set up yet — add them in Administration → Departments & Teams."
+          />
+          <ScopeChecklist
+            label="Teams"
+            hint="A team lead held to one team assigns and reviews work inside it."
+            options={deptTree.flatMap((d) => (d.teams || []).map((t) => ({
+              value: t.name, label: `${t.name} (${d.name})`,
+            })))}
+            value={scopeFor.atsScopeTeams}
+            onChange={(v) => setScopeFor({ ...scopeFor, atsScopeTeams: v })}
+            empty="No teams are set up yet."
+          />
+          <ScopeChecklist
+            label="Clients"
+            hint="A BDE's assigned client list. It drives which clients and requirements they reach."
+            options={(options.clients || []).map((c) => ({ value: c.id, label: c.name }))}
+            value={scopeFor.atsScopeClients}
+            onChange={(v) => setScopeFor({ ...scopeFor, atsScopeClients: v })}
+            empty="No clients yet."
+          />
+          {['SUPER_ADMIN', 'ADMIN'].includes(scopeFor.role) && (
+            <div className="notice amber">
+              This login is {atsRoleLabel(scopeFor.role)} — a company-wide role. The engine treats it as global,
+              so these lists are stored but do not narrow what it can reach.
+            </div>
+          )}
+        </Modal>
       )}
 
       {roleTarget && options && (
@@ -754,7 +978,7 @@ export default function Employees() {
             role below — the three-role split is a separate, deferred change, so they are shown here read-only.
           </div>
           <div className="field"><label>Role</label>
-            <Combo value={roleTarget.role || 'EMPLOYEE'} onChange={(e) => setRoleTarget({ ...roleTarget, role: e.target.value, productAccess: options.productAccess[e.target.value] })}>
+            <Combo value={roleTarget.role || 'EMPLOYEE'} onChange={(e) => setRoleTarget({ ...roleTarget, role: e.target.value })}>
               {options.roles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
             </Combo></div>
           <div className="grid-3">
@@ -765,7 +989,7 @@ export default function Employees() {
             <div className="field"><label>Accounts Role</label>
               <input value={(options.productAccess[roleTarget.role] || {}).accounts || '—'} disabled /></div>
           </div>
-          <div className="field"><label>Scope (department / team)</label>
+          <div className="field"><label>Primary department</label>
             <Combo creatable value={roleTarget.atsDepartment || ''} onChange={(e) => setRoleTarget({ ...roleTarget, atsDepartment: e.target.value })}>
               <option value="">Organization</option>
               {options.departments.map((d) => <option key={d}>{d}</option>)}
@@ -781,6 +1005,9 @@ export default function Employees() {
                 <option value="">—</option>
                 {options.managerNames.map((n) => <option key={n}>{n}</option>)}
               </Combo></div>
+          </div>
+          <div className="small-muted" style={{ marginTop: 8 }}>
+            The data scope stays where it is — change it with <b>Edit scope</b> on the Scope column.
           </div>
         </Modal>
       )}
@@ -799,6 +1026,7 @@ export default function Employees() {
           <div className="kv"><span className="k">Mobile</span><span>{detail.phone || '—'}</span></div>
           <div className="kv"><span className="k">Department</span><span>{detail.department || '—'}</span></div>
           <div className="kv"><span className="k">Designation</span><span>{detail.designation || '—'}</span></div>
+          <div className="kv"><span className="k">Role</span><span>{detail.role ? atsRoleLabel(detail.role) : '—'}</span></div>
           <div className="kv"><span className="k">Reporting Manager</span><span>{detail.reportingManager || '—'}</span></div>
           <div className="kv"><span className="k">Location</span><span>{detail.location || '—'}</span></div>
           <div className="kv"><span className="k">Joining Date</span><span>{detail.joiningDate || '—'}</span></div>
@@ -826,27 +1054,46 @@ export default function Employees() {
   );
 }
 
-// Add Employee — the prototype's openAddEmployeeModal(): the employee record
-// and the login are created together, one employee, one user, one login.
-// Sections and field order are the prototype's.
-function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }) {
+// ADD EMPLOYEE — the ONE implementation. It used to sit on Administration →
+// Users as a second, thinner form; the two are merged here.
+//
+// Employee ID is optional and auto-filled when left blank. Department comes
+// off the Department master and Role / Designation off the DesignationRole
+// master, and those two are what the identity model DERIVES the login's role,
+// product access, landing workspace and data scope from — so there is no
+// compound role like "Medical Recruiter" to choose anywhere.
+function AddEmployeeModal({
+  form, setForm, options, employees, otp, setOtp, emailReady, sendOtp, verifyOtp, onClose, onSave,
+}) {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const access = options.productAccess[form.role] || {};
-  const scope = form.atsDepartment || `${form.department || '—'} (own department)`;
+  const chosen = (options.designations || []).find((d) => d.designation === form.designation);
+  const access = chosen
+    ? {
+      hrms: chosen.products.hrms ? 'Yes' : 'No Access',
+      ats: chosen.products.ats ? (chosen.atsRole || 'Yes') : 'No Access',
+      accounts: chosen.products.accounts ? 'Yes' : 'No Access',
+    }
+    : { hrms: '—', ats: '—', accounts: '—' };
+  const scope = form.department ? `${form.department}${form.team ? ` · team ${form.team}` : ''}` : '—';
+  const canSave = form.name.trim() && form.email.trim() && form.department && form.designation
+    && (!emailReady || otp.verified);
 
   return (
     <Modal
       title="Add Employee"
-      note={`${options.nextEmployeeCode || ''} · a login is created with this record`}
+      note={`${options.nextEmployeeCode || ''} · the employee record and their login are created together`}
       size="wide"
       onClose={onClose}
       foot={<>
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={onSave}>Create Employee &amp; Login</button>
+        <button className="btn btn-primary" disabled={!canSave} onClick={onSave}>Create Employee &amp; Login</button>
       </>}
     >
-      <div className="section-label">Personal</div>
+      <div className="section-label">Identity</div>
       <div className="grid-3">
+        <div className="field"><label>Employee ID <i style={{ fontWeight: 400 }}>(optional — auto if blank)</i></label>
+          <input value={form.employeeId} onChange={(e) => set({ employeeId: e.target.value })}
+            placeholder={`e.g. ${options.nextEmployeeCode || 'EMP-0009'}`} /></div>
         <div className="field"><label>Full name *</label>
           <input type="text" placeholder="As it should appear on records" value={form.name} onChange={(e) => set({ name: e.target.value })} /></div>
         <div className="field"><label>Date of birth</label>
@@ -857,28 +1104,27 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
           </Combo></div>
       </div>
 
-      <div className="section-label">Contact</div>
+      <div className="section-label">Position — this is what the role and the scope are derived from</div>
       <div className="grid-3">
-        <div className="field"><label>Official email</label>
-          <input type="email" placeholder="name@tmlink.in" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
-        <div className="field"><label>Mobile</label>
-          <input type="text" placeholder="10 digits" value={form.phone} onChange={(e) => set({ phone: e.target.value })} /></div>
-        <div className="field"><label>Location</label>
-          <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
-            <option value="">—</option>
-            {options.locations.map((l) => <option key={l}>{l}</option>)}
-          </Combo></div>
-      </div>
-
-      <div className="section-label">Position</div>
-      <div className="grid-3">
-        <div className="field"><label>Department</label>
+        {/* Department master. It becomes the login's data scope. */}
+        <div className="field"><label>Department *</label>
           <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
-            <option value="">—</option>
+            <option value="">Select department</option>
             {options.departments.map((d) => <option key={d}>{d}</option>)}
           </Combo></div>
-        <div className="field"><label>Designation</label>
-          <input type="text" placeholder="e.g. Senior Recruiter" value={form.designation} onChange={(e) => set({ designation: e.target.value })} /></div>
+        {/* DesignationRole master. It gives the ATS role, the product access
+            and the landing workspace — never typed free-hand. */}
+        <div className="field"><label>Role / Designation *</label>
+          <Combo value={form.designation} onChange={(e) => set({ designation: e.target.value })}>
+            <option value="">Select role / designation</option>
+            {(options.designations || []).map((d) => (
+              <option key={d.designation} value={d.designation}>
+                {d.designation}{d.atsRole ? ` — ATS ${atsRoleLabel(d.atsRole)}` : ''}
+              </option>
+            ))}
+          </Combo></div>
+        <div className="field"><label>Team</label>
+          <input type="text" placeholder="e.g. Medical Team-A" value={form.team} onChange={(e) => set({ team: e.target.value })} /></div>
         <div className="field"><label>Reporting manager</label>
           <Combo value={form.reportingManagerId} onChange={(e) => set({ reportingManagerId: e.target.value })}>
             <option value="">—</option>
@@ -894,8 +1140,57 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
             <option value="">—</option>
             {options.managerNames.map((n) => <option key={n}>{n}</option>)}
           </Combo></div>
-        <div className="field"><label>Team</label>
-          <input type="text" placeholder="e.g. Section A" value={form.team} onChange={(e) => set({ team: e.target.value })} /></div>
+      </div>
+
+      <div className="section-label">Contact</div>
+      <div className="grid-2">
+        {/* THE EMAIL GATE. A code goes to the address before the account
+            exists — and where there is no channel the button says exactly
+            that instead of pretending one was sent. */}
+        <label className="field"><span>Official email *</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="email" style={{ flex: 1 }} placeholder="name@tmlink.in"
+              value={form.email}
+              onChange={(e) => { set({ email: e.target.value }); setOtp({ sending: false, sent: false, code: '', verified: false, message: '', error: '' }); }}
+            />
+            <button
+              type="button" className="btn btn-sm"
+              disabled={!emailReady || !form.email || otp.sending}
+              title={emailReady ? 'Email a one-time code to this address' : (options.email?.reason || '')}
+              onClick={sendOtp}
+            >
+              {emailReady
+                ? (otp.sending ? 'Sending…' : (otp.sent ? 'Resend OTP' : 'Send OTP'))
+                : 'No email channel — can’t send OTP'}
+            </button>
+          </div>
+          {!emailReady && (
+            <span className="small-muted">
+              No SMTP provider is configured, so no code can be sent — {options.email?.reason} The
+              employee can still be created, and the address stays unverified.
+            </span>
+          )}
+          {otp.message && <span className="small-muted">{otp.message}</span>}
+          {otp.error && <span className="error-text">{otp.error}</span>}
+          {otp.sent && !otp.verified && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <input
+                style={{ flex: 1 }} inputMode="numeric" maxLength="6" placeholder="6-digit code"
+                value={otp.code} onChange={(e) => setOtp({ ...otp, code: e.target.value })}
+              />
+              <button type="button" className="btn btn-sm" onClick={verifyOtp} disabled={!otp.code}>Verify</button>
+            </div>
+          )}
+          {otp.verified && <span className="status approved" style={{ marginTop: 6 }}>Email verified</span>}
+        </label>
+        <div className="field"><label>Mobile</label>
+          <input type="text" placeholder="10 digits" value={form.phone} onChange={(e) => set({ phone: e.target.value })} /></div>
+        <div className="field"><label>Location</label>
+          <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
+            <option value="">—</option>
+            {options.locations.map((l) => <option key={l}>{l}</option>)}
+          </Combo></div>
       </div>
 
       <div className="section-label">Employment</div>
@@ -910,37 +1205,23 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
           <Combo value={form.employmentStatus} onChange={(e) => set({ employmentStatus: e.target.value })}>
             {options.empStatuses.map((s) => <option key={s}>{s}</option>)}
           </Combo></div>
-      </div>
-
-      <div className="section-label">Product access — one login, three products</div>
-      <div className="grid-3">
-        <div className="field"><label>Role</label>
-          <Combo value={form.role} onChange={(e) => set({ role: e.target.value })}>
-            {options.roles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-          </Combo></div>
-        <div className="field"><label>HRMS role</label><input value={access.hrms || 'No Access'} disabled /></div>
-        <div className="field"><label>ATS role</label><input value={access.ats || 'No Access'} disabled /></div>
-        <div className="field"><label>Accounts role</label><input value={access.accounts || 'No Access'} disabled /></div>
-        <div className="field"><label>ATS department scope</label>
-          <Combo creatable value={form.atsDepartment} onChange={(e) => set({ atsDepartment: e.target.value })}>
-            <option value="">Own department</option>
-            <option>All departments</option>
-            {options.departments.map((d) => <option key={d}>{d}</option>)}
-          </Combo></div>
         {/* Optional and discouraged. Leave it empty and the employee gets a
-            single-use link to choose their own password — no password is ever
-            emailed, and the account has no guessable default in the meantime. */}
+            single-use, expiring link to choose their own password — no
+            password is ever emailed, and the account has no guessable default
+            in the meantime. */}
         <div className="field"><label>Temporary password (leave empty — recommended)</label>
-          <input type="password" placeholder="leave empty to email a set-password link" value={form.password} onChange={(e) => set({ password: e.target.value })} /></div>
+          <input type="password" placeholder="leave empty to email a set-password link" value={form.password}
+            onChange={(e) => set({ password: e.target.value })} /></div>
       </div>
 
-      {/* The prototype's neSummary(): what this person will actually be able to
-          do, shown before saving. */}
+      {/* What this person will actually be able to do, shown before saving. */}
       <div className="notice" style={{ marginTop: 10 }}>
         <span>
-          HRMS → {access.hrms || 'No Access'}&nbsp;&nbsp;·&nbsp;&nbsp;ATS → {access.ats || 'No Access'}&nbsp;&nbsp;·&nbsp;&nbsp;
-          Accounts → {access.accounts || 'No Access'}&nbsp;&nbsp;·&nbsp;&nbsp;ATS scope: {scope}.
-          One login covers all three — no second account is created.
+          Login role → <b>{chosen ? atsRoleLabel(chosen.atsRole || 'EMPLOYEE') : '—'}</b>
+          &nbsp;&nbsp;·&nbsp;&nbsp;HRMS → {access.hrms}&nbsp;&nbsp;·&nbsp;&nbsp;ATS → {access.ats}
+          &nbsp;&nbsp;·&nbsp;&nbsp;Accounts → {access.accounts}&nbsp;&nbsp;·&nbsp;&nbsp;Scope: {scope}.
+          All derived from the department and the designation — one login covers all three products, and no
+          second account is created.
         </span>
       </div>
     </Modal>

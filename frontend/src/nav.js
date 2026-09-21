@@ -43,6 +43,12 @@ const leaf = (to, label, perms, product) => ({ to, label, perms, product });
 
 export const HRMS_ITEMS = [
   leaf('/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
+  // Employee Management is an HRMS feature and lives in the HRMS group. It
+  // used to be listed under Administration, which meant every HR role — a TL,
+  // an STL, a Manager — was shown an "Administration" menu just to reach it.
+  // Administration is Super Admin / Admin only now (see ADMIN_ITEMS), so this
+  // entry is where a TL finds their own department's employees.
+  leaf('/employees', 'Employee Management', [['hrms', 'Employee Management', 'view']]),
   leaf('/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
   leaf('/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
@@ -82,20 +88,38 @@ export const ACCOUNTS_ITEMS = [
   leaf('/bank', 'Bank & Reconciliation', [['accounts', 'Bank & Reconciliation', 'view']]),
 ];
 
+// ADMINISTRATION — Super Admin and Admin only.
+//
+// EVERY entry here now names an `administration` permission, and nothing else
+// does. The engine only switches the administration MODULE on for a role that
+// is listed for it (permissions.js DEFAULT_MODULES), so a Recruiter, TL, BDE,
+// Accountant, Employee, Client or Candidate matches none of these and
+// visibleItems() returns an empty list — which makes groupsForUser() drop the
+// whole "Administration" group rather than show a one-item stub.
+//
+// Two entries changed to make that true:
+//   * Employee Management moved to the HRMS group, where it belongs. It is an
+//     HRMS feature, and leaving it here was the reason every HR lead saw an
+//     Administration menu.
+//   * Notifications and Profile were `perms: null` — always visible — which
+//     kept the group alive for literally everyone, including a candidate.
+//     Notifications is reachable from the bell in the topbar whatever your
+//     role; the page itself is still routed and still open to everyone at
+//     /admin/notifications and /admin/profile. Only the menu entry is gated.
+//
+// Grant a role the administration module in Role Catalog and the group comes
+// back for it — "unless an administration permission was deliberately
+// granted" is exactly what this expresses.
 export const ADMIN_ITEMS = [
   leaf('/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
   leaf('/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
-  // Employee Management is an HRMS feature the Administration group links to,
-  // so HR roles reach it without being given the Administration module.
-  leaf('/employees', 'Employee Management', [['hrms', 'Employee Management', 'view']]),
   leaf('/admin/users', 'Users', [['administration', 'Users', 'view']]),
   leaf('/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
   leaf('/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
   leaf('/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
-  // Notifications and Profile are everyone's, whatever their role.
-  leaf('/admin/notifications', 'Notifications', null),
+  leaf('/admin/notifications', 'Notifications', [['administration', 'Notifications', 'view']]),
   leaf('/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
-  leaf('/admin/profile', 'Profile', null),
+  leaf('/admin/profile', 'Profile', [['administration', 'Users', 'view']]),
 ];
 
 export const REPORTS_ITEMS = [
@@ -151,11 +175,13 @@ export function flattenGroups(groups) {
 // Which sidebar section a URL belongs to, so the group opens and the topbar
 // title / breadcrumb name the right section.
 const SECTION_OF_PATH = [
-  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile)/, 'hrms'],
+  // /employees is Employee Management, an HRMS screen — it sits in the HRMS
+  // group now, so the HRMS section is what opens and what the topbar names.
+  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile|employees)/, 'hrms'],
   [/^\/(ats|requirements|clients|candidates|client-portal)/, 'ats'],
   [/^\/(accounts|invoices|bank|office)/, 'accounts'],
   [/^\/reports/, 'reports'],
-  [/^\/(admin|employees)/, 'admin'],
+  [/^\/admin/, 'admin'],
 ];
 export function sectionOf(pathname) {
   const hit = SECTION_OF_PATH.find(([re]) => re.test(pathname));

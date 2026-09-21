@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
@@ -10,11 +11,22 @@ const { sendCredentials, unguessablePasswordHash } = require('../utils/employeeI
 // serves Medical, IT and everyone else, because the DEPARTMENT is the scope.
 const { mappingFor } = require('../utils/identity');
 const { toCsv, toXlsx, toPdf } = require('../utils/tabularExport');
-
-const ROLE_BY_DESIGNATION = {
-  'Super Admin': 'SUPER_ADMIN', 'HR Admin': 'ADMIN', 'Manager': 'MANAGER', 'Assistant Manager': 'ASSISTANT_MANAGER',
-  'Senior Team Lead (STL)': 'STL', 'Team Lead (TL)': 'TL', 'Employee (Self-Service)': 'EMPLOYEE', 'Accountant': 'ACCOUNTANT',
-};
+// Employee administration — the shared vocabulary the Employee Management
+// surface below and the Administration → Users screen both read. Moved out of
+// routes/admin.js with the routes; see utils/employeeAdmin.js for why.
+const {
+  ALL_ROLES, EMAIL_RE, normalEmail,
+  designationRows, defaultProductAccessByRole, loginRoleFor,
+  EMP_MGMT_INCLUDE, shapeEmployeeMgmtRow,
+  OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS, OTP_PURPOSE, hashOtp, liveVerification,
+} = require('../utils/employeeAdmin');
+const { CATALOG_ROLES } = require('../utils/roleAccess');
+const {
+  EMP_TYPES, EMP_STATUSES, EMP_GENDERS, EMP_MGMT_STATUS_FILTER,
+} = require('../utils/adminCatalog');
+const { DEPTS, LOCS } = require('../utils/atsVocab');
+const mailer = require('../utils/mailer');
+const { senderIdentity } = require('../utils/candidateComms');
 
 const router = express.Router();
 
@@ -451,6 +463,547 @@ router.get('/export.csv', requirePerm(null, 'hrms', 'Employee Management', 'expo
 router.get('/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'xlsx'));
 router.get('/export.pdf', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'pdf'));
 
+/* ==========================================================================
+   EMPLOYEE MANAGEMENT — the administration surface for employee accounts.
+
+   MOVED HERE from routes/admin.js. It used to sit behind
+   `administration / Users`, which is Super Admin + Admin only, so a TL who
+   opened Employee Management got a 403 for the list and saw nothing but the
+   review queue. Every route below is guarded by
+   `hrms / Employee Management / <action>` — the same feature the screen's nav
+   entry asks for — and every list and record is held to the caller's data
+   scope by departmentWhere() / assertInScope(), so a TL now gets THEIR
+   employees rather than an error.
+
+   These routes are registered BEFORE `/:id` below, so `/management` is never
+   swallowed by the employee-detail route.
+
+   ONE EMPLOYEE = ONE USER = ONE LOGIN. There is exactly one Add Employee in
+   the app (POST /management) and exactly one Edit Scope
+   (PUT /management/:id/scope); Administration → Users links here rather than
+   carrying a second copy.
+   ========================================================================== */
+
+// Which departments this caller may create into / act on.
+function assertDepartmentAllowed(req, department) {
+  const allowed = scopeDepartments(req);
+  if (allowed === undefined) return { ok: true, department };
+  if (!department) return { ok: true, department: allowed[0] };
+  if (!allowed.includes(department)) {
+    return { ok: false, error: `${department} is outside your department scope (${allowed.join(', ')}).` };
+  }
+  return { ok: true, department };
+}
+
+router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const where = departmentWhere(req);
+  if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
+  if (scopeDepartments(req) === undefined && req.query.department) where.department = req.query.department;
+  const employees = await prisma.employee.findMany({
+    where, include: EMP_MGMT_INCLUDE, orderBy: { name: 'asc' },
+  });
+  res.json({
+    scope: scopeLabel(req),
+    // What this caller may actually do, so the screen offers exactly that and
+    // the API is still the thing that refuses.
+    caps: {
+      create: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'create'),
+      edit: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'edit'),
+      export: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'export'),
+      // Edit Scope is `assign` — Super Admin / Admin, per the matrix. A TL may
+      // see the Scope column without being able to widen anyone's reach.
+      assign: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'assign'),
+      approve: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'approve'),
+      configure: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'configure'),
+      delete: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'delete'),
+    },
+    rows: employees.map(shapeEmployeeMgmtRow),
+  });
+});
+
+// Every option list the Add Employee modal, the filter row and the Edit Scope
+// editor render — one call, so the screen never has to reach into
+// /api/admin/* for a lookup it is no longer allowed to make.
+router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const [employees, departments, rows, count, cfg, clients] = await Promise.all([
+    prisma.employee.findMany({
+      where: departmentWhere(req),
+      select: { id: true, name: true, department: true, location: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.department.findMany({ include: { teams: true }, orderBy: { name: 'asc' } }),
+    designationRows(),
+    prisma.employee.count(),
+    mailer.emailConfig(),
+    prisma.client.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }).catch(() => []),
+  ]);
+  // The department and location pickers are CREATABLE (both columns are plain
+  // strings by design), so a value typed into Add Employee is not in the
+  // Department master table. Union the master list with the values on file.
+  const inUse = (key) => employees.map((e) => e[key]).filter(Boolean);
+  const union = (base, used) => [...new Set([...base, ...used])].sort((a, b) => a.localeCompare(b));
+  const masterDepts = departments.length ? departments.map((d) => d.name) : DEPTS;
+  const allowed = scopeDepartments(req);
+
+  let nextEmployeeCode = `EMP-${String(count + 1).padStart(4, '0')}`;
+  // eslint-disable-next-line no-await-in-loop
+  while (await prisma.employee.findUnique({ where: { employeeCode: nextEmployeeCode } })) {
+    nextEmployeeCode = `EMP-${String(Number(nextEmployeeCode.slice(4)) + 1).padStart(4, '0')}`;
+  }
+
+  res.json({
+    nextEmployeeCode,
+    scope: scopeLabel(req),
+    empTypes: EMP_TYPES,
+    empStatuses: EMP_STATUSES,
+    genders: EMP_GENDERS,
+    statusFilter: EMP_MGMT_STATUS_FILTER,
+    // A department-scoped caller is offered only the departments they hold —
+    // the same list assertDepartmentAllowed() then enforces on the write.
+    departments: allowed === undefined
+      ? union(masterDepts, inUse('department'))
+      : allowed,
+    // Departments with their teams, for the Edit Scope checklists.
+    departmentTree: departments.map((d) => ({
+      id: d.id, name: d.name, teams: (d.teams || []).map((t) => ({ id: t.id, name: t.name })),
+    })),
+    clients,
+    locations: union(LOCS, inUse('location')),
+    managerNames: [...new Set(employees.map((e) => e.name))],
+    reportingManagers: employees.map((e) => ({ id: e.id, name: e.name })),
+    roles: CATALOG_ROLES,
+    // Straight off the DesignationRole table — this is the Role / Designation
+    // picker, and each row says what that designation will actually grant.
+    designations: rows.map((r) => ({
+      designation: r.designation,
+      atsRole: r.atsRole || null,
+      products: { hrms: !!r.hrms, ats: !!r.ats, accounts: !!r.accounts },
+      landing: r.landing || null,
+    })),
+    designationRoles: rows,
+    productAccess: await defaultProductAccessByRole(),
+    email: { configured: cfg.configured, reason: cfg.configured ? null : cfg.reason },
+  });
+});
+
+// --- The email one-time code that gates Add Employee -----------------------
+router.post('/management/email-otp/send', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const email = normalEmail(req.body.email);
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
+  const taken = await prisma.user.findUnique({ where: { email } });
+  if (taken) return res.status(409).json({ error: 'That email already has a login.' });
+
+  const cfg = await mailer.emailConfig();
+  if (!cfg.configured) {
+    // Recorded, not transmitted — the same vocabulary the mail worker uses.
+    return res.json({
+      configured: false,
+      sent: false,
+      reason: cfg.reason,
+      message: `No email channel is configured, so no code was sent — ${cfg.reason} Set up Administration → Integrations → Email (SMTP) to verify an address. The employee can still be created without verification.`,
+    });
+  }
+
+  // A fresh request retires every earlier code for this address.
+  await prisma.emailVerification.updateMany({
+    where: { email, purpose: OTP_PURPOSE, consumedAt: null },
+    data: { consumedAt: new Date() },
+  });
+
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  const row = await prisma.emailVerification.create({
+    data: {
+      email, purpose: OTP_PURPOSE, codeHash: hashOtp(email, code), expiresAt, requestedById: req.user.id,
+    },
+  });
+
+  const sender = await senderIdentity(req.user).catch(() => ({}));
+  const sent = await mailer.sendMail({
+    to: email,
+    subject: 'TeamLink — your verification code',
+    text: [
+      `Your TeamLink verification code is ${code}.`,
+      '',
+      `It expires in ${OTP_TTL_MINUTES} minutes and can be entered ${OTP_MAX_ATTEMPTS} times at most.`,
+      '',
+      `Requested by ${req.user.name} while creating your employee record.`,
+      'If you were not expecting this, ignore this message — no account is created until the code is entered.',
+    ].join('\n'),
+    senderEmail: sender.email,
+    senderName: sender.name,
+  });
+
+  if (!sent.ok) {
+    await prisma.emailVerification.update({ where: { id: row.id }, data: { consumedAt: new Date() } });
+    return res.status(502).json({
+      configured: true, sent: false, error: `The provider did not accept it — ${sent.error}`,
+    });
+  }
+  // The code itself is never logged.
+  await logAudit({
+    userId: req.user.id, action: 'Verification code sent', entity: 'EmailVerification', entityId: row.id, toValue: email,
+  });
+  res.json({
+    configured: true, sent: true, expiresAt, attemptsAllowed: OTP_MAX_ATTEMPTS, ttlMinutes: OTP_TTL_MINUTES,
+  });
+});
+
+router.post('/management/email-otp/verify', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const email = normalEmail(req.body.email);
+  const code = String(req.body.code || '').trim();
+  if (!code) return res.status(400).json({ error: 'Enter the code that was emailed.' });
+  const row = await liveVerification(email);
+  if (!row) return res.status(400).json({ error: 'No live code for that address — send one first.' });
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Too many attempts on that code — send a new one.' });
+  }
+  const attempts = row.attempts + 1;
+  if (row.codeHash !== hashOtp(email, code)) {
+    await prisma.emailVerification.update({ where: { id: row.id }, data: { attempts } });
+    const left = OTP_MAX_ATTEMPTS - attempts;
+    return res.status(400).json({
+      error: left > 0 ? `That code is not right — ${left} attempt(s) left.` : 'That code is not right, and the attempts are used up. Send a new one.',
+    });
+  }
+  await prisma.emailVerification.update({ where: { id: row.id }, data: { attempts, verifiedAt: new Date() } });
+  res.json({ verified: true, email });
+});
+
+// --- ADD EMPLOYEE — the one and only implementation ------------------------
+//
+// The employee record, the User and the login are created together. Department
+// + Role/Designation are what everything else is DERIVED from:
+// utils/identity.js mappingFor() reads the DesignationRole TABLE (never a
+// hard-coded list) for the ATS role, the product access and the landing
+// workspace, and the department becomes the login's data scope. No compound
+// role such as "Medical Recruiter" is ever stored.
+router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  const email = normalEmail(b.email);
+  const designation = String(b.designation || '').trim();
+  const phone = b.phone ? String(b.phone).trim() : '';
+  const wantedCode = String(b.employeeId || b.employeeCode || '').trim();
+  const password = String(b.password || '');
+
+  if (!name) return res.status(400).json({ error: 'Enter the full name.' });
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
+  if (!String(b.department || '').trim()) return res.status(400).json({ error: 'Select a department.' });
+  if (!designation) return res.status(400).json({ error: 'Select a role / designation.' });
+  if (phone && !/^\d{10}$/.test(phone.replace(/\s/g, ''))) {
+    return res.status(400).json({ error: 'Mobile should be 10 digits.' });
+  }
+  if (password && password.length < 6) {
+    return res.status(400).json({ error: 'A login password must be at least 6 characters — or leave it empty for a set-password link.' });
+  }
+  if (b.role && !ALL_ROLES.includes(b.role)) return res.status(400).json({ error: 'Unknown role' });
+
+  const deptCheck = assertDepartmentAllowed(req, String(b.department).trim());
+  if (!deptCheck.ok) return res.status(403).json({ error: deptCheck.error });
+  const department = deptCheck.department;
+
+  if (await prisma.user.findUnique({ where: { email } })) {
+    return res.status(409).json({ error: 'That email already has a login.' });
+  }
+  const dup = await prisma.employee.findFirst({
+    where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] },
+  });
+  if (dup) {
+    return res.status(409).json({
+      error: `${dup.name} (${dup.employeeCode}) already has that ${dup.email === email ? 'email' : 'mobile'}.`,
+    });
+  }
+
+  // THE EMAIL GATE. Where a channel exists the address must have been proved
+  // by a code; where none exists we say so and go ahead unverified rather than
+  // pretending a code was ever sent.
+  const cfg = await mailer.emailConfig();
+  let verification = null;
+  if (cfg.configured) {
+    verification = await liveVerification(email);
+    if (!verification || !verification.verifiedAt) {
+      return res.status(400).json({
+        error: 'Verify this email first — send the code with Send OTP and enter it.',
+      });
+    }
+  }
+
+  // Employee ID: the one typed, or the next free EMP-nnnn.
+  let employeeCode = wantedCode;
+  if (employeeCode) {
+    if (await prisma.employee.findUnique({ where: { employeeCode } })) {
+      return res.status(409).json({ error: `Employee ID ${employeeCode} is already taken.` });
+    }
+  } else {
+    const count = await prisma.employee.count();
+    employeeCode = `EMP-${String(count + 1).padStart(4, '0')}`;
+    // eslint-disable-next-line no-await-in-loop
+    while (await prisma.employee.findUnique({ where: { employeeCode } })) {
+      employeeCode = `EMP-${String(Number(employeeCode.slice(4)) + 1).padStart(4, '0')}`;
+    }
+  }
+
+  // Role, product access and scope are DERIVED, never typed: designation ->
+  // DesignationRole. An explicit `role` is honoured as an override, but the
+  // products and the scope still come from the mapping and the department.
+  const mapping = await mappingFor(designation);
+  const role = b.role && ALL_ROLES.includes(b.role) ? b.role : loginRoleFor(mapping);
+  const team = b.team ? String(b.team).trim() : null;
+
+  const user = await prisma.user.create({
+    data: {
+      name,
+      email,
+      passwordHash: password ? await bcrypt.hash(password, 10) : await unguessablePasswordHash(),
+      role,
+      username: email,
+      status: 'Active',
+      branch: b.location || null,
+      team,
+      atsDepartment: department,
+      atsRole: mapping && mapping.atsRole ? mapping.atsRole : null,
+      atsScopeDepartments: department,
+      atsScopeTeams: team,
+      hrmsAccess: mapping ? !!mapping.hrms : true,
+      atsAccess: mapping ? !!mapping.ats : false,
+      accountsAccess: mapping ? !!mapping.accounts : false,
+      landingWorkspace: (mapping && mapping.landing) || null,
+    },
+  });
+
+  const employee = await prisma.employee.create({
+    data: {
+      employeeCode,
+      name,
+      email,
+      phone: phone || null,
+      department,
+      designation,
+      team,
+      location: b.location || null,
+      stl: b.stl || null,
+      tl: b.tl || null,
+      reportingManagerId: b.reportingManagerId || null,
+      gender: b.gender && b.gender !== '—' ? b.gender : null,
+      employeeType: b.employeeType || null,
+      employmentStatus: b.employmentStatus || 'Active',
+      dateOfBirth: toDate(b.dateOfBirth),
+      dateOfJoining: toDate(b.dateOfJoining),
+      userId: user.id,
+      onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
+    },
+    include: EMP_MGMT_INCLUDE,
+  });
+
+  if (verification) {
+    await prisma.emailVerification.update({ where: { id: verification.id }, data: { consumedAt: new Date() } });
+  }
+  // The password is never echoed back and never logged.
+  await logAudit({
+    userId: req.user.id,
+    action: `Employee and login created${verification ? ' (email verified by code)' : ' (email unverified — no SMTP channel)'}`,
+    entity: 'Employee',
+    entityId: employee.id,
+    toValue: `${employeeCode} · ${designation} · ${role} · scope ${department}`,
+  });
+
+  // Sign-in details: a single-use, expiring set-password link from the acting
+  // HR user's own address. NEVER a password in a mail body. The result travels
+  // back verbatim so the screen can say "not sent — no provider" rather than
+  // implying the employee was told.
+  const credentials = await sendCredentials({ employee, userId: user.id, actingUser: req.user, req });
+  await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: employee.id });
+
+  const fresh = await prisma.employee.findUnique({ where: { id: employee.id }, include: EMP_MGMT_INCLUDE });
+  res.status(201).json({
+    ...shapeEmployeeMgmtRow(fresh),
+    credentials,
+    login: {
+      id: user.id, email: user.email, role: user.role, atsRole: user.atsRole,
+      products: { hrms: user.hrmsAccess, ats: user.atsAccess, accounts: user.accountsAccess },
+      scope: department,
+    },
+    emailVerified: !!verification,
+    emailChannel: cfg.configured
+      ? 'verified by one-time code'
+      : `not verified — no email channel is configured (${cfg.reason})`,
+  });
+});
+
+// Create Login — attaches a login to an employee who has none. Never a second
+// identity for someone who already has one.
+router.post('/management/:id/create-login', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (employee.userId) return res.status(409).json({ error: 'That employee already has a login' });
+  if (!employee.email) return res.status(400).json({ error: 'That employee has no email address — add one before creating a login.' });
+  const taken = await prisma.user.findUnique({ where: { email: employee.email } });
+  if (taken) {
+    // The login exists but was never linked: link it rather than duplicate it.
+    await prisma.employee.update({ where: { id: employee.id }, data: { userId: taken.id } });
+    await logAudit({ userId: req.user.id, action: 'Login linked to employee', entity: 'User', entityId: taken.id, toValue: employee.employeeCode });
+  } else {
+    const { password } = req.body || {};
+    // Role and reach are derived from the designation, exactly as Add Employee
+    // derives them — the same mapping, so the two paths cannot disagree.
+    const mapping = await mappingFor(employee.designation);
+    const role = req.body && req.body.role && ALL_ROLES.includes(req.body.role)
+      ? req.body.role : loginRoleFor(mapping);
+    const user = await prisma.user.create({
+      data: {
+        name: employee.name,
+        email: employee.email,
+        passwordHash: password && String(password).length >= 6
+          ? await bcrypt.hash(String(password), 10)
+          : await unguessablePasswordHash(),
+        role,
+        username: employee.email,
+        atsDepartment: employee.department,
+        atsRole: mapping && mapping.atsRole ? mapping.atsRole : null,
+        atsScopeDepartments: employee.department,
+        atsScopeTeams: employee.team || null,
+        hrmsAccess: mapping ? !!mapping.hrms : true,
+        atsAccess: mapping ? !!mapping.ats : false,
+        accountsAccess: mapping ? !!mapping.accounts : false,
+        landingWorkspace: (mapping && mapping.landing) || null,
+        branch: employee.branch || employee.location,
+        team: employee.team,
+        status: 'Active',
+      },
+    });
+    await prisma.employee.update({ where: { id: employee.id }, data: { userId: user.id } });
+    await logAudit({ userId: req.user.id, action: 'User auto-created and linked to employee', entity: 'User', entityId: user.id, toValue: employee.employeeCode });
+  }
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  // A login without sign-in details is a login nobody can use.
+  const credentials = fresh.userId
+    ? await sendCredentials({ employee: fresh, userId: fresh.userId, actingUser: req.user, req })
+    : null;
+  if (credentials) await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: fresh.id });
+  res.json({ ...shapeEmployeeMgmtRow(fresh), credentials });
+});
+
+// Activate / Deactivate the employee's login.
+router.post('/management/:id/toggle-login', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
+  if (employee.user.id === req.user.id) return res.status(409).json({ error: 'You cannot disable your own login' });
+  const prev = employee.user.status || 'Active';
+  const next = prev === 'Active' ? 'Inactive' : 'Active';
+  await prisma.user.update({ where: { id: employee.user.id }, data: { status: next } });
+  await logAudit({ userId: req.user.id, action: `Login ${next === 'Active' ? 'activated' : 'deactivated'}`, entity: 'User', entityId: employee.user.id, fromValue: prev, toValue: next });
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  res.json(shapeEmployeeMgmtRow(fresh));
+});
+
+router.post('/management/:id/reset-password', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const { password } = req.body || {};
+  if (!password || String(password).length < 6) return res.status(400).json({ error: 'A password of at least 6 characters is required' });
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
+  await prisma.user.update({ where: { id: employee.user.id }, data: { passwordHash: await bcrypt.hash(String(password), 10) } });
+  // The new password is never echoed back or logged.
+  await logAudit({ userId: req.user.id, action: 'Password reset', entity: 'User', entityId: employee.user.id, toValue: 'Reset' });
+  res.json({ ok: true });
+});
+
+// Assign Roles — product access on the SAME login, plus the reporting chain.
+router.put('/management/:id/roles', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const { role, atsDepartment, stl, tl } = req.body || {};
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!employee.user) return res.status(400).json({ error: 'Create a login for this employee first.' });
+  if (role && !ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
+
+  const before = employee.user.role;
+  if (role || atsDepartment !== undefined) {
+    await prisma.user.update({
+      where: { id: employee.user.id },
+      data: { ...(role ? { role } : {}), ...(atsDepartment !== undefined ? { atsDepartment: atsDepartment || null } : {}) },
+    });
+  }
+  if (stl !== undefined || tl !== undefined) {
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: { ...(stl !== undefined ? { stl: stl || null } : {}), ...(tl !== undefined ? { tl: tl || null } : {}) },
+    });
+  }
+  if (role && role !== before) {
+    await logAudit({ userId: req.user.id, action: 'Product roles assigned', entity: 'User', entityId: employee.user.id, fromValue: before, toValue: role });
+  }
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  res.json(shapeEmployeeMgmtRow(fresh));
+});
+
+// EDIT SCOPE — the data scope on the Scope column. THE only implementation:
+// Administration → Users links here rather than carrying its own copy.
+//
+// `assign` is the action, which the matrix gives to Super Admin / Admin: a TL
+// reads the Scope column but cannot widen anybody's reach, including their
+// own. Scope is re-resolved from the database on every request
+// (middleware/auth.js), so a change here applies on that user's very next
+// call — no re-login.
+router.put('/management/:id/scope', requirePerm(null, 'hrms', 'Employee Management', 'assign'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!employee.user) return res.status(400).json({ error: 'Create a login for this employee first — scope belongs to the login.' });
+
+  const clean = (v) => {
+    if (v === undefined) return undefined;
+    const s = String(v || '').split(',').map((x) => x.trim()).filter(Boolean).join(',');
+    return s || null;
+  };
+  const data = {};
+  const departments = clean(req.body?.atsScopeDepartments);
+  const teams = clean(req.body?.atsScopeTeams);
+  const clients = clean(req.body?.atsScopeClients);
+  if (departments !== undefined) data.atsScopeDepartments = departments;
+  if (teams !== undefined) data.atsScopeTeams = teams;
+  if (clients !== undefined) data.atsScopeClients = clients;
+  if (!Object.keys(data).length) return res.status(400).json({ error: 'Nothing to change.' });
+
+  const before = [employee.user.atsScopeDepartments, employee.user.atsScopeTeams, employee.user.atsScopeClients]
+    .filter(Boolean).join(' · ') || 'own department';
+  await prisma.user.update({ where: { id: employee.user.id }, data });
+  const after = [
+    data.atsScopeDepartments ?? employee.user.atsScopeDepartments,
+    data.atsScopeTeams ?? employee.user.atsScopeTeams,
+    data.atsScopeClients ?? employee.user.atsScopeClients,
+  ].filter(Boolean).join(' · ') || 'own department';
+  await logAudit({
+    userId: req.user.id, action: 'Data scope changed', entity: 'User',
+    entityId: employee.user.id, fromValue: before, toValue: after,
+  });
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  res.json(shapeEmployeeMgmtRow(fresh));
+});
+
+// The View modal: the employee's details, their login and their recent activity.
+router.get('/management/:id', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const ids = [employee.id, ...(employee.userId ? [employee.userId] : [])];
+  const activity = await prisma.auditLog.findMany({
+    where: { entityId: { in: ids } },
+    include: { user: true },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  });
+  res.json({
+    ...shapeEmployeeMgmtRow(employee),
+    activity: activity.map((a) => ({ action: a.action, date: new Date(a.createdAt).toLocaleString(), by: a.user?.name || 'System' })),
+  });
+});
+
 router.get('/', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const where = departmentWhere(req);
   if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
@@ -488,58 +1041,11 @@ router.get('/:id', async (req, res) => {
   res.json(withComputed(employee));
 });
 
-// Creates the employee record and — when a role + password are supplied — their
-// login account together, in one step (matching the reference app's combined flow).
-router.post('/', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
-  let { employeeCode, department } = req.body;
-  const { name, email, phone, team, designation, location, dateOfJoining, dateOfBirth, gender, employeeType, role, password, branch } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  if (!employeeCode) {
-    const count = await prisma.employee.count();
-    employeeCode = 'EMP-' + String(count + 1).padStart(4, '0');
-  }
-  // A department-scoped role may only add into a department they hold. With
-  // several, the one they picked is honoured; anything else falls back to
-  // their first rather than silently creating the employee somewhere they
-  // cannot then see them.
-  const allowedDepts = scopeDepartments(req);
-  if (allowedDepts !== undefined) {
-    department = allowedDepts.includes(department) ? department : allowedDepts[0];
-  }
-
-  let userId = null;
-  if (role) {
-    if (!email) return res.status(400).json({ error: 'email is required to create a login account' });
-    // A password may still be supplied (an internal relay-less deployment),
-    // but the default and the recommended path is NO password at all: the
-    // account gets an unguessable hash and the employee sets their own
-    // through the single-use link the credentials email carries.
-    const passwordHash = password ? await bcrypt.hash(password, 10) : await unguessablePasswordHash();
-    const user = await prisma.user.create({ data: { name, email, passwordHash, role } });
-    userId = user.id;
-  }
-
-  const employee = await prisma.employee.create({
-    data: {
-      employeeCode, name, email, phone, department, team, designation, location, gender, employeeType, branch, userId,
-      dateOfJoining: dateOfJoining ? new Date(dateOfJoining) : null,
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-      onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
-    },
-  });
-  await logAudit({ userId: req.user.id, action: 'Employee created' + (userId ? ' with login account' : ''), entity: 'Employee', entityId: employee.id });
-
-  // Sign-in details, from the acting HR user's own address. The result is
-  // handed back verbatim so the screen can say "not sent — no provider"
-  // instead of implying the employee has been told.
-  let credentials = null;
-  if (userId) {
-    credentials = await sendCredentials({ employee, userId, actingUser: req.user, req });
-    await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: employee.id });
-  }
-  const fresh = await prisma.employee.findUnique({ where: { id: employee.id } });
-  res.status(201).json({ ...withComputed(fresh), credentials });
-});
+// ADD EMPLOYEE lives at POST /management above — ONE implementation, with the
+// email one-time code, the auto Employee ID, the designation-derived role,
+// products and scope, and the single-use set-password link. The second create
+// path that used to sit here has been REMOVED rather than left as a quieter
+// copy of it.
 
 // Re-send (or first-send) the sign-in link for an employee who already has a
 // login — the fix for "the mail bounced" and for an employee created while

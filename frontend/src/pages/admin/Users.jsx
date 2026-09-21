@@ -32,52 +32,11 @@ const EMPTY_FORM = {
   atsScopeDepartments: '', atsScopeTeams: '',
 };
 
-// Add Employee — the employee record and the login, created together. Department
-// and Role / Designation are the only two identity fields it asks for, because
-// they are what the identity model DERIVES everything else from: the
-// DesignationRole table gives the ATS role, the product access and the landing
-// workspace, and the department becomes the login's data scope.
-const EMPTY_EMPLOYEE = {
-  employeeId: '', name: '', department: '', designation: '', email: '', password: '',
-};
-const EMPTY_OTP = { sending: false, sent: false, code: '', verified: false, message: '', error: '' };
-
-function csvList(value) {
-  return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
-}
-
-// One checkbox list, used three times by the scope editor.
-function ScopeChecklist({ label, hint, options, value, onChange, empty }) {
-  const selected = csvList(value);
-  function toggle(name, on) {
-    const next = on ? [...selected, name] : selected.filter((s) => s !== name);
-    onChange([...new Set(next)].join(','));
-  }
-  return (
-    <div className="field">
-      <label>{label}</label>
-      {hint && <div className="small-muted" style={{ marginBottom: 6 }}>{hint}</div>}
-      {options.length ? (
-        <div style={{
-          display: 'flex', flexWrap: 'wrap', gap: '6px 16px',
-          border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px', maxHeight: 160, overflowY: 'auto',
-        }}
-        >
-          {options.map((o) => (
-            <label key={o.value} className="small-muted" style={{ whiteSpace: 'nowrap' }}>
-              <input
-                type="checkbox"
-                checked={selected.includes(o.value)}
-                onChange={(e) => toggle(o.value, e.target.checked)}
-              />{' '}
-              {o.label}
-            </label>
-          ))}
-        </div>
-      ) : <div className="small-muted">{empty}</div>}
-    </div>
-  );
-}
+// ADD EMPLOYEE and EDIT SCOPE have MOVED to HRMS → Employee Management
+// (frontend/src/pages/Employees.jsx). Both were duplicated here; this screen
+// links to the one implementation of each rather than keeping a copy, so the
+// email one-time code, the auto Employee ID, the designation-derived role and
+// the scope checklists all exist exactly once in the app.
 
 function statusClass(status) {
   if (status === 'Active') return 'priority-low';
@@ -98,32 +57,17 @@ export default function Users() {
   // Branch / team / scope are read-only text in the table (as in the prototype);
   // this modal is where main's inline editing of them moved to.
   const [editing, setEditing] = useState(null);
-  // "Edit scope" on the Scope column — departments, teams and clients as real
-  // pickers, saved to the same atsScope* columns utils/scope.js reads.
-  const [scopeFor, setScopeFor] = useState(null);
   const [departments, setDepartments] = useState([]);
-  // Add Employee — creates the employee record and the login together.
-  const [showAddEmp, setShowAddEmp] = useState(false);
-  const [empForm, setEmpForm] = useState(EMPTY_EMPLOYEE);
-  const [empOptions, setEmpOptions] = useState(null);
-  const [otp, setOtp] = useState(EMPTY_OTP);
-  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const setEmp = (patch) => setEmpForm((f) => ({ ...f, ...patch }));
-
   function load() {
     api.get('/admin/users').then((res) => setUsers(res.data)).catch(() => setError('Could not load users.'));
     api.get('/admin/users/employees-without-login').then((res) => setFreeEmployees(res.data)).catch(() => setFreeEmployees([]));
   }
-  function loadEmpOptions() {
-    api.get('/admin/add-employee/options').then((res) => setEmpOptions(res.data)).catch(() => setEmpOptions(null));
-  }
   useEffect(() => {
     load();
-    loadEmpOptions();
     api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
     api.get('/admin/departments').then((res) => setDepartments(res.data)).catch(() => setDepartments([]));
   }, []);
@@ -185,72 +129,10 @@ export default function Users() {
     if (ok) setEditing(null);
   }
 
-  // --- Edit scope -----------------------------------------------------------
-  // Scope is re-resolved from the database on EVERY request
-  // (backend/src/middleware/auth.js), so saving here changes what that user can
-  // fetch on their very next call — no re-login, no cache to wait out.
-  async function saveScope() {
-    const ok = await run(
-      () => api.put(`/admin/users/${scopeFor.id}`, {
-        atsScopeDepartments: scopeFor.atsScopeDepartments || null,
-        atsScopeTeams: scopeFor.atsScopeTeams || null,
-        atsScopeClients: scopeFor.atsScopeClients || null,
-      }),
-      `${scopeFor.name} — scope saved. It applies to their next request.`,
-    );
-    if (ok) setScopeFor(null);
-  }
-
-  // --- Add Employee ---------------------------------------------------------
-  // A code goes to the address BEFORE the account exists. Where no SMTP channel
-  // is configured the button says so and nothing is sent — the form never
-  // pretends otherwise.
-  const emailReady = !!empOptions?.email?.configured;
-
-  async function sendOtp() {
-    setOtp({ ...EMPTY_OTP, sending: true });
-    try {
-      const res = await api.post('/admin/email-otp/send', { email: empForm.email });
-      if (!res.data.configured) {
-        setOtp({ ...EMPTY_OTP, message: res.data.message });
-        return;
-      }
-      setOtp({
-        ...EMPTY_OTP, sent: true,
-        message: `A 6-digit code was emailed to ${empForm.email}. It expires in ${res.data.ttlMinutes} minutes.`,
-      });
-    } catch (err) {
-      setOtp({ ...EMPTY_OTP, error: err.response?.data?.error || 'That code could not be sent.' });
-    }
-  }
-
-  async function verifyOtp() {
-    try {
-      await api.post('/admin/email-otp/verify', { email: empForm.email, code: otp.code });
-      setOtp((o) => ({ ...o, verified: true, error: '', message: 'Email verified.' }));
-    } catch (err) {
-      setOtp((o) => ({ ...o, error: err.response?.data?.error || 'That code could not be checked.' }));
-    }
-  }
-
-  function closeAddEmp() {
-    setShowAddEmp(false); setEmpForm(EMPTY_EMPLOYEE); setOtp(EMPTY_OTP); setShowPw(false);
-  }
-
-  async function createEmployee(e) {
-    e.preventDefault();
-    setError(''); setNotice('');
-    try {
-      const res = await api.post('/admin/add-employee', empForm);
-      const { employee, login } = res.data;
-      setNotice(`${employee.name} (${employee.employeeCode}) created with a login — ${login.role}`
-        + `${login.atsRole ? ` · ATS ${login.atsRole}` : ''} · scope ${login.scope}. Email ${res.data.emailChannel}.`);
-      closeAddEmp();
-      load(); loadEmpOptions();
-    } catch (err) {
-      setError(err.response?.data?.error || 'That employee could not be created.');
-    }
-  }
+  // EDIT SCOPE and ADD EMPLOYEE used to be implemented here. Both now live
+  // on HRMS → Employee Management, which is the screen that owns the employee
+  // master; the Scope column below links to it rather than re-implementing
+  // either one.
 
   function toggleStatus(u) {
     run(() => api.post(`/admin/users/${u.id}/toggle-status`),
@@ -299,13 +181,10 @@ export default function Users() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            className="btn btn-primary"
-            onClick={() => { if (showAddEmp) closeAddEmp(); else { setShowAddEmp(true); setShowForm(false); } }}
-          >
-            {showAddEmp ? 'Cancel' : 'Add Employee'}
-          </button>
-          <button className="btn" onClick={() => { setShowForm((s) => !s); setShowAddEmp(false); }}>
+          {/* Add Employee lives on Employee Management — one implementation,
+              with the email one-time code and the designation-derived role. */}
+          <Link className="btn btn-primary" to="/employees">Add Employee →</Link>
+          <button className="btn" onClick={() => setShowForm((v) => !v)}>
             {showForm ? 'Cancel' : 'Add User'}
           </button>
         </div>
@@ -313,104 +192,6 @@ export default function Users() {
 
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="card section" style={{ marginBottom: 14 }}>{notice}</div>}
-
-      {showAddEmp && (
-        <form className="card section" onSubmit={createEmployee}>
-          <h3 style={{ textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 13 }}>
-            Add Employee — creates their employee record and login together
-          </h3>
-          <div className="grid-2" style={{ marginTop: 12 }}>
-            <label className="field"><span>Employee ID <i style={{ fontWeight: 400 }}>(optional — auto if blank)</i></span>
-              <input
-                value={empForm.employeeId}
-                onChange={(e) => setEmp({ employeeId: e.target.value })}
-                placeholder={empOptions ? `e.g. ${empOptions.nextEmployeeCode}` : 'e.g. EMP-009'}
-              /></label>
-            <label className="field"><span>Full name</span>
-              <input required value={empForm.name} onChange={(e) => setEmp({ name: e.target.value })} /></label>
-
-            <label className="field"><span>Department</span>
-              <Combo creatable required value={empForm.department} onChange={(e) => setEmp({ department: e.target.value })}>
-                <option value="">Select department</option>
-                {(empOptions?.departments || []).map((d) => <option key={d}>{d}</option>)}
-              </Combo></label>
-            {/* Straight off the DesignationRole table — the identity model
-                derives the ATS role, the product access and the landing
-                workspace from this choice, so there is no list to hard-code. */}
-            <label className="field"><span>Role / Designation</span>
-              <Combo required value={empForm.designation} onChange={(e) => setEmp({ designation: e.target.value })}>
-                <option value="">Select role</option>
-                {(empOptions?.designations || []).map((d) => (
-                  <option key={d.designation} value={d.designation}>
-                    {d.designation}{d.atsRole ? ` — ATS ${atsRoleLabel(d.atsRole)}` : ''}
-                  </option>
-                ))}
-              </Combo></label>
-
-            <label className="field"><span>Email</span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  required type="email" style={{ flex: 1 }}
-                  value={empForm.email}
-                  onChange={(e) => { setEmp({ email: e.target.value }); setOtp(EMPTY_OTP); }}
-                />
-                <button
-                  type="button" className="btn btn-sm"
-                  disabled={!emailReady || !empForm.email || otp.sending}
-                  title={emailReady ? 'Email a one-time code to this address' : (empOptions?.email?.reason || '')}
-                  onClick={sendOtp}
-                >
-                  {!empOptions ? 'Send OTP'
-                    : emailReady
-                      ? (otp.sending ? 'Sending…' : (otp.sent ? 'Resend OTP' : 'Send OTP'))
-                      : 'No email channel — can’t send OTP'}
-                </button>
-              </div>
-              {!emailReady && empOptions && (
-                <span className="small-muted">
-                  No SMTP provider is configured, so no code can be sent — {empOptions.email.reason} The
-                  employee can still be created, and the address stays unverified.
-                </span>
-              )}
-              {otp.message && <span className="small-muted">{otp.message}</span>}
-              {otp.error && <span className="error-text">{otp.error}</span>}
-              {otp.sent && !otp.verified && (
-                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  <input
-                    style={{ flex: 1 }} inputMode="numeric" maxLength="6" placeholder="6-digit code"
-                    value={otp.code} onChange={(e) => setOtp((o) => ({ ...o, code: e.target.value }))}
-                  />
-                  <button type="button" className="btn btn-sm" onClick={verifyOtp} disabled={!otp.code}>Verify</button>
-                </div>
-              )}
-              {otp.verified && <span className="status approved" style={{ marginTop: 6 }}>Email verified</span>}
-            </label>
-
-            <label className="field"><span>Password <i style={{ fontWeight: 400 }}>(for their login)</i></span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  required minLength="6" style={{ flex: 1 }}
-                  type={showPw ? 'text' : 'password'}
-                  value={empForm.password}
-                  onChange={(e) => setEmp({ password: e.target.value })}
-                />
-                <button type="button" className="btn btn-sm" onClick={() => setShowPw((s) => !s)}>
-                  {showPw ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              {/* The password is hashed on the server, never returned by the
-                  API and never written to the audit log. */}
-            </label>
-          </div>
-
-          <div className="small-muted" style={{ margin: '4px 0 12px' }}>
-            Creates their employee record and login account together — they can sign in right away to fill in
-            the rest of their profile.
-          </div>
-          <button className="btn btn-primary btn-sm" type="submit">Create employee</button>{' '}
-          <button className="btn btn-sm" type="button" onClick={closeAddEmp}>Cancel</button>
-        </form>
-      )}
 
       {showForm && (
         <form className="card section" onSubmit={createUser}>
@@ -551,22 +332,17 @@ export default function Users() {
                 <td><span className={'status ' + statusClass(u.status)}>{u.status}</span></td>
                 <td className="cell-muted">
                   {u.scope}
-                  <div>
-                    <button
-                      className="link-btn"
-                      onClick={() => setScopeFor({
-                        id: u.id,
-                        name: u.name,
-                        role: u.role,
-                        atsScopeDepartments: u.atsScopeDepartments || '',
-                        atsScopeTeams: u.atsScopeTeams || '',
-                        atsScopeClients: u.atsScopeClients || '',
-                      })}
-                      title="Which departments, teams and clients this login may reach — not their own profile lock"
-                    >
-                      Edit scope
-                    </button>
-                  </div>
+                  {/* EDIT SCOPE lives on HRMS → Employee Management, on that
+                      screen''s own Scope column. One implementation; this is a
+                      link to it, never a second copy. */}
+                  {u.employeeRecordId && (
+                    <div>
+                      <Link className="link-btn" to="/employees"
+                        title="Edit which departments, teams and clients this login may reach — on Employee Management">
+                        Edit scope →
+                      </Link>
+                    </div>
+                  )}
                 </td>
                 <td className="cell-muted">{u.assignedClients?.length ? u.assignedClients.join(', ') : '—'}</td>
                 <td className="cell-muted">{u.assignedRequirements}</td>
@@ -606,67 +382,6 @@ export default function Users() {
         product access to that same login. HRMS, ATS and Accounts are shown here derived from the single stored
         role; they become independently editable when the three-role split lands.
       </div>
-
-      {scopeFor && (
-        <Modal
-          title={`Edit scope — ${scopeFor.name}`}
-          size="wide"
-          onClose={() => setScopeFor(null)}
-          foot={<>
-            <button className="btn" onClick={() => setScopeFor(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveScope}>Save scope</button>
-          </>}
-        >
-          <div className="notice">
-            <span>
-              <b>Data scope — which records this login may reach.</b> What the API itself allows them to fetch,
-              not what the screen chooses to draw. The server re-resolves it on every request, so a change here
-              takes effect on their very next call, without a re-login. Leave a list empty to fall back to the
-              employee&apos;s own department and team.
-            </span>
-          </div>
-          <div className="notice amber">
-            <span>
-              This is <b>not</b> <i>Grant Edit Access</i>. Editing scope changes which <i>other people&apos;s</i>
-              {' '}records this login can see and work on, permanently, until you change it again. Grant Edit Access
-              (HRMS → Employee Management) temporarily unlocks <i>this person&apos;s own profile</i> so they can
-              correct it, and expires. Neither one does the other&apos;s job.
-            </span>
-          </div>
-          <ScopeChecklist
-            label="Departments"
-            hint="Every list the engine scopes by department — requirements, clients, employees, tasks."
-            options={departments.map((d) => ({ value: d.name, label: d.name }))}
-            value={scopeFor.atsScopeDepartments}
-            onChange={(v) => setScopeFor({ ...scopeFor, atsScopeDepartments: v })}
-            empty="No departments are set up yet — add them in Administration → Departments & Teams."
-          />
-          <ScopeChecklist
-            label="Teams"
-            hint="A team lead held to one team assigns and reviews work inside it."
-            options={departments.flatMap((d) => (d.teams || []).map((t) => ({
-              value: t.name, label: `${t.name} (${d.name})`,
-            })))}
-            value={scopeFor.atsScopeTeams}
-            onChange={(v) => setScopeFor({ ...scopeFor, atsScopeTeams: v })}
-            empty="No teams are set up yet."
-          />
-          <ScopeChecklist
-            label="Clients"
-            hint="A BDE's assigned client list. It drives which clients and requirements they reach."
-            options={clients.map((c) => ({ value: c.id, label: c.name }))}
-            value={scopeFor.atsScopeClients}
-            onChange={(v) => setScopeFor({ ...scopeFor, atsScopeClients: v })}
-            empty="No clients yet."
-          />
-          {['SUPER_ADMIN', 'ADMIN'].includes(scopeFor.role) && (
-            <div className="notice amber">
-              This login is {atsRoleLabel(scopeFor.role)} — a company-wide role. The engine treats it as global,
-              so these lists are stored but do not narrow what it can reach.
-            </div>
-          )}
-        </Modal>
-      )}
 
       {editing && (
         <Modal
