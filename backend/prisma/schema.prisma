@@ -257,6 +257,11 @@ model Candidate {
 
   applications Application[]
   invoices     Invoice[]
+  // cand_: virtual back-references only — no column is added to Candidate.
+  stageEvents  ApplicationStageEvent[]
+  messages     CandidateMessage[]
+  notes        CandidateNote[]
+  documents    CandidateDocument[]
 }
 
 model Application {
@@ -288,6 +293,8 @@ model Application {
   interviewStartedAt   DateTime?
   interviewCompletedAt DateTime?
   interviewEvents      InterviewEvent[]
+  // cand_: virtual back-reference only — no column is added to Application.
+  stageEvents          ApplicationStageEvent[]
 
   // AI interview detail (the calendar's second tab).
   aiInterviewDeadline  String?
@@ -1231,4 +1238,107 @@ model DesignationRole {
   position    Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// =============================================================================
+// CANDIDATES — pipeline history, communications, notes, documents (cand_)
+//
+// Four NEW tables. Nothing here alters an existing table: the only schema
+// change is CREATE TABLE + CREATE INDEX, so the SQLite table-rebuild trap that
+// silently drops columns added by other migrations cannot be triggered.
+// The relation fields added to Candidate / Application below are virtual
+// (Prisma back-references); they produce no column on those tables.
+// =============================================================================
+
+// Pipeline History — the stage chain with Who / When / Action / Comment.
+// One row per transition. The Application.stage column stays the single source
+// of truth for WHERE a candidate is; this table records HOW they got there.
+model ApplicationStageEvent {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  candidateId   String
+  candidate     Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  fromStage     String?     // null on the first event (application created)
+  toStage       String
+  action        String      // human phrase: "Moved to Client Review", "Rejected", …
+  comment       String?
+  actorUserId   String?
+  actorName     String?
+  actorRole     String?     // the actor's ATS working role at the time
+  createdAt     DateTime    @default(now())
+
+  @@index([candidateId])
+  @@index([applicationId])
+}
+
+// Candidate communications — Email / SMS / WhatsApp.
+//
+// HONEST BY DESIGN: this table is the RECORD and the TRIGGER, not a delivery
+// receipt. No mail / SMS / WhatsApp provider is wired into this app, so every
+// row is written with status NOT_SENT_NO_PROVIDER and sentAt stays null. A real
+// integration would fill providerRef / sentAt / status from the provider's
+// callback; see backend/src/utils/candidateComms.js.
+model CandidateMessage {
+  id            String      @id @default(cuid())
+  candidateId   String
+  candidate     Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  applicationId String?
+  channel       String      // Email | SMS | WhatsApp
+  template      String      // template key, e.g. INTERVIEW_SCHEDULED
+  templateLabel String?
+  trigger       String      // what caused it, e.g. "Stage change: Interview"
+  recipient     String      // the candidate's email / phone, as addressed
+  subject       String?
+  body          String?
+  status        String      @default("NOT_SENT_NO_PROVIDER")
+  statusDetail  String?
+  // Sender identity comes from the acting EMPLOYEE's record (Employee.email),
+  // captured when the employee was added — never a hardcoded from-address.
+  senderUserId     String?
+  senderEmployeeId String?
+  senderName       String?
+  senderEmail      String?
+  senderSourceNote String?   // which record the address came from
+  stageFrom     String?
+  stageTo       String?
+  providerRef   String?      // filled by a real provider; always null here
+  sentAt        DateTime?    // filled by a real provider; always null here
+  createdAt     DateTime     @default(now())
+
+  @@index([candidateId])
+}
+
+// Internal recruiter / TL notes. NEVER visible to a CLIENT or CANDIDATE login —
+// routes/candidates.js refuses the endpoint and omits the field for them.
+model CandidateNote {
+  id            String    @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  applicationId String?
+  body          String
+  authorUserId  String?
+  authorName    String?
+  authorRole    String?
+  createdAt     DateTime  @default(now())
+
+  @@index([candidateId])
+}
+
+// Resume / ID / Certificates / Offer / Joining documents.
+model CandidateDocument {
+  id             String    @id @default(cuid())
+  candidateId    String
+  candidate      Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  docType        String    // Resume | ID | Certificate | Offer | Joining
+  name           String
+  note           String?
+  // Internal documents (e.g. anything carrying fee or salary detail) are held
+  // back from client logins.
+  internalOnly   Boolean   @default(false)
+  uploadedByUserId String?
+  uploadedByName   String?
+  createdAt      DateTime  @default(now())
+
+  @@index([candidateId])
 }

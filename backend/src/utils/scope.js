@@ -116,6 +116,22 @@ function applicationWhere(user) {
 }
 
 // --- Candidates ------------------------------------------------------------
+// "A Client only sees candidates SHARED with that client."
+//
+// Reaching the client's requirement is not enough: a candidate sitting at
+// Recruiter Review on a client's role has not been put in front of that client
+// yet, and the client must not see them. These are the stages from the moment
+// a profile is shared onward. routes/candidates.js applies this on top of
+// applicationWhere(), and also treats an application that EVER reached one of
+// these stages as shared — so a candidate the client themselves rejected does
+// not vanish from their view, while one rejected internally beforehand never
+// appears at all.
+const CLIENT_SHARED_STAGES = [
+  'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED',
+  'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED',
+  'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED',
+];
+
 // A candidate record is reachable when the user can reach one of its
 // applications. Candidates themselves see only their own record.
 function candidateWhere(user) {
@@ -194,6 +210,7 @@ module.exports = {
   clientWhere,
   applicationWhere,
   candidateWhere,
+  CLIENT_SHARED_STAGES,
   invoiceWhere,
   employeeWhere,
   recordInScope,

@@ -5,6 +5,8 @@ const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
 const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
+const { groupLabelOfStage } = require('../utils/pipelineView');
+const { recordStageCommunications } = require('../utils/candidateComms');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -141,12 +143,26 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
       aiInterviewStatus: 'Required',
     },
   });
+  // The first link in the pipeline chain the Candidate Detail screen renders.
+  await prisma.applicationStageEvent.create({
+    data: {
+      applicationId: application.id,
+      candidateId,
+      fromStage: null,
+      toStage: 'NEW',
+      action: 'Added to pipeline',
+      comment: req.body.comment || null,
+      actorUserId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.atsRole || req.user.role,
+    },
+  });
   await logAudit({ userId: req.user.id, action: 'Candidate added to pipeline', entity: 'Application', entityId: application.id, toValue: 'New' });
   res.status(201).json(application);
 });
 
 router.patch('/:id/stage', async (req, res) => {
-  const { stage, interviewAt } = req.body;
+  const { stage, interviewAt, comment } = req.body;
   if (!stage) return res.status(400).json({ error: 'stage is required' });
 
   const allowedRoles = STAGE_OWNERS[stage];
@@ -197,6 +213,51 @@ router.patch('/:id/stage', async (req, res) => {
   // invoice 6 days after joining, payment due 6 days after that.
   if (stage === 'JOINED') {
     await raiseJoiningInvoice({ application, existing, userId: req.user.id });
+  }
+
+  // --- Pipeline History ----------------------------------------------------
+  // One row per transition, carrying Who / When / Action / Comment. This is
+  // what the candidate's Pipeline History tab renders; the stage column on the
+  // application stays the single source of truth for WHERE they are now.
+  await prisma.applicationStageEvent.create({
+    data: {
+      applicationId: application.id,
+      candidateId: existing.candidateId,
+      fromStage: existing.stage,
+      toStage: stage,
+      action: `Moved to ${groupLabelOfStage(stage)} — ${stageLabel(stage)}`,
+      comment: comment || null,
+      actorUserId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.atsRole || req.user.role,
+    },
+  });
+
+  // --- Candidate communication ---------------------------------------------
+  // Stage changes trigger the candidate-facing Email / SMS / WhatsApp records
+  // (AI Interview Scheduled, Interview Scheduled, Selected, and the rest — see
+  // utils/candidateComms.js for the template set). NOTHING IS TRANSMITTED: no
+  // provider is configured in this app, so each row is written with status
+  // NOT_SENT_NO_PROVIDER and shows up in the Communications tab labelled that
+  // way. The trigger and the record are real; the delivery is not.
+  //
+  // The from-address on each row is the acting EMPLOYEE's own email, taken
+  // from the employee record captured when they were added.
+  try {
+    await recordStageCommunications({
+      application,
+      candidate: existing.candidate,
+      requirement: existing.requirement,
+      fromStage: existing.stage,
+      toStage: stage,
+      user: req.user,
+      comment,
+    });
+  } catch (err) {
+    // A communication record must never roll back a stage change that already
+    // happened — the move is the business event, the message is a side effect.
+    // eslint-disable-next-line no-console
+    console.error('Could not record candidate communication:', err.message);
   }
 
   await logAudit({
