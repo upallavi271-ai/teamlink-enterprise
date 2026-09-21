@@ -841,6 +841,36 @@ model OfficeExpense {
   description   String?
   // The vendor's own invoice number — what a GST return is reconciled against.
   billNumber    String?
+
+  // Office & Accounts depth — the reference accounting app's expense record.
+  // A bill can be an expense or an owner's hand loan (a loan is not a cost, so
+  // it stays out of profit and GST); a pending bill carries its own due date,
+  // which is where the calendar shows it and what makes it overdue.
+  entryKind     String?  @default("expense") // expense | hand
+  dueDate       String?
+  remarks       String?
+  approvedBy    String?
+  // The rate actually applied to THIS bill. GST and TDS money is stored as an
+  // amount, but the rate is what the GST vendor table reports, so it is kept
+  // rather than inferred — never assumed to be 18%.
+  gstRatePct    Float?
+  tdsRatePct    Float?
+  // Type of supply and the place it was supplied from — CGST+SGST within the
+  // state, IGST across states.
+  supplyType    String?  // Goods | Service
+  gstTreatment  String?
+  sourceState   String?
+  // Proof of payment. The file itself is NOT stored here — see the route file:
+  // this is the metadata a real object store would key off.
+  proofName     String?
+  proofMime     String?
+  proofSize     Int?
+  proofAt       String?
+  proofBy       String?
+  // The imported bank statement line this payment came off. That line is the
+  // proof of payment on its own; only input GST still needs the vendor's own
+  // tax invoice.
+  bankTxnId     String?
 }
 
 // =============================================================================
