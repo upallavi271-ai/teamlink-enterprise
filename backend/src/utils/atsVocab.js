@@ -353,7 +353,7 @@ const DEFAULT_PAYMENT_TERMS = PAYMENT_TERMS[0];
 // ---------------------------------------------------------------------------
 const INTERVIEW_STATUS_CODES = [
   'SCHEDULED', 'CONFIRMED', 'STARTED', 'COMPLETED', 'PENDING_FEEDBACK',
-  'CANCELLED', 'NO_SHOW', 'RESCHEDULED',
+  'FEEDBACK_SUBMITTED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED',
 ];
 
 const INTERVIEW_STATUS_LABELS = {
@@ -362,6 +362,7 @@ const INTERVIEW_STATUS_LABELS = {
   STARTED: 'Started',
   COMPLETED: 'Completed',
   PENDING_FEEDBACK: 'Pending Feedback',
+  FEEDBACK_SUBMITTED: 'Feedback Submitted',
   CANCELLED: 'Cancelled',
   NO_SHOW: 'No Show',
   RESCHEDULED: 'Rescheduled',
@@ -373,6 +374,10 @@ const INTERVIEW_NEXT = {
   CONFIRMED: 'STARTED',
   STARTED: 'COMPLETED',
   COMPLETED: 'PENDING_FEEDBACK',
+  // A rescheduled interview is re-confirmed into the same chain — the
+  // calendar has always offered that button; without this entry the API
+  // refused it.
+  RESCHEDULED: 'CONFIRMED',
 };
 
 // Statuses an interview cannot be advanced out of — it must be rescheduled.
@@ -381,6 +386,31 @@ const INTERVIEW_TERMINAL = ['CANCELLED', 'NO_SHOW'];
 const INTERVIEW_TYPES = ['Client Interview', 'Internal Panel'];
 const INTERVIEW_MODES = ['Online', 'In Person', 'Telephonic'];
 const INTERVIEW_RESULTS = ['Recommended', 'Hold', 'Not Selected'];
+
+// STATUS is where the interview IS; RESULT is what it DECIDED. They are two
+// different columns and are never mixed: an interview can be Feedback
+// Submitted with a result of Hold, or Cancelled with no result at all.
+// The recommendation a feedback form records — and therefore the Result
+// column — is one of exactly these three.
+const INTERVIEW_RECOMMENDATIONS = ['Selected', 'Rejected', 'Hold'];
+
+// Feedback submitted before this vocabulary existed used the prototype's older
+// three words. They are read back as the new ones; nothing is rewritten.
+const LEGACY_RESULT_MAP = { Recommended: 'Selected', 'Not Selected': 'Rejected', Hold: 'Hold' };
+function normalizeRecommendation(value) {
+  if (!value) return null;
+  if (INTERVIEW_RECOMMENDATIONS.includes(value)) return value;
+  return LEGACY_RESULT_MAP[value] || null;
+}
+
+// The interview feedback form, field for field.
+const FEEDBACK_CRITERIA = [
+  { key: 'technical', label: 'Technical Skills' },
+  { key: 'communication', label: 'Communication' },
+  { key: 'experience', label: 'Experience' },
+  { key: 'roleFit', label: 'Role Fit' },
+];
+const FEEDBACK_KINDS = ['Internal', 'Client'];
 
 // AI interview tab. An expired AI interview never rejects the candidate.
 const AI_INTERVIEW_STATUSES = ['Required', 'Scheduled', 'Started', 'Completed', 'Expired', 'Manual Review Requested'];
@@ -428,6 +458,10 @@ module.exports = {
   INTERVIEW_TYPES,
   INTERVIEW_MODES,
   INTERVIEW_RESULTS,
+  INTERVIEW_RECOMMENDATIONS,
+  normalizeRecommendation,
+  FEEDBACK_CRITERIA,
+  FEEDBACK_KINDS,
   AI_INTERVIEW_STATUSES,
   interviewStatusLabel,
   PRIORITIES,

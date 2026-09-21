@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
-  INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TYPES, INTERVIEW_RESULTS,
-  interviewStatusLabel, interviewStatusClass,
+  INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TYPES,
+  INTERVIEW_RECOMMENDATIONS, FEEDBACK_CRITERIA,
+  interviewStatusLabel, interviewStatusClass, resultClass,
 } from '../../atsVocab';
 import { canActOnPipeline } from '../../permissions';
+import { INTJOIN_TABS, HiringTypeChip } from './intjoinShared.jsx';
 
 // The prototype's Interview Calendar (calendarView, line 9184): two tabs kept
 // deliberately apart, because an AI interview score is never mixed into
@@ -16,7 +18,12 @@ import { canActOnPipeline } from '../../permissions';
 // Pending Feedback. Cancelled, No Show and Rescheduled are tracked separately —
 // none of them rejects the candidate.
 
-const EMPTY_FILTERS = { q: '', status: '', type: '', date: '', client: '', recruiter: '', tl: '', bde: '' };
+// Department, Client, Requirement, Candidate, Recruiter, TL, BDE, Interview
+// Type, Status, Hiring Type and a date range — the full Interviews filter set.
+const EMPTY_FILTERS = {
+  q: '', status: '', type: '', date: '', client: '', recruiter: '', tl: '', bde: '',
+  department: '', requirement: '', candidate: '', hiringType: '', from: '', to: '',
+};
 
 // Roles that may move an interview. Clients watch; the API enforces this too.
 
@@ -59,7 +66,17 @@ export default function InterviewCalendar() {
       if (filters.recruiter && r.requirement.recruiter?.name !== filters.recruiter) return false;
       if (filters.tl && r.requirement.tl !== filters.tl) return false;
       if (filters.bde && r.requirement.bde?.name !== filters.bde) return false;
+      if (filters.department && r.requirement.department !== filters.department) return false;
+      if (filters.requirement && r.requirement.title !== filters.requirement) return false;
+      if (filters.candidate && r.candidate.name !== filters.candidate) return false;
+      if (filters.hiringType && r.hiringType !== filters.hiringType) return false;
       if (filters.date && (!r.interviewAt || new Date(r.interviewAt).toISOString().slice(0, 10) !== filters.date)) return false;
+      if (filters.from || filters.to) {
+        if (!r.interviewAt) return false;
+        const d = new Date(r.interviewAt).toISOString().slice(0, 10);
+        if (filters.from && d < filters.from) return false;
+        if (filters.to && d > filters.to) return false;
+      }
       if (q && !`${r.candidate.name} ${r.requirement.title} ${r.interviewCode}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -101,6 +118,12 @@ export default function InterviewCalendar() {
         <Link className="btn btn-primary" to="/candidates">Schedule Interview</Link>
       </div>
 
+      <div className="tabbar">
+        {INTJOIN_TABS.map((t) => (
+          <NavLink key={t.to} to={t.to} end className={({ isActive }) => 'tab-btn' + (isActive ? ' active' : '')}>{t.label}</NavLink>
+        ))}
+      </div>
+
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="card section" style={{ marginBottom: 14 }}>{notice}</div>}
 
@@ -132,6 +155,22 @@ export default function InterviewCalendar() {
                 <option value="">All statuses</option>
                 {INTERVIEW_STATUS_CODES.map((s) => <option key={s} value={s}>{interviewStatusLabel(s)}</option>)}
               </select>
+              <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+                <option value="">All departments</option>
+                {(opts.departments || []).map((d) => <option key={d}>{d}</option>)}
+              </select>
+              <select value={filters.requirement} onChange={(e) => setFilter({ requirement: e.target.value })}>
+                <option value="">All requirements</option>
+                {(opts.requirements || []).map((d) => <option key={d}>{d}</option>)}
+              </select>
+              <select value={filters.candidate} onChange={(e) => setFilter({ candidate: e.target.value })}>
+                <option value="">All candidates</option>
+                {(opts.candidates || []).map((d) => <option key={d}>{d}</option>)}
+              </select>
+              <select value={filters.hiringType} onChange={(e) => setFilter({ hiringType: e.target.value })}>
+                <option value="">All hiring types</option>
+                {(data.hiringTypes || []).map((d) => <option key={d}>{d}</option>)}
+              </select>
               <select value={filters.type} onChange={(e) => setFilter({ type: e.target.value })}>
                 <option value="">All types</option>
                 {INTERVIEW_TYPES.map((t) => <option key={t}>{t}</option>)}
@@ -156,6 +195,8 @@ export default function InterviewCalendar() {
                 <option value="">All BDEs</option>
                 {(opts.bdes || []).map((b) => <option key={b}>{b}</option>)}
               </select>
+              <label className="small-muted">From <input type="date" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} /></label>
+              <label className="small-muted">To <input type="date" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} /></label>
               <button className="btn btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
               <span className="small-muted">{rows.length} interview(s)</span>
             </div>
@@ -165,7 +206,7 @@ export default function InterviewCalendar() {
                 <thead>
                   <tr>
                     <th>Interview ID</th><th>Candidate</th><th>Requirement</th><th>Client</th>
-                    <th>Round</th><th>Type</th><th>Interviewer</th><th>Date</th><th>Time</th>
+                    <th>Hiring Type</th><th>Round</th><th>Type</th><th>Interviewer</th><th>Date</th><th>Time</th>
                     <th>Mode</th><th>Meeting / Location</th><th>Status</th><th>Score</th>
                     <th>Result</th><th>Created By</th><th>Actions</th>
                   </tr>
@@ -180,6 +221,7 @@ export default function InterviewCalendar() {
                       <td className="row-link"><Link to={`/candidates/${r.candidate.id}`}>{r.candidate.name}</Link></td>
                       <td className="row-link"><Link to={`/requirements/${r.requirement.id}`}>{r.requirement.title}</Link></td>
                       <td className="small-muted">{r.requirement.client?.name || '—'}</td>
+                      <td><HiringTypeChip value={r.hiringType} /></td>
                       <td className="small-muted">{r.round}</td>
                       <td className="small-muted">{r.type}</td>
                       <td className="small-muted">{r.interviewer || '—'}</td>
@@ -192,7 +234,7 @@ export default function InterviewCalendar() {
                         {r.cancelReason && <div className="small-muted" style={{ fontSize: 11 }}>{r.cancelReason}</div>}
                       </td>
                       <td>{r.score != null ? <b>{r.score}%</b> : <span className="small-muted">—</span>}</td>
-                      <td className="small-muted">{r.result}</td>
+                      <td>{r.result === '—' ? <span className="small-muted">—</span> : <span className={'status ' + resultClass(r.result)}>{r.result}</span>}</td>
                       <td className="small-muted">{r.createdBy || '—'}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         {!canAct ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} noShow={noShow} setDialog={setDialog} />}
@@ -200,7 +242,7 @@ export default function InterviewCalendar() {
                     </tr>
                   ))}
                   {rows.length === 0 && (
-                    <tr><td colSpan="16" className="small-muted" style={{ padding: 16 }}>No interviews match these filters.</td></tr>
+                    <tr><td colSpan="17" className="small-muted" style={{ padding: 16 }}>No interviews match these filters.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -235,11 +277,11 @@ function Actions({ row, advance, noShow, setDialog }) {
       </>
     );
   }
-  if (['PENDING_FEEDBACK', 'COMPLETED'].includes(st)) {
+  if (['PENDING_FEEDBACK', 'COMPLETED', 'FEEDBACK_SUBMITTED'].includes(st)) {
     return (
       <>
         <button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'feedback', row })}>
-          {st === 'COMPLETED' ? 'Edit Feedback' : 'Add Feedback'}
+          {['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(st) ? 'Edit Feedback' : 'Add Feedback'}
         </button>{' '}
         <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'history', row })}>History</button>
       </>
@@ -324,9 +366,17 @@ function CancelForm({ dialog, setDialog, act }) {
 
 function FeedbackForm({ dialog, setDialog, act }) {
   const { row } = dialog;
-  const [score, setScore] = useState(row.score ?? '');
-  const [feedback, setFeedback] = useState(row.feedback || '');
-  const [result, setResult] = useState(row.result && INTERVIEW_RESULTS.includes(row.result) ? row.result : 'Recommended');
+  const fb = row.internalFeedback || {};
+  const [form, setForm] = useState({
+    technical: fb.technical ?? 3,
+    communication: fb.communication ?? 3,
+    experience: fb.experience ?? 3,
+    roleFit: fb.roleFit ?? 3,
+    score: row.score ?? '',
+    feedback: fb.overall || row.feedback || '',
+    result: INTERVIEW_RECOMMENDATIONS.includes(row.result) ? row.result : 'Selected',
+  });
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   return (
     <Panel
       title={`Interview feedback — ${row.candidate.name}`}
@@ -336,21 +386,33 @@ function FeedbackForm({ dialog, setDialog, act }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          act(() => api.post(`/ats/interviews/${row.id}/feedback`, { score, feedback, result }), 'Feedback saved. Take the selection decision from the candidate profile.');
+          act(
+            () => api.post(`/ats/interviews/${row.id}/feedback`, form),
+            'Feedback submitted — the interview is now Feedback Submitted. Take the decision on Interview Feedback.',
+          );
         }}
       >
-        <div className="grid-2">
+        <div className="grid-3">
+          {FEEDBACK_CRITERIA.map((c) => (
+            <label className="field" key={c.key}>
+              <span>{c.label} (1–5)</span>
+              <select value={form[c.key]} onChange={(e) => set({ [c.key]: Number(e.target.value) })}>
+                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          ))}
           <label className="field"><span>Score (0–100)</span>
-            <input type="number" min="0" max="100" value={score} onChange={(e) => setScore(e.target.value)} /></label>
+            <input type="number" min="0" max="100" value={form.score} onChange={(e) => set({ score: e.target.value })} /></label>
           <label className="field"><span>Recommendation</span>
-            <select value={result} onChange={(e) => setResult(e.target.value)}>
-              {INTERVIEW_RESULTS.map((r) => <option key={r}>{r}</option>)}
+            <select value={form.result} onChange={(e) => set({ result: e.target.value })}>
+              {INTERVIEW_RECOMMENDATIONS.map((r) => <option key={r}>{r}</option>)}
             </select></label>
         </div>
-        <label className="field" style={{ marginBottom: 10 }}><span>Feedback *</span>
-          <textarea required rows="3" value={feedback} onChange={(e) => setFeedback(e.target.value)} /></label>
+        <label className="field" style={{ marginBottom: 10 }}><span>Overall Feedback *</span>
+          <textarea required rows="3" value={form.feedback} onChange={(e) => set({ feedback: e.target.value })} /></label>
         <div className="small-muted" style={{ marginBottom: 10 }}>
-          This is the recruitment / client interview score — kept separate from the AI Interview score.
+          This is the internal recruitment / client interview record — kept separate from the AI
+          Interview score, and from the client&apos;s own feedback record.
         </div>
         <button className="btn btn-primary btn-sm" type="submit">Save feedback</button>
       </form>

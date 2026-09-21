@@ -209,6 +209,7 @@ model Requirement {
 
   // Prototype Create Requirement form (openAddRequirementModal / collectRequirementForm).
   internal            Boolean @default(false) // Internal Requirement vs Client Requirement
+  hiringType          String? // Client Placement | TeamLink Internal Hire — the stored form of `internal`
   closingDate         String?
   jobDescription      String?
   responsibilities    String?
@@ -351,6 +352,27 @@ model Application {
   // Client joining -> Accounts hand-off (prototype confirmClientJoining).
   offeredCtc        Float?
   joiningDate       String?
+
+  // --- Interviews & Joining (Offers / Joining / Internal Hiring) -----------
+  // Hiring Type is the fork the whole downstream flow turns on, and it is
+  // stored, never guessed at render time:
+  //   Client Placement       Selected -> Offer -> Joined Client -> Accounts
+  //                          -> Invoice -> Receivable
+  //   TeamLink Internal Hire Selected -> Internal Offer -> Accepted -> Hired
+  //                          -> HRMS Employee Creation
+  // Only a client placement ever raises an invoice; only an internal hire ever
+  // becomes an HRMS employee. See backend/src/utils/joining.js.
+  hiringType        String?   // Client Placement | TeamLink Internal Hire
+  offerStatus       String?   // Not Issued | Offer Released | Offer Accepted | Offer Declined
+  offerDate         String?
+  offerNotes        String?
+  offerAcceptedAt   DateTime?
+  documentsStatus   String?   // Pending | Submitted | Verified
+  joiningStatus     String?   // Not Scheduled | Joining Scheduled | Joined | Dropped
+  joinedAt          DateTime?
+  billingStatus     String?   // Not Applicable | Billing Pending | Invoiced
+  hrmsEmployeeId    String?   // Employee row created for a TeamLink internal hire
+  interviewFeedbacks InterviewFeedback[]
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
@@ -370,6 +392,30 @@ model InterviewEvent {
   toSlot        String?     // new date+time, on a reschedule
   by            String?     // who did it
   createdAt     DateTime    @default(now())
+}
+
+// Interview feedback. INTERNAL feedback and CLIENT feedback are two separate
+// records on the same interview and are never merged into one another — and
+// neither is ever mixed with the AI interview score, which lives in
+// Application.aiInterviewScore.
+model InterviewFeedback {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  kind          String      // Internal | Client
+  technical     Int?        // Technical Skills, 1-5
+  communication Int?        // Communication, 1-5
+  experience    Int?        // Experience, 1-5
+  roleFit       Int?        // Role Fit, 1-5
+  overall       String      // Overall Feedback
+  recommendation String     // Selected | Rejected | Hold
+  submittedById String?
+  submittedBy   String?
+  clientId      String?     // set on client feedback, so a client only ever reads its own
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([applicationId, kind])
 }
 
 model AuditLog {

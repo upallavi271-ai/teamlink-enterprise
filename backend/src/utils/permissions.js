@@ -154,11 +154,24 @@ const DEFAULT_RULES = [
   { module: 'recruiterbde', features: '*', actions: ['view'], roles: SET.MATCHING },
   { module: 'recruiterbde', features: ['Team View'], actions: ['assign'], roles: SET.RAISE },
 
-  // --- ATS: Interview Calendar ------------------------------------------
+  // --- ATS: Interviews & Joining ----------------------------------------
+  // Viewing is wide (and then cut down by utils/scope.js: a client sees only
+  // their own company's interviews, offers and joinings; a candidate only
+  // their own). Acting is the pipeline's.
   { module: 'interviews', features: '*', actions: ['view'], roles: [...SET.MATCHING, 'CLIENT', 'CANDIDATE'] },
   { module: 'interviews', features: ['Schedule Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
   { module: 'interviews', features: ['AI Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
-  { module: 'interviews', features: ['Interview Feedback'], actions: ['create', 'edit', 'approve'], roles: [...SET.PIPELINE, 'CLIENT'] },
+  // INTERNAL interview feedback — the panel's own record. A client never
+  // writes this one; they write Client Feedback below, which is a separate
+  // record on the same interview.
+  { module: 'interviews', features: ['Interview Feedback'], actions: ['create', 'edit', 'approve'], roles: SET.PIPELINE },
+  { module: 'interviews', features: ['Client Feedback'], actions: ['create', 'edit'], roles: [...SET.PIPELINE, 'CLIENT'] },
+  // Offers and Joining are recruitment work; a client watches their own.
+  { module: 'interviews', features: ['Offers', 'Joining'], actions: ['create', 'edit'], roles: SET.PIPELINE },
+  { module: 'interviews', features: ['Offers', 'Joining'], actions: ['approve', 'export'], roles: SET.RAISE },
+  // Internal Hiring ends in an HRMS employee record, so it is a lead's
+  // action, not a recruiter's — and it never touches a client placement.
+  { module: 'interviews', features: ['Internal Hiring'], actions: ['create', 'edit', 'approve'], roles: SET.RAISE },
 
   // --- HRMS --------------------------------------------------------------
   // Every employee reaches HRMS SELF-SERVICE: their own attendance, leave,

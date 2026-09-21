@@ -6,8 +6,10 @@ const { logAudit } = require('../utils/audit');
 const {
   INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TERMINAL,
   INTERVIEW_MODES, INTERVIEW_TYPES, INTERVIEW_RESULTS,
+  INTERVIEW_RECOMMENDATIONS, normalizeRecommendation,
   interviewStatusLabel, REQUIREMENT_LIVE_STATUSES,
 } = require('../utils/atsVocab');
+const { hiringTypeOf, HIRING_TYPES } = require('../utils/joining');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -76,6 +78,7 @@ const CALENDAR_INCLUDE = {
   candidate: true,
   requirement: { include: { client: true, recruiter: true, bde: true } },
   interviewEvents: { orderBy: { createdAt: 'asc' } },
+  interviewFeedbacks: true,
 };
 
 // Clients only ever see their own company's interviews. Everyone else sees all.
@@ -92,7 +95,10 @@ function interviewCode(app) {
 // The "Result" column: the interview's own recommendation if one was recorded,
 // otherwise derived from where the application sits in the pipeline.
 function derivedResult(app) {
-  if (app.interviewResult) return app.interviewResult;
+  const internal = (app.interviewFeedbacks || []).find((f) => f.kind === 'Internal');
+  if (internal) return internal.recommendation;
+  const legacy = normalizeRecommendation(app.interviewResult);
+  if (legacy) return legacy;
   if (['SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(app.stage)) return 'Selected';
   if (app.stage === 'REJECTED') return 'Rejected';
   if (app.stage === 'HOLD') return 'Hold';
@@ -128,6 +134,13 @@ function shapeRecruitment(app) {
     feedback: app.interviewFeedback,
     rescheduleCount: app.interviewRescheduleCount,
     stage: app.stage,
+    // Client Placement vs TeamLink Internal Hire, visible on the calendar
+    // itself: the two go to completely different places after Selected.
+    hiringType: hiringTypeOf(app, app.requirement),
+    // Internal and client feedback are two separate records and are shown as
+    // two separate things. Neither is ever mixed with the AI score.
+    internalFeedback: (app.interviewFeedbacks || []).find((f) => f.kind === 'Internal') || null,
+    clientFeedback: (app.interviewFeedbacks || []).find((f) => f.kind === 'Client') || null,
     history: app.interviewEvents,
   };
 }
@@ -183,7 +196,12 @@ router.get('/calendar', async (req, res) => {
     statuses: INTERVIEW_STATUS_CODES,
     types: INTERVIEW_TYPES,
     modes: INTERVIEW_MODES,
+    recommendations: INTERVIEW_RECOMMENDATIONS,
+    hiringTypes: HIRING_TYPES,
     filterOptions: {
+      departments: uniq(recruitment.map((r) => r.requirement.department)),
+      requirements: uniq(recruitment.map((r) => r.requirement.title)),
+      candidates: uniq(recruitment.map((r) => r.candidate.name)),
       clients: uniq(recruitment.map((r) => r.requirement.client?.name)),
       recruiters: uniq(recruitment.map((r) => r.requirement.recruiter?.name)),
       tls: uniq(recruitment.map((r) => r.requirement.tl)),
@@ -309,35 +327,68 @@ router.post('/interviews/:id/reschedule', async (req, res) => {
   await respondWith(res, app.id);
 });
 
-// Recruitment/client feedback. Deliberately separate from aiInterviewScore.
+// INTERNAL interview feedback — the panel’s own record.
+//
+//   Completed -> Feedback Pending -> Feedback Submitted -> Decision
+//
+// The form is Technical Skills, Communication, Experience, Role Fit, Overall
+// Feedback and a Recommendation of Selected / Rejected / Hold. Submitting it
+// moves the interview’s STATUS to Feedback Submitted; the RESULT it records
+// is a separate column and the pipeline decision is a separate action
+// (POST /ats/interviews/:id/decision). Deliberately separate from
+// aiInterviewScore, and separate from the client’s own feedback record.
 router.post('/interviews/:id/feedback', async (req, res) => {
   const app = await loadInterview(req, res);
   if (!app) return;
-  const feedback = (req.body.feedback || '').trim();
+  const feedback = (req.body.feedback || req.body.overall || '').trim();
   if (!feedback) return res.status(400).json({ error: 'Feedback is required' });
-  const result = req.body.result || 'Recommended';
-  if (!INTERVIEW_RESULTS.includes(result)) return res.status(400).json({ error: 'Unknown recommendation' });
+  // Selected / Rejected / Hold. The prototype’s older wording
+  // (Recommended / Not Selected) is still accepted and read back as the new.
+  const result = normalizeRecommendation(req.body.result || req.body.recommendation) || 'Selected';
+  if (req.body.result && !normalizeRecommendation(req.body.result) && !INTERVIEW_RESULTS.includes(req.body.result)) {
+    return res.status(400).json({ error: 'Unknown recommendation' });
+  }
   let score = null;
   if (req.body.score !== '' && req.body.score != null) {
     const n = Number(req.body.score);
     if (Number.isNaN(n)) return res.status(400).json({ error: 'Score must be a number' });
     score = Math.max(0, Math.min(100, Math.round(n)));
   }
+  const rating = (v) => {
+    if (v === '' || v == null) return null;
+    const n = Math.round(Number(v));
+    return Number.isNaN(n) ? null : Math.max(1, Math.min(5, n));
+  };
 
   await prisma.application.update({
     where: { id: app.id },
     data: {
-      interviewStatus: 'COMPLETED', interviewFeedback: feedback,
+      interviewStatus: 'FEEDBACK_SUBMITTED', interviewFeedback: feedback,
       interviewResult: result, interviewScore: score,
       // Completing the interview moves the pipeline forward, but the
-      // select/reject decision stays on the candidate profile.
+      // select/reject decision stays a decision of its own.
       ...(app.stage === 'INTERVIEW_SCHEDULED' ? { stage: 'INTERVIEW_COMPLETED' } : {}),
     },
   });
-  await recordEvent(app.id, 'COMPLETED', { reason: `Feedback recorded — ${result}`, by: req.user.name });
+  const data = {
+    technical: rating(req.body.technical),
+    communication: rating(req.body.communication),
+    experience: rating(req.body.experience),
+    roleFit: rating(req.body.roleFit),
+    overall: feedback,
+    recommendation: result,
+    submittedById: req.user.id,
+    submittedBy: req.user.name,
+  };
+  await prisma.interviewFeedback.upsert({
+    where: { applicationId_kind: { applicationId: app.id, kind: 'Internal' } },
+    create: { applicationId: app.id, kind: 'Internal', ...data },
+    update: data,
+  });
+  await recordEvent(app.id, 'FEEDBACK_SUBMITTED', { reason: `Feedback recorded — ${result}`, by: req.user.name });
   await logAudit({
     userId: req.user.id, action: `Interview feedback recorded — ${result}`, entity: 'Application',
-    entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'Completed',
+    entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'Feedback Submitted',
   });
   await respondWith(res, app.id);
 });
