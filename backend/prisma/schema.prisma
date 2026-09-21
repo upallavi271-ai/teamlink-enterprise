@@ -251,6 +251,18 @@ model Requirement {
   accountManager   String?
   portalSyncStatus String?  @default("Not Synced") // Not Synced | Pending | Synced | Failed
 
+  // --- portal_: the Job Portal workspace inside Jobs / Requirements -------
+  // PUBLISHED is a decision someone makes and is recorded with who and when;
+  // it is NOT the same thing as "live". A requirement can be OPEN and not
+  // published, and a published one that is later closed stops being offered
+  // without the publishing record being erased. portalSyncStatus (above) is
+  // the separate question of whether the posting has been pushed out since it
+  // last changed. Plain scalars, so the migration stays ADD COLUMN only.
+  portalPublished     Boolean   @default(false)
+  portalPublishedAt   DateTime?
+  portalPublishedBy   String?   // user id of whoever published it
+  portalUnpublishedAt DateTime?
+
   recruiterId   String?
   recruiter     User?              @relation("RecruiterRequirements", fields: [recruiterId], references: [id])
   bdeId         String?
@@ -354,6 +366,16 @@ model Application {
   firstSource       String?
   sourceCampaign    String?
   applicationMethod String?  @default("Manual") // Manual | Auto-Apply
+  // --- portal_: Job Portal intake ----------------------------------------
+  // An application whose `source` is PORTAL_APPLICATION_SOURCE arrived from a
+  // job portal form rather than from a recruiter keying it in. It is already a
+  // real pipeline row (that is how intake works today); "Import to ATS" is the
+  // separate, recorded act of a recruiter ADMITTING it — assigning it to the
+  // requirement's recruiter and moving it off NEW. These two columns are that
+  // record, so an un-imported portal application can always be told apart from
+  // one a recruiter has already picked up.
+  portalImportedAt  DateTime?
+  portalImportedBy  String?  // user id of whoever imported it
   aiInterviewStatus String?  @default("Required")
   aiInterviewScore  Int?
   // Client joining -> Accounts hand-off (prototype confirmClientJoining).

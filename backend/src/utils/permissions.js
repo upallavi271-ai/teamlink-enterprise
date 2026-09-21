@@ -60,6 +60,19 @@ const SET = {
   RAISE: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'ASSISTANT_MANAGER'],
   // routes/requirements.js MATCHING_ROLES — never a client
   MATCHING: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'ASSISTANT_MANAGER', 'RECRUITER', 'BDE'],
+  // --- Job Portal ---------------------------------------------------------
+  // Who may OPEN the internal Job Portal workspace. Identical to MATCHING: an
+  // ATS working role is what grants portal reach. An Accountant, an HRMS-only
+  // Employee, a Client and a Candidate are all absent, by construction — none
+  // of them holds an ATS working role, so none of them can be given the
+  // workspace by accident.
+  PORTAL_VIEW: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE'],
+  // Who may ACT in it — publish, sync, import. "Manager | View, no publishing
+  // or editing unless explicitly granted" is the access matrix's wording, and
+  // Assistant Manager and STL read the same way, so the three of them get view
+  // and nothing more by default. Role Catalog can widen any of them, which is
+  // what "unless explicitly granted" means in an app with a real matrix.
+  PORTAL_ACT: ['SUPER_ADMIN', 'ADMIN', 'TL', 'RECRUITER', 'BDE'],
   // Everyone who works inside TeamLink (no external logins).
   STAFF: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'],
   EVERYONE: ALL_ROLES,
@@ -105,7 +118,18 @@ const DEFAULT_RULES = [
 
   // --- ATS: Jobs / Requirements -----------------------------------------
   // GET /requirements, GET /requirements/:id — everyone with ATS reach, scoped.
-  { module: 'requirements', features: '*', actions: ['view'], roles: [...SET.MATCHING, 'CLIENT'] },
+  //
+  // DELIBERATELY NOT '*'. Rules are additive and a '*' expands to every
+  // feature the module carries, so a wildcard here would hand a CLIENT `view`
+  // on the internal Job Portal Workspace the moment that feature was added to
+  // the catalog. The six requirement features are named one by one; the three
+  // Job Portal features get their own rules below.
+  {
+    module: 'requirements',
+    features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline'],
+    actions: ['view'],
+    roles: [...SET.MATCHING, 'CLIENT'],
+  },
   // requireRole(...MATCHING_ROLES) on /:id/matching-candidates
   { module: 'requirements', features: ['Matching Candidates'], actions: ['view'], roles: SET.MATCHING },
   // requireRole(...RAISE_ROLES) on POST /, PUT /:id, activate, toggle-status, generate-jd
@@ -122,6 +146,49 @@ const DEFAULT_RULES = [
   { module: 'requirements', features: ['Job Posting'], actions: ['create', 'edit'], roles: SET.RAISE },
   { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: SET.MATCHING },
   { module: 'requirements', features: ['Requirement Pipeline'], actions: ['view'], roles: SET.MATCHING },
+
+  // --- ATS: Jobs / Requirements -> Job Portal ---------------------------
+  // THE ACCESS MATRIX, expressed once, here. Nothing in a route handler or a
+  // React component re-decides any of this.
+  //
+  //   Super Admin / Admin   full — view, publish, sync, import
+  //   Manager               view only (grantable)
+  //   Assistant Manager     view only, assigned scope (grantable)
+  //   STL                   view only, team/department scope (grantable)
+  //   TL                    view + act, department/team scope
+  //   Recruiter             view + act, own/assigned requirements
+  //   BDE / BDE TL          view + act, own clients' requirements
+  //   Accountant            none — no ATS working role
+  //   HRMS-only Employee    none — portal access comes from an ATS role,
+  //                         never from being an employee
+  //   Client                Client Job Portal only, never the workspace
+  //   Candidate             the public portal only; no rule here grants them
+  //                         anything, and DEFAULT_MODULES.CANDIDATE does not
+  //                         list `requirements` at all
+  //
+  // SCOPE is not in this table — utils/scope.js requirementWhere() supplies
+  // it, unchanged, so a Medical recruiter's portal rows are exactly the
+  // requirements they are assigned and an IT one's are exactly theirs.
+  { module: 'requirements', features: ['Job Portal Workspace', 'Job Portal Applications'], actions: ['view'], roles: SET.PORTAL_VIEW },
+  // `edit` publishes/unpublishes, `configure` runs Sync. Two different
+  // actions because they are two different buttons: Sync and Open Job Portal
+  // are not the same thing and are not granted as one.
+  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['edit', 'configure'], roles: SET.PORTAL_ACT },
+  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['export'], roles: SET.RAISE },
+  // `create` on Job Portal Applications is Import to ATS.
+  { module: 'requirements', features: ['Job Portal Applications'], actions: ['create'], roles: SET.PORTAL_ACT },
+  // The client-facing portal view. A CLIENT holds this and NOT the two
+  // features above, which is the whole of "a client never sees the internal
+  // posting/sync workspace" — it is a permission, not a hidden button.
+  { module: 'requirements', features: ['Client Job Portal'], actions: ['view'], roles: ['CLIENT'] },
+  // `edit` is the client's DECISION on a candidate shared with them —
+  // shortlist, reject, request an interview. It is a separate action from
+  // `view` so a read-only client login can be issued by un-ticking one box in
+  // Role Catalog, and it is deliberately NOT `candidates / Pipeline Stages /
+  // edit`: that grant would hand a client the whole internal pipeline. The
+  // three transitions it permits are fixed in routes/jobPortal.js and are the
+  // same ones routes/applications.js STAGE_OWNERS already names a CLIENT on.
+  { module: 'requirements', features: ['Client Job Portal'], actions: ['edit'], roles: ['CLIENT'] },
 
   // --- ATS: Clients ------------------------------------------------------
   { module: 'clients', features: '*', actions: ['view'], roles: [...SET.MATCHING, 'CLIENT'] },

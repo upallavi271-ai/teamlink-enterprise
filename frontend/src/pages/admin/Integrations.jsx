@@ -393,6 +393,11 @@ function JobPortalTab({ jp, stats, run }) {
             {stats.needsMapping > 0 && (
               <Link className="btn btn-sm" to="/candidates">Mapping queue ({stats.needsMapping}) →</Link>
             )}
+            {/* This screen is company-wide and Administration-only. The
+                day-to-day publishing / sync / import work is a recruiter's,
+                a TL's and a BDE's, and it lives inside Jobs / Requirements,
+                scoped to what each of them is assigned. */}
+            <Link className="btn btn-sm" to="/requirements/job-portal">Job Portal workspace →</Link>
           </div>
         </div>
         {/* Sync and Open Job Portal are two different actions and must stay

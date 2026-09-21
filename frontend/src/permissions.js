@@ -81,6 +81,26 @@ export const canManageAgreement = (user) => can(user, 'ats', 'clients', 'Agreeme
 export const canSignAgreement = (user) => can(user, 'ats', 'clients', 'Agreement Lifecycle', 'approve')
   && !canManageAgreement(user);
 
+// --- Job Portal -----------------------------------------------------------
+// Three features of the `requirements` module, not a module of their own, so
+// the sidebar, the tab strip and the buttons all read the SAME matrix the API
+// enforces. Nothing here is a role test; an accountant, an HRMS-only
+// employee, a client and a candidate simply do not hold these features.
+export const canSeePortalWorkspace = (user) => can(user, 'ats', 'requirements', 'Job Portal Workspace', 'view');
+export const canPublishToPortal = (user) => can(user, 'ats', 'requirements', 'Job Portal Workspace', 'edit');
+// Sync and Open Job Portal are TWO DIFFERENT ACTIONS and two different
+// answers. Sync writes; opening the portal is a link anyone in the workspace
+// may follow.
+export const canSyncPortal = (user) => can(user, 'ats', 'requirements', 'Job Portal Workspace', 'configure');
+export const canOpenJobPortal = (user) => canSeePortalWorkspace(user);
+export const canSeePortalApplications = (user) => can(user, 'ats', 'requirements', 'Job Portal Applications', 'view');
+export const canImportPortalApplication = (user) => can(user, 'ats', 'requirements', 'Job Portal Applications', 'create');
+export const canSeeClientPortal = (user) => can(user, 'ats', 'requirements', 'Client Job Portal', 'view');
+// A client's decision on a candidate shared with them — shortlist, reject,
+// request an interview. Its own action, so a read-only client login is one
+// un-ticked box in Role Catalog.
+export const canDecideAsClient = (user) => can(user, 'ats', 'requirements', 'Client Job Portal', 'edit');
+
 // Reports export. Was EXPORT_ROLES.includes(role).
 export const canExportReports = (user, feature) => can(user, null, 'reports', feature, 'export');
 

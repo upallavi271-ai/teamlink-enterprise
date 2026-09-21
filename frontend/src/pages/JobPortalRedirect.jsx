@@ -18,6 +18,15 @@ import { useEffect } from 'react';
 //
 // Deliberately a hard document navigation (not react-router): the portal is a
 // whole separate document, not a route inside this SPA.
+//
+// TWO IDENTITIES, NOT ONE — and this page says so rather than implying
+// otherwise. The portal keeps its own accounts (recruiter@teamlink.com and
+// friends) in localStorage under tl_job_portal_state_v1. They are not this
+// app's users, there is no SSO between them, and an application submitted
+// inside the portal never reaches this database. The DB-backed candidate flow
+// — /careers/classic, POST /api/public/jobs/:id/apply, /careers/my-applications
+// — is the one that does, and it is the authoritative one for a signed-in
+// TeamLink candidate. See the note rendered below.
 // ---------------------------------------------------------------------------
 export const JOB_PORTAL_URL = '/job-portal/';
 const JOB_PORTAL_FILE = '/job-portal/index.html';
@@ -37,6 +46,12 @@ export default function JobPortalRedirect() {
         <div className="small-muted">Opening the TeamLink Job Portal…</div>
         <p className="small-muted">
           If nothing happens, <a href={JOB_PORTAL_FILE}>open the Job Portal</a>.
+        </p>
+        <p className="small-muted">
+          The Job Portal keeps its own accounts. Signing in there is separate from your TeamLink login, and an
+          application made there does not reach a TeamLink recruiter. To apply through TeamLink itself, use the{' '}
+          <a href="/careers/classic">TeamLink careers list</a> and track it under{' '}
+          <a href="/careers/my-applications">My Applications</a>.
         </p>
       </main>
     </div>

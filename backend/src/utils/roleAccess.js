@@ -24,7 +24,19 @@ const ROLE_FEATURE_ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'ex
 
 const ROLE_ACCESS_MODULES = [
   { id: 'dashboard', label: 'Dashboard', features: ['KPI Overview', 'Department Strength', 'Pending Approvals', 'Alerts & Notifications', 'Upcoming Interviews', 'Quick Actions', 'Recruiter Leaderboard', 'Role & User Management'] },
-  { id: 'requirements', label: 'Jobs / Requirements', features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline'] },
+  // Job Portal is NOT a module of its own. It is three features of Jobs /
+  // Requirements, because that is where the work sits:
+  //   Job Portal Workspace     — the internal Publish → Sync → Applications →
+  //                              Import to ATS → Candidate Pipeline screen.
+  //                              view / edit (publish) / configure (sync).
+  //   Job Portal Applications  — the applications arriving from a portal.
+  //                              view / create (import into the pipeline).
+  //   Client Job Portal        — the CLIENT-facing view: their own published
+  //                              requirements and the candidates shared with
+  //                              them. A client holds this and never the two
+  //                              features above, which is exactly why they can
+  //                              never reach the internal workspace.
+  { id: 'requirements', label: 'Jobs / Requirements', features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline', 'Job Portal Workspace', 'Job Portal Applications', 'Client Job Portal'] },
   { id: 'clients', label: 'Clients', features: ['Client List', 'Add Client', 'Client Detail', 'Agreement Lifecycle', 'Commercial Terms', 'Client Requirements'] },
   { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores'] },
   { id: 'recruiterbde', label: 'Recruiter & BDE', features: ['Recruiter Workload', 'BDE Workload', 'Team View', 'Pending Actions'] },
