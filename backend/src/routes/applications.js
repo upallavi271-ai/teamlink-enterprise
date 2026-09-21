@@ -115,30 +115,40 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
   res.status(201).json(application);
 });
 
-router.patch('/:id/stage', async (req, res) => {
-  const { stage, interviewAt, comment } = req.body;
-  if (!stage) return res.status(400).json({ error: 'stage is required' });
+// ---------------------------------------------------------------------------
+// THE stage move. Extracted from the PATCH handler so that the route and the
+// AI assistant's confirmed "move this candidate on" action run the SAME code:
+// one permission check, one pipeline-ownership check, one set of side effects
+// (stage event, candidate communications, audit row, notifications). There is
+// no second stage-move implementation anywhere in this app.
+//
+// Returns { status, body } rather than writing to a response, because one of
+// its two callers is not an HTTP handler.
+// ---------------------------------------------------------------------------
+async function applyStageMove(user, applicationId, body = {}) {
+  const { stage, interviewAt, comment } = body;
+  if (!stage) return { status: 400, body: { error: 'stage is required' } };
 
   const allowedRoles = STAGE_OWNERS[stage];
-  if (!allowedRoles) return res.status(400).json({ error: 'Unknown stage' });
+  if (!allowedRoles) return { status: 400, body: { error: 'Unknown stage' } };
   // STAGE_OWNERS is pipeline workflow (who owns a stage), not access control:
   // the access half is caps.atsAct, resolved from the permission engine.
-  if (!req.user.caps.atsAct) {
-    return res.status(403).json({ error: "This action isn't included in your role's permissions" });
+  if (!user.caps.atsAct) {
+    return { status: 403, body: { error: "This action isn't included in your role's permissions" } };
   }
-  const isAdmin = req.user.caps.hrmsManage && req.user.caps.accountsManage;
-  if (!isAdmin && !allowedRoles.includes(req.user.atsRole || req.user.role)) {
-    return res.status(403).json({ error: "Moving to this stage isn't included in your role's permissions" });
+  const isAdmin = user.caps.hrmsManage && user.caps.accountsManage;
+  if (!isAdmin && !allowedRoles.includes(user.atsRole || user.role)) {
+    return { status: 403, body: { error: "Moving to this stage isn't included in your role's permissions" } };
   }
 
   const existing = await prisma.application.findUnique({
-    where: { id: req.params.id },
+    where: { id: applicationId },
     include: { candidate: true, requirement: { include: { client: true } } },
   });
-  if (!existing) return res.status(404).json({ error: 'Application not found' });
+  if (!existing) return { status: 404, body: { error: 'Application not found' } };
 
   const application = await prisma.application.update({
-    where: { id: req.params.id },
+    where: { id: applicationId },
     data: {
       stage,
       interviewStatus: stage === 'INTERVIEW_SCHEDULED' ? 'SCHEDULED' : stage === 'INTERVIEW_COMPLETED' ? 'COMPLETED' : existing.interviewStatus,
@@ -149,14 +159,14 @@ router.patch('/:id/stage', async (req, res) => {
         ? {
           interviewCode: existing.interviewCode || `INT-${existing.id.slice(-6).toUpperCase()}`,
           interviewType: existing.interviewType || (existing.requirement.internal ? 'Internal Panel' : 'Client Interview'),
-          interviewCreatedBy: existing.interviewCreatedBy || req.user.name,
-          ...(req.body.interviewer ? { interviewer: req.body.interviewer } : {}),
-          ...(req.body.interviewMode ? { interviewMode: req.body.interviewMode } : {}),
-          ...(req.body.interviewMeetingLink ? { interviewMeetingLink: req.body.interviewMeetingLink } : {}),
+          interviewCreatedBy: existing.interviewCreatedBy || user.name,
+          ...(body.interviewer ? { interviewer: body.interviewer } : {}),
+          ...(body.interviewMode ? { interviewMode: body.interviewMode } : {}),
+          ...(body.interviewMeetingLink ? { interviewMeetingLink: body.interviewMeetingLink } : {}),
         }
         : {}),
-      ...(req.body.offeredCtc != null && req.body.offeredCtc !== '' ? { offeredCtc: Number(req.body.offeredCtc) } : {}),
-      ...(req.body.joiningDate ? { joiningDate: req.body.joiningDate } : {}),
+      ...(body.offeredCtc != null && body.offeredCtc !== '' ? { offeredCtc: Number(body.offeredCtc) } : {}),
+      ...(body.joiningDate ? { joiningDate: body.joiningDate } : {}),
     },
   });
 
@@ -166,7 +176,7 @@ router.patch('/:id/stage', async (req, res) => {
   // (line 9099): fee = CTC x agreed fee %, GST 18%, TDS at the client's rate,
   // invoice 6 days after joining, payment due 6 days after that.
   if (stage === 'JOINED') {
-    await onApplicationJoined({ application, existing, userId: req.user.id });
+    await onApplicationJoined({ application, existing, userId: user.id });
   }
 
   // --- Pipeline History ----------------------------------------------------
@@ -181,9 +191,9 @@ router.patch('/:id/stage', async (req, res) => {
       toStage: stage,
       action: `Moved to ${groupLabelOfStage(stage)} — ${stageLabel(stage)}`,
       comment: comment || null,
-      actorUserId: req.user.id,
-      actorName: req.user.name,
-      actorRole: req.user.atsRole || req.user.role,
+      actorUserId: user.id,
+      actorName: user.name,
+      actorRole: user.atsRole || user.role,
     },
   });
 
@@ -204,7 +214,7 @@ router.patch('/:id/stage', async (req, res) => {
       requirement: existing.requirement,
       fromStage: existing.stage,
       toStage: stage,
-      user: req.user,
+      user: user,
       comment,
     });
   } catch (err) {
@@ -215,7 +225,7 @@ router.patch('/:id/stage', async (req, res) => {
   }
 
   await logAudit({
-    userId: req.user.id,
+    userId: user.id,
     action: 'Application stage changed',
     entity: 'Application',
     entityId: application.id,
@@ -237,10 +247,21 @@ router.patch('/:id/stage', async (req, res) => {
   await notifyUsers(audience, {
     title: `${existing.candidate.name} moved to ${stageLabel(stage)}`,
     message: `${existing.requirement.title} — ${existing.requirement.client.name}`,
-    exceptUserId: req.user.id,
+    exceptUserId: user.id,
   });
 
-  res.json(application);
+  return { status: 200, body: application };
+}
+
+router.patch('/:id/stage', async (req, res, next) => {
+  try {
+    const out = await applyStageMove(req.user, req.params.id, req.body);
+    return res.status(out.status).json(out.body);
+  } catch (err) {
+    return next(err);
+  }
 });
 
 module.exports = router;
+module.exports.STAGE_OWNERS = STAGE_OWNERS;
+module.exports.applyStageMove = applyStageMove;

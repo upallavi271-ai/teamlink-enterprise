@@ -83,7 +83,13 @@ const INTEGRATION_CATALOG = [
   { id: 'ai-claude', name: 'AI Assistant (Anthropic Claude)', group: 'AI', glyph: '\u{1F916}',
     desc: 'Free-text questions in the AI Assistant, answered from this app’s own data — always inside the asking user’s permissions and scope.',
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
-      ['Max answer tokens', '1500'], ['Questions per user per hour', '30']] },
+      ['Max answer tokens', '1500'], ['Questions per user per hour', '30'],
+      // OFF UNLESS THIS SAYS YES. With anything else the assistant is
+      // read-only: no write tool is offered to the model, and /api/ai/act
+      // refuses. With "Yes" the assistant may PROPOSE a stage move, an
+      // interview or a task; the user still has to press Confirm in the
+      // panel, and the permission check runs again at that moment.
+      ['Allow the assistant to act (with confirmation)', 'No']] },
 ];
 
 const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling', 'Job Boards', 'Storage', 'Finance', 'Workforce', 'Developer'];
