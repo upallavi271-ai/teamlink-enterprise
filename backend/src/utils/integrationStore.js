@@ -140,6 +140,24 @@ async function writeValues(id, incoming) {
   return { values: next, filled };
 }
 
+// Write one row to the channel's history.
+//
+// IntegrationEvent.integrationId is a foreign key, and a channel has no
+// Integration row until someone configures it — so writing an event for a
+// channel that was never saved violated the constraint, and because these
+// calls sat un-awaited-for-errors inside async routes the rejection took the
+// whole process down. ("Send test email" before saving SMTP killed the API.)
+// Ensure the parent row first, and never let history-keeping be fatal: the
+// event is a side effect of the action, not the action itself.
+async function recordEvent(integrationId, data) {
+  try {
+    await integrationRow(integrationId);
+    await prisma.integrationEvent.create({ data: { integrationId, ...data } });
+  } catch (err) {
+    console.error(`[integrations] could not record event for ${integrationId}:`, err.message);
+  }
+}
+
 module.exports = {
   isSecretField,
   parseValues,
@@ -147,4 +165,5 @@ module.exports = {
   publicValuesFor,
   readConfig,
   writeValues,
+  recordEvent,
 };

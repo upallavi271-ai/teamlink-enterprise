@@ -15,7 +15,7 @@ const {
   EMP_MGMT_STATUS_FILTER, integrationById, LIVE_CHANNELS,
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
-const { publicValuesFor, writeValues } = require('../utils/integrationStore');
+const { publicValuesFor, writeValues, recordEvent } = require('../utils/integrationStore');
 const { secretsConfigured, ENV_VAR: SECRET_ENV_VAR, NO_KEY_MESSAGE } = require('../utils/secrets');
 const mailer = require('../utils/mailer');
 const mailWorker = require('../utils/mailWorker');
@@ -981,13 +981,11 @@ router.post('/integrations/job-portal/sync', requirePerm(null, 'administration',
   await prisma.syncLog.create({
     data: { entity: 'Candidates', status: 'Success', reason: `${stats.candidates} candidate(s), ${stats.applications} application(s) read from the Job Portal` },
   });
-  await prisma.integrationEvent.create({
-    data: {
-      integrationId: 'jobportal', action: 'Sync Now', by: req.user.name,
+  await recordEvent('jobportal', {
+ action: 'Sync Now', by: req.user.name,
       result: stats.failed ? 'Completed with errors' : 'Completed',
       synced, failed: stats.failed, entities: (SYNC_ENTITIES.jobportal || []).join(', '),
-    },
-  });
+    });
   await logAudit({ userId: req.user.id, action: 'Integration sync', entity: 'Integration', entityId: 'jobportal', toValue: `${synced} synced / ${stats.failed} failed` });
   res.json({ ok: true, synced, failed: stats.failed, previousState: row.state });
 });
@@ -1053,12 +1051,10 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
     mailWorker.kick();
   }
   if (channel.id === 'ai-claude') aiAgent.resetClient();
-  await prisma.integrationEvent.create({
-    data: {
-      integrationId: channel.id, action: 'Connected', by: req.user.name,
+  await recordEvent(channel.id, {
+ action: 'Connected', by: req.user.name,
       result: live ? 'Credentials saved (encrypted at rest)' : 'OK (Demo)',
-    },
-  });
+    });
   await logAudit({ userId: req.user.id, action: 'Integration configured', entity: 'Integration', entityId: channel.id, toValue: 'Connected' });
   res.json(shapeIntegration(channel, row));
 });
@@ -1102,12 +1098,10 @@ router.post('/integrations/email/test-message', requirePerm(null, 'administratio
   const result = await mailer.verifyAndSendTest({
     to, senderEmail: sender.senderEmail, senderName: sender.senderName, by: req.user.name,
   });
-  await prisma.integrationEvent.create({
-    data: {
-      integrationId: 'email', action: 'Test Connection', by: req.user.name,
+  await recordEvent('email', {
+ action: 'Test Connection', by: req.user.name,
       result: result.ok ? `Test email accepted for ${to}` : `Failed (${result.stage || 'config'}) — ${result.error}`.slice(0, 480),
-    },
-  });
+    });
   await prisma.integration.update({
     where: { id: 'email' },
     data: {
@@ -1140,12 +1134,10 @@ router.post('/integrations/email/worker/run', requirePerm(null, 'administration'
    -------------------------------------------------------------------------- */
 router.post('/integrations/ai-claude/test-message', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const result = await aiAgent.testConnection();
-  await prisma.integrationEvent.create({
-    data: {
-      integrationId: 'ai-claude', action: 'Test Connection', by: req.user.name,
+  await recordEvent('ai-claude', {
+ action: 'Test Connection', by: req.user.name,
       result: result.ok ? `Model ${result.model} answered` : `Failed — ${result.error}`.slice(0, 480),
-    },
-  });
+    });
   await prisma.integration.update({
     where: { id: 'ai-claude' },
     data: {
@@ -1171,7 +1163,7 @@ router.post('/integrations/:id/connect', requirePerm(null, 'administration', 'In
     where: { id: channel.id },
     data: { state: 'Connected', connected: true, enabled: true, connectedAt: new Date(), error: null },
   });
-  await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Connected', by: req.user.name, result: 'OK (Demo)' } });
+  await recordEvent(channel.id, { action: 'Connected', by: req.user.name, result: 'OK (Demo)' });
   await logAudit({ userId: req.user.id, action: 'Integration connected (demo)', entity: 'Integration', entityId: channel.id, fromValue: row.state, toValue: 'Connected' });
   res.json(shapeIntegration(channel, next));
 });
@@ -1185,7 +1177,7 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
   // queued goes back to "recorded, not transmitted", which is true again.
   if (channel.id === 'email') { mailer.resetTransport(); await mailWorker.runOnce({}); }
   if (channel.id === 'ai-claude') aiAgent.resetClient();
-  await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Disconnected', by: req.user.name, result: 'OK' } });
+  await recordEvent(channel.id, { action: 'Disconnected', by: req.user.name, result: 'OK' });
   await logAudit({ userId: req.user.id, action: 'Integration disconnected', entity: 'Integration', entityId: channel.id, fromValue: row.state, toValue: 'Not Connected' });
   res.json(shapeIntegration(channel, next));
 });
@@ -1195,7 +1187,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const row = await integrationRow(channel.id);
   if (row.state !== 'Connected') {
-    await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result: 'Failed — not connected' } });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: 'Failed — not connected' });
     return res.status(409).json({ error: `${channel.name}: not connected.` });
   }
 
@@ -1234,7 +1226,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
         ...(okReal ? {} : { state: 'Reconnect Required' }),
       },
     });
-    await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) } });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
     await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: okReal ? 'OK' : 'Failed' });
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }
@@ -1251,7 +1243,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
         ...(probe.ok ? {} : { state: 'Reconnect Required' }),
       },
     });
-    await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) } });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
     await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }
@@ -1267,7 +1259,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
       ...(ok ? {} : { state: 'Reconnect Required', error: 'Endpoint did not respond during the simulated test.' }),
     },
   });
-  await prisma.integrationEvent.create({ data: { integrationId: channel.id, action: 'Test Connection', by: req.user.name, result } });
+  await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result });
   await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: result });
   res.json({ ...shapeIntegration(channel, next), result });
 });
@@ -1299,12 +1291,10 @@ router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integ
       error: failed ? `${failed} record(s) could not be synced (simulated).` : null,
     },
   });
-  await prisma.integrationEvent.create({
-    data: {
-      integrationId: channel.id, action: 'Sync Now', by: req.user.name,
+  await recordEvent(channel.id, {
+ action: 'Sync Now', by: req.user.name,
       result: failed ? 'Completed with errors' : 'Completed', synced, failed, entities: entities.join(', '),
-    },
-  });
+    });
   await logAudit({ userId: req.user.id, action: 'Integration sync', entity: 'Integration', entityId: channel.id, toValue: `${synced} synced / ${failed} failed` });
   res.json({ ...shapeIntegration(channel, next), synced, failed });
 });
