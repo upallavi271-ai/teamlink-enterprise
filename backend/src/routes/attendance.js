@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { employeeWhere, employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const {
   CHECKIN_METHODS, DIRECTIONS, toMinutes, isLate, sortedPunches, firstIn, lastOut,
   calendarDays, businessDays, monthLabel, monthStats, employeeMatchesFilters,
@@ -17,28 +18,34 @@ async function getConfig() {
   return config;
 }
 
-// Employees this request may see. Employees see only themselves; everyone else
-// sees the whole company (department scoping for STL/TL lives in employees.js and
-// is intentionally not duplicated here — attendance is read-only reporting).
+// Employees this request may see. DEPARTMENT-SCOPED: the old comment here said
+// department scoping "lives in employees.js and is intentionally not duplicated
+// here — attendance is read-only reporting", which meant a Medical TL read every
+// IT employee's attendance, punch log and monthly report. Read-only is still
+// access. utils/scope.js employeeWhere() is now the one rule for all of it, so
+// the dashboard, the biometric view, the punch log and the report are all scoped
+// by the same fragment that scopes the employee list itself.
 async function scopedEmployees(req, q = {}) {
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    return own ? [own] : [];
-  }
-  const employees = await prisma.employee.findMany({ orderBy: { name: 'asc' } });
+  const employees = await prisma.employee.findMany({
+    where: employeeWhere(req.user), orderBy: { name: 'asc' },
+  });
   return employees.filter((e) => employeeMatchesFilters(e, q));
 }
 
+// A requested employeeId is honoured only when it is INSIDE the caller's scope;
+// anything else resolves to "no such employee for you" rather than leaking a row.
 async function resolveEmployeeId(req, requestedEmployeeId) {
   if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     return own ? own.id : null;
   }
-  return requestedEmployeeId || null;
+  if (!requestedEmployeeId) return null;
+  const employee = await prisma.employee.findUnique({ where: { id: requestedEmployeeId } });
+  return employee && employeeInScope(req.user, employee) ? employee.id : '__out_of_scope__';
 }
 
 router.get('/', async (req, res) => {
-  const where = {};
+  const where = { ...employeeRecordWhere(req.user) };
   const employeeId = await resolveEmployeeId(req, req.query.employeeId);
   if (req.user.caps.hrmsSelfOnly && !employeeId) return res.json([]);
   if (employeeId) where.employeeId = employeeId;
@@ -59,6 +66,11 @@ router.post('/', async (req, res) => {
     return res.status(403).json({ error: "This isn't included in your role's permissions" });
   }
   if (!employeeId || !date || !status) return res.status(400).json({ error: 'employeeId, date and status are required' });
+  if (!req.user.caps.hrmsSelfOnly) {
+    const target = await prisma.employee.findUnique({ where: { id: employeeId } });
+    if (!target) return res.status(404).json({ error: 'Employee not found' });
+    if (!employeeInScope(req.user, target)) return res.status(403).json(OUT_OF_SCOPE);
+  }
 
   const attendance = await prisma.attendance.upsert({
     where: { employeeId_date: { employeeId, date } },
@@ -72,7 +84,7 @@ router.post('/', async (req, res) => {
 // ---- Regularization requests (correcting a missed/incorrect punch after the fact) ----
 
 router.get('/regularizations', async (req, res) => {
-  const where = {};
+  const where = { ...employeeRecordWhere(req.user) };
   const employeeId = await resolveEmployeeId(req, req.query.employeeId);
   if (req.user.caps.hrmsSelfOnly && !employeeId) return res.json([]);
   if (employeeId) where.employeeId = employeeId;
@@ -94,8 +106,11 @@ router.post('/regularizations', async (req, res) => {
 router.patch('/regularizations/:id/decision', requirePerm(null, 'hrms', 'Attendance & Time', 'approve'), async (req, res) => {
   const { status } = req.body; // Approved | Rejected
   if (!['Approved', 'Rejected'].includes(status)) return res.status(400).json({ error: 'status must be Approved or Rejected' });
-  const existing = await prisma.attendanceRegularization.findUnique({ where: { id: req.params.id } });
+  const existing = await prisma.attendanceRegularization.findUnique({
+    where: { id: req.params.id }, include: { employee: true },
+  });
   if (!existing) return res.status(404).json({ error: 'Request not found' });
+  if (!employeeInScope(req.user, existing.employee)) return res.status(403).json(OUT_OF_SCOPE);
   const regularization = await prisma.attendanceRegularization.update({ where: { id: req.params.id }, data: { status, decidedAt: new Date() } });
   if (status === 'Approved') {
     await prisma.attendance.upsert({

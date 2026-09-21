@@ -1,6 +1,30 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
+const {
+  employeeWhere, employeeRecordWhere, employeeInScope, departmentWhere, accountsGlobal, matches, OUT_OF_SCOPE,
+} = require('../utils/scope');
+
+// Who this caller may see payroll for. The payroll SCREENS are already gated
+// to Super Admin / Admin / Accountant by hrms/Payroll & Compensation/view; the
+// question here is only which employees inside that. An unconfigured Accounts
+// desk keeps the whole company (that is the job); a configured one, and any
+// department-scoped lead who is ever granted payroll, is held to their
+// departments; everybody else sees their own payslip and nothing more.
+function payrollEmployeeWhere(req) {
+  if (accountsGlobal(req.user)) return {};
+  if (req.user.caps.payrollManage) return departmentWhere(req.user);
+  return employeeWhere(req.user);
+}
+function payrollPayslipWhere(req) {
+  const where = payrollEmployeeWhere(req);
+  return Object.keys(where).length ? { employee: where } : {};
+}
+// Record-level twin, so editing a salary structure obeys the same rule the
+// list does rather than a second, hand-written one.
+function matchesScope(req, employee) {
+  return matches(employee, payrollEmployeeWhere(req));
+}
 const { logAudit } = require('../utils/audit');
 const { monthStats, monthLabel } = require('../utils/attendanceMath');
 
@@ -38,14 +62,13 @@ function salaryBreakup(annualCtc, cfg) {
 }
 
 router.get('/', async (req, res) => {
-  const where = {};
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    if (!own) return res.json([]);
-    where.employeeId = own.id;
-  } else if (req.query.employeeId) {
-    where.employeeId = req.query.employeeId;
-  }
+  // A payslip is the most personal HRMS record there is. This list is an
+  // employee's own payslip history, NOT the payroll operator's register —
+  // /payroll/structure, /preview and /runs are that — so it stays on the HRMS
+  // rule for everyone: your own, or your departments' if you lead them.
+  // Narrowed only: an accountant's reach here is unchanged from before.
+  const where = { ...employeeRecordWhere(req.user) };
+  if (req.query.employeeId) where.employeeId = req.query.employeeId;
   if (req.query.month) where.month = req.query.month;
   const payslips = await prisma.payslip.findMany({ where, include: { employee: true }, orderBy: { month: 'desc' } });
   res.json(payslips);
@@ -55,7 +78,11 @@ router.get('/', async (req, res) => {
 
 router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const cfg = await getPolicy();
-  const employees = await prisma.employee.findMany({ include: { salaryStructure: true }, orderBy: { name: 'asc' } });
+  // Salary is the most department-sensitive record in HRMS, so the structure
+  // list is held to the caller's departments like everything else.
+  const employees = await prisma.employee.findMany({
+    where: payrollEmployeeWhere(req), include: { salaryStructure: true }, orderBy: { name: 'asc' },
+  });
   res.json(
     employees.map((e) => {
       const ss = e.salaryStructure;
@@ -72,6 +99,9 @@ router.get('/reference-structure', requirePerm(null, 'hrms', 'Payroll & Compensa
 });
 
 router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
+  const inScope = await prisma.employee.findUnique({ where: { id: req.params.employeeId } });
+  if (!inScope) return res.status(404).json({ error: 'Employee not found' });
+  if (!matchesScope(req, inScope)) return res.status(403).json(OUT_OF_SCOPE);
   const { payMode, ctc, stipend } = req.body;
   const cfg = await getPolicy();
   const data = {};

@@ -9,6 +9,12 @@ const {
   moduleById, sanitizeFeatures,
 } = require('../utils/roleAccess');
 const { mergeAccess, invalidateRoleAccess } = require('../utils/permissions');
+const { scopeDepartments: scopeDepartmentsRaw, accountsGlobal } = require('../utils/scope');
+
+// The department picker's scope. Same rule as everywhere else, with the one
+// exception utils/scope.js already names: the Accounts desk runs payroll for
+// every department, so an unconfigured accountant is offered all of them.
+const scopeDepartments = (user) => (accountsGlobal(user) ? undefined : scopeDepartmentsRaw(user));
 
 // The Role Catalog is Product → Module → Feature → Action now. A module's
 // product is fixed (PRODUCT_OF_MODULE); what the product dimension buys is
@@ -457,8 +463,24 @@ router.put('/role-catalog/:role/modules/:moduleId/features', requirePerm(null, '
 });
 
 // ---- Departments & Teams (Super Admin-managed; everyone can read them for dropdowns) ----
+// THE DEPARTMENT DROPDOWN, for the whole app.
+//
+// This endpoint is deliberately NOT permission-guarded: Attendance, Payroll,
+// Announcements and Employee Detail all use it as their department picker, and
+// a guard here would blank those screens. It returned all nine departments to
+// every login, which is exactly the leak the user pointed at — "at least
+// vallaki option kuda visible avvakudadhu".
+//
+// The fix is to SCOPE THE RESPONSE, not to refuse the request: the caller is
+// offered the departments their own scope reaches and nothing else. A Medical
+// TL is offered Medical; an external login is offered none.
 router.get('/departments', async (req, res) => {
-  const departments = await prisma.department.findMany({ include: { teams: { orderBy: { name: 'asc' } } }, orderBy: { name: 'asc' } });
+  const allowed = scopeDepartments(req.user);
+  const departments = await prisma.department.findMany({
+    where: allowed === undefined ? {} : { name: { in: allowed } },
+    include: { teams: { orderBy: { name: 'asc' } } },
+    orderBy: { name: 'asc' },
+  });
   res.json(departments);
 });
 
@@ -639,7 +661,14 @@ async function orgRoles() {
 // login — a recruiter, an accountant, a candidate — could read the approval and escalation chain.
 // It is guarded by the same feature its screen is now.
 router.get('/org-structure', requirePerm(null, 'administration', 'Organization Structure', 'view'), async (req, res) => {
-  const [roles, departments] = await Promise.all([orgRoles(), prisma.department.findMany({ include: { teams: { orderBy: { name: 'asc' } } }, orderBy: { name: 'asc' } })]);
+  // Organization Structure is read-only for a scoped Manager / Assistant
+  // Manager (§15), and read-only is still scoped: they see their own branches.
+  const allowedOrg = scopeDepartments(req.user);
+  const [roles, departments] = await Promise.all([orgRoles(), prisma.department.findMany({
+    where: allowedOrg === undefined ? {} : { name: { in: allowedOrg } },
+    include: { teams: { orderBy: { name: 'asc' } } },
+    orderBy: { name: 'asc' },
+  })]);
   const branches = [...new Set((await prisma.employee.findMany({ select: { branch: true, location: true } }))
     .map((e) => e.branch || e.location).filter(Boolean))].sort();
   res.json({

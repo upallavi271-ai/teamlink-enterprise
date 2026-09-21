@@ -179,16 +179,30 @@ async function peopleFor(rows) {
 }
 
 // The people who may be put on a requirement — the Assignment picker's source.
+//
+// It carried NO permission guard, so a CLIENT login received the full internal
+// staff directory: every recruiter, TL, STL and BDE in the company, by name.
+// It is now held to the same feature that opens the Recruiter & BDE screen —
+// an ATS working role — which excludes clients, candidates, accountants and
+// HRMS-only employees by construction rather than by a role string.
+//
 // Scoped: a TL only assigns within the departments they actually cover.
-router.get('/assignable-people', async (req, res) => {
+router.get('/assignable-people', requirePerm('ats', 'recruiterbde', 'Team View', 'view'), async (req, res) => {
   const s = scopeOf(req.user);
   const where = { atsAccess: true, status: 'Active', atsRole: { in: ['RECRUITER', 'TL', 'STL', 'BDE'] } };
-  if (!s.global && s.departments.length) {
-    where.OR = [
-      { atsDepartment: { in: s.departments } },
-      { atsScopeDepartments: { in: s.departments } },
-      { atsRole: 'BDE' },
-    ];
+  if (!s.global) {
+    // `atsScopeDepartments` is a COMMA-SEPARATED column, so `{ in: [...] }`
+    // only ever matched a single-department list. `contains` per department is
+    // what actually finds an STL scoped to "Medical,IT".
+    where.OR = s.departments.length
+      ? [
+        { atsDepartment: { in: s.departments } },
+        ...s.departments.map((d) => ({ atsScopeDepartments: { contains: d } })),
+        // A BDE works across desks by definition, so the BDE bench stays
+        // visible to anyone who may assign — that is the assignment chain.
+        { atsRole: 'BDE' },
+      ]
+      : [{ id: s.userId }];
   }
   const users = await prisma.user.findMany({
     where,

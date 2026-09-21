@@ -101,10 +101,19 @@ export function mayRenderSection(user, pathname) {
 
 // leaf: { to, label, perms: [[module, feature, action], ...], product }
 // A leaf with several perms needs all of them.
-const leaf = (to, label, perms, product) => ({ to, label, perms, product });
+// `unless` is the mirror of `perms`: an entry carrying it is hidden from a
+// login that HAS those permissions. One entry needs it — HRMS -> Employees,
+// which exists for the leads who do not reach Administration.
+const leaf = (to, label, perms, product, unless) => ({ to, label, perms, product, unless });
 
 export const HRMS_ITEMS = [
   leaf('/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
+  // "Employees in assigned department" / "Team employees" (§15). The SAME
+  // screen and the SAME scoped endpoint as Administration -> Employee
+  // Management; only the entry point differs, and `unless` keeps Super Admin
+  // and Admin from seeing it listed twice (they get the Administration one).
+  leaf('/employees', 'Employees', [['hrms', 'Employee Management', 'view']], null,
+    [['administration', 'Users', 'view']]),
   leaf('/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
   leaf('/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
@@ -144,41 +153,40 @@ export const ACCOUNTS_ITEMS = [
   leaf('/bank', 'Bank & Reconciliation', [['accounts', 'Bank & Reconciliation', 'view']]),
 ];
 
-// ADMINISTRATION — Super Admin and Admin only.
+// ADMINISTRATION — §15, exactly.
 //
-// EVERY entry here now names an `administration` permission, and nothing else
-// does. The engine only switches the administration MODULE on for a role that
-// is listed for it (permissions.js DEFAULT_MODULES), so a Recruiter, TL, BDE,
-// Accountant, Employee, Client or Candidate matches none of these and
-// visibleItems() returns an empty list — which makes groupsForUser() drop the
-// whole "Administration" group rather than show a one-item stub.
+//   Super Admin / Admin      the whole group
+//   Manager / Asst Manager   Profile, Notifications, and — IF CONFIGURED in
+//                            Role Catalog — read-only Organization Structure
+//                            and Audit Logs
+//   everyone else            Profile and Notifications, nothing more
 //
-// One entry changed to make that true:
-//   * Notifications and Profile were `perms: null` — always visible — which
-//     kept the group alive for literally everyone, including a candidate.
-//     Notifications is reachable from the bell in the topbar whatever your
-//     role; the page itself is still routed and still open to everyone at
-//     /admin/notifications and /admin/profile. Only the menu entry is gated.
+// Two things changed to make that true.
 //
-// Grant a role the administration module in Role Catalog and the group comes
-// back for it — "unless an administration permission was deliberately
-// granted" is exactly what this expresses.
+//   * Profile and Notifications are EVERYONE'S (§15), so they carry no perms.
+//     They were gated on `administration / Users / view`, i.e. Super Admin and
+//     Admin, which meant every other login had no Profile entry at all.
+//     External logins still reach only these two — nav.js mayRenderSection()
+//     lists both in ALWAYS_OPEN_PATHS and refuses the rest of /admin — and the
+//     group is labelled "Settings" for them, never "Administration".
+//
+//   * Employee Management now names an ADMINISTRATION permission. It used to
+//     name the HRMS one so a TL could still reach their department's people,
+//     which — once the screen moved under Administration — gave a TL an
+//     "Administration" group containing that single entry. §15 says that is
+//     wrong. The TL's access did not go away: it moved to where the matrix
+//     puts it, HRMS -> Employees, pointing at the same scoped screen.
 export const ADMIN_ITEMS = [
   leaf('/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
   leaf('/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
-  // Employee Management is its own module under Administration. Its permission
-  // stays the HRMS one deliberately: the screen is scoped, so an HR role — a
-  // TL, an STL, a Manager — still reaches their own department's employees
-  // without being granted the administration module. The consequence is that
-  // such a login sees an Administration group containing only this entry.
-  leaf('/employees', 'Employee Management', [['hrms', 'Employee Management', 'view']]),
+  leaf('/employees', 'Employee Management', [['administration', 'Users', 'view']]),
   leaf('/admin/users', 'Users', [['administration', 'Users', 'view']]),
   leaf('/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
   leaf('/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
   leaf('/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
-  leaf('/admin/notifications', 'Notifications', [['administration', 'Notifications', 'view']]),
   leaf('/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
-  leaf('/admin/profile', 'Profile', [['administration', 'Users', 'view']]),
+  leaf('/admin/notifications', 'Notifications', null),
+  leaf('/admin/profile', 'Profile', null),
 ];
 
 export const REPORTS_ITEMS = [
@@ -189,8 +197,10 @@ export const REPORTS_ITEMS = [
 
 function leafVisible(user, item) {
   if (item.product && !(user?.products || {})[item.product]) return false;
+  const held = ([m, f, a]) => (f ? can(user, null, m, f, a) : canModule(user, m));
+  if (item.unless && item.unless.every(held)) return false;
   if (!item.perms) return true;                       // Notifications, Profile
-  return item.perms.every(([m, f, a]) => (f ? can(user, null, m, f, a) : canModule(user, m)));
+  return item.perms.every(held);
 }
 
 // Filter a group's items, dropping any section left with no visible tab.
@@ -236,12 +246,16 @@ export function flattenGroups(groups) {
 // Which sidebar section a URL belongs to, so the group opens and the topbar
 // title / breadcrumb name the right section.
 const SECTION_OF_PATH = [
-  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile)/, 'hrms'],
+  // /employees is the employee list. It is an HRMS screen for the leads who
+  // reach it from HRMS -> Employees, and the same screen for an admin who
+  // reaches it from Administration -> Employee Management; putting it in the
+  // HRMS section keeps a TL's sidebar from opening an Administration group
+  // they hold nothing else in.
+  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile|employees)/, 'hrms'],
   [/^\/(ats|requirements|clients|candidates|client-portal)/, 'ats'],
   [/^\/(accounts|invoices|bank|office)/, 'accounts'],
   [/^\/reports/, 'reports'],
-  // /employees is Employee Management, its own module under Administration.
-  [/^\/(admin|employees)/, 'admin'],
+  [/^\/admin/, 'admin'],
 ];
 export function sectionOf(pathname) {
   const hit = SECTION_OF_PATH.find(([re]) => re.test(pathname));

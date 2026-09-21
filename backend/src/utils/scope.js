@@ -180,10 +180,20 @@ function clientWhere(user) {
   if (s.atsRole === 'RECRUITER') {
     return { requirements: { some: requirementWhere(user) } };
   }
-  // TL / STL / Manager reach the client directory — they CAN raise a
-  // requirement, and it is the backing list for doing so. It carries no other
-  // client's candidates, and each client's detail is still scope-checked.
-  return {};
+  // TL / STL / Manager / Assistant Manager reach the client directory — they
+  // CAN raise a requirement and this is the backing list for doing so — but
+  // DEPARTMENT ISOLATION applies here too: a Medical TL is offered Medical's
+  // clients, not the Educational desk's. `ownerDepartment` is the client's own
+  // desk; the second arm keeps any client they already hold a requirement for,
+  // so a cross-desk assignment never blanks a row they legitimately work on.
+  const departments = scopeDepartments(user);
+  if (departments === undefined) return {};
+  return {
+    OR: [
+      { ownerDepartment: { in: departments } },
+      { requirements: { some: requirementWhere(user) } },
+    ],
+  };
 }
 
 // --- Applications / pipeline / interviews ----------------------------------
@@ -231,8 +241,24 @@ function candidateWhere(user) {
 function invoiceWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  if (s.accountsRole === 'ACCOUNTANT') return {};
   if (s.accountsRole === 'CLIENT' || s.role === 'CLIENT') return { clientId: s.clientId || '__none__' };
+  // An invoice's department is the department of the CLIENT it is raised
+  // against, or of the REQUIREMENT it bills for. Both arms are needed: an
+  // ad-hoc invoice has no requirement, and a requirement can be raised for a
+  // client owned by another desk.
+  const departments = scopeDepartments(user);
+  const byDepartment = departments === undefined ? {} : {
+    OR: [
+      { client: { ownerDepartment: { in: departments } } },
+      { requirement: { department: { in: departments } } },
+    ],
+  };
+  // An ACCOUNTANT with no configured department list keeps the whole ledger.
+  // Configure one and they see only the invoices raised against their
+  // departments' clients and requirements.
+  if (s.accountsRole === 'ACCOUNTANT') return {};
+  // Any other role reaching this function has the Accounts module but no
+  // accounts working role (a Manager, today). Unchanged: no invoices.
   return { id: '__none__' };
 }
 
@@ -247,6 +273,79 @@ function employeeWhere(user) {
     return { department: { in: s.departments } };
   }
   return { id: s.employeeId || '__none__' };
+}
+
+// --- DEPARTMENT ISOLATION (all three products) ------------------------------
+// "hrms ayina, ats ayina, accounts ayina, ey department vallaki ahh department
+// dhey visible avvali" — whichever product, a person sees their own
+// department's data and nobody else's.
+//
+// Four helpers, and every department-aware list in the app spreads one of
+// them. This is NOT a second scoping mechanism: each one is expressed in terms
+// of scopeOf() / employeeWhere() above, so widening a role's scope in one
+// place widens it everywhere.
+
+// EVERY department this user may reach, or `undefined` when they are
+// unrestricted (Super Admin / Admin, or a Manager / Assistant Manager with no
+// configured department list). A scoped login with no department at all gets a
+// sentinel rather than [], so a `{ in: [] }` can never silently match nothing
+// in one place and everything in another.
+function scopeDepartments(user) {
+  const s = scopeOf(user);
+  if (s.global) return undefined;
+  return s.departments.length ? s.departments : ['__no_department_assigned__'];
+}
+
+// The Prisma `where` fragment for a model that carries its own `department`
+// column (Employee, Requirement, PayrollRun, Announcement, ...).
+function departmentWhere(user, field = 'department') {
+  const departments = scopeDepartments(user);
+  return departments === undefined ? {} : { [field]: { in: departments } };
+}
+
+// The Prisma `where` fragment for a model that hangs off an Employee —
+// Attendance, LeaveRequest, Payslip, EmployeeRecord, PerformanceReview,
+// HelpdeskTicket and the rest of HRMS. It is employeeWhere() lifted through
+// the relation, so the three tiers stay in ONE place:
+//
+//   global (Super Admin / Admin / unconfigured Manager) -> every employee
+//   HRMS lead with departments (STL/TL/Manager/AsstMgr) -> their departments
+//   everyone else                                       -> themselves only
+//
+// An HRMS-only Employee therefore keeps exactly the self-service rows they had
+// before, and a Medical TL stops seeing an IT employee's attendance.
+function employeeRecordWhere(user, relation = 'employee') {
+  const where = employeeWhere(user);
+  return Object.keys(where).length ? { [relation]: where } : {};
+}
+
+// Record-level twin of employeeRecordWhere(), for the detail and decision
+// endpoints. `employee` is an Employee row (anything carrying id + department).
+function employeeInScope(user, employee) {
+  if (!employee) return false;
+  return matches(employee, employeeWhere(user));
+}
+
+// Some work is COMPANY-WIDE BY FUNCTION rather than departmental: running
+// payroll and keeping the ledger are the Accounts desk's job across every
+// department. "Accounts" on an accountant's record is where they SIT, not a
+// recruiting desk they were scoped to, so narrowing them to it would mean an
+// accountant could only invoice the Accounts department and only pay three
+// people — which is not department isolation, it is a broken ledger.
+//
+// So an Accountant stays company-wide for Accounts and Payroll. Department
+// isolation still reaches these products: it is invoiceWhere() below that
+// decides, by the CLIENT's owning department and the REQUIREMENT's department,
+// and a non-accountant who is granted the Accounts module is held to it.
+function accountsGlobal(user) {
+  const s = scopeOf(user);
+  return s.global || s.accountsRole === 'ACCOUNTANT';
+}
+
+// What a screen prints when it says "you are seeing X".
+function scopeLabel(user) {
+  const departments = scopeDepartments(user);
+  return departments === undefined ? 'All departments' : departments.join(', ');
 }
 
 // --- Record-level check, used by can(..., record) and by detail endpoints ---
@@ -309,6 +408,12 @@ module.exports = {
   CLIENT_SHARED_STAGES,
   invoiceWhere,
   employeeWhere,
+  scopeDepartments,
+  departmentWhere,
+  accountsGlobal,
+  employeeRecordWhere,
+  employeeInScope,
+  scopeLabel,
   recordInScope,
   matches,
   OUT_OF_SCOPE,

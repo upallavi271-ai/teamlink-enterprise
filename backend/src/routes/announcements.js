@@ -2,13 +2,29 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { scopeDepartments } = require('../utils/scope');
 
 const router = express.Router();
 router.use(requireAuth);
 
 
+// `target` is free text ("All Employees", "Medical", "IT · Manufacturing"), so
+// the scope rule is: a company-wide notice reaches everyone, a notice naming a
+// department reaches that department only. A department-scoped viewer never
+// sees another desk's announcement.
 router.get('/', async (req, res) => {
-  const announcements = await prisma.announcement.findMany({ orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }] });
+  const departments = scopeDepartments(req.user);
+  const where = departments === undefined ? {} : {
+    OR: [
+      { target: null },
+      { target: '' },
+      { target: { contains: 'All' } },
+      ...departments.map((d) => ({ target: { contains: d } })),
+    ],
+  };
+  const announcements = await prisma.announcement.findMany({
+    where, orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
+  });
   res.json(announcements);
 });
 

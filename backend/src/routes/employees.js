@@ -3,7 +3,13 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
-const { scopeOf } = require('../utils/scope');
+const {
+  scopeOf,
+  scopeDepartments: scopeDepartmentsOf,
+  departmentWhere: departmentWhereOf,
+  scopeLabel: scopeLabelOf,
+  clientWhere,
+} = require('../utils/scope');
 const { logAudit, logFieldChanges, resolveFieldApprovals } = require('../utils/audit');
 const { sendCredentials, unguessablePasswordHash } = require('../utils/employeeInvite');
 // The designation -> role / product-access mapping. DATA in the
@@ -64,24 +70,13 @@ router.use(requireAuth);
 // STL or a Manager scoped to several departments saw one department's list
 // while assertInScope() below happily allowed all of theirs — the list and
 // the record check disagreed. One function now answers for both.
-function scopeDepartments(req) {
-  const s = scopeOf(req.user);
-  if (s.global) return undefined;
-  return s.departments.length ? s.departments : ['__no_department_assigned__'];
-}
-
-// The Prisma `where` fragment for that scope. The list, the review queue, the
-// export and the import all spread this, so no surface can quietly skip it.
-function departmentWhere(req) {
-  const departments = scopeDepartments(req);
-  return departments === undefined ? {} : { department: { in: departments } };
-}
-
-// What a screen prints when it says "you are seeing X".
-function scopeLabel(req) {
-  const departments = scopeDepartments(req);
-  return departments === undefined ? 'All departments' : departments.join(', ');
-}
+// These three moved to utils/scope.js, where attendance, leave, payroll, the
+// employee-record routers and the option endpoints now read the SAME copy.
+// They are kept here as thin req-taking wrappers so the dozens of call sites
+// below read unchanged — there is still exactly one rule.
+const scopeDepartments = (req) => scopeDepartmentsOf(req.user);
+const departmentWhere = (req) => departmentWhereOf(req.user);
+const scopeLabel = (req) => scopeLabelOf(req.user);
 
 async function assertInScope(req, employee) {
   const s = scopeOf(req.user);
@@ -531,11 +526,19 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
       select: { id: true, name: true, department: true, location: true },
       orderBy: { name: 'asc' },
     }),
-    prisma.department.findMany({ include: { teams: true }, orderBy: { name: 'asc' } }),
+    // The department tree and the client list are OPTION LISTS too, and they
+    // were company-wide: a Medical TL opening Add Employee was offered all
+    // nine departments in the Edit Scope checklist and all four clients.
+    // Both are now held to the caller's own scope.
+    prisma.department.findMany({
+      where: scopeDepartments(req) === undefined ? {} : { name: { in: scopeDepartments(req) } },
+      include: { teams: true },
+      orderBy: { name: 'asc' },
+    }),
     designationRows(),
     prisma.employee.count(),
     mailer.emailConfig(),
-    prisma.client.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }).catch(() => []),
+    prisma.client.findMany({ where: clientWhere(req.user), select: { id: true, name: true }, orderBy: { name: 'asc' } }).catch(() => []),
   ]);
   // The department and location pickers are CREATABLE (both columns are plain
   // strings by design), so a value typed into Add Employee is not in the

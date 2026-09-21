@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
+const { employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -65,14 +66,8 @@ function present(record, days) {
 }
 
 router.get('/', async (req, res) => {
-  const where = { type: 'RESIGNATION' };
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    if (!own) return res.json([]);
-    where.employeeId = own.id;
-  } else if (req.query.employeeId) {
-    where.employeeId = req.query.employeeId;
-  }
+  const where = { type: 'RESIGNATION', ...employeeRecordWhere(req.user) };
+  if (req.query.employeeId) where.employeeId = req.query.employeeId;
   if (req.query.status) where.status = req.query.status;
   const [records, days] = await Promise.all([
     prisma.employeeRecord.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } }),
@@ -85,7 +80,7 @@ router.get('/', async (req, res) => {
 // been relieved, the configured notice period and the standard exit checklist.
 router.get('/summary', requirePerm(null, 'hrms', 'Employee Services', 'export'), async (req, res) => {
   const [records, days] = await Promise.all([
-    prisma.employeeRecord.findMany({ where: { type: 'RESIGNATION' } }),
+    prisma.employeeRecord.findMany({ where: { type: 'RESIGNATION', ...employeeRecordWhere(req.user) } }),
     noticePeriodDays(),
   ]);
   res.json({

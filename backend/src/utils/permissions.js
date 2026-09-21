@@ -324,8 +324,29 @@ const DEFAULT_RULES = [
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Performance & Development'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Employee Services'], actions: ['create', 'edit', 'approve', 'delete', 'export'], roles: SET.HR },
-  { module: 'hrms', features: ['Employee Management'], actions: ['view', 'create', 'edit', 'export'], roles: SET.HR },
-  { module: 'hrms', features: ['Employee Management'], actions: ['delete', 'approve', 'assign', 'configure'], roles: SET.ADMIN },
+  // EMPLOYEE MANAGEMENT — the split the access matrix (§15) implies.
+  //
+  // The SCREEN moved under Administration yesterday, but the matrix gives
+  // Administration to Super Admin and Admin only, while still giving a
+  // Manager / STL / TL "Employees in assigned department" / "Team employees"
+  // under HRMS. Those two facts are only compatible if VIEW and ADMINISTER
+  // are different grants — so they are:
+  //
+  //   view   -> SET.HR   an HR lead reads THEIR DEPARTMENT'S employees, from
+  //                      the HRMS group (nav.js HRMS_ITEMS -> "Employees"),
+  //                      scoped by utils/scope.js employeeWhere().
+  //   edit   -> SET.HR   a lead still maintains their own people's records.
+  //   create / export / delete / approve / assign / configure -> SET.ADMIN
+  //                      Add Employee, the CSV/XLSX/PDF export, Edit Scope and
+  //                      the rest of the administration screen. This is the
+  //                      "Administration -> Employee Management is Super Admin
+  //                      / Admin only" half.
+  //
+  // `view` deliberately stays with SET.HR: middleware/auth.js caps.hrmsManage
+  // reads it, and narrowing it would silently turn every HR lead into a
+  // self-service-only login across attendance, leave and employee services.
+  { module: 'hrms', features: ['Employee Management'], actions: ['view', 'edit'], roles: SET.HR },
+  { module: 'hrms', features: ['Employee Management'], actions: ['create', 'export', 'delete', 'approve', 'assign', 'configure'], roles: SET.ADMIN },
   // requireRole(...PAYROLL_ROLES) — payroll structures, runs, F&F, reports.
   { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'create', 'edit', 'approve', 'export'], roles: SET.ACCOUNTS },
   // requireRole('SUPER_ADMIN','ADMIN') — attendance policy, payroll policy &

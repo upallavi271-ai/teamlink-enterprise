@@ -73,13 +73,10 @@ function present(ticket, req) {
   };
 }
 
+// DEPARTMENT-SCOPED: an HR lead handles their own departments' tickets.
 async function loadScoped(req, where = {}) {
-  const filter = { type: 'HELPDESK', ...where };
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    if (!own) return [];
-    filter.employeeId = own.id;
-  }
+  const { employeeRecordWhere } = require('../utils/scope');
+  const filter = { type: 'HELPDESK', ...employeeRecordWhere(req.user), ...where };
   return prisma.employeeRecord.findMany({ where: filter, include: { employee: true }, orderBy: { createdAt: 'desc' } });
 }
 

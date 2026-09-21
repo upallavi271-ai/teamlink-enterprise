@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { employeeWhere, employeeRecordWhere, employeeInScope, scopeDepartments, OUT_OF_SCOPE } = require('../utils/scope');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -46,15 +47,12 @@ async function ensureBalances(employeeIds) {
   if (missing.length) await prisma.leaveBalance.createMany({ data: missing });
 }
 
+// DEPARTMENT-SCOPED. employeeRecordWhere() already resolves the three tiers —
+// global / this user's departments / themselves only — so the self-only branch
+// that used to live here is gone rather than duplicated.
 router.get('/', async (req, res) => {
-  const where = {};
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    if (!own) return res.json([]);
-    where.employeeId = own.id;
-  } else if (req.query.employeeId) {
-    where.employeeId = req.query.employeeId;
-  }
+  const where = { ...employeeRecordWhere(req.user) };
+  if (req.query.employeeId) where.employeeId = req.query.employeeId;
   if (req.query.status) where.status = req.query.status;
   const leave = await prisma.leaveRequest.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } });
   res.json(leave);
@@ -109,8 +107,12 @@ router.post('/', async (req, res) => {
 router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'approve'), async (req, res) => {
   const { status, approvalReason, rejectReason } = req.body; // Approved | Rejected | Cancelled
   if (!['Approved', 'Rejected', 'Cancelled'].includes(status)) return res.status(400).json({ error: 'status must be Approved, Rejected or Cancelled' });
-  const existing = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
+  const existing = await prisma.leaveRequest.findUnique({
+    where: { id: req.params.id }, include: { employee: true },
+  });
   if (!existing) return res.status(404).json({ error: 'Leave request not found' });
+  // A Medical TL does not decide an IT employee's leave.
+  if (!employeeInScope(req.user, existing.employee)) return res.status(403).json(OUT_OF_SCOPE);
 
   const cfg = await getConfig();
   const days = existing.days != null ? existing.days : daySpan(existing.fromDate, existing.toDate);
@@ -156,13 +158,10 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
 
 router.get('/balances', async (req, res) => {
   const types = (await prisma.leaveType.findMany({ orderBy: { name: 'asc' } })).filter((t) => t.active);
-  let employees;
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    employees = own ? [own] : [];
-  } else {
-    employees = await prisma.employee.findMany({ where: { employmentStatus: { not: 'Relieved' } }, orderBy: { name: 'asc' } });
-  }
+  const employees = await prisma.employee.findMany({
+    where: { ...employeeWhere(req.user), employmentStatus: { not: 'Relieved' } },
+    orderBy: { name: 'asc' },
+  });
   await ensureBalances(employees.map((e) => e.id));
   const balances = await prisma.leaveBalance.findMany({ where: { employeeId: { in: employees.map((e) => e.id) } } });
 
@@ -188,6 +187,9 @@ router.get('/balances', async (req, res) => {
 router.put('/balances/:employeeId', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { type, total, taken } = req.body;
   if (!type) return res.status(400).json({ error: 'type is required' });
+  const target = await prisma.employee.findUnique({ where: { id: req.params.employeeId } });
+  if (!target) return res.status(404).json({ error: 'Employee not found' });
+  if (!employeeInScope(req.user, target)) return res.status(403).json(OUT_OF_SCOPE);
   const balance = await prisma.leaveBalance.upsert({
     where: { employeeId_type: { employeeId: req.params.employeeId, type } },
     update: { total: total != null ? Number(total) : undefined, taken: taken != null ? Number(taken) : undefined },
@@ -201,9 +203,16 @@ router.put('/balances/:employeeId', requirePerm(null, 'hrms', 'Leave & Holidays'
 
 router.get('/on-leave-today', requirePerm(null, 'hrms', 'Leave & Holidays', 'export'), async (req, res) => {
   const today = req.query.date || new Date().toISOString().slice(0, 10);
-  const employees = await prisma.employee.findMany({ where: { employmentStatus: { not: 'Relieved' } } });
+  const employees = await prisma.employee.findMany({
+    where: { ...employeeWhere(req.user), employmentStatus: { not: 'Relieved' } },
+  });
+  // The "who is on leave today" board is DEPARTMENT-WISE, so it is also
+  // department-SCOPED: a Medical TL counts Medical, not the whole company.
   const approved = await prisma.leaveRequest.findMany({
-    where: { status: 'Approved', fromDate: { lte: today }, toDate: { gte: today } },
+    where: {
+      ...employeeRecordWhere(req.user),
+      status: 'Approved', fromDate: { lte: today }, toDate: { gte: today },
+    },
     include: { employee: true },
   });
   const departments = [...new Set(employees.map((e) => e.department).filter(Boolean))].sort();
@@ -218,10 +227,15 @@ router.get('/on-leave-today', requirePerm(null, 'hrms', 'Leave & Holidays', 'exp
 // Employee requests cancellation of an already-approved leave; HR decides via /decision above.
 router.patch('/:id/cancel-request', async (req, res) => {
   const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-  const existing = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
+  const existing = await prisma.leaveRequest.findUnique({
+    where: { id: req.params.id }, include: { employee: true },
+  });
   if (!existing) return res.status(404).json({ error: 'Leave request not found' });
   if (req.user.caps.hrmsSelfOnly && (!own || existing.employeeId !== own.id)) {
     return res.status(403).json({ error: "This isn't included in your role's permissions" });
+  }
+  if (!req.user.caps.hrmsSelfOnly && !employeeInScope(req.user, existing.employee)) {
+    return res.status(403).json(OUT_OF_SCOPE);
   }
   const leave = await prisma.leaveRequest.update({ where: { id: req.params.id }, data: { status: 'Cancellation Requested' } });
   await logAudit({ userId: req.user.id, action: 'Leave cancellation requested', entity: 'LeaveRequest', entityId: leave.id });

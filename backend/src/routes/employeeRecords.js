@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const attachments = require('../utils/attachments');
 
 
@@ -22,25 +23,20 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
   // The record, if this user may reach it at all — exactly the rule the list
   // and the free-form patch below already apply, in one place so the upload
   // and the download cannot drift from it.
+  // DEPARTMENT-SCOPED, via the one rule in utils/scope.js: an HRMS lead reaches
+  // their departments' records and nobody else's; everyone else reaches their
+  // own. This covers KT, Targets, Recognition, Disciplinary, Shift Roster,
+  // Timesheet, Assets, Expense Claims, Access Requests and Weekly Ideas at once.
   async function reachable(req, id) {
-    const record = await prisma.employeeRecord.findUnique({ where: { id } });
+    const record = await prisma.employeeRecord.findUnique({ where: { id }, include: { employee: true } });
     if (!record || record.type !== type) return { error: 404 };
-    if (req.user.caps.hrmsSelfOnly) {
-      const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-      if (!own || record.employeeId !== own.id) return { error: 403 };
-    }
+    if (!employeeInScope(req.user, record.employee)) return { error: 403 };
     return { record };
   }
 
   router.get('/', async (req, res) => {
-    const where = { type };
-    if (req.user.caps.hrmsSelfOnly) {
-      const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-      if (!own) return res.json([]);
-      where.employeeId = own.id;
-    } else if (req.query.employeeId) {
-      where.employeeId = req.query.employeeId;
-    }
+    const where = { type, ...employeeRecordWhere(req.user) };
+    if (req.query.employeeId) where.employeeId = req.query.employeeId;
     if (req.query.status) where.status = req.query.status;
     const records = await prisma.employeeRecord.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } });
     res.json(records);
@@ -61,6 +57,11 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
       employeeId = own.id;
     }
     if (!employeeId || !title) return res.status(400).json({ error: 'employeeId and title are required' });
+    if (!req.user.caps.hrmsSelfOnly) {
+      const target = await prisma.employee.findUnique({ where: { id: employeeId } });
+      if (!target) return res.status(404).json({ error: 'Employee not found' });
+      if (!employeeInScope(req.user, target)) return res.status(403).json(OUT_OF_SCOPE);
+    }
 
     const record = await prisma.employeeRecord.create({
       data: {
@@ -87,6 +88,9 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
   router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res) => {
     const { status } = req.body;
     if (!status) return res.status(400).json({ error: 'status is required' });
+    const reach = await reachable(req, req.params.id);
+    if (reach.error === 404) return res.status(404).json({ error: 'Record not found' });
+    if (reach.error) return res.status(403).json(OUT_OF_SCOPE);
     const record = await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { status } });
     await logAudit({ userId: req.user.id, action: `${type} status changed`, entity: 'EmployeeRecord', entityId: record.id, toValue: status });
     res.json(record);
