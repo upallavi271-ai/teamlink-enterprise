@@ -13,6 +13,7 @@ import ClientDetail from './pages/ClientDetail.jsx';
 import Agreements from './pages/Agreements.jsx';
 import Candidates from './pages/Candidates.jsx';
 import CandidateDetail from './pages/CandidateDetail.jsx';
+import CandidateHome from './pages/CandidateHome.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
@@ -133,6 +134,9 @@ export default function App() {
         <Route path="agreements" element={<Agreements />} />
         <Route path="candidates" element={<Candidates />} />
         <Route path="candidates/:id" element={<CandidateDetail />} />
+        {/* Where a signed-in candidate lands (identity.js WORKSPACE_HOME).
+            The route did not exist, so logging in as one hit a dead page. */}
+        <Route path="my-applications" element={<CandidateHome />} />
         <Route path="ats/team" element={<Team />} />
         <Route path="ats/calendar" element={<InterviewCalendar />} />
         {/* Interviews & Joining: Interview Calendar (above) - Interview Feedback
