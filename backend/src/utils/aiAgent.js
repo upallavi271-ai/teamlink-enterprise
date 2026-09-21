@@ -117,6 +117,10 @@ function resetClient() { cachedClient = null; }
 // guard on a single-process app, and a restart losing it is not a problem.
 const hits = new Map(); // userId -> number[] (timestamps)
 
+// Forgets the per-user counters. Used by backend/test/aiAgent.harness.js,
+// which asks far more questions in a minute than a person ever would.
+function resetRateLimits() { hits.clear(); }
+
 function rateCheck(userId, perHour) {
   const now = Date.now();
   const list = (hits.get(userId) || []).filter((t) => now - t < 3600_000);
@@ -437,6 +441,6 @@ module.exports = {
   // features (today: the weekly-idea screener in utils/ideaAi.js) reuse the
   // same key handling, the same cached client and the SAME per-user hourly
   // budget rather than opening a second one.
-  clientFor, rateCheck, apiError,
+  clientFor, rateCheck, resetRateLimits, apiError,
   MAX_HISTORY_TURNS, MAX_TOOL_ITERATIONS,
 };

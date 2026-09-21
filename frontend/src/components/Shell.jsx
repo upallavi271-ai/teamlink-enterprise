@@ -4,7 +4,7 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
-  SECTION_LABEL, groupsForUser, flattenGroups, sectionOf, scoreMatch,
+  sectionLabel, groupsForUser, flattenGroups, sectionOf, scoreMatch,
 } from '../nav';
 import Logo from './Logo.jsx';
 import AiAssistant from './AiAssistant.jsx';
@@ -148,7 +148,7 @@ export default function Shell() {
       <div className="content-col">
         <div className="topbar">
           <button className="hamburger" onClick={() => setOpen(true)} title="Menu">☰</button>
-          <div className="topbar-title">{SECTION_LABEL[section] || 'Dashboard'}</div>
+          <div className="topbar-title">{sectionLabel(section, user)}</div>
           <form className="gsearch" onSubmit={onSearch}>
             <input
               type="text"
@@ -181,7 +181,7 @@ export default function Shell() {
             <span className="bc-current">Dashboard</span>
           ) : (
             <>
-              <span className="bc-current">{SECTION_LABEL[section]}</span>
+              <span className="bc-current">{sectionLabel(section, user)}</span>
               {current && current.parent && (
                 <>
                   <span className="bc-sep">/</span>
@@ -219,7 +219,8 @@ export default function Shell() {
         </main>
 
         <footer>
-          TeamLink.Enterprise — HRMS + ATS + Accounts in one login · connected to the TeamLink Job Portal
+          {/* No product names: this footer renders for clients and candidates too. */}
+          TeamLink.Enterprise · connected to the TeamLink Job Portal
         </footer>
       </div>
 

@@ -40,11 +40,60 @@ function DueChip({ row }) {
   return <span className="small-muted">{row.due}</span>;
 }
 
+// Offered only where the login could actually answer them, so a candidate is
+// never shown a question about invoices.
 const SUGGESTIONS = [
-  'What is waiting on me right now?',
-  'Which of my requirements has the fewest candidates?',
-  'Draft a job description for my newest open role.',
+  { text: 'What is waiting on me right now?', needs: 'ats' },
+  { text: 'Which of my requirements has the fewest candidates?', needs: 'ats' },
+  { text: 'Draft a job description for my newest open role.', needs: 'ats' },
+  { text: 'How much leave do I have left?', needs: 'hrms' },
+  { text: 'What tasks are overdue on my plate?', needs: 'hrms' },
+  { text: 'How much is outstanding, and how much of it is overdue?', needs: 'accounts' },
 ];
+
+// ---------------------------------------------------------------------------
+// A proposed action. NOTHING HAS HAPPENED YET when this renders: the agent
+// prepared a change, the server is holding a single-use token for it, and the
+// change happens only when this button is pressed — at which point the server
+// re-checks the permission and the scope before writing anything.
+// ---------------------------------------------------------------------------
+function ActionCard({ card, onConfirm, onDismiss }) {
+  const entries = Object.entries(card.details || {}).filter(([, v]) => v !== null && v !== '');
+  return (
+    <div className={`ai-action${card.state ? ` ai-action-${card.state}` : ''}`}>
+      <div className="ai-action-head">
+        {card.state === 'done' ? 'Done' : card.state === 'failed' ? 'Not done' : 'Confirm this change'}
+      </div>
+      <div className="ai-action-summary">{card.summary}</div>
+      {entries.length > 0 && (
+        <dl className="ai-action-details">
+          {entries.map(([k, v]) => (
+            <div key={k}>
+              <dt>{k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())}</dt>
+              <dd>{String(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {card.error && <div className="ai-action-error">{card.error}</div>}
+      {!card.state && (
+        <div className="ai-action-buttons">
+          <button className="btn btn-primary btn-sm" type="button" onClick={() => onConfirm(card)} disabled={card.busy}>
+            {card.busy ? 'Working…' : 'Confirm'}
+          </button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => onDismiss(card)} disabled={card.busy}>
+            Discard
+          </button>
+        </div>
+      )}
+      {!card.state && (
+        <div className="ai-action-note small-muted">
+          Nothing has changed yet. Your permissions are checked again when you confirm.
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AiAssistant() {
   const { user } = useAuth();
@@ -63,6 +112,12 @@ export default function AiAssistant() {
   const streamEnd = useRef(null);
 
   const hasAts = !!(user && user.products && user.products.ats && user.atsRole);
+
+  // The starter questions this login could actually get an answer to.
+  const suggestions = useMemo(() => {
+    const products = (user && user.products) || {};
+    return SUGGESTIONS.filter((s) => (s.needs === 'ats' ? hasAts : !!products[s.needs]));
+  }, [user, hasAts]);
 
   // Refreshed when the panel opens and whenever the user moves to another
   // screen, so the counts never go stale behind an action they just took.
@@ -93,8 +148,11 @@ export default function AiAssistant() {
 
   // Where this user is allowed to go, straight out of the nav tree.
   const destinations = useMemo(() => {
-    const leaves = flattenGroups(groupsForUser(user)).filter((l) => l.section === 'ats');
-    return leaves.slice(0, 6);
+    const leaves = flattenGroups(groupsForUser(user));
+    // ATS first, because that is where the work is — but a login with no ATS
+    // (an accountant, an employee) gets its own screens rather than nothing.
+    const ats = leaves.filter((l) => l.section === 'ats');
+    return (ats.length ? ats : leaves).slice(0, 6);
   }, [user]);
 
   const go = (to) => { setOpen(false); navigate(to); };
@@ -125,6 +183,9 @@ export default function AiAssistant() {
           content: res.data.answer,
           tools: res.data.toolsUsed || [],
           truncated: res.data.truncated,
+          // Proposals, not changes. Each one renders as a confirm card and is
+          // dead until the user presses Confirm.
+          actions: (res.data.pendingActions || []).map((a) => ({ ...a })),
         }]);
       }
     } catch (err) {
@@ -134,6 +195,34 @@ export default function AiAssistant() {
         content: err.response?.data?.error || 'The assistant could not answer just now.',
       }]);
     } finally { setBusy(false); }
+  }
+
+  // Rewrites one action card in place, wherever it sits in the transcript.
+  function patchAction(token, patch) {
+    setTurns((list) => list.map((t) => (t.actions
+      ? { ...t, actions: t.actions.map((a) => (a.token === token ? { ...a, ...patch } : a)) }
+      : t)));
+  }
+
+  // THE ONLY THING THAT PERFORMS A CHANGE. The token is single-use; the server
+  // re-checks this user's permission and scope before it writes, and records
+  // the confirmation in the audit log.
+  async function confirmAction(card) {
+    patchAction(card.token, { busy: true, error: null });
+    try {
+      const res = await api.post('/ai/act', { token: card.token });
+      patchAction(card.token, { busy: false, state: 'done', summary: res.data.summary || card.summary });
+    } catch (err) {
+      patchAction(card.token, {
+        busy: false,
+        state: 'failed',
+        error: err.response?.data?.error || 'That change could not be made.',
+      });
+    }
+  }
+
+  function dismissAction(card) {
+    patchAction(card.token, { state: 'failed', error: 'Discarded — nothing was changed.' });
   }
 
   return (
@@ -223,7 +312,7 @@ export default function AiAssistant() {
                   </button>
                 ))}
                 {destinations.length === 0 && (
-                  <div className="small-muted">No ATS screens are enabled for your role.</div>
+                  <div className="small-muted">No screens are enabled for your role.</div>
                 )}
               </div>
 
@@ -252,14 +341,18 @@ export default function AiAssistant() {
                 {ai && ai.configured && turns.length === 0 && (
                   <>
                     <div className="ai-note">
-                      Ask about your own requirements, candidates and queues. Answers come from this app&rsquo;s
-                      data, read with <em>your</em> permissions — the assistant cannot see anything the screens
-                      would refuse you, and it cannot change anything.
+                      Ask about your requirements, candidates and queues, your own leave, attendance, payslips
+                      and tasks, and — if your login has them — invoices and receivables. Answers come from this
+                      app&rsquo;s data, read with <em>your</em> permissions: the assistant cannot see anything the
+                      screens would refuse you.
+                      {ai.actionsEnabled && ai.actions && ai.actions.length > 0
+                        ? ' It can also propose a change, which you confirm before anything happens.'
+                        : ' It cannot change anything.'}
                     </div>
                     <div className="ai-sec">Try</div>
-                    {SUGGESTIONS.map((s) => (
-                      <button className="ai-sug ai-sug-slim" key={s} onClick={() => ask(s)}>
-                        <span className="ai-sug-main">{s}</span>
+                    {suggestions.map((s) => (
+                      <button className="ai-sug ai-sug-slim" key={s.text} onClick={() => ask(s.text)}>
+                        <span className="ai-sug-main">{s.text}</span>
                       </button>
                     ))}
                   </>
@@ -273,9 +366,12 @@ export default function AiAssistant() {
                   >
                     {t.content}
                     {t.truncated && <div className="small-muted">(answer cut off at the token limit)</div>}
+                    {t.role === 'assistant' && t.actions && t.actions.map((a) => (
+                      <ActionCard key={a.token} card={a} onConfirm={confirmAction} onDismiss={dismissAction} />
+                    ))}
                     {t.role === 'assistant' && t.tools && t.tools.length > 0 && (
                       <div className="ai-turn-tools small-muted">
-                        read: {t.tools.map((x) => `${x.name}${x.denied ? ' (refused)' : ''}`).join(', ')}
+                        {t.tools.map((x) => `${x.name}${x.denied ? ' (refused)' : ''}${x.proposed ? ' (proposed)' : ''}`).join(', ')}
                       </div>
                     )}
                   </div>
@@ -304,7 +400,14 @@ export default function AiAssistant() {
 
               <div className="ai-foot small-muted">
                 {ai && ai.configured
-                  ? <>Answered by {ai.model} from this app&rsquo;s own data, through your permissions. Read-only — it cannot move a stage or send a message.</>
+                  ? (
+                    <>
+                      Answered by {ai.model} from this app&rsquo;s own data, through your permissions.
+                      {ai.actionsEnabled && ai.actions && ai.actions.length > 0
+                        ? <> It can propose a change, but nothing happens until you press Confirm.</>
+                        : <> Read-only — it cannot move a stage or send a message.</>}
+                    </>
+                  )
                   : <>Free-text questions need a language model, which this app is not connected to yet.</>}
               </div>
             </>

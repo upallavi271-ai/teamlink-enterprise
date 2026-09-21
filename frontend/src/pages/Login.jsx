@@ -39,11 +39,13 @@ export default function Login() {
           {/* The real artwork. The card is white, so it needs no plate and
               the brand colours show exactly as supplied. */}
           <TeamLinkMark width={168} />
-          <div className="small-muted" style={{ marginTop: 6 }}>HRMS · TeamLink.Enterprise</div>
+          {/* NO PRODUCT NAME HERE. A client and a candidate sign in on this same
+              card, and "HRMS" is internal vocabulary they must never see. */}
+          <div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div>
         </div>
 
         <div className="small-muted" style={{ marginBottom: 16 }}>
-          Sign in with your work email. One login covers HRMS, ATS and Accounts —
+          Sign in with your email. One login covers everything you have access to —
           your access follows your role.
         </div>
 

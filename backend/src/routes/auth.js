@@ -32,7 +32,9 @@ router.post('/login', async (req, res) => {
   const identity = await resolveIdentity(user.id, user);
   if (!identity.products.hrms && !identity.products.ats && !identity.products.accounts
       && !['CLIENT', 'CANDIDATE'].includes(identity.role)) {
-    return res.status(403).json({ error: 'This login has no product access — ask an administrator to grant HRMS, ATS or Accounts' });
+    // No product names: this is a login screen, and the message is read
+    // before we know anything about who is reading it.
+    return res.status(403).json({ error: 'This login has no access yet — ask an administrator to grant it' });
   }
 
   // Stamps the Users screen's "Last Login" column.

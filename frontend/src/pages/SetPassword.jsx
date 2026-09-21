@@ -83,8 +83,8 @@ export default function SetPassword() {
               {saving ? 'Saving…' : 'Set password and continue'}
             </button>
             <div className="small-muted" style={{ marginTop: 12 }}>
-              After signing in, open HRMS → My Profile, fill in the rest of your details and submit them
-              for HR review. Once HR approves them the profile locks.
+              After signing in, open My Profile, fill in the rest of your details and submit them
+              for review. Once they are approved the profile locks.
             </div>
           </form>
         )}

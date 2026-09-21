@@ -43,7 +43,7 @@ const DENIED = (what) => ({
 
 const NO_EMPLOYEE = {
   notApplicable: true,
-  message: 'This login has no employee record, so it has no HRMS data of its own. Say so plainly — it is not a refusal and not an error.',
+  message: 'This login has no employee record, so it has no personal HR data of its own. Say so plainly — it is not a refusal and not an error.',
 };
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -82,7 +82,7 @@ const READ_TOOLS = [
   // --- HRMS, the signed-in person's own record -----------------------------
   {
     name: 'my_profile_status',
-    description: "The signed-in user's own employee record: department, team, designation, reporting manager, employment status, and where their HRMS profile has got to (Profile Incomplete / Pending Review / Approved / Locked / Change Requested / Edit Access Granted). Use for \"is my profile approved\", \"what is my designation\", \"who is my manager\".",
+    description: "The signed-in user's own employee record: department, team, designation, reporting manager, employment status, and where their profile has got to (Profile Incomplete / Pending Review / Approved / Locked / Change Requested / Edit Access Granted). Use for \"is my profile approved\", \"what is my designation\", \"who is my manager\".",
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
     async run(user) {
       const gate = await selfServiceGate(user, 'Employee Services');

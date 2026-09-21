@@ -37,6 +37,38 @@ export const SECTION_LABEL = {
   accounts: 'Accounts', admin: 'Administration', reports: 'Reports',
 };
 
+// ---------------------------------------------------------------------------
+// EXTERNAL LOGINS NEVER SEE AN INTERNAL PRODUCT NAME.
+//
+// A Client and a Candidate are outside this company. "HRMS" is our own word
+// for our own staff records and it must not appear on any surface they can
+// reach — not in the sidebar, not in the topbar, not in a breadcrumb. Neither
+// role is granted the hrms module, so in practice these labels never render
+// for them; this mapping is what makes that true by construction rather than
+// by luck, so a future grant cannot leak the word.
+//
+// Every place that prints a section label goes through sectionLabel() below.
+// ---------------------------------------------------------------------------
+export const EXTERNAL_ROLES = ['CLIENT', 'CANDIDATE'];
+
+export function isExternalUser(user) {
+  return EXTERNAL_ROLES.includes(user?.role) || EXTERNAL_ROLES.includes(user?.atsRole);
+}
+
+const EXTERNAL_SECTION_LABEL = {
+  dashboard: 'Dashboard',
+  hrms: 'My Workspace',
+  ats: 'Recruitment',
+  accounts: 'Billing',
+  admin: 'Settings',
+  reports: 'Reports',
+};
+
+export function sectionLabel(section, user) {
+  if (isExternalUser(user)) return EXTERNAL_SECTION_LABEL[section] || SECTION_LABEL[section] || 'Dashboard';
+  return SECTION_LABEL[section] || 'Dashboard';
+}
+
 // leaf: { to, label, perms: [[module, feature, action], ...], product }
 // A leaf with several perms needs all of them.
 const leaf = (to, label, perms, product) => ({ to, label, perms, product });
@@ -120,11 +152,13 @@ export function groupsForUser(user) {
     const shown = visibleItems(user, items);
     if (shown.length) groups.push([id, label, shown]);
   };
-  add('hrms', 'HRMS', HRMS_ITEMS);
-  add('ats', 'ATS', ATS_ITEMS);
-  add('accounts', 'Accounts', ACCOUNTS_ITEMS);
-  add('reports', 'Reports', REPORTS_ITEMS);
-  add('admin', 'Administration', ADMIN_ITEMS);
+  // Labels come from sectionLabel(), so an external login can never be shown
+  // an internal product name in the sidebar.
+  add('hrms', sectionLabel('hrms', user), HRMS_ITEMS);
+  add('ats', sectionLabel('ats', user), ATS_ITEMS);
+  add('accounts', sectionLabel('accounts', user), ACCOUNTS_ITEMS);
+  add('reports', sectionLabel('reports', user), REPORTS_ITEMS);
+  add('admin', sectionLabel('admin', user), ADMIN_ITEMS);
   return groups;
 }
 
