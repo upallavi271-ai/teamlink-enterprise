@@ -276,5 +276,10 @@ async function testConnection() {
 
 module.exports = {
   CHANNEL, ask, status, testConnection, resetClient, agentConfig,
+  // clientFor / rateCheck / apiError are exported so that other server-side AI
+  // features (today: the weekly-idea screener in utils/ideaAi.js) reuse the
+  // same key handling, the same cached client and the SAME per-user hourly
+  // budget rather than opening a second one.
+  clientFor, rateCheck, apiError,
   MAX_HISTORY_TURNS, MAX_TOOL_ITERATIONS,
 };
