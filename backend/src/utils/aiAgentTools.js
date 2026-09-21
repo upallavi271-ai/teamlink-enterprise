@@ -32,6 +32,10 @@ const {
   stageLabel, applicationNextAction, applicationDueDate, applicationIsOverdue,
   applicationOwner, REQUIREMENT_LIVE_STATUSES,
 } = require('./atsVocab');
+// The rest of the read surface — HRMS self-service, Accounts, interviews and
+// joinings, the employee directory. Split into its own file only for length:
+// every tool there runs can() + the scope.js fragment exactly as these do.
+const { READ_TOOLS } = require('./aiAgentReadTools');
 
 // How many rows any one tool call may return. The model does not need more,
 // and an unbounded read is an unbounded bill.
@@ -436,11 +440,14 @@ const TOOLS = [
   },
 ];
 
-const TOOL_BY_NAME = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
+// The ATS tools above plus the HRMS / Accounts / interviews tools. One
+// registry, one dispatch, one permission rule.
+const ALL_TOOLS = [...TOOLS, ...READ_TOOLS];
+const TOOL_BY_NAME = Object.fromEntries(ALL_TOOLS.map((t) => [t.name, t]));
 
 // What the Anthropic API is sent. The `run` function stays on this side.
 function toolDefinitions() {
-  return TOOLS.map((t) => ({
+  return ALL_TOOLS.map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.input_schema,
@@ -459,4 +466,6 @@ async function runTool(user, name, input) {
   }
 }
 
-module.exports = { TOOLS, toolDefinitions, runTool, LIMIT };
+module.exports = {
+  TOOLS, ALL_TOOLS, toolDefinitions, runTool, LIMIT,
+};

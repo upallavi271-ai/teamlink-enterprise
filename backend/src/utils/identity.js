@@ -150,10 +150,17 @@ async function resolveIdentity(userId, preloaded = null) {
   identity.workspace = landingFor(identity);
   identity.landingPath = WORKSPACE_HOME[identity.workspace] || '/';
   // Which workspaces this login can switch between — never a role picker.
+  //
+  // THE SWITCHER IS A SURFACE AN EXTERNAL LOGIN CAN SEE, so the labels it
+  // carries are role-dependent. "HRMS" is internal vocabulary: a Client or a
+  // Candidate must never be handed it, even in the unlikely event somebody
+  // grants one of them the product by mistake.
+  const external = ['CLIENT', 'CANDIDATE'].includes(identity.role) || ['CLIENT', 'CANDIDATE'].includes(atsRole);
+  const label = (id, internalLabel, externalLabel) => (external ? externalLabel : internalLabel);
   identity.workspaces = [
-    products.ats && atsRole ? { id: 'ats', label: 'ATS', path: WORKSPACE_HOME.ats } : null,
-    products.hrms ? { id: 'hrms', label: 'HRMS', path: WORKSPACE_HOME.hrms } : null,
-    products.accounts ? { id: 'accounts', label: 'Accounts', path: WORKSPACE_HOME.accounts } : null,
+    products.ats && atsRole ? { id: 'ats', label: label('ats', 'ATS', 'Recruitment'), path: WORKSPACE_HOME.ats } : null,
+    products.hrms ? { id: 'hrms', label: label('hrms', 'HRMS', 'My Workspace'), path: WORKSPACE_HOME.hrms } : null,
+    products.accounts ? { id: 'accounts', label: label('accounts', 'Accounts', 'Billing'), path: WORKSPACE_HOME.accounts } : null,
   ].filter(Boolean);
   return identity;
 }

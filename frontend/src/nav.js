@@ -37,6 +37,68 @@ export const SECTION_LABEL = {
   accounts: 'Accounts', admin: 'Administration', reports: 'Reports',
 };
 
+// ---------------------------------------------------------------------------
+// EXTERNAL LOGINS NEVER SEE AN INTERNAL PRODUCT NAME.
+//
+// A Client and a Candidate are outside this company. "HRMS" is our own word
+// for our own staff records and it must not appear on any surface they can
+// reach — not in the sidebar, not in the topbar, not in a breadcrumb. Neither
+// role is granted the hrms module, so in practice these labels never render
+// for them; this mapping is what makes that true by construction rather than
+// by luck, so a future grant cannot leak the word.
+//
+// Every place that prints a section label goes through sectionLabel() below.
+// ---------------------------------------------------------------------------
+export const EXTERNAL_ROLES = ['CLIENT', 'CANDIDATE'];
+
+export function isExternalUser(user) {
+  return EXTERNAL_ROLES.includes(user?.role) || EXTERNAL_ROLES.includes(user?.atsRole);
+}
+
+const EXTERNAL_SECTION_LABEL = {
+  dashboard: 'Dashboard',
+  hrms: 'My Workspace',
+  ats: 'Recruitment',
+  accounts: 'Billing',
+  admin: 'Settings',
+  reports: 'Reports',
+};
+
+export function sectionLabel(section, user) {
+  if (isExternalUser(user)) return EXTERNAL_SECTION_LABEL[section] || SECTION_LABEL[section] || 'Dashboard';
+  return SECTION_LABEL[section] || 'Dashboard';
+}
+
+// ---------------------------------------------------------------------------
+// May this login RENDER this URL at all?
+//
+// The routes in App.jsx are not individually permission-guarded: any signed-in
+// user who types a path gets the screen's chrome, and only the data behind it
+// is refused by the API. For a member of staff that is harmless. For a Client
+// or a Candidate it is not — typing /hrms or /employees printed internal
+// vocabulary ("HRMS Dashboard", "HRMS Role") at somebody outside the company.
+//
+// So this narrows EXTERNAL logins only, and nothing else: an internal login's
+// behaviour is unchanged. An external login may render the sections whose
+// product they actually hold, plus their own Notifications and Profile.
+// ---------------------------------------------------------------------------
+const ALWAYS_OPEN_PATHS = ['/admin/notifications', '/admin/profile'];
+
+export function mayRenderSection(user, pathname) {
+  if (!isExternalUser(user)) return true;
+  if (ALWAYS_OPEN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return true;
+  const products = user?.products || {};
+  switch (sectionOf(pathname)) {
+    case 'hrms': return !!products.hrms;
+    case 'accounts': return !!products.accounts;
+    case 'ats': return !!products.ats;
+    // Administration proper — Users, Role Catalog, Employee Management and the
+    // rest — is never an outsider's screen.
+    case 'admin': return false;
+    default: return true;
+  }
+}
+
 // leaf: { to, label, perms: [[module, feature, action], ...], product }
 // A leaf with several perms needs all of them.
 const leaf = (to, label, perms, product) => ({ to, label, perms, product });
@@ -154,11 +216,13 @@ export function groupsForUser(user) {
     const shown = visibleItems(user, items);
     if (shown.length) groups.push([id, label, shown]);
   };
-  add('hrms', 'HRMS', HRMS_ITEMS);
-  add('ats', 'ATS', ATS_ITEMS);
-  add('accounts', 'Accounts', ACCOUNTS_ITEMS);
-  add('reports', 'Reports', REPORTS_ITEMS);
-  add('admin', 'Administration', ADMIN_ITEMS);
+  // Labels come from sectionLabel(), so an external login can never be shown
+  // an internal product name in the sidebar.
+  add('hrms', sectionLabel('hrms', user), HRMS_ITEMS);
+  add('ats', sectionLabel('ats', user), ATS_ITEMS);
+  add('accounts', sectionLabel('accounts', user), ACCOUNTS_ITEMS);
+  add('reports', sectionLabel('reports', user), REPORTS_ITEMS);
+  add('admin', sectionLabel('admin', user), ADMIN_ITEMS);
   return groups;
 }
 

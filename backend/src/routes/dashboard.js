@@ -17,6 +17,12 @@ const {
 const router = express.Router();
 router.use(requireAuth);
 
+// A Client and a Candidate are outside this company. Anything company-wide —
+// the audit trail below, internal vocabulary, other people's activity — stops
+// here for them.
+const EXTERNAL_ROLES = ['CLIENT', 'CANDIDATE'];
+const externalLogin = (user) => EXTERNAL_ROLES.includes(user?.role) || EXTERNAL_ROLES.includes(user?.atsRole);
+
 // The Accountant's own view: receivables, what needs chasing and what is still
 // sitting unreconciled on the bank statement.
 router.get('/accounts', async (req, res) => {
@@ -538,7 +544,14 @@ router.get('/', async (req, res) => {
     // "Interviews upcoming" counts scheduled interviews, not the stage.
     count({ interviewStatus: 'SCHEDULED' }),
     count({ stage: { in: ['JOINED', 'HIRED'] } }),
-    prisma.auditLog.findMany({ take: 8, orderBy: { createdAt: 'desc' }, include: { user: true } }),
+    // "Recent activity" is the COMPANY'S audit trail, and it was being handed
+    // to every signed-in login — including a Client and a Candidate, who are
+    // outside this company. It showed them staff bulk imports, internal-hire
+    // rows worded in internal vocabulary ("HRMS employee created from ATS"),
+    // and who did what. An outsider gets none of it.
+    externalLogin(req.user)
+      ? Promise.resolve([])
+      : prisma.auditLog.findMany({ take: 8, orderBy: { createdAt: 'desc' }, include: { user: true } }),
     prisma.employee.count({ where: { employmentStatus: 'Active' } }),
     prisma.leaveRequest.count({ where: { status: 'Pending' } }),
     prisma.invoice.count({ where: { status: 'Pending' } }),

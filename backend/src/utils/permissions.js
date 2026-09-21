@@ -440,10 +440,20 @@ function requirePerm(product, moduleId, feature, action) {
 }
 
 // Product-level guard, for whole routers that belong to one product.
+// A refusal message is a surface too. An external login (Client, Candidate)
+// is never told the internal product name it was refused — "HRMS" is our own
+// vocabulary for our own staff records and must not reach them.
+const EXTERNAL_ROLES = ['CLIENT', 'CANDIDATE'];
+
 function requireProduct(product) {
   return (req, res, next) => {
     if (!req.user || !(req.user.products || {})[product]) {
-      return res.status(403).json({ error: `Your login does not include ${product.toUpperCase()} access` });
+      const external = req.user && (EXTERNAL_ROLES.includes(req.user.role) || EXTERNAL_ROLES.includes(req.user.atsRole));
+      return res.status(403).json({
+        error: external
+          ? 'This area is not part of your access'
+          : `Your login does not include ${product.toUpperCase()} access`,
+      });
     }
     next();
   };

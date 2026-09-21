@@ -129,7 +129,7 @@ function body({ employee, actingName, link, expiresAt, companyName }) {
     '',
     link,
     '',
-    'After signing in, open HRMS -> My Profile, complete the remaining details and submit them for review. '
+    'After signing in, open My Profile, complete the remaining details and submit them for review. '
       + 'HR checks what you entered; once it is approved the profile is locked and you can request edit access if something needs changing later.',
     '',
     'We never send passwords by email. If you did not expect this message, reply to it and tell us.',

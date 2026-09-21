@@ -354,76 +354,86 @@ router.get('/reports', VIEW, async (req, res, next) => {
 });
 
 // --- Create -----------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THE task create. Extracted from the POST handler so the route and the AI
+// assistant's confirmed "create a task" action run the same validation, the
+// same assignable() scope check and the same audit row. Returns
+// { status, body } because one caller is not an HTTP handler.
+// ---------------------------------------------------------------------------
+async function createTask(me, input = {}) {
+  const {
+    department, name, description, subTaskName, status,
+    startDate, endDate, dependent, dependsOnId,
+  } = input;
+
+  // THE SAME FIVE RULES THE MODAL CHECKS, enforced here because the modal is
+  // a courtesy and this is the gate. `field` names the box so the browser can
+  // put the message back under it when the API is what caught the problem.
+  const bad = (field, error) => ({ status: 400, body: { field, error } });
+  if (!department || !String(department).trim()) return bad('department', MSG.department);
+  if (!name || !String(name).trim()) return bad('name', MSG.name);
+  if (!status || !TASK_STATUSES.includes(status)) return bad('status', MSG.status);
+
+  let start;
+  let end;
+  try {
+    start = asDate(startDate, 'Task start date');
+  } catch (err) { return bad('startDate', err.message); }
+  try {
+    end = asDate(endDate, 'Task end date');
+  } catch (err) { return bad('endDate', err.message); }
+  if (!start) return bad('startDate', MSG.startDate);
+  if (end && end < start) return bad('endDate', MSG.endBeforeStart);
+
+  // Assign To — blank means "myself", exactly as the field says.
+  const wanted = input.assigneeId || me.id;
+  const { canAssignOthers, people } = await assignable(me);
+  if (wanted !== me.id && !canAssignOthers) return { status: 403, body: DENIED };
+  const target = people.find((p) => p.userId === wanted);
+  if (!target) return { status: 403, body: OUT_OF_SCOPE };
+
+  // A dependency has to be a task this user can actually see.
+  let dependsOn = null;
+  if (dependent && dependsOnId) {
+    const found = await reachable(me, String(dependsOnId));
+    if (found.error) return { status: 400, body: { error: 'That dependent task is not one you can reach.' } };
+    dependsOn = found.task.id;
+  }
+
+  const task = await prisma.task.create({
+    data: {
+      name: String(name).trim(),
+      department: String(department).trim(),
+      description: description ? String(description) : null,
+      subTaskName: subTaskName ? String(subTaskName).trim() : null,
+      status,
+      startDate: start,
+      endDate: end,
+      dependent: !!dependent,
+      dependsOnId: dependsOn,
+      assigneeId: target.userId,
+      assignedById: me.id,
+      assigneeName: target.name,
+      assignedByName: me.name,
+      // A task created straight into a later state still gets its stamps, so
+      // the lifecycle never has a hole in it.
+      startedAt: status === 'Not Started' ? null : new Date(),
+      completedAt: status === 'Completed' ? new Date() : null,
+      reviewState: status === 'Completed' ? 'Pending Review' : 'Not Submitted',
+    },
+  });
+  await logAudit({
+    userId: me.id, action: 'Task created', entity: 'Task', entityId: task.id,
+    toValue: `${task.name} → ${task.assigneeName}`,
+  });
+  return { status: 201, body: task };
+}
+
 router.post('/', VIEW, async (req, res, next) => {
   try {
-    const me = req.user;
-    const {
-      department, name, description, subTaskName, status,
-      startDate, endDate, dependent, dependsOnId,
-    } = req.body;
-
-    // THE SAME FIVE RULES THE MODAL CHECKS, enforced here because the modal is
-    // a courtesy and this is the gate. `field` names the box so the browser can
-    // put the message back under it when the API is what caught the problem.
-    const bad = (field, error) => res.status(400).json({ field, error });
-    if (!department || !String(department).trim()) return bad('department', MSG.department);
-    if (!name || !String(name).trim()) return bad('name', MSG.name);
-    if (!status || !TASK_STATUSES.includes(status)) return bad('status', MSG.status);
-
-    let start;
-    let end;
-    try {
-      start = asDate(startDate, 'Task start date');
-    } catch (err) { return bad('startDate', err.message); }
-    try {
-      end = asDate(endDate, 'Task end date');
-    } catch (err) { return bad('endDate', err.message); }
-    if (!start) return bad('startDate', MSG.startDate);
-    if (end && end < start) return bad('endDate', MSG.endBeforeStart);
-
-    // Assign To — blank means "myself", exactly as the field says.
-    const wanted = req.body.assigneeId || me.id;
-    const { canAssignOthers, people } = await assignable(me);
-    if (wanted !== me.id && !canAssignOthers) return res.status(403).json(DENIED);
-    const target = people.find((p) => p.userId === wanted);
-    if (!target) return res.status(403).json(OUT_OF_SCOPE);
-
-    // A dependency has to be a task this user can actually see.
-    let dependsOn = null;
-    if (dependent && dependsOnId) {
-      const found = await reachable(me, String(dependsOnId));
-      if (found.error) return res.status(400).json({ error: 'That dependent task is not one you can reach.' });
-      dependsOn = found.task.id;
-    }
-
-    const task = await prisma.task.create({
-      data: {
-        name: String(name).trim(),
-        department: String(department).trim(),
-        description: description ? String(description) : null,
-        subTaskName: subTaskName ? String(subTaskName).trim() : null,
-        status,
-        startDate: start,
-        endDate: end,
-        dependent: !!dependent,
-        dependsOnId: dependsOn,
-        assigneeId: target.userId,
-        assignedById: me.id,
-        assigneeName: target.name,
-        assignedByName: me.name,
-        // A task created straight into a later state still gets its stamps, so
-        // the lifecycle never has a hole in it.
-        startedAt: status === 'Not Started' ? null : new Date(),
-        completedAt: status === 'Completed' ? new Date() : null,
-        reviewState: status === 'Completed' ? 'Pending Review' : 'Not Submitted',
-      },
-    });
-    await logAudit({
-      userId: me.id, action: 'Task created', entity: 'Task', entityId: task.id,
-      toValue: `${task.name} → ${task.assigneeName}`,
-    });
-    res.status(201).json(task);
-  } catch (err) { next(err); }
+    const out = await createTask(req.user, req.body);
+    return res.status(out.status).json(out.body);
+  } catch (err) { return next(err); }
 });
 
 // --- Edit -------------------------------------------------------------------
@@ -669,3 +679,6 @@ router.post('/:id/comments', VIEW, async (req, res, next) => {
 module.exports = router;
 module.exports.TASK_STATUSES = TASK_STATUSES;
 module.exports.REVIEW_STATES = REVIEW_STATES;
+module.exports.createTask = createTask;
+module.exports.assignable = assignable;
+module.exports.visibleWhere = visibleWhere;
