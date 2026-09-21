@@ -5,6 +5,9 @@ const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
 const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
+// Hiring Type, the invoice-on-joining path and the internal-hire path all live
+// in ONE place so the pipeline and the Joining workspace cannot drift apart.
+const { hiringTypeOf, onApplicationJoined } = require('../utils/joining');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -42,58 +45,6 @@ const STAGE_OWNERS = {
   REJECTED: ['RECRUITER', 'BDE', 'CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   HOLD: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
 };
-
-// yyyy-mm-dd plus n days.
-function offsetDate(from, days) {
-  const d = from ? new Date(from) : new Date();
-  if (Number.isNaN(d.getTime())) return null;
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-async function raiseJoiningInvoice({ application, existing, userId }) {
-  const requirement = existing.requirement;
-  const client = requirement && requirement.client;
-  if (!client) return null;
-
-  const already = await prisma.invoice.findFirst({
-    where: { candidateId: existing.candidateId, requirementId: existing.requirementId },
-  });
-  if (already) return already;
-
-  // Fee % comes from the agreement. Falls back to the annual CTC band on the
-  // requirement when no offered CTC was recorded — never to a random number.
-  const feePercent = client.agreementFeePercent != null ? client.agreementFeePercent : 8.33;
-  const bandLakhs = Number(String(requirement.salary || '').match(/(\d+(?:\.\d+)?)/)?.[1]) || 12;
-  const ctc = Number(application.offeredCtc) > 0 ? Number(application.offeredCtc) : bandLakhs * 100000;
-  const amount = Math.round((ctc * feePercent) / 100);
-  const gst = Math.round(amount * ((client.gstPercent != null ? client.gstPercent : 18) / 100));
-  const tds = Math.round(amount * ((client.tdsPercent != null ? client.tdsPercent : 10) / 100));
-
-  const joiningDate = application.joiningDate || new Date().toISOString().slice(0, 10);
-  const invoice = await prisma.invoice.create({
-    data: {
-      clientId: client.id,
-      candidateId: existing.candidateId,
-      requirementId: existing.requirementId,
-      amount,
-      gst,
-      tds,
-      status: 'Pending',
-      joiningDate,
-      invoiceDate: offsetDate(joiningDate, 6),
-      dueDate: offsetDate(joiningDate, 12),
-      feePercent,
-      offeredCtc: ctc,
-      paymentTerms: client.paymentTerms || 'Invoice 6 days after joining; payment due within 6 days of invoice',
-    },
-  });
-  await logAudit({
-    userId, action: 'Invoice generated from ATS (Client Joining)', entity: 'Invoice',
-    entityId: invoice.id, toValue: 'Pending',
-  });
-  return invoice;
-}
 
 router.get('/', async (req, res) => {
   const where = {};
@@ -139,6 +90,9 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
       source: 'ATS Match',
       applicationMethod: 'Manual',
       aiInterviewStatus: 'Required',
+      // Client Placement vs TeamLink Internal Hire, decided once, here, from
+      // the requirement it is raised against — and stored, not re-guessed.
+      hiringType: hiringTypeOf(null, requirement),
     },
   });
   await logAudit({ userId: req.user.id, action: 'Candidate added to pipeline', entity: 'Application', entityId: application.id, toValue: 'New' });
@@ -196,7 +150,7 @@ router.patch('/:id/stage', async (req, res) => {
   // (line 9099): fee = CTC x agreed fee %, GST 18%, TDS at the client's rate,
   // invoice 6 days after joining, payment due 6 days after that.
   if (stage === 'JOINED') {
-    await raiseJoiningInvoice({ application, existing, userId: req.user.id });
+    await onApplicationJoined({ application, existing, userId: req.user.id });
   }
 
   await logAudit({

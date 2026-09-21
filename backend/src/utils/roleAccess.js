@@ -28,7 +28,10 @@ const ROLE_ACCESS_MODULES = [
   { id: 'clients', label: 'Clients', features: ['Client List', 'Add Client', 'Client Detail', 'Agreement Lifecycle', 'Commercial Terms', 'Client Requirements'] },
   { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores'] },
   { id: 'recruiterbde', label: 'Recruiter & BDE', features: ['Recruiter Workload', 'BDE Workload', 'Team View', 'Pending Actions'] },
-  { id: 'interviews', label: 'Interview Calendar', features: ['Calendar View', 'Schedule Interview', 'AI Interview', 'Interview Feedback'] },
+  // Interviews & Joining: Interview Calendar - Interview Feedback - Offers -
+  // Joining - Internal Hiring. Client Feedback is its own feature because a
+  // client submits client feedback and never internal interview feedback.
+  { id: 'interviews', label: 'Interviews & Joining', features: ['Calendar View', 'Schedule Interview', 'AI Interview', 'Interview Feedback', 'Client Feedback', 'Offers', 'Joining', 'Internal Hiring'] },
   { id: 'hrms', label: 'HRMS', features: ['HRMS Dashboard', 'Attendance & Time', 'Leave & Holidays', 'Payroll & Compensation', 'Performance & Development', 'Employee Services', 'Employee Management'] },
   { id: 'accounts', label: 'Accounts', features: ['Accounts Dashboard', 'Office & Expenses', 'Invoices', 'Bank & Reconciliation', 'Payments'] },
   { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports'] },

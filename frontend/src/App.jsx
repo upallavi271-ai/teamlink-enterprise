@@ -13,6 +13,10 @@ import CandidateDetail from './pages/CandidateDetail.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
+import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
+import Offers from './pages/ats/Offers.jsx';
+import Joining from './pages/ats/Joining.jsx';
+import InternalHiring from './pages/ats/InternalHiring.jsx';
 import Search from './pages/ats/Search.jsx';
 import AccountsDashboard from './pages/AccountsDashboard.jsx';
 
@@ -95,6 +99,12 @@ export default function App() {
         <Route path="candidates/:id" element={<CandidateDetail />} />
         <Route path="ats/team" element={<Team />} />
         <Route path="ats/calendar" element={<InterviewCalendar />} />
+        {/* Interviews & Joining: Interview Calendar (above) - Interview Feedback
+            - Offers - Joining - Internal Hiring */}
+        <Route path="ats/interview-feedback" element={<InterviewFeedback />} />
+        <Route path="ats/offers" element={<Offers />} />
+        <Route path="ats/joining" element={<Joining />} />
+        <Route path="ats/internal-hiring" element={<InternalHiring />} />
         <Route path="ats/search" element={<Search />} />
         <Route path="ats/dashboard" element={<AtsDashboard />} />
 

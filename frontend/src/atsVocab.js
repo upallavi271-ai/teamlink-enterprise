@@ -106,7 +106,7 @@ export function atsRoleLabel(code) {
 // backend/src/utils/atsVocab.js — keep the two in step.
 export const INTERVIEW_STATUS_CODES = [
   'SCHEDULED', 'CONFIRMED', 'STARTED', 'COMPLETED', 'PENDING_FEEDBACK',
-  'CANCELLED', 'NO_SHOW', 'RESCHEDULED',
+  'FEEDBACK_SUBMITTED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED',
 ];
 
 export const INTERVIEW_STATUS_LABELS = {
@@ -115,6 +115,7 @@ export const INTERVIEW_STATUS_LABELS = {
   STARTED: 'Started',
   COMPLETED: 'Completed',
   PENDING_FEEDBACK: 'Pending Feedback',
+  FEEDBACK_SUBMITTED: 'Feedback Submitted',
   CANCELLED: 'Cancelled',
   NO_SHOW: 'No Show',
   RESCHEDULED: 'Rescheduled',
@@ -130,15 +131,57 @@ export const INTERVIEW_NEXT = {
   CONFIRMED: 'STARTED',
   STARTED: 'COMPLETED',
   COMPLETED: 'PENDING_FEEDBACK',
+  // A rescheduled interview is re-confirmed into the same chain — the
+  // calendar has always offered that button; without this entry the API
+  // refused it.
+  RESCHEDULED: 'CONFIRMED',
 };
 
 export const INTERVIEW_TYPES = ['Client Interview', 'Internal Panel'];
 export const INTERVIEW_MODES = ['Online', 'In Person', 'Telephonic'];
 export const INTERVIEW_RESULTS = ['Recommended', 'Hold', 'Not Selected'];
 
+// STATUS is where the interview IS; RESULT is what it DECIDED. Two columns,
+// never mixed. A feedback recommendation is one of exactly these three.
+export const INTERVIEW_RECOMMENDATIONS = ['Selected', 'Rejected', 'Hold'];
+
+export const FEEDBACK_CRITERIA = [
+  { key: 'technical', label: 'Technical Skills' },
+  { key: 'communication', label: 'Communication' },
+  { key: 'experience', label: 'Experience' },
+  { key: 'roleFit', label: 'Role Fit' },
+];
+
+// --- Interviews & Joining --------------------------------------------------
+export const CLIENT_PLACEMENT = 'Client Placement';
+export const INTERNAL_HIRE = 'TeamLink Internal Hire';
+export const HIRING_TYPES = [CLIENT_PLACEMENT, INTERNAL_HIRE];
+export const OFFER_STATUSES = ['Not Issued', 'Offer Released', 'Offer Accepted', 'Offer Declined'];
+export const DOCUMENT_STATUSES = ['Pending', 'Submitted', 'Verified'];
+export const JOINING_STATUSES = ['Not Scheduled', 'Joining Scheduled', 'Joined', 'Dropped'];
+
+export function resultClass(value) {
+  if (value === 'Selected') return 'selected';
+  if (value === 'Rejected') return 'rejected';
+  if (value === 'Hold') return 'hold';
+  return '';
+}
+export function offerStatusClass(value) {
+  if (value === 'Offer Accepted') return 'selected';
+  if (value === 'Offer Released') return 'offer';
+  if (value === 'Offer Declined') return 'rejected';
+  return '';
+}
+export function joiningStatusClass(value) {
+  if (value === 'Joined') return 'joined';
+  if (value === 'Joining Scheduled') return 'interview';
+  if (value === 'Dropped') return 'rejected';
+  return '';
+}
+
 // Reuses the existing badge palette rather than the prototype's inline colours.
 export function interviewStatusClass(code) {
-  if (code === 'COMPLETED') return 'priority-low';
+  if (['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(code)) return 'priority-low';
   if (['CANCELLED', 'NO_SHOW'].includes(code)) return 'priority-high';
   if (['PENDING_FEEDBACK', 'RESCHEDULED'].includes(code)) return 'priority-medium';
   return '';

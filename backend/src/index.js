@@ -25,6 +25,7 @@ const adminRoutes = require('./routes/admin');
 const reportRoutes = require('./routes/reports');
 const officeRoutes = require('./routes/office');
 const atsExtrasRoutes = require('./routes/atsExtras');
+const interviewsJoiningRoutes = require('./routes/interviewsJoining');
 const employeeRecordRouter = require('./routes/employeeRecords');
 const shiftPatternRoutes = require('./routes/shiftPatterns');
 const helpdeskRoutes = require('./routes/helpdesk');
@@ -66,6 +67,9 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/office-expenses', officeRoutes);
 app.use('/api/ats', atsExtrasRoutes);
+// Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
+// shares the /api/ats prefix with the calendar above.
+app.use('/api/ats', interviewsJoiningRoutes);
 app.use('/api/hrms/dashboard', hrmsDashboardRoutes);
 app.use('/api/hrms/escalation', escalationRoutes);
 
