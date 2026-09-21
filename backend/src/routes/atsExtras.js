@@ -6,7 +6,7 @@ const { logAudit } = require('../utils/audit');
 const {
   INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TERMINAL,
   INTERVIEW_MODES, INTERVIEW_TYPES, INTERVIEW_RESULTS,
-  interviewStatusLabel,
+  interviewStatusLabel, REQUIREMENT_LIVE_STATUSES,
 } = require('../utils/atsVocab');
 
 const router = express.Router();
@@ -44,7 +44,7 @@ router.get('/team', async (req, res) => {
     people.map(async (u) => {
       const ownRequirements = { OR: [{ recruiterId: u.id }, { bdeId: u.id }] };
       const [openRequirements, activePipeline] = await Promise.all([
-        prisma.requirement.count({ where: { ...ownRequirements, status: 'OPEN' } }),
+        prisma.requirement.count({ where: { ...ownRequirements, status: { in: REQUIREMENT_LIVE_STATUSES } } }),
         prisma.application.count({
           where: { requirement: ownRequirements, stage: { notIn: CLOSED_PIPELINE_STAGES } },
         }),

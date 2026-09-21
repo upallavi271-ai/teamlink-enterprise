@@ -164,6 +164,31 @@ model Client {
   agreementSignedBy  String? // full name typed at e-sign time
   agreementSignedByTitle String? // signatory designation
 
+  // --- clireq: client profile depth -------------------------------------
+  // The Client Detail screen's Overview tab. A client carries a human-readable
+  // code, a billing contact and a recruitment contact in addition to the
+  // primary/secondary commercial contacts above.
+  clientCode                    String?  @unique
+  billingContactName            String?
+  billingContactDesignation     String?
+  billingContactEmail           String?
+  billingContactPhone           String?
+  recruitmentContactName        String?
+  recruitmentContactDesignation String?
+  recruitmentContactEmail       String?
+  recruitmentContactPhone       String?
+
+  // --- clireq: agreement workflow depth ---------------------------------
+  // Draft -> Sent -> Viewed -> Client Confirmation Pending -> Signed -> Active,
+  // with Expired and Rejected as terminal states. agreementSource records
+  // whether the document was generated from the template or uploaded.
+  agreementSource                  String?   @default("Generated")
+  agreementConfirmationRequestedAt DateTime?
+  agreementRejectedAt              DateTime?
+  agreementRejectedReason          String?
+  agreementSignedCopyName          String?
+  agreementSignedCopyNote          String?
+
   requirements Requirement[]
   users        User[]
   invoices     Invoice[]
@@ -204,6 +229,20 @@ model Requirement {
   tl                  String?
   stl                 String?
   postingSources      String? // comma-separated selected posting sources
+  // --- clireq: requirement identity, assignment and portal sync ---------
+  // reqCode is the human-facing Requirement ID (REQ-0004). tlId / stlId /
+  // recruiterIds are plain scalars, NOT Prisma relations, so the migration
+  // stays ADD COLUMN only - the same pattern User.candidateId uses. They are
+  // what utils/scope.js filters on: a recruiter sees the requirements they are
+  // assigned, a TL the ones they lead, a BDE the ones they own.
+  reqCode          String?  @unique
+  tlId             String?
+  stlId            String?
+  recruiterIds     String? // comma-separated additional recruiter user ids
+  targetDate       String?
+  accountManager   String?
+  portalSyncStatus String?  @default("Not Synced") // Not Synced | Pending | Synced | Failed
+
   recruiterId   String?
   recruiter     User?              @relation("RecruiterRequirements", fields: [recruiterId], references: [id])
   bdeId         String?

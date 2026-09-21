@@ -8,6 +8,7 @@ import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
+import Agreements from './pages/Agreements.jsx';
 import Candidates from './pages/Candidates.jsx';
 import CandidateDetail from './pages/CandidateDetail.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
@@ -89,8 +90,12 @@ export default function App() {
         {/* ATS */}
         <Route path="requirements" element={<Requirements />} />
         <Route path="requirements/:id" element={<RequirementDetail />} />
+        {/* Clients · Requirements · Agreements · Job Portal are one module;
+            each tab keeps its own route so it stays bookmarkable. Job Portal
+            is another agent's screen — see components/ClientModuleTabs.jsx. */}
         <Route path="clients" element={<Clients />} />
         <Route path="clients/:id" element={<ClientDetail />} />
+        <Route path="agreements" element={<Agreements />} />
         <Route path="candidates" element={<Candidates />} />
         <Route path="candidates/:id" element={<CandidateDetail />} />
         <Route path="ats/team" element={<Team />} />

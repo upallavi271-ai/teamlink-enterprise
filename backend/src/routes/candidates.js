@@ -6,7 +6,7 @@ const { logAudit } = require('../utils/audit');
 const { computeMatch } = require('../utils/matching');
 const {
   applicationOwner, applicationNextAction, applicationDueDate, applicationIsOverdue,
-  applicationLifeStatus, stageLabel,
+  applicationLifeStatus, stageLabel, REQUIREMENT_LIVE_STATUSES,
 } = require('../utils/atsVocab');
 
 const router = express.Router();
@@ -132,7 +132,7 @@ router.get('/:id', async (req, res) => {
   // Scoped the same way, so a client never sees another client's openings.
   const linked = new Set(decorated.applications.map((a) => a.requirementId));
   const open = await prisma.requirement.findMany({
-    where: { status: 'OPEN', ...requirementWhere(req.user) },
+    where: { status: { in: REQUIREMENT_LIVE_STATUSES }, ...requirementWhere(req.user) },
     include: { client: true },
   });
   const matchingRequirements = open

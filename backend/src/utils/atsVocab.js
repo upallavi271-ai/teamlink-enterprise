@@ -190,18 +190,48 @@ function atsRoleLabel(code) {
 }
 
 // --- Agreement lifecycle ---------------------------------------------------
-// Draft -> Sent -> Confirmed -> Active. A client requirement can only be
-// activated or posted once the agreement is ACTIVE (prototype
-// activateRequirement, line 6333).
-const AGREEMENT_STATUSES = ['DRAFT', 'SENT', 'CONFIRMED', 'ACTIVE', 'CANCELLED', 'EXPIRED'];
+// The full workflow, in order:
+//
+//   Add Client -> GST / TDS / Payment Terms -> Agreement -> Preview
+//     -> Upload / Generate -> Send to Client -> Client View
+//     -> Client Confirmation / Signed Copy -> Agreement Active
+//
+// DRAFT -> SENT -> VIEWED -> CLIENT_CONFIRMATION_PENDING -> SIGNED -> ACTIVE,
+// with EXPIRED and REJECTED as terminal states. A client requirement can only
+// be activated or posted once the agreement is ACTIVE.
+//
+// CONFIRMED is the pre-clireq spelling of SIGNED and CANCELLED of REJECTED.
+// Both are still ACCEPTED on read (see normalizeAgreementStatus) so a database
+// written before this round keeps rendering, but nothing writes them any more.
+const AGREEMENT_STATUSES = [
+  'DRAFT', 'SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING', 'SIGNED', 'ACTIVE', 'EXPIRED', 'REJECTED',
+];
 const AGREEMENT_STATUS_LABELS = {
   DRAFT: 'Draft',
   SENT: 'Sent',
-  CONFIRMED: 'Confirmed',
+  VIEWED: 'Viewed',
+  CLIENT_CONFIRMATION_PENDING: 'Client Confirmation Pending',
+  SIGNED: 'Signed',
   ACTIVE: 'Active',
-  CANCELLED: 'Cancelled',
   EXPIRED: 'Expired',
+  REJECTED: 'Rejected',
+  // legacy spellings
+  CONFIRMED: 'Signed',
+  CANCELLED: 'Rejected',
 };
+const AGREEMENT_STATUS_ALIASES = { CONFIRMED: 'SIGNED', CANCELLED: 'REJECTED' };
+function normalizeAgreementStatus(code) {
+  return AGREEMENT_STATUS_ALIASES[code] || code || 'DRAFT';
+}
+// The one place that answers "has this client actually signed?" — used by the
+// agreement routes so a legacy CONFIRMED row behaves exactly like SIGNED.
+function agreementIsSigned(code) {
+  return ['SIGNED', 'ACTIVE'].includes(normalizeAgreementStatus(code));
+}
+// The requirement gate. Only ACTIVE lets a client requirement go live.
+function agreementIsActive(code) {
+  return normalizeAgreementStatus(code) === 'ACTIVE';
+}
 function agreementStatusLabel(code) {
   return AGREEMENT_STATUS_LABELS[code] || code;
 }
@@ -214,6 +244,45 @@ const LOCS = ['Hyderabad', 'Bengaluru', 'Pune'];
 const REQUIREMENT_TYPES = ['Client Requirement', 'Internal Requirement'];
 const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent']; // default Medium
 const REQUIREMENT_STATUSES = ['Draft', 'Open', 'On Hold', 'Closed'];
+
+// --- Requirement workflow --------------------------------------------------
+// Draft -> Agreement Check -> Open -> Recruiter Assigned -> Sourcing
+//   -> Candidates Available -> On Hold / Closed
+//
+// AGREEMENT_CHECK is the state a client requirement sits in once it has been
+// submitted but the client's agreement is not yet Active; OPEN is only ever
+// reached through that gate. The three states after OPEN are driven by what
+// actually happened to the requirement (a recruiter assigned, sourcing begun,
+// candidates in the pipeline), so they are advanced by the routes as well as
+// settable by hand.
+const REQUIREMENT_STATUS_CODES = [
+  'DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING',
+  'CANDIDATES_AVAILABLE', 'ON_HOLD', 'CLOSED',
+];
+const REQUIREMENT_STATUS_LABELS = {
+  DRAFT: 'Draft',
+  AGREEMENT_CHECK: 'Agreement Check',
+  OPEN: 'Open',
+  RECRUITER_ASSIGNED: 'Recruiter Assigned',
+  SOURCING: 'Sourcing',
+  CANDIDATES_AVAILABLE: 'Candidates Available',
+  ON_HOLD: 'On Hold',
+  CLOSED: 'Closed',
+};
+// The states that count as "live" — a requirement past the agreement gate and
+// not parked or finished. Everything that used to test `status === 'OPEN'`
+// asks this instead, so the four new live states do not silently disappear
+// from the Open Requirements list or the job portal.
+const REQUIREMENT_LIVE_STATUSES = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
+function requirementIsLive(status) {
+  return REQUIREMENT_LIVE_STATUSES.includes(status);
+}
+function requirementStatusLabel(code) {
+  return REQUIREMENT_STATUS_LABELS[code] || code || '-';
+}
+
+// --- Job portal sync -------------------------------------------------------
+const PORTAL_SYNC_STATUSES = ['Not Synced', 'Pending', 'Synced', 'Failed'];
 const EDUCATION_LEVELS = [
   'Any Degree', 'B.Tech', 'B.E', 'MCA', 'MBA', 'M.Tech', 'MBBS', 'B.Pharm', 'B.Sc', 'M.Sc', 'Diploma', 'Other',
 ];
@@ -338,7 +407,17 @@ module.exports = {
   atsRoleLabel,
   AGREEMENT_STATUSES,
   AGREEMENT_STATUS_LABELS,
+  AGREEMENT_STATUS_ALIASES,
+  normalizeAgreementStatus,
+  agreementIsSigned,
+  agreementIsActive,
   agreementStatusLabel,
+  REQUIREMENT_STATUS_CODES,
+  REQUIREMENT_STATUS_LABELS,
+  REQUIREMENT_LIVE_STATUSES,
+  requirementIsLive,
+  requirementStatusLabel,
+  PORTAL_SYNC_STATUSES,
   DEPTS,
   LOCS,
   REQUIREMENT_TYPES,
