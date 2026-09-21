@@ -331,3 +331,23 @@ tfoot td{font-weight:700;background:var(--line-soft);border-top:1px solid var(--
 tr.acct-kid td{background:var(--paper);font-size:12px}
 tr.acct-kid td:first-child{padding-left:26px}
 .acct-exp{font-size:11px;padding:1px 6px;margin-right:6px;border:1px solid var(--line);border-radius:5px;background:#fff;line-height:1.4}
+
+/* Office & Accounts — the month calendar, and the bills nested under a group row. */
+.cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.cal-head>div{font-size:11px;font-weight:600;color:var(--ink-soft);text-align:center}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cal-cell{min-height:78px;border:1px solid var(--line);border-radius:8px;background:var(--paper-raised);padding:5px 6px;cursor:pointer}
+.cal-cell.cal-empty{border-style:dashed;background:transparent;cursor:default}
+.cal-cell.cal-wknd{background:var(--line-soft)}
+.cal-cell.cal-today{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--teal)}
+.cal-cell.cal-sel{background:var(--navy-tint);border-color:var(--navy)}
+.cal-d{font-size:11.5px;font-weight:600;color:var(--ink-soft);display:flex;justify-content:space-between;align-items:center}
+.cal-now{font-size:9px;font-weight:600;color:var(--teal);text-transform:uppercase;letter-spacing:.06em}
+.cal-amt{font-size:11px;font-weight:600;margin-top:3px;display:flex;justify-content:space-between;gap:4px}
+.cal-amt span{font-weight:400;color:var(--ink-soft)}
+.cal-amt.cal-out{color:var(--red)}
+.cal-amt.cal-due{color:var(--amber)}
+.cal-amt.cal-in{color:var(--teal)}
+.cal-stat{font-size:9.5px;color:var(--ink-soft);margin-top:4px;border-top:1px solid var(--line-soft);padding-top:3px;line-height:1.25}
+tr.kidrow td{background:var(--paper);font-size:12px}
+tr.kidrow td:first-child{padding-left:26px;color:var(--ink-soft)}
