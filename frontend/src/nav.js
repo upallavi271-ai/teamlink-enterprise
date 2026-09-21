@@ -105,12 +105,6 @@ const leaf = (to, label, perms, product) => ({ to, label, perms, product });
 
 export const HRMS_ITEMS = [
   leaf('/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
-  // Employee Management is an HRMS feature and lives in the HRMS group. It
-  // used to be listed under Administration, which meant every HR role — a TL,
-  // an STL, a Manager — was shown an "Administration" menu just to reach it.
-  // Administration is Super Admin / Admin only now (see ADMIN_ITEMS), so this
-  // entry is where a TL finds their own department's employees.
-  leaf('/employees', 'Employee Management', [['hrms', 'Employee Management', 'view']]),
   leaf('/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
   leaf('/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
@@ -159,10 +153,7 @@ export const ACCOUNTS_ITEMS = [
 // visibleItems() returns an empty list — which makes groupsForUser() drop the
 // whole "Administration" group rather than show a one-item stub.
 //
-// Two entries changed to make that true:
-//   * Employee Management moved to the HRMS group, where it belongs. It is an
-//     HRMS feature, and leaving it here was the reason every HR lead saw an
-//     Administration menu.
+// One entry changed to make that true:
 //   * Notifications and Profile were `perms: null` — always visible — which
 //     kept the group alive for literally everyone, including a candidate.
 //     Notifications is reachable from the bell in the topbar whatever your
@@ -175,6 +166,12 @@ export const ACCOUNTS_ITEMS = [
 export const ADMIN_ITEMS = [
   leaf('/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
   leaf('/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
+  // Employee Management is its own module under Administration. Its permission
+  // stays the HRMS one deliberately: the screen is scoped, so an HR role — a
+  // TL, an STL, a Manager — still reaches their own department's employees
+  // without being granted the administration module. The consequence is that
+  // such a login sees an Administration group containing only this entry.
+  leaf('/employees', 'Employee Management', [['hrms', 'Employee Management', 'view']]),
   leaf('/admin/users', 'Users', [['administration', 'Users', 'view']]),
   leaf('/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
   leaf('/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
@@ -239,13 +236,12 @@ export function flattenGroups(groups) {
 // Which sidebar section a URL belongs to, so the group opens and the topbar
 // title / breadcrumb name the right section.
 const SECTION_OF_PATH = [
-  // /employees is Employee Management, an HRMS screen — it sits in the HRMS
-  // group now, so the HRMS section is what opens and what the topbar names.
-  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile|employees)/, 'hrms'],
+  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile)/, 'hrms'],
   [/^\/(ats|requirements|clients|candidates|client-portal)/, 'ats'],
   [/^\/(accounts|invoices|bank|office)/, 'accounts'],
   [/^\/reports/, 'reports'],
-  [/^\/admin/, 'admin'],
+  // /employees is Employee Management, its own module under Administration.
+  [/^\/(admin|employees)/, 'admin'],
 ];
 export function sectionOf(pathname) {
   const hit = SECTION_OF_PATH.find(([re]) => re.test(pathname));
