@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isClientUser } from '../../permissions';
+import { JOB_PORTAL_URL } from '../JobPortalRedirect.jsx';
 
 // The prototype's atsDashboard() (line 6252): a six-tile statbar, then a
 // two-column split with "Pipeline by stage" on the left and "Recruiter
@@ -102,16 +103,23 @@ export default function AtsDashboard() {
                 <span><span className="conn-dot ok" />Connected</span>
               </div>
               <div className="kv">
-                <span className="k">Last Sync</span>
-                <span>Live — applications land in the pipeline as they are submitted</span>
+                <span className="k">Portal</span>
+                <span>TeamLink Job Portal — served at /job-portal/</span>
               </div>
               <div className="kv">
-                <span className="k">Candidates Synced</span>
+                <span className="k">Candidates from portal sources</span>
                 <span>{synced ?? '—'}</span>
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                {/* Sync ≠ Open Job Portal. Sync stays on this page and only
+                    re-reads this ATS; Open Job Portal opens the portal itself. */}
                 <button className="btn btn-sm btn-primary" onClick={load}>Sync</button>
-                <a className="btn btn-sm" href="/careers" target="_blank" rel="noreferrer">Open Job Portal ↗</a>
+                <a className="btn btn-sm" href={JOB_PORTAL_URL} target="_blank" rel="noreferrer">Open Job Portal ↗</a>
+              </div>
+              <div className="small-muted" style={{ marginTop: 8 }}>
+                <strong>Sync</strong> re-reads this ATS and refreshes the count above. It does not yet
+                exchange records with the Job Portal app — that portal keeps its own data in the
+                browser. See Administration → Integrations for what a two-way sync still needs.
               </div>
               <span
                 className="link-btn"

@@ -38,7 +38,7 @@ export default function MyApplications() {
         </div>
       </header>
       <main className="careers-content">
-        <Link className="small-muted" to="/careers">← Back to open positions</Link>
+        <Link className="small-muted" to="/careers/classic">← Back to open positions</Link>
         <h1 style={{ marginTop: 10 }}>Check your application status</h1>
         <p className="small-muted">Enter the email address you applied with — no account needed.</p>
         <form className="filter-row" onSubmit={check} style={{ maxWidth: 460 }}>

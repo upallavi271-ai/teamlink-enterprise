@@ -27,7 +27,7 @@ export default function JobDetail() {
     }
   }
 
-  if (notFound) return <div className="careers-shell"><main className="careers-content"><p>Job not found or no longer open.</p><Link to="/careers">← Back to openings</Link></main></div>;
+  if (notFound) return <div className="careers-shell"><main className="careers-content"><p>Job not found or no longer open.</p><Link to="/careers/classic">← Back to openings</Link></main></div>;
   if (!job) return <div className="careers-shell"><main className="careers-content" /></div>;
 
   return (
@@ -42,7 +42,7 @@ export default function JobDetail() {
         </div>
       </header>
       <main className="careers-content">
-        <Link className="small-muted" to="/careers">← Back to openings</Link>
+        <Link className="small-muted" to="/careers/classic">← Back to openings</Link>
         <h1 style={{ marginTop: 10 }}>{job.title}</h1>
         <div className="small-muted">{job.client} · {job.location || 'Location TBD'}</div>
         {job.description && <p>{job.description}</p>}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
+import { JOB_PORTAL_URL } from '../JobPortalRedirect.jsx';
 
 // Integrations — the prototype's integrationsView() (line 10367).
 //
@@ -11,8 +12,11 @@ import Modal from '../../components/Modal.jsx';
 // controls and sync log.
 //
 // Every channel except the Job Portal is Demo / Simulated, exactly as the
-// prototype says on each one. The Job Portal is real here: it is this app's own
-// public careers site, and the sync log rows are written as applications land.
+// prototype says on each one. The Job Portal is real here: the platform serves
+// the TeamLink Job Portal itself at /job-portal/. What is NOT real yet is the
+// synchronisation — the portal is a self-contained app that keeps its data in
+// the browser, so "Sync" only re-reads this ATS. The screen says so plainly
+// rather than implying a live channel; see the SYNC SEAM note below.
 
 function stateClass(state) {
   if (state === 'Connected') return 'active';
@@ -229,14 +233,14 @@ function JobPortalTab({ jp, stats, run }) {
             <div className="kv"><span className="k">Sync Status</span>
               <span><span className={`status ${connected ? 'active' : 'pending'}`}>{jp.lastSyncResult}</span></span></div>
             <div className="kv"><span className="k">Mode</span>
-              <span>Live — reading this platform&apos;s own Job Portal (the public careers site)</span></div>
+              <span>Portal served by this platform at <code>/job-portal/</code>; its own data store is the browser</span></div>
             <div className="kv"><span className="k">Real-time channel</span>
-              <span><span className="conn-dot ok" />Active — applications land in the pipeline as they are submitted</span></div>
-            <div className="kv"><span className="k">Sync direction</span><span>Job Portal → Enterprise (one-way, by design)</span></div>
+              <span><span className="conn-dot fail" />Not connected — the portal does not yet post applications into this ATS</span></div>
+            <div className="kv"><span className="k">Sync direction</span><span>None yet — Sync re-reads this ATS only</span></div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 190 }}>
             <button className="btn btn-primary btn-sm" onClick={() => run(() => api.post('/admin/integrations/job-portal/sync'), (r) => `${r.data.synced} synced, ${r.data.failed} failed.`)}>Sync</button>
-            <a className="btn btn-sm" href="/careers" target="_blank" rel="noreferrer">Open Job Portal ↗</a>
+            <a className="btn btn-sm" href={JOB_PORTAL_URL} target="_blank" rel="noreferrer">Open Job Portal ↗</a>
             <button className="btn btn-sm" onClick={() => run(() => api.post('/admin/integrations/jobportal/test'), (r) => `TeamLink Job Portal: ${r.data.result}`)}>Test Connection</button>
             <button className="btn btn-sm" onClick={() => setShowConfig(true)}>Configure</button>
             {stats.needsMapping > 0 && (
@@ -244,10 +248,19 @@ function JobPortalTab({ jp, stats, run }) {
             )}
           </div>
         </div>
-        <div className="notice" style={{ marginTop: 14 }}>
-          <strong>Sync</strong> pulls candidate and application data from the Job Portal into this ATS — it never
-          navigates away. <strong>Open Job Portal</strong> opens the candidate-facing careers site in a new tab —
-          it never triggers a sync.
+        {/* Sync and Open Job Portal are two different actions and must stay
+            that way. Neither one does the other's job. */}
+        <div className="notice amber" style={{ marginTop: 14 }}>
+          <strong>Open Job Portal</strong> opens the real TeamLink Job Portal (served at <code>/job-portal/</code>)
+          in a new tab. It never triggers a sync.
+          <br />
+          <strong>Sync</strong> stays on this page: today it re-reads this ATS&apos;s own records — candidates and
+          applications already carrying a portal source — refreshes the counters above and writes a sync-log row.
+          It does <strong>not</strong> yet move data between this ATS and the Job Portal: the portal is the
+          customer&apos;s self-contained app and keeps its jobs, candidates, applications and resumes in the
+          browser&apos;s local storage, not in this database. A real two-way sync needs the portal to read and write
+          through an API instead — pushing new, updated and closed requirements out, and bringing applications,
+          candidate profiles, resumes, stage changes and source back in.
         </div>
       </div>
 
@@ -281,14 +294,25 @@ function JobPortalTab({ jp, stats, run }) {
           foot={<button className="btn btn-primary" onClick={() => setShowConfig(false)}>Close</button>}
         >
           <div className="notice amber">
-            The Job Portal is this platform&apos;s own public careers site, so there is no external API endpoint,
-            API key or webhook to configure here. Its catalogue entry — under Connections → Job Boards — holds the
-            portal URL and bridge key.
+            The Job Portal is served by this platform itself, at <code>/job-portal/</code>, so there is no
+            external API endpoint, API key or webhook to configure here. There is also nothing to configure for
+            synchronisation yet: the portal stores its own data in the browser, so no record crosses between it
+            and this database.
           </div>
-          <div className="kv"><span className="k">Connection type</span><span>Internal — the platform&apos;s own public careers site</span></div>
-          <div className="kv"><span className="k">Sync direction</span><span>Job Portal → Enterprise (one-way, by design)</span></div>
-          <div className="kv"><span className="k">Duplicate protection</span><span>By candidate email; a repeat application to the same job is logged as Failed</span></div>
-          <div className="kv"><span className="k">Sync frequency</span><span>Real time, plus manual (&quot;Sync&quot;)</span></div>
+          <div className="kv"><span className="k">Connection type</span><span>Internal — served by this platform at /job-portal/</span></div>
+          <div className="kv"><span className="k">Portal data store</span><span>Browser local storage (the portal&apos;s own), not this database</span></div>
+          <div className="kv"><span className="k">Sync direction</span><span>None yet — Sync re-reads this ATS only</span></div>
+          <div className="kv"><span className="k">Sync frequency</span><span>Manual (&quot;Sync&quot;)</span></div>
+          {/* ---- SYNC SEAM ------------------------------------------------
+              A real Enterprise ↔ Portal sync attaches here. It needs, in this
+              order: (1) the portal reading its job list from GET /api/public/jobs
+              instead of its built-in DATA.jobs, so new/updated/closed
+              requirements flow out; (2) the portal POSTing applications and
+              candidate profiles (with resume upload) to this API instead of
+              writing tl_job_portal_state_v1; (3) stage/status changes flowing
+              back out so the candidate dashboard shows real progress. Until
+              those exist, this screen must keep saying so rather than
+              implying a live channel. -------------------------------------- */}
         </Modal>
       )}
     </>

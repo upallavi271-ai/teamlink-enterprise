@@ -46,6 +46,7 @@ import AuditLogs from './pages/admin/AuditLogs.jsx';
 import Profile from './pages/admin/Profile.jsx';
 
 import Careers from './pages/Careers.jsx';
+import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
 import JobDetail from './pages/JobDetail.jsx';
 import MyApplications from './pages/MyApplications.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
@@ -55,8 +56,17 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
 
-      {/* Public Job Portal — no login required */}
-      <Route path="/careers" element={<Careers />} />
+      {/* Public Job Portal — no login required.
+          /job-portal/ is the stable route for the real TeamLink Job Portal (the
+          self-contained app served from frontend/public/job-portal/index.html).
+          This React route only catches the no-trailing-slash form; see
+          JobPortalRedirect.jsx. /careers is kept as an alias of it so that
+          existing "Job Portal (public)" links land on the real portal, while the
+          database-backed careers list still lives at /careers/classic and its
+          deep links (/careers/:id, /careers/my-applications) are untouched. */}
+      <Route path="/job-portal" element={<JobPortalRedirect />} />
+      <Route path="/careers" element={<JobPortalRedirect />} />
+      <Route path="/careers/classic" element={<Careers />} />
       <Route path="/careers/my-applications" element={<MyApplications />} />
       <Route path="/careers/:id" element={<JobDetail />} />
 

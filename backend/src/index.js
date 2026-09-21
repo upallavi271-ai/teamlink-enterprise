@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
@@ -42,6 +43,39 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// ---------------------------------------------------------------------------
+// TeamLink Job Portal — served verbatim as a static asset.
+//
+// The portal is the customer's own self-contained single-file app. It lives at
+// frontend/public/job-portal/index.html (~1.5MB), is never imported by any JS
+// module, and is served as-is so that every feature and field behaves exactly
+// as it does when the file is opened on its own. It routes on the URL hash, so
+// the sub-path mount needs no rewriting.
+//
+// The frontend dev server / static host serves the same file at the same
+// stable route, /job-portal/; this mount makes it reachable from the API
+// origin too (e.g. a deployment that fronts only this process).
+//
+// SYNC SEAM: the portal currently keeps its jobs, candidates, applications and
+// resumes in browser local storage (tl_job_portal_state_v1), so nothing it
+// records reaches this database. A real Enterprise <-> Portal sync attaches
+// here: give the portal an API to read requirements from and to POST
+// applications, candidate profiles and resumes back into, then have stage and
+// status changes flow out the same way. Nothing below fakes that today, and
+// Administration -> Integrations says so on screen.
+// ---------------------------------------------------------------------------
+const JOB_PORTAL_DIR = path.join(__dirname, '..', '..', 'frontend', 'public', 'job-portal');
+// express.static resolves "/job-portal/" to index.html on its own. The bare
+// "/job-portal" form needs an explicit redirect, written app-level and matched
+// on the exact path so it cannot also match "/job-portal/" and loop (a
+// mounted app.get('/job-portal') would match both — Express is not strict
+// about the trailing slash).
+app.use((req, res, next) => {
+  if (req.path === '/job-portal') return res.redirect(302, '/job-portal/');
+  return next();
+});
+app.use('/job-portal', express.static(JOB_PORTAL_DIR, { index: 'index.html' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);

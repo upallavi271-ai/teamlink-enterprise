@@ -1,0 +1,3 @@
+# The TeamLink Job Portal is shipped byte-for-byte as the customer supplied
+# it. Never let Git rewrite its line endings.
+frontend/public/job-portal/index.html -text
