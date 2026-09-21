@@ -4,12 +4,14 @@ import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
 import Combo from '../components/Combo.jsx';
+import RequirementForm from '../components/RequirementForm.jsx';
 
 import {
   ALL_STAGE_CODES, stageLabel, stageBadgeClass, priorityBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive,
   agreementStatusLabel, agreementBadgeClass,
   PORTAL_SYNC_STATUSES, protoDate,
+  REJECTION_REASON_CATEGORIES, HOLD_REASON_CATEGORIES,
 } from '../atsVocab';
 
 const list = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -108,8 +110,14 @@ export default function RequirementDetail() {
   const [people, setPeople] = useState([]);
   const [linkCandidateId, setLinkCandidateId] = useState('');
   const [error, setError] = useState('');
-  const [dialog, setDialog] = useState(null); // 'jd' | 'posting' | 'assign'
+  const [dialog, setDialog] = useState(null); // 'jd' | 'posting' | 'assign' | 'edit'
   const [assign, setAssign] = useState(null);
+  const [notice, setNotice] = useState('');
+  // Edit Requirement reuses the Create Requirement form, so the client list
+  // it needs is loaded here too.
+  const [clients, setClients] = useState([]);
+  // The Reject / Hold decision being recorded, if any.
+  const [decision, setDecision] = useState(null);
 
   function load() {
     api.get(`/requirements/${id}`)
@@ -122,16 +130,38 @@ export default function RequirementDetail() {
     load();
     api.get('/candidates').then((res) => setCandidates(res.data)).catch(() => setCandidates([]));
     api.get('/requirements/assignable-people').then((res) => setPeople(res.data)).catch(() => setPeople([]));
+    api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
   }, [id]);
 
-  async function setStage(applicationId, stage) {
+  async function setStage(applicationId, stage, extra) {
     setError('');
     try {
-      await api.patch(`/applications/${applicationId}/stage`, { stage });
+      await api.patch(`/applications/${applicationId}/stage`, { stage, ...(extra || {}) });
       load();
+      return true;
     } catch (err) {
       setError(err.response?.data?.error || 'Could not change stage');
+      return false;
     }
+  }
+
+  // REJECTED and HOLD are the two moves that must keep a full record, so they
+  // go through a dialog that asks for the reason instead of writing a bare
+  // stage change. Every other stage moves straight through, as before.
+  function requestStage(application, stage) {
+    if (['REJECTED', 'HOLD'].includes(stage)) {
+      setDecision({
+        applicationId: application.id,
+        candidateName: application.candidate?.name || application.candidateName || 'this candidate',
+        fromStage: application.stage,
+        stage,
+        reasonCategory: '',
+        reasonDetail: '',
+        comment: '',
+      });
+      return;
+    }
+    setStage(application.id, stage);
   }
 
   async function linkCandidate(e, candidateId) {
@@ -197,8 +227,24 @@ export default function RequirementDetail() {
           <h1 style={{ fontSize: 20 }}>{`${r.reqCode ? `${r.reqCode} · ` : ''}${r.title}`}</h1>
           <div className="page-sub">{[clientName, r.department, r.location].filter(Boolean).join(' · ')}</div>
         </div>
-        <span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* EDIT REQUIREMENT. Opens the SAME seven-section form the Create
+              Requirement modal uses (components/RequirementForm.jsx), filled
+              from the saved record. `p.edit` is resolved on the server from
+              the one permission engine and already carries the record-level
+              check, so a TL who can only SEE this requirement gets no button
+              — and would be refused by the API if they sent the request
+              anyway. */}
+          {p.edit && (
+            <button className="btn btn-sm" onClick={() => { setNotice(''); setDialog('edit'); }}>
+              Edit Requirement
+            </button>
+          )}
+          <span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span>
+        </div>
       </div>
+
+      {notice && <div className="notice">{notice}</div>}
 
       {/* Draft → Agreement Check → Open → Recruiter Assigned → Sourcing →
           Candidates Available → On Hold / Closed */}
@@ -417,7 +463,7 @@ export default function RequirementDetail() {
                       <td>{a.matchScore != null ? `${a.matchScore}%` : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
                       <td>
                         {p.pipeline ? (
-                          <Combo value={a.stage} onChange={(e) => setStage(a.id, e.target.value)}>
+                          <Combo value={a.stage} onChange={(e) => requestStage(a, e.target.value)}>
                             {ALL_STAGE_CODES.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
                           </Combo>
                         ) : <span className="cell-muted">—</span>}
@@ -454,7 +500,14 @@ export default function RequirementDetail() {
                   {activity.map((a) => (
                     <tr key={a.id}>
                       <td className="cell-muted">{protoDate(a.createdAt)}</td>
-                      <td>{a.action}</td>
+                      <td>
+                        {a.action}
+                        {/* An edit writes one row per changed field, so the
+                            trail says WHICH field moved, not just that
+                            something did. */}
+                        {a.fieldLabel && <div className="small-muted" style={{ marginTop: 2 }}>{a.fieldLabel}</div>}
+                        {a.reason && <div className="small-muted" style={{ marginTop: 2 }}>{a.reason}</div>}
+                      </td>
                       <td className="cell-muted">{a.fromValue || '—'}</td>
                       <td className="cell-muted">{a.toValue || '—'}</td>
                       <td className="cell-muted">{a.by || 'System'}</td>
@@ -649,6 +702,109 @@ export default function RequirementDetail() {
           <Row k="Sources">{sources.length ? sources.map((s) => `${s} (${postingStatus})`).join(', ') : 'None selected'}</Row>
           <JobDescription requirement={r} forCandidate />
         </Modal>
+      )}
+
+      {/* --- REJECT / HOLD, recorded in full -------------------------------
+          "Rejected and Hold records must keep their full history — candidate,
+          requirement, client, previous stage, who rejected, their role and
+          side, reason category, detailed reason, comments, timestamp."
+
+          Everything on that list is either already known to the server (the
+          candidate, requirement, client, previous stage, the actor, their
+          role and their side) or asked for here (category, detailed reason,
+          comment). It is written onto the ApplicationStageEvent, which is
+          never overwritten and never deleted — a rejected candidate stays in
+          the master, searchable and matchable for other requirements. */}
+      {decision && (
+        <Modal
+          title={`${decision.stage === 'REJECTED' ? 'Reject' : 'Put on hold'} — ${decision.candidateName}`}
+          onClose={() => setDecision(null)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setDecision(null)}>Cancel</button>
+              <button
+                className={`btn ${decision.stage === 'REJECTED' ? 'btn-danger' : 'btn-primary'}`}
+                disabled={!decision.reasonCategory}
+                onClick={async () => {
+                  const ok = await setStage(decision.applicationId, decision.stage, {
+                    reasonCategory: decision.reasonCategory,
+                    reasonDetail: decision.reasonDetail,
+                    comment: decision.comment,
+                  });
+                  if (ok) setDecision(null);
+                }}
+              >
+                {decision.stage === 'REJECTED' ? 'Record rejection' : 'Record hold'}
+              </button>
+            </>
+          )}
+        >
+          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>
+            {`Moving from ${stageLabel(decision.fromStage)}. This is kept for ever against the application — `}
+            {'the candidate is never removed from the master, and this reasoning is never shown to a client login.'}
+          </div>
+          <label className="field">
+            <span>Reason Category *</span>
+            <Combo
+              value={decision.reasonCategory}
+              onChange={(e) => setDecision({ ...decision, reasonCategory: e.target.value })}
+            >
+              <option value="">— Select —</option>
+              {(decision.stage === 'REJECTED' ? REJECTION_REASON_CATEGORIES : HOLD_REASON_CATEGORIES)
+                .map((x) => <option key={x} value={x}>{x}</option>)}
+            </Combo>
+          </label>
+          <label className="field">
+            <span>Detailed Reason</span>
+            <textarea
+              rows="3"
+              value={decision.reasonDetail}
+              placeholder="What specifically decided it?"
+              onChange={(e) => setDecision({ ...decision, reasonDetail: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Comments</span>
+            <textarea
+              rows="2"
+              value={decision.comment}
+              placeholder="Anything the next recruiter to open this record should know"
+              onChange={(e) => setDecision({ ...decision, comment: e.target.value })}
+            />
+          </label>
+          <div className="cell-muted" style={{ fontSize: 11.5 }}>
+            {'Who decided, their role and which side they were on (Internal or Client) are recorded from your '}
+            {'signed-in identity — they are not typed in and cannot be back-dated.'}
+          </div>
+        </Modal>
+      )}
+
+      {/* EDIT REQUIREMENT — the Create Requirement form in edit mode. Not a
+          second form: components/RequirementForm.jsx is the one the Add
+          Requirement button opens, filled from this record.
+
+          `canAssign` comes from the server's own per-record permission set,
+          so section F (the assignment chain) is read-only for a recruiter who
+          may edit this requirement but may not re-assign it. The server
+          refuses that change too — the read-only state explains, it does not
+          enforce. */}
+      {dialog === 'edit' && (
+        <RequirementForm
+          mode="edit"
+          requirement={r}
+          clients={clients}
+          team={people}
+          canAssign={!!p.assign}
+          onClose={() => setDialog(null)}
+          onSaved={(saved, meta) => {
+            setDialog(null);
+            const changed = (meta && meta.changedFields) || [];
+            setNotice(changed.length
+              ? `Saved. ${changed.length} field(s) updated: ${changed.join(', ')}. The change is in the activity trail below.`
+              : 'Nothing changed — no fields were different.');
+            load();
+          }}
+        />
       )}
     </div>
   );
