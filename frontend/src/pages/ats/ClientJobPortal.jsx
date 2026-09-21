@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
+import ClientModuleTabs from '../../components/ClientModuleTabs.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can, canDecideAsClient, canSeeClientPortal } from '../../permissions';
 
@@ -52,10 +53,19 @@ export default function ClientJobPortal() {
   useEffect(load, [load]);
 
   // One place for every write, so nothing can reject uncaught.
+  //
+  // The confirmation must not claim a move that did not happen: Request
+  // Interview records the ask and changes no stage, so it says so instead of
+  // reading back whatever stage the candidate was already sitting at.
   function decide(app, decision, label) {
     setBusy(app.applicationId); setError(''); setNotice('');
     Promise.resolve(api.post(`/job-portal/client/applications/${app.applicationId}/decision`, { decision }))
-      .then((r) => { setNotice(`${app.name}: ${r.data.action} — now at ${r.data.stageLabel}.`); load(); })
+      .then((r) => {
+        setNotice(decision === 'REQUEST_INTERVIEW'
+          ? `${app.name}: interview requested. The recruiter has been notified and will schedule it — the candidate stays at ${r.data.stageLabel}.`
+          : `${app.name}: ${r.data.action} — now at ${r.data.stageLabel}.`);
+        load();
+      })
       .catch((e) => setError(e.response?.data?.error || `${label} was refused.`))
       .finally(() => setBusy(''));
   }
@@ -93,6 +103,12 @@ export default function ClientJobPortal() {
           </div>
         </div>
       </div>
+
+      {/* The same Clients · Requirements · Agreements · Job Portal strip the
+          rest of the module shows, so a client lands here from Jobs /
+          Requirements and can get back. The strip picks THIS screen for them
+          because they hold Client Job Portal and not Job Portal Workspace. */}
+      <ClientModuleTabs active="jobportal" />
 
       {/* .notice is display:flex — one child, or every phrase becomes a column. */}
       {error && <div className="notice red"><span>{error}</span></div>}
