@@ -34,6 +34,8 @@ const assetInventoryRoutes = require('./routes/assetInventory');
 const resignationRoutes = require('./routes/resignations');
 const hrmsDashboardRoutes = require('./routes/hrmsDashboard');
 const escalationRoutes = require('./routes/escalation');
+const aiRoutes = require('./routes/ai');
+const mailWorker = require('./utils/mailWorker');
 
 // hrManagedCreate: only someone with HRMS Employee Management reach may
 // create these record types for another employee. Resolved by the permission
@@ -104,6 +106,9 @@ app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
 // shares the /api/ats prefix with the calendar above.
 app.use('/api/ats', interviewsJoiningRoutes);
+// The AI Assistant. Server-side only: the Anthropic key stays in the encrypted
+// credential store (utils/secrets.js) and never reaches the browser.
+app.use('/api/ai', aiRoutes);
 app.use('/api/hrms/dashboard', hrmsDashboardRoutes);
 app.use('/api/hrms/escalation', escalationRoutes);
 
@@ -136,4 +141,9 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`TeamLink API listening on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`TeamLink API listening on http://localhost:${PORT}`);
+  // The email sending worker. A no-op until Administration → Integrations has
+  // an SMTP channel configured; MAIL_WORKER_INTERVAL_MS=0 switches it off.
+  mailWorker.start();
+});

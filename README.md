@@ -111,6 +111,101 @@ workspace switcher in the top bar; it never asks you to choose a role.
 
 **Public** — a careers portal at `/careers`, plus a tokenised client agreement signing page.
 
+## Integrations, credentials and secrets
+
+Third-party credentials are entered in **Administration → Integrations** and
+live **server-side only**. `backend/src/utils/secrets.js` encrypts every
+credential field with AES-256-GCM before it is stored in the existing
+`Integration.values` JSON column, and `backend/src/utils/integrationStore.js`
+is the only module that reads or writes it. The API returns the non-secret
+fields (host, port, username, from-address, model name) plus a **masked hint**
+such as `••••••a91f`; the plaintext never reaches the browser and is never
+logged.
+
+The encryption key comes from one environment variable:
+
+```
+INTEGRATION_SECRET_KEY   # 64 hex chars, or any long passphrase (scrypt-stretched)
+```
+
+It is documented in `backend/.env.example`. Without it the Integrations screen
+**refuses to save a credential** rather than storing one in plain text —
+everything else keeps working. Changing it makes stored credentials unreadable;
+the screens say so and the credential must be entered again. `.env` is
+gitignored and no real value belongs in the repository.
+
+In the Configure dialog a credential box opens **empty**: blank means "keep
+what is stored", and a single `-` clears it.
+
+### Email (SMTP) — real
+
+`nodemailer` sends through the host configured on the **Email (SMTP)** channel:
+SMTP host, port, encryption (SSL / STARTTLS / None), username, password,
+from-address and default from-name. To switch it on, fill those in and press
+**Save & Connect**, then **Send test email** on the same screen — a failure
+reports the provider's own error (`EAUTH`, `ECONNREFUSED`, the SMTP 5xx text),
+not a generic one.
+
+`backend/src/utils/mailWorker.js` then sends the `CandidateMessage` rows that a
+stage change writes, and the status vocabulary stays honest:
+
+| Status | Means |
+|---|---|
+| `NOT_SENT_NO_PROVIDER` | Recorded, not transmitted. The correct state when no SMTP channel is configured — and the permanent state of every SMS and WhatsApp row, because neither has a provider. |
+| `QUEUED` | A provider exists; waiting for the worker. |
+| `RETRY` | The provider failed **temporarily**. Retried with backoff (1, 5, 15, 60, 180 minutes), up to `MAIL_MAX_ATTEMPTS`. |
+| `SENT` | The provider **accepted** it. `providerRef` carries its message id and `sentAt` the time. |
+| `FAILED` | The provider refused it, or the retries ran out. `lastError` carries the provider's reason. |
+
+`SENT` means accepted for delivery, not delivered: there is no bounce or
+delivery webhook yet, and no suppression list. The screens say so.
+
+**Sender identity, and why it needs DNS.** A candidate message goes out under
+the **sending employee's own email address**, taken from their employee record
+(`Employee.email`, captured when the employee is added). SMTP will not let an
+authenticated mailbox claim an arbitrary envelope sender, so the message is
+built as a standard *send-on-behalf-of*:
+
+```
+envelope MAIL FROM : the configured From address (the mailbox we authenticated as)
+header   From      : "Employee Name" <employee@domain>     <- what the candidate sees
+         Reply-To  : employee@domain                        <- where replies land
+         Sender    : the configured From address
+```
+
+For that `From` to reach an inbox, **the employee's domain must authorise this
+SMTP host**: SPF must include it, DKIM must sign for that domain, and DMARC
+must be satisfiable. Without SPF/DKIM/DMARC alignment on each employee domain,
+the mail is spam-foldered or bounced. Employees on a domain you do not control
+(a personal Gmail address, say) cannot be used as a `From` at all — put a
+domain you own on their employee record.
+
+### AI Assistant (Anthropic Claude) — real, optional
+
+The floating assistant has two halves. **"Do next"** is computed from the same
+scoped, permission-guarded queues the dashboard renders and needs no model.
+**"Ask"** is a real agent: paste an Anthropic API key into the **AI Assistant
+(Anthropic Claude)** channel and free-text questions are answered by
+`backend/src/utils/aiAgent.js`.
+
+- The key is stored encrypted like any other credential and is used **only on
+  the server**. The browser posts to `/api/ai/ask`; it never sees the key.
+- The agent answers **only from this app's data**, through a small tool surface
+  in `backend/src/utils/aiAgentTools.js`: pending actions, requirement and
+  candidate search, requirement detail, job-description facts, client list, and
+  candidate/requirement scoring.
+- **Every tool call runs `can(...)` from the permission engine and spreads the
+  `utils/scope.js` `where` fragments into the query**, exactly as a route does.
+  A user cannot ask the agent for anything the API would refuse them; a refusal
+  is reported as a refusal, not as "no such record". The agent is read-only.
+- Match scores come from `backend/src/utils/matching.js`, never from the model.
+- Cost and abuse: conversation history, tool iterations, output tokens and
+  questions per user per hour are all capped (the last two are editable on the
+  channel).
+
+With no key, `/api/ai/status` reports it, the Ask tab says so plainly, and the
+rest of the panel keeps working.
+
 ## Notes
 
 - Invoice money is `amount + GST − TDS`; GST and TDS rates come from the client record.
@@ -127,4 +222,7 @@ workspace switcher in the top bar; it never asks you to choose a role.
   implements a column *change* on SQLite as a table rebuild that silently drops
   columns added by migrations it did not know about. If `prisma migrate dev`
   generates a rebuild, hand-write the migration instead (see
-  `20260921140000_auth_rbac_identity_and_access`).
+  `20260921140000_auth_rbac_identity_and_access` and
+  `20260921170000_integr_message_delivery`).
+- Never commit a credential. `.env` and `backend/prisma/dev.db` are gitignored,
+  and nothing in the codebase logs a secret.

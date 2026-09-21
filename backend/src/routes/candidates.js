@@ -14,7 +14,7 @@ const {
   CANDIDATE_VIEWS, groupIdOfStage, groupLabelOfStage, stageDetail,
   stageIndex, matchesView, groupsWithDetail,
 } = require('../utils/pipelineView');
-const { TEMPLATES, NOT_SENT_DETAIL } = require('../utils/candidateComms');
+const { TEMPLATES, commsNote } = require('../utils/candidateComms');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -596,7 +596,7 @@ router.get('/:id', async (req, res) => {
     aiMatch: kind === 'internal' && latest ? aiMatchFor(candidate, latest) : null,
     pipelineHistory,
     communications,
-    communicationsNote: NOT_SENT_DETAIL,
+    communicationsNote: await commsNote(),
     documents,
     notes,
     audit,
@@ -617,7 +617,7 @@ router.get('/:id/communications', async (req, res) => {
   });
   res.json({
     rows,
-    note: NOT_SENT_DETAIL,
+    note: await commsNote(),
     templates: Object.values(TEMPLATES).map((t) => ({ key: t.key, label: t.label, channels: t.channels })),
   });
   return undefined;

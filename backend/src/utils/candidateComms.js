@@ -3,53 +3,46 @@
 //
 // READ THIS BEFORE BELIEVING ANYTHING THIS MODULE SAYS ABOUT DELIVERY.
 //
-// There is NO mail, SMS or WhatsApp provider wired into this application. No
-// SMTP host, no Twilio/MSG91 account, no WhatsApp Business API. Nothing here
-// opens a socket to anybody. What this module does is the half that belongs in
-// the app anyway:
+// WHAT IS REAL NOW
+//   EMAIL is real. Administration → Integrations → Email (SMTP) holds the
+//   host, port, encryption, username and password (encrypted at rest — see
+//   utils/secrets.js). utils/mailWorker.js picks the rows up, hands them to
+//   nodemailer and writes back the provider's own message id, sentAt and
+//   status. A row reaches SENT only when the provider accepted it.
 //
-//   * the TRIGGER  — a stage transition decides which templates fire;
-//   * the RECORD   — one CandidateMessage row per channel, carrying channel,
-//                    template, recipient, trigger, sender identity, status and
-//                    timestamp, shown in the candidate's Communications tab.
+// WHAT IS STILL NOT
+//   SMS and WhatsApp. There is no Twilio/MSG91 account and no WhatsApp
+//   Business API, so those rows keep status NOT_SENT_NO_PROVIDER and the UI
+//   keeps labelling them "Not sent — no provider". That remains TRUE, and it
+//   is the correct state for EMAIL too whenever the SMTP channel is not
+//   configured. A row is evidence that the app decided to contact this
+//   person; only SENT is evidence that the person was contacted.
 //
-// Every row is written with status NOT_SENT_NO_PROVIDER, sentAt = null and
-// providerRef = null, and the UI labels it "Not sent — no provider". A row is
-// evidence that the app decided to contact this person, never evidence that
-// the person was contacted.
-//
-// WHAT A REAL INTEGRATION WOULD NEED (nothing below is implemented):
-//   1. Credentials per channel, held in Administration → Integrations, not in
-//      code: SMTP host/port/user/password or a transactional-email API key;
-//      an SMS gateway key plus a registered sender ID and DLT template ids for
-//      India; a WhatsApp Business phone-number id, permanent token and
-//      Meta-APPROVED message templates (WhatsApp will not deliver free-form
-//      text outside a 24-hour service window).
-//   2. A sending worker that picks up NOT_SENT_NO_PROVIDER rows, calls the
-//      provider, and writes back providerRef, sentAt and status
-//      (SENT → DELIVERED → READ / FAILED) — so a provider outage retries
-//      instead of losing the message.
-//   3. A webhook endpoint per provider for those delivery callbacks, plus
-//      bounce and opt-out handling (an unsubscribed or bounced address must
-//      stop being written to).
-//   4. Per-employee sending identity: sending "from" an employee's own address
-//      requires that domain's SPF/DKIM/DMARC to authorise the provider, or the
-//      mail is spam-foldered. The address itself already comes from the
-//      employee record (see senderIdentity() below).
+// STILL MISSING FOR EMAIL (honest list):
+//   * delivery/bounce webhooks — the worker knows the provider ACCEPTED the
+//     message, not that the mailbox received it. There is no DELIVERED or
+//     READ state, and nothing here claims one.
+//   * opt-out / suppression handling: a bounced or unsubscribed address is
+//     not yet stopped from being written to again.
+//   * SMS and WhatsApp, as above.
 //
 // SENDER IDENTITY
 // The user's requirement: an employee's email is captured when the employee is
 // added, and candidate messages from that employee go out through that same
-// address. senderIdentity() therefore resolves Employee.email for the acting
-// user and stores it on the row. There is no hardcoded from-address anywhere in
-// this file — if an employee has no email on their record the row records that
-// fact rather than substituting a default.
+// address. senderIdentity() resolves Employee.email for the acting user and
+// stores it on the row; utils/mailer.js then carries it into the envelope as
+// the header From with Reply-To, over an authenticated envelope sender. There
+// is no hardcoded from-address anywhere in this file — if an employee has no
+// email on their record the row records that fact rather than substituting a
+// default. Per-employee From addresses need SPF/DKIM/DMARC on that employee's
+// domain; the README says so.
 // ---------------------------------------------------------------------------
 
 const prisma = require('../db');
 const { stageLabel } = require('./atsVocab');
 
-// The one honest status. Kept as a constant so no screen can invent "Sent".
+// The honest "nothing was transmitted" status. Kept as a constant so no screen
+// can invent "Sent"; only the worker, having heard from a provider, may.
 const NOT_SENT = 'NOT_SENT_NO_PROVIDER';
 const NOT_SENT_DETAIL = 'Recorded, not transmitted — this app has no Email/SMS/WhatsApp provider configured.';
 
@@ -232,12 +225,25 @@ async function recordStageCommunications({
   };
 
   const trigger = `Stage change: ${stageLabel(fromStage) || 'New'} → ${stageLabel(toStage)}`;
+
+  // Is there a live provider for this channel right now? Only Email can have
+  // one. If there is, the row is QUEUED and the worker will really send it;
+  // if there is not, it keeps the honest "recorded, not transmitted" state.
+  // eslint-disable-next-line global-require
+  const { emailConfig } = require('./mailer');
+  let emailLive = false;
+  try { emailLive = (await emailConfig()).configured; } catch { emailLive = false; }
+
   const rows = [];
+  let queuedAnEmail = false;
   for (const channel of template.channels) {
     const recipient = recipientFor(channel, candidate);
-    const detail = recipient
-      ? NOT_SENT_DETAIL
-      : `${NOT_SENT_DETAIL} No ${channel === 'Email' ? 'email address' : 'phone number'} on this candidate's record.`;
+    const live = channel === 'Email' && emailLive && !!recipient;
+    const detail = live
+      ? 'Queued for sending.'
+      : (recipient
+        ? NOT_SENT_DETAIL
+        : `${NOT_SENT_DETAIL} No ${channel === 'Email' ? 'email address' : 'phone number'} on this candidate's record.`);
     // eslint-disable-next-line no-await-in-loop
     const row = await prisma.candidateMessage.create({
       data: {
@@ -250,14 +256,20 @@ async function recordStageCommunications({
         recipient,
         subject: channel === 'Email' ? fill(template.subject, tokens) : null,
         body: fill(template.body, tokens),
-        status: NOT_SENT,
+        status: live ? 'QUEUED' : NOT_SENT,
         statusDetail: detail,
         stageFrom: fromStage || null,
         stageTo: toStage,
         ...sender,
       },
     });
+    if (live) queuedAnEmail = true;
     rows.push(row);
+  }
+  // Hand the queue to the worker now rather than waiting for its next tick.
+  if (queuedAnEmail) {
+    // eslint-disable-next-line global-require
+    require('./mailWorker').kick();
   }
   // Note: the recruiter's transition `comment` is deliberately NOT used here.
   // It is internal, it is recorded on the pipeline-history event, and it is
@@ -265,10 +277,36 @@ async function recordStageCommunications({
   return rows;
 }
 
+// The sentence the Communications tab prints above the table. It has to tell
+// the truth about the CURRENT configuration, not a compile-time assumption.
+async function commsNote() {
+  let email = { configured: false, reason: '' };
+  try {
+    // eslint-disable-next-line global-require
+    email = await require('./mailer').emailConfig();
+  } catch { email = { configured: false, reason: '' }; }
+  if (email.configured) {
+    return `Email is connected (${email.host}) and these messages are really sent — a row reaches "Sent" only when the provider accepted it, and carries the provider's message id. SMS and WhatsApp have no provider, so those rows stay recorded but not transmitted.`;
+  }
+  return NOT_SENT_DETAIL;
+}
+
+// How a status code reads on screen. One place, so no screen can invent a
+// label for a state the worker never writes.
+const STATUS_LABELS = {
+  NOT_SENT_NO_PROVIDER: 'Not sent — no provider',
+  QUEUED: 'Queued',
+  RETRY: 'Retrying',
+  SENT: 'Sent',
+  FAILED: 'Failed',
+};
+
 module.exports = {
   TEMPLATES,
   NOT_SENT,
   NOT_SENT_DETAIL,
+  STATUS_LABELS,
+  commsNote,
   senderIdentity,
   recordStageCommunications,
 };
