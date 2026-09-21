@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import Modal, { SectionHead } from '../components/Modal.jsx';
 import {
-  ALL_STAGE_CODES, stageLabel, LIFE_STATUSES, DEPTS, LOCS,
+  STAGE_LABELS, LIFE_STATUSES, DEPTS, LOCS,
   CANDIDATE_SOURCES, CANDIDATE_FIRST_SOURCES, CANDIDATE_FILTER_SOURCES, APPLICATION_METHODS,
   CANDIDATE_GENDERS, CANDIDATE_NOTICE_PERIODS, CANDIDATE_AVAILABILITY, CANDIDATE_JOB_PREFERENCES,
   CANDIDATE_EMPLOYMENT_TYPES, CANDIDATE_WORK_MODES, CANDIDATE_EDUCATION,
-  stageBadgeClass, lifeStatusClass, aiStatusClass, protoDate, initials,
+  lifeStatusClass, protoDate, initials,
 } from '../atsVocab';
+import {
+  STAGE_GROUPS, CANDIDATE_VIEWS, matchesView, groupContents, groupBadgeClass,
+} from '../pipelineView';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 
@@ -28,9 +31,12 @@ const EMPTY = {
   applicationMethod: 'Manual', requirementId: '',
 };
 
+// The consistent filter set: Department, Client, Requirement, Recruiter, TL,
+// BDE, Location, Source, Stage, Status, Date Range.
 const EMPTY_FILTERS = {
   search: '', department: '', clientId: '', requirementId: '', recruiter: '',
-  tl: '', bde: '', location: '', source: '', stage: '', status: '', appliedOn: '',
+  tl: '', bde: '', location: '', source: '', stage: '', status: '',
+  appliedFrom: '', appliedTo: '',
 };
 
 export default function Candidates() {
@@ -41,12 +47,18 @@ export default function Candidates() {
   const [requirements, setRequirements] = useState([]);
   const [team, setTeam] = useState([]);
   const [form, setForm] = useState(EMPTY);
-  const [filters, setFilters] = useState({ ...EMPTY_FILTERS, stage: searchParams.get('stage') || '' });
+  const [filters, setFilters] = useState({
+    ...EMPTY_FILTERS,
+    stage: searchParams.get('stage') ? `stage:${searchParams.get('stage')}` : '',
+  });
   const [showForm, setShowForm] = useState(false);
   const [duplicate, setDuplicate] = useState('');
   const [error, setError] = useState('');
-  // The prototype's three tabs: Pipeline / Rejected (n) / Source Analytics.
-  const [view, setView] = useState('pipeline');
+  // Hold and Rejected are VIEWS over one list, not separate modules. The six
+  // views: All · Active · Hold · Rejected · Selected · Joined.
+  const [view, setView] = useState(searchParams.get('view') || 'all');
+  const [tab, setTab] = useState('pipeline');
+  const [sources, setSources] = useState(null);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
@@ -58,6 +70,9 @@ export default function Candidates() {
     load();
     api.get('/requirements').then((res) => setRequirements(res.data)).catch(() => setRequirements([]));
     api.get('/ats/team').then((res) => setTeam(res.data)).catch(() => setTeam([]));
+    // Source analytics is computed on the server, over the same scoped list,
+    // so the numbers can never disagree with the table.
+    api.get('/candidates/source-analytics').then((res) => setSources(res.data)).catch(() => setSources(null));
   }, []);
 
   const clientOptions = useMemo(() => {
@@ -68,14 +83,18 @@ export default function Candidates() {
 
   // Requirement-derived filters match if ANY of the candidate's applications
   // match — the prototype's renderCandidateList().
-  const rows = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
     return candidates.filter((c) => {
       if (q && !(`${c.name} ${c.skills || ''}`.toLowerCase().includes(q))) return false;
       if (filters.location && c.location !== filters.location) return false;
       if (filters.source && c.source !== filters.source) return false;
-      if (filters.stage && c.currentStage !== filters.stage) return false;
       if (filters.status && c.lifeStatus !== filters.status) return false;
+      // The Stage filter accepts either a whole visible stage ("group:interview")
+      // or one precise underlying status ("stage:INTERVIEW_COMPLETED"), so
+      // folding the pipeline never costs anyone the fine-grained filter.
+      if (filters.stage.startsWith('group:') && c.stageGroup !== filters.stage.slice(6)) return false;
+      if (filters.stage.startsWith('stage:') && c.currentStage !== filters.stage.slice(6)) return false;
 
       const apps = c.applications || [];
       const any = (pred) => apps.length > 0 && apps.some(pred);
@@ -85,15 +104,41 @@ export default function Candidates() {
       if (filters.recruiter && !any((a) => a.requirement?.recruiter?.name === filters.recruiter)) return false;
       if (filters.tl && !any((a) => a.requirement?.tl === filters.tl)) return false;
       if (filters.bde && !any((a) => a.requirement?.bde?.name === filters.bde)) return false;
-      if (filters.appliedOn && !any((a) => String(a.createdAt || '').slice(0, 10) === filters.appliedOn)) return false;
+      if (filters.appliedFrom && !any((a) => String(a.createdAt || '').slice(0, 10) >= filters.appliedFrom)) return false;
+      if (filters.appliedTo && !any((a) => String(a.createdAt || '').slice(0, 10) <= filters.appliedTo)) return false;
       return true;
     });
   }, [candidates, filters]);
 
+  // The view is applied last, so the counts on the view tabs reflect the
+  // filters that are already on.
+  const rows = useMemo(
+    () => filtered.filter((c) => matchesView(view, c.currentStage)),
+    [filtered, view],
+  );
+
+  const viewCounts = useMemo(() => {
+    const out = {};
+    CANDIDATE_VIEWS.forEach((v) => {
+      out[v.id] = filtered.filter((c) => matchesView(v.id, c.currentStage)).length;
+    });
+    return out;
+  }, [filtered]);
+
+  // How many candidates sit at each of the ten VISIBLE stages.
+  const groupCounts = useMemo(() => {
+    const out = {};
+    filtered.forEach((c) => {
+      if (!c.stageGroup) return;
+      out[c.stageGroup] = (out[c.stageGroup] || 0) + 1;
+    });
+    return out;
+  }, [filtered]);
+
   async function checkDuplicate() {
     if (!form.email && !form.phone) return setDuplicate('');
     const res = await api.get('/candidates/check-duplicate', { params: { email: form.email, phone: form.phone } });
-    setDuplicate(
+    return setDuplicate(
       res.data.duplicate
         ? `Already on file: ${res.data.matches.map((m) => m.name).join(', ')}. Save again to add anyway.`
         : ''
@@ -120,55 +165,18 @@ export default function Candidates() {
     setDuplicate('');
     setShowForm(false);
     load();
+    return undefined;
   }
 
   const tlNames = [...new Set(requirements.map((r) => r.tl).filter(Boolean))];
-
-  // Rejected view — the prototype's rejectedListHtml(). A rejection closes one
-  // application; the Candidate Master record is never deleted.
-  const rejectedRows = useMemo(() => {
-    const out = [];
-    candidates.forEach((c) => (c.applications || []).forEach((a) => {
-      if (a.stage === 'REJECTED') out.push({ candidate: c, application: a });
-    }));
-    return out;
-  }, [candidates]);
-
-  // Source analytics — the prototype's sourceAnalyticsHtml(), computed live
-  // from the candidate and application records.
-  const sourceStats = useMemo(() => {
-    const by = {};
-    const bucket = (k) => {
-      by[k] = by[k] || { first: 0, latest: 0, apps: 0, auto: 0, manual: 0 };
-      return by[k];
-    };
-    let autoTotal = 0;
-    candidates.forEach((c) => {
-      const first = c.firstSource || c.source || 'Unknown';
-      const latest = c.source || first;
-      bucket(first).first += 1;
-      bucket(latest).latest += 1;
-      (c.applications || []).forEach((a) => {
-        const src = a.source || c.source || 'Unknown';
-        const b = bucket(src);
-        b.apps += 1;
-        if ((a.applicationMethod || 'Manual') === 'Auto-Apply') { b.auto += 1; autoTotal += 1; } else b.manual += 1;
-      });
-    });
-    const totalApps = candidates.reduce((n, c) => n + (c.applications || []).length, 0);
-    return {
-      rows: Object.entries(by).sort((a, b) => b[1].latest - a[1].latest),
-      autoTotal,
-      manualTotal: totalApps - autoTotal,
-    };
-  }, [candidates]);
+  const activeGroup = filters.stage.startsWith('group:') ? filters.stage.slice(6) : null;
 
   return (
     <div>
       <div className="page-head">
         <div>
           <h1>Candidates &amp; Pipeline</h1>
-          <div className="page-sub">{candidates.length} candidates in the database</div>
+          <div className="page-sub">{candidates.length} candidates in your scope</div>
         </div>
         {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
           <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Candidate</button>
@@ -347,7 +355,7 @@ export default function Candidates() {
           </div>
           <div className="cell-muted" style={{ fontSize: 12 }}>
             Resume Score and AI-parsed fields appear only after a resume is attached — no score is shown for a
-            candidate without one.
+            candidate without one. A named resume also becomes the first row of the Documents tab.
           </div>
 
           <SectionHead caps>F. Source</SectionHead>
@@ -415,194 +423,208 @@ export default function Candidates() {
         </Modal>
       )}
 
-      <div className="filter-row">
-        <input type="text" placeholder="Search name or skill…" value={filters.search} onChange={(e) => setFilter({ search: e.target.value })} />
-        <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
-          <option value="">All departments</option>
-          {DEPTS.map((d) => <option key={d}>{d}</option>)}
-        </select>
-        <select value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
-          <option value="">All clients</option>
-          {clientOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        <select value={filters.requirementId} onChange={(e) => setFilter({ requirementId: e.target.value })}>
-          <option value="">All requirements</option>
-          {requirements.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
-        </select>
-        <select value={filters.recruiter} onChange={(e) => setFilter({ recruiter: e.target.value })}>
-          <option value="">All recruiters</option>
-          {team.filter((t) => t.role === 'RECRUITER').map((t) => <option key={t.id}>{t.name}</option>)}
-        </select>
-        <select value={filters.tl} onChange={(e) => setFilter({ tl: e.target.value })}>
-          <option value="">All TLs</option>
-          {tlNames.map((t) => <option key={t}>{t}</option>)}
-        </select>
-        <select value={filters.bde} onChange={(e) => setFilter({ bde: e.target.value })}>
-          <option value="">All BDEs</option>
-          {team.filter((t) => t.role === 'BDE').map((t) => <option key={t.id}>{t.name}</option>)}
-        </select>
-        <select value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
-          <option value="">All locations</option>
-          {LOCS.map((l) => <option key={l}>{l}</option>)}
-        </select>
-        <select value={filters.source} onChange={(e) => setFilter({ source: e.target.value })}>
-          <option value="">All sources</option>
-          {CANDIDATE_FILTER_SOURCES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select value={filters.stage} onChange={(e) => setFilter({ stage: e.target.value })}>
-          <option value="">All stages</option>
-          {ALL_STAGE_CODES.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
-        </select>
-        <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
-          <option value="">All statuses</option>
-          {LIFE_STATUSES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <input type="date" title="Applied on" value={filters.appliedOn} onChange={(e) => setFilter({ appliedOn: e.target.value })} />
-        <button className="btn btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
-      </div>
-
+      {/* --- The six views. Hold and Rejected are filters over this one list,
+              not modules of their own: a held candidate has paused in the
+              pipeline, they have not moved to a different process. --- */}
       <div className="tabs" style={{ marginBottom: 12 }}>
-        <div className={`tab${view === 'pipeline' ? ' active' : ''}`} onClick={() => setView('pipeline')}>Pipeline</div>
-        <div className={`tab${view === 'rejected' ? ' active' : ''}`} onClick={() => setView('rejected')}>
-          {`Rejected (${rejectedRows.length})`}
+        {CANDIDATE_VIEWS.map((v) => (
+          <div
+            key={v.id}
+            className={`tab${view === v.id ? ' active' : ''}`}
+            onClick={() => { setView(v.id); setTab('pipeline'); }}
+          >
+            {`${v.label} (${viewCounts[v.id] ?? 0})`}
+          </div>
+        ))}
+        <div className={`tab${tab === 'sources' ? ' active' : ''}`} onClick={() => setTab('sources')}>
+          Source Analytics
         </div>
-        <div className={`tab${view === 'sources' ? ' active' : ''}`} onClick={() => setView('sources')}>Source Analytics</div>
       </div>
 
-      {view === 'pipeline' && (
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Candidate</th><th>ID</th><th>Current Stage</th><th>Owner</th><th>Next Action</th>
-                <th>Due Date</th><th>Match Score</th><th>Status</th><th>AI Interview</th><th>Follow-up</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.id} className="row-link" onClick={() => navigate(`/candidates/${c.id}`)}>
-                  <td><span className="avatarsm">{initials(c.name)}</span>{c.name}</td>
-                  <td>{c.id}</td>
-                  <td>
-                    {c.currentStage
-                      ? <span className={`status ${stageBadgeClass(c.currentStage)}`}>{c.currentStageLabel}</span>
-                      : <span className="small-muted">No application</span>}
-                  </td>
-                  <td className="cell-muted">{c.owner || '—'}</td>
-                  <td className="cell-muted">{c.nextAction || '—'}</td>
-                  <td className="cell-muted">
-                    {protoDate(c.dueDate)}
-                    {c.overdue && <> <span className="status rejected">Overdue</span></>}
-                  </td>
-                  <td>{c.matchScore != null ? `${c.matchScore}%` : '—'}</td>
-                  <td>
-                    {c.lifeStatus
-                      ? <span className={`status ${lifeStatusClass(c.lifeStatus)}`}>{c.lifeStatus}</span>
-                      : <span className="cell-muted">—</span>}
-                  </td>
-                  <td>
-                    {c.currentStage
-                      ? <span className={`status ${aiStatusClass(c.aiInterviewStatus)}`}>{c.aiInterviewStatus}</span>
-                      : <span className="cell-muted">—</span>}
-                  </td>
-                  {/* Follow-up logging is not implemented yet — the column is the
-                      prototype's, the action behind it is still to come. */}
-                  <td className="cell-muted">—</td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr><td colSpan="10" className="small-muted" style={{ padding: 16 }}>No candidates match.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {view === 'rejected' && (
+      {tab === 'pipeline' && (
         <>
-          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 8 }}>
-            Rejected candidates stay in the Candidate Master and remain searchable and matchable for other
-            requirements. Internal rejection reasoning is never shown to client users.
+          {/* --- The VISIBLE pipeline: ten stages, not twenty. Each one folds
+                  its detailed statuses inside; the title attribute and the
+                  legend below say exactly which. Click to filter. --- */}
+          <div className="tbl-wrap" style={{ padding: '12px 14px', marginBottom: 12 }}>
+            <div className="stage-track">
+              {STAGE_GROUPS.map((g, i) => (
+                <span key={g.id} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  {i > 0 && <span className="stage-connector" />}
+                  <span
+                    className={`stage${activeGroup === g.id ? ' current' : ''}${groupCounts[g.id] ? ' done' : ''}`}
+                    style={{ cursor: 'pointer' }}
+                    title={`${g.label} contains: ${groupContents(g).join(', ')}`}
+                    onClick={() => setFilter({ stage: activeGroup === g.id ? '' : `group:${g.id}` })}
+                  >
+                    <span className="dot" />
+                    {`${g.label} (${groupCounts[g.id] || 0})`}
+                  </span>
+                </span>
+              ))}
+            </div>
+            <div className="small-muted" style={{ marginTop: 8 }}>
+              {activeGroup
+                ? `${STAGE_GROUPS.find((g) => g.id === activeGroup).label} contains: ${groupContents(STAGE_GROUPS.find((g) => g.id === activeGroup)).join(' · ')}`
+                : 'Ten visible stages. The detailed statuses sit inside them — hover a stage to see which, or pick one in the Stage filter. No stage code was removed; the pipeline and its transitions are unchanged.'}
+            </div>
           </div>
+
+          <div className="filter-row">
+            <input type="text" placeholder="Search name or skill…" value={filters.search} onChange={(e) => setFilter({ search: e.target.value })} />
+            <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+              <option value="">All departments</option>
+              {DEPTS.map((d) => <option key={d}>{d}</option>)}
+            </select>
+            <select value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
+              <option value="">All clients</option>
+              {clientOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+            <select value={filters.requirementId} onChange={(e) => setFilter({ requirementId: e.target.value })}>
+              <option value="">All requirements</option>
+              {requirements.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+            </select>
+            <select value={filters.recruiter} onChange={(e) => setFilter({ recruiter: e.target.value })}>
+              <option value="">All recruiters</option>
+              {team.filter((t) => t.role === 'RECRUITER').map((t) => <option key={t.id}>{t.name}</option>)}
+            </select>
+            <select value={filters.tl} onChange={(e) => setFilter({ tl: e.target.value })}>
+              <option value="">All TLs</option>
+              {tlNames.map((t) => <option key={t}>{t}</option>)}
+            </select>
+            <select value={filters.bde} onChange={(e) => setFilter({ bde: e.target.value })}>
+              <option value="">All BDEs</option>
+              {team.filter((t) => t.role === 'BDE').map((t) => <option key={t.id}>{t.name}</option>)}
+            </select>
+            <select value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
+              <option value="">All locations</option>
+              {LOCS.map((l) => <option key={l}>{l}</option>)}
+            </select>
+            <select value={filters.source} onChange={(e) => setFilter({ source: e.target.value })}>
+              <option value="">All sources</option>
+              {CANDIDATE_FILTER_SOURCES.map((s) => <option key={s}>{s}</option>)}
+            </select>
+            {/* Stage: the ten visible stages, each with its detailed statuses
+                nested underneath, so the fold costs nobody a filter. */}
+            <select value={filters.stage} onChange={(e) => setFilter({ stage: e.target.value })}>
+              <option value="">All stages</option>
+              {STAGE_GROUPS.map((g) => (
+                <optgroup key={g.id} label={g.label}>
+                  <option value={`group:${g.id}`}>{`${g.label} — all`}</option>
+                  {g.stages.map((s) => (
+                    <option key={s} value={`stage:${s}`}>{`  ${STAGE_LABELS[s] || s}`}</option>
+                  ))}
+                </optgroup>
+              ))}
+              <optgroup label="Off-pipeline">
+                <option value="stage:HOLD">Hold</option>
+                <option value="stage:REJECTED">Rejected</option>
+              </optgroup>
+            </select>
+            <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
+              <option value="">All statuses</option>
+              {LIFE_STATUSES.map((s) => <option key={s}>{s}</option>)}
+            </select>
+            <input type="date" title="Applied from" value={filters.appliedFrom} onChange={(e) => setFilter({ appliedFrom: e.target.value })} />
+            <input type="date" title="Applied to" value={filters.appliedTo} onChange={(e) => setFilter({ appliedTo: e.target.value })} />
+            <button className="btn btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
+          </div>
+
+          {/* Eight columns, and Owner is one of them. Match score, AI interview
+              status, resume score and the rest moved to the detail page. */}
           <div className="tbl-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Candidate</th><th>Candidate ID</th><th>Requirement</th><th>Client</th><th>Previous Stage</th>
-                  <th>Rejected By</th><th>Rejected Side</th><th>Reason</th><th>Detailed Reason</th>
-                  <th>Rejected Date</th><th>Recruiter</th><th>BDE</th><th>TL</th><th>Actions</th>
+                  <th>Candidate</th><th>Requirement</th><th>Client</th><th>Stage</th>
+                  <th>Owner</th><th>Next Action</th><th>Due</th><th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {rejectedRows.map(({ candidate: c, application: a }) => (
-                  <tr key={a.id}>
-                    <td>{c.name}</td>
-                    <td className="cell-muted">{c.id}</td>
-                    <td>{a.requirement?.title || '—'}</td>
-                    <td className="cell-muted">{a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'}</td>
-                    <td className="cell-muted">—</td>
-                    <td className="cell-muted">—</td>
-                    <td className="cell-muted">—</td>
-                    <td className="cell-muted">—</td>
-                    <td>—</td>
-                    <td className="cell-muted">{protoDate(a.updatedAt)}</td>
-                    <td className="cell-muted">{a.requirement?.recruiter?.name || '—'}</td>
-                    <td className="cell-muted">{a.requirement?.bde?.name || '—'}</td>
-                    <td className="cell-muted">{a.requirement?.tl || '—'}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <Link className="btn btn-sm" to={`/candidates/${c.id}`}>View Profile</Link>
+                {rows.map((c) => (
+                  <tr key={c.id} className="row-link" onClick={() => navigate(`/candidates/${c.id}`)}>
+                    <td><span className="avatarsm">{initials(c.name)}</span>{c.name}</td>
+                    <td>{c.requirementTitle || <span className="small-muted">No application</span>}</td>
+                    <td className="cell-muted">{c.clientName || '—'}</td>
+                    <td>
+                      {c.currentStage
+                        ? (
+                          <>
+                            <span className={`status ${groupBadgeClass(c.currentStage, c.stageGroup)}`}>
+                              {c.stageGroupLabel}
+                            </span>
+                            {c.stageDetailLabel && c.stageDetailLabel !== c.stageGroupLabel && (
+                              <div className="small-muted" style={{ marginTop: 3 }}>{c.stageDetailLabel}</div>
+                            )}
+                          </>
+                        )
+                        : <span className="small-muted">No application</span>}
+                    </td>
+                    <td>{c.owner || '—'}</td>
+                    <td className="cell-muted">{c.nextAction || '—'}</td>
+                    <td className="cell-muted">
+                      {protoDate(c.dueDate)}
+                      {c.overdue && <> <span className="status rejected">Overdue</span></>}
+                    </td>
+                    <td>
+                      {c.lifeStatus
+                        ? <span className={`status ${lifeStatusClass(c.lifeStatus)}`}>{c.lifeStatus}</span>
+                        : <span className="cell-muted">—</span>}
                     </td>
                   </tr>
                 ))}
-                {rejectedRows.length === 0 && (
-                  <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>No rejected candidates in your scope.</td></tr>
+                {rows.length === 0 && (
+                  <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>No candidates match.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+          {view === 'rejected' && rows.length > 0 && (
+            <div className="notice" style={{ marginTop: 14 }}>
+              Rejected candidates stay in the Candidate Master and remain searchable and matchable for other
+              requirements. Internal rejection reasoning is never shown to client users.
+            </div>
+          )}
         </>
       )}
 
-      {view === 'sources' && (
+      {tab === 'sources' && (
         <>
-          <div className="section-label">Auto-apply</div>
-          <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-            {'Total auto-apply: '}<b>{sourceStats.autoTotal}</b>
-            {' · Manual applications: '}<b>{sourceStats.manualTotal}</b>
-          </div>
-          <div className="section-label">Source-wise candidates</div>
+          <div className="section-label">Source performance</div>
           <div className="tbl-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Source</th><th>Candidates (latest source)</th><th>Candidates (first source)</th>
-                  <th>Applications</th><th>Auto-apply</th><th>Manual</th>
+                  <th>Source</th><th>Total</th><th>Screened</th><th>Shortlisted</th><th>Client Shared</th>
+                  <th>Interviewed</th><th>Selected</th><th>Rejected</th><th>Joined</th>
                 </tr>
               </thead>
               <tbody>
-                {sourceStats.rows.map(([name, s]) => (
+                {(sources?.rows || []).map((s) => (
                   <tr
-                    key={name}
+                    key={s.source}
                     className="row-link"
-                    onClick={() => { setView('pipeline'); setFilter({ source: name }); }}
+                    onClick={() => { setTab('pipeline'); setFilter({ source: s.source }); }}
                   >
-                    <td><b>{name}</b></td>
-                    <td>{s.latest}</td>
-                    <td className="cell-muted">{s.first}</td>
-                    <td className="cell-muted">{s.apps}</td>
-                    <td className="cell-muted">{s.auto}</td>
-                    <td className="cell-muted">{s.manual}</td>
+                    <td><b>{s.source}</b></td>
+                    <td>{s.total}</td>
+                    <td className="cell-muted">{s.screened}</td>
+                    <td className="cell-muted">{s.shortlisted}</td>
+                    <td className="cell-muted">{s.clientShared}</td>
+                    <td className="cell-muted">{s.interviewed}</td>
+                    <td className="cell-muted">{s.selected}</td>
+                    <td className="cell-muted">{s.rejected}</td>
+                    <td className="cell-muted">{s.joined}</td>
                   </tr>
                 ))}
-                {sourceStats.rows.length === 0 && (
-                  <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>No source data yet.</td></tr>
+                {(!sources || sources.rows.length === 0) && (
+                  <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>No source data in your scope.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
           <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 8 }}>
-            Counts are computed live from the candidate and application records — a candidate arriving from a
-            second source updates their latest source, it never creates a duplicate master record.
+            {sources?.note || 'Counts are computed live from the candidate and application records.'}
           </div>
         </>
       )}
