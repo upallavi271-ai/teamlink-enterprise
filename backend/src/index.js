@@ -34,6 +34,7 @@ const assetInventoryRoutes = require('./routes/assetInventory');
 const resignationRoutes = require('./routes/resignations');
 const hrmsDashboardRoutes = require('./routes/hrmsDashboard');
 const escalationRoutes = require('./routes/escalation');
+const taskRoutes = require('./routes/tasks');
 const aiRoutes = require('./routes/ai');
 const mailWorker = require('./utils/mailWorker');
 
@@ -111,6 +112,10 @@ app.use('/api/ats', interviewsJoiningRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/hrms/dashboard', hrmsDashboardRoutes);
 app.use('/api/hrms/escalation', escalationRoutes);
+// Timesheet — tasks, assignment, comments and the Task Reports roll-up. The
+// generic /api/timesheet EmployeeRecord router below stays mounted for the
+// hour-log rows it already holds.
+app.use('/api/tasks', taskRoutes);
 
 // EmployeeRecord-backed HRMS long-tail areas — one generic model, one route per type.
 // Helpdesk and Resignation still store EmployeeRecord rows but have their own

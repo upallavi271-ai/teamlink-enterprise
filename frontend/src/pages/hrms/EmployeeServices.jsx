@@ -23,7 +23,7 @@ const PROTO_TABS = [
 const EXTRA_TABS = [
   ['documents', 'Documents', 'Documents', 'Policies, compliance documents and acknowledgements.', Documents],
   ['shift', 'Shift Roster', 'Shift & Roster', 'Shift patterns and who is rostered on which day.', ShiftRoster],
-  ['timesheet', 'Timesheet', 'Timesheet', 'Hours logged against tasks.', Timesheet],
+  ['timesheet', 'Timesheet', 'Timesheet', 'Track and assign work across your team — create a task, assign it, and follow it to done.', Timesheet],
   ['expenses', 'Expense Claims', 'Expense & Travel Claims', 'Claims, approvals and reimbursement.', Expenses],
 ];
 

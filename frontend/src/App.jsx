@@ -29,6 +29,7 @@ import Payroll from './pages/Payroll.jsx';
 import HrmsDashboard from './pages/hrms/HrmsDashboard.jsx';
 import PerformanceDevelopment from './pages/hrms/PerformanceDevelopment.jsx';
 import EmployeeServices from './pages/hrms/EmployeeServices.jsx';
+import Timesheet from './pages/hrms/Timesheet.jsx';
 import MyProfile from './pages/hrms/MyProfile.jsx';
 import OrgStructure from './pages/admin/OrgStructure.jsx';
 
@@ -99,6 +100,11 @@ export default function App() {
         <Route path="payroll" element={<Payroll />} />
         <Route path="performance" element={<PerformanceDevelopment />} />
         <Route path="employee-services" element={<EmployeeServices />} />
+        {/* Timesheet is a tab of Employee Services AND a screen of its own, so
+            it stays bookmarkable — the same convention Agreements, Offers and
+            Joining follow. It is not listed in the sidebar, which keeps the
+            prototype's six HRMS entries. */}
+        <Route path="timesheet" element={<Timesheet standalone />} />
         <Route path="my-profile" element={<MyProfile />} />
 
         {/* ATS */}
