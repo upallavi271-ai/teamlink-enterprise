@@ -41,12 +41,29 @@ export default function Candidates() {
   const [requirements, setRequirements] = useState([]);
   const [team, setTeam] = useState([]);
   const [form, setForm] = useState(EMPTY);
-  const [filters, setFilters] = useState({ ...EMPTY_FILTERS, stage: searchParams.get('stage') || '' });
+  const [filters, setFilters] = useState({
+    ...EMPTY_FILTERS,
+    stage: searchParams.get('stage') || '',
+    status: searchParams.get('status') || '',
+  });
   const [showForm, setShowForm] = useState(false);
   const [duplicate, setDuplicate] = useState('');
   const [error, setError] = useState('');
   // The prototype's three tabs: Pipeline / Rejected (n) / Source Analytics.
-  const [view, setView] = useState('pipeline');
+  const [view, setView] = useState(searchParams.get('view') || 'pipeline');
+
+  // The sidebar's Hold / Rejected / Selected / Screening entries are VIEWS of
+  // this list, reached by query string. React Router keeps the component
+  // mounted when only the query changes, so the URL has to be re-read here or
+  // clicking one of those nav entries would leave the last filter in place.
+  useEffect(() => {
+    setFilters((f) => ({
+      ...f,
+      stage: searchParams.get('stage') || '',
+      status: searchParams.get('status') || '',
+    }));
+    setView(searchParams.get('view') || 'pipeline');
+  }, [searchParams]);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
@@ -74,7 +91,9 @@ export default function Candidates() {
       if (q && !(`${c.name} ${c.skills || ''}`.toLowerCase().includes(q))) return false;
       if (filters.location && c.location !== filters.location) return false;
       if (filters.source && c.source !== filters.source) return false;
-      if (filters.stage && c.currentStage !== filters.stage) return false;
+      // `stage` may be a comma-separated set, so one nav entry (or one
+      // dashboard row) can open a queue that spans several stages.
+      if (filters.stage && !filters.stage.split(',').includes(c.currentStage)) return false;
       if (filters.status && c.lifeStatus !== filters.status) return false;
 
       const apps = c.applications || [];
@@ -451,6 +470,11 @@ export default function Candidates() {
         </select>
         <select value={filters.stage} onChange={(e) => setFilter({ stage: e.target.value })}>
           <option value="">All stages</option>
+          {/* A nav entry or a dashboard row can open several stages at once;
+              name that set so the filter row still reads true. */}
+          {filters.stage.includes(',') && (
+            <option value={filters.stage}>{filters.stage.split(',').map(stageLabel).join(' / ')}</option>
+          )}
           {ALL_STAGE_CODES.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
         </select>
         <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>

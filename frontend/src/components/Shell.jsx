@@ -2,114 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
-import { can, canModule, workRoleLabel } from '../permissions';
+import { workRoleLabel } from '../permissions';
+import {
+  SECTION_LABEL, groupsForUser, flattenGroups, sectionOf, scoreMatch,
+} from '../nav';
+import Logo from './Logo.jsx';
+import AiAssistant from './AiAssistant.jsx';
 
-// ---------------------------------------------------------------------------
-// Nav structure is the prototype's, verbatim: SECTION_LABEL (line 2065) and
-// SUBNAV (line 2176) from teamlink-enterprise_69.html. Only the `to` paths are
-// this app's React Router paths — labels, grouping and ordering are the
-// prototype's. Entries marked `extra` are screens this app has that the
-// prototype's nav lacks; they are appended to the group they belong to rather
-// than orphaned.
-// ---------------------------------------------------------------------------
-const SECTION_LABEL = {
-  dashboard: 'Dashboard', hrms: 'HRMS', ats: 'ATS',
-  accounts: 'Accounts', admin: 'Administration', reports: 'Reports',
-};
-
-// Every nav item now names the (module, feature) it belongs to, and the
-// sidebar renders it only when the permission engine says the signed-in user
-// can view that feature. This is the SAME matrix the API enforces — the nav is
-// not a separate permission system, and hiding an item is never the control.
-const HRMS_ITEMS = [
-  ['/hrms', 'HRMS Dashboard', 'hrms', 'HRMS Dashboard'],
-  ['/my-profile', 'My Profile', 'hrms', null],
-  ['/attendance', 'Attendance & Time', 'hrms', 'Attendance & Time'],
-  ['/leave', 'Leave & Holidays', 'hrms', 'Leave & Holidays'],
-  ['/payroll', 'Payroll & Compensation', 'hrms', null],
-  ['/performance', 'Performance & Development', 'hrms', 'Performance & Development'],
-  ['/employee-services', 'Employee Services', 'hrms', 'Employee Services'],
-];
-
-const ATS_ITEMS = [
-  // The ATS dashboard is a dashboard-module screen, but it belongs in the nav
-  // only for a login that actually has the ATS product.
-  ['/ats/dashboard', 'Dashboard', 'dashboard', 'KPI Overview', 'ats'],
-  ['/requirements', 'Jobs / Requirements', 'requirements', 'Requirement List'],
-  ['/clients', 'Clients', 'clients', 'Client List'],
-  ['/candidates', 'Candidates & Pipeline', 'candidates', 'Candidate List'],
-  ['/ats/team', 'Recruiter & BDE', 'recruiterbde', 'Team View'],
-  ['/ats/calendar', 'Interview Calendar', 'interviews', 'Calendar View'],
-];
-
-const ACCOUNTS_ITEMS = [
-  ['/accounts/dashboard', 'Dashboard', 'accounts', 'Accounts Dashboard', 'accounts'],
-  ['/office', 'Office / Business', 'accounts', 'Office & Expenses'],
-  ['/invoices', 'Invoices', 'accounts', 'Invoices'],
-  ['/bank', 'Bank & Reconciliation', 'accounts', 'Bank & Reconciliation'],
-];
-
-const ADMIN_ITEMS = [
-  ['/admin/company', 'Company Setup', 'administration', 'Company Setup'],
-  ['/admin/departments', 'Departments & Teams', 'administration', 'Departments & Teams'],
-  // Employee Management is an HRMS feature the Administration group links to,
-  // so HR roles reach it without being given the Administration module.
-  ['/employees', 'Employee Management', 'hrms', 'Employee Management'],
-  ['/admin/users', 'Users', 'administration', 'Users'],
-  ['/admin/roles', 'Role Catalog', 'administration', 'Role Catalog'],
-  ['/admin/integrations', 'Integrations', 'administration', 'Integrations'],
-  ['/admin/org-structure', 'Organization Structure', 'administration', 'Organization Structure'],
-  // Notifications and Profile are everyone's, whatever their role.
-  ['/admin/notifications', 'Notifications', null, null],
-  ['/admin/audit', 'Audit Logs', 'administration', 'Audit Logs'],
-  ['/admin/profile', 'Profile', null, null],
-];
-
-const REPORTS_ITEMS = [
-  ['/reports/ats', 'ATS Reports', 'reports', 'ATS Reports'],
-  ['/reports/job-portal', 'Job Portal Reports', 'reports', 'Job Portal Reports'],
-  ['/reports/accounts', 'Accounts Reports', 'reports', 'Accounts Reports'],
-];
-
-// Group render order is the prototype's sidebarHtml() order (line 2100):
-// HRMS, ATS, Accounts, Reports, Administration. Which groups and which items
-// appear is decided entirely by the permission matrix.
-function visibleItems(user, items) {
-  return items.filter(([, , moduleId, feature, product]) => {
-    if (product && !(user?.products || {})[product]) return false;
-    if (!moduleId) return true;              // Notifications, Profile, My Profile
-    if (!feature) return canModule(user, moduleId);
-    return can(user, null, moduleId, feature, 'view');
-  });
-}
-
-function groupsForUser(user) {
-  const groups = [];
-  const add = (id, label, items) => {
-    const shown = visibleItems(user, items);
-    if (shown.length) groups.push([id, label, shown]);
-  };
-  add('hrms', 'HRMS', HRMS_ITEMS);
-  add('ats', 'ATS', ATS_ITEMS);
-  add('accounts', 'Accounts', ACCOUNTS_ITEMS);
-  add('reports', 'Reports', REPORTS_ITEMS);
-  add('admin', 'Administration', ADMIN_ITEMS);
-  return groups;
-}
-
-// Which sidebar section a URL belongs to, so the group opens and the topbar
-// title / breadcrumb name the right section.
-const SECTION_OF_PATH = [
-  [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile)/, 'hrms'],
-  [/^\/(ats|requirements|clients|candidates)/, 'ats'],
-  [/^\/(accounts|invoices|bank|office)/, 'accounts'],
-  [/^\/reports/, 'reports'],
-  [/^\/(admin|employees)/, 'admin'],
-];
-function sectionOf(pathname) {
-  const hit = SECTION_OF_PATH.find(([re]) => re.test(pathname));
-  return hit ? hit[1] : 'dashboard';
-}
+// The sidebar renders the tree in ../nav.js. Which groups, which sections and
+// which tabs appear is decided entirely by the permission engine — see that
+// file's header.
 
 function initials(name) {
   if (!name) return '?';
@@ -119,10 +21,11 @@ function initials(name) {
 export default function Shell() {
   const { user, logout, switchWorkspace } = useAuth();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);           // mobile sidebar
   const [manual, setManual] = useState({});          // prototype's sidebarManualToggle
+  const [manualSub, setManualSub] = useState({});    // the ATS sub-sections
   const [unread, setUnread] = useState(0);
 
   const groups = useMemo(() => groupsForUser(user), [user]);
@@ -134,19 +37,42 @@ export default function Shell() {
       .catch(() => setUnread(0));
   }, [pathname]);
 
-  // isGroupOpen (prototype line 2067): the current section's group is open
-  // unless the user has toggled it by hand.
-  const isGroupOpen = (s) => (s in manual ? manual[s] : section === s);
+  // The nav entry the current URL belongs to — the highest-scoring match.
+  const allLeaves = useMemo(() => flattenGroups(groups), [groups]);
+  const current = useMemo(() => {
+    let best = null;
+    let bestScore = 0;
+    allLeaves.forEach((item) => {
+      const sc = scoreMatch(item.to, pathname, search);
+      if (sc > bestScore) { bestScore = sc; best = item; }
+    });
+    return best;
+  }, [allLeaves, pathname, search]);
 
-  function toggleGroup(s, firstPath) {
+  // isGroupOpen (prototype line 2067): the current section's group is open
+  // unless the user has toggled it by hand. The ATS sub-sections behave the
+  // same way one level down.
+  const isGroupOpen = (s) => (s in manual ? manual[s] : section === s);
+  const isSubOpen = (id) => (id in manualSub
+    ? manualSub[id]
+    : !!(current && current.parent && current.parent.id === id));
+
+  function firstPathOf(items) {
+    const head = items[0];
+    return head.children ? head.children[0].to : head.to;
+  }
+
+  function toggleGroup(s, items) {
     if (section === s) {
       setManual({ ...manual, [s]: !isGroupOpen(s) });
     } else {
       setManual({});
+      setManualSub({});
       closeSidebar();
-      navigate(firstPath);
+      navigate(firstPathOf(items));
     }
   }
+  function toggleSub(id) { setManualSub({ ...manualSub, [id]: !isSubOpen(id) }); }
   function navTo(path) { closeSidebar(); navigate(path); }
   function closeSidebar() { setOpen(false); }
 
@@ -156,20 +82,16 @@ export default function Shell() {
     navigate(`/ats/search?q=${encodeURIComponent(q)}`);
   }
 
-  // Breadcrumb: section, then the nav item whose path this page sits under.
-  const allItems = groups.flatMap(([, , items]) => items);
-  const current = allItems
-    .filter(([to]) => pathname === to || pathname.startsWith(to + '/'))
-    .sort((a, b) => b[0].length - a[0].length)[0];
+  const isActive = (to) => !!(current && current.to === to);
+  const currentPath = current ? current.to.split('?')[0] : null;
 
   return (
     <div className="app-shell">
       <aside className={'sidebar' + (open ? ' open' : '')} id="sidebar">
         <div className="sidebar-brand">
-          <div>
-            <div className="b1">TeamLink Consultants</div>
-            <div className="b2">TeamLink.Enterprise</div>
-          </div>
+          <Link to="/" onClick={closeSidebar} aria-label="TeamLink Consultants — home">
+            <Logo />
+          </Link>
           <button className="sidebar-close" onClick={closeSidebar} aria-label="Close menu">✕</button>
         </div>
         <nav className="sidebar-nav">
@@ -181,19 +103,36 @@ export default function Shell() {
           </div>
           {groups.map(([s, label, items]) => (
             <div className={'sb-group' + (isGroupOpen(s) ? ' open' : '')} key={s}>
-              <div className="sb-group-head" onClick={() => toggleGroup(s, items[0][0])}>
+              <div className="sb-group-head" onClick={() => toggleGroup(s, items)}>
                 <span>{label}</span><span className="chev">▸</span>
               </div>
               <div className="sb-sub">
-                {items.map(([to, l]) => (
-                  <div
-                    key={to}
-                    className={'sb-sub-item' + (current && current[0] === to ? ' active' : '')}
-                    onClick={() => navTo(to)}
-                  >
-                    {l}
+                {items.map((item) => (item.children ? (
+                  <div className={'sb-sub-group' + (isSubOpen(item.id) ? ' open' : '')} key={item.id}>
+                    <div className="sb-sub-head" onClick={() => toggleSub(item.id)}>
+                      <span>{item.label}</span><span className="chev">▸</span>
+                    </div>
+                    <div className="sb-leaf-list">
+                      {item.children.map((c) => (
+                        <div
+                          key={c.to}
+                          className={'sb-leaf' + (isActive(c.to) ? ' active' : '')}
+                          onClick={() => navTo(c.to)}
+                        >
+                          {c.label}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
+                ) : (
+                  <div
+                    key={item.to}
+                    className={'sb-sub-item' + (isActive(item.to) ? ' active' : '')}
+                    onClick={() => navTo(item.to)}
+                  >
+                    {item.label}
+                  </div>
+                )))}
               </div>
             </div>
           ))}
@@ -241,18 +180,26 @@ export default function Shell() {
           ) : (
             <>
               <span className="bc-current">{SECTION_LABEL[section]}</span>
+              {current && current.parent && (
+                <>
+                  <span className="bc-sep">/</span>
+                  <span className="bc-current">{current.parent.label}</span>
+                </>
+              )}
               {current && (
                 <>
                   <span className="bc-sep">/</span>
-                  {pathname === current[0]
-                    ? <span className="bc-current">{current[1]}</span>
-                    : <Link className="bc-link" to={current[0]}>{current[1]}</Link>}
+                  {pathname === currentPath
+                    ? <span className="bc-current">{current.label}</span>
+                    : <Link className="bc-link" to={current.to}>{current.label}</Link>}
                 </>
               )}
-              {current && pathname !== current[0] && (
+              {current && pathname !== currentPath && (
                 <>
                   <span className="bc-sep">/</span>
-                  <span className="bc-current">{decodeURIComponent(pathname.slice(current[0].length + 1))}</span>
+                  <span className="bc-current">
+                    {decodeURIComponent(pathname.slice(currentPath.length + 1))}
+                  </span>
                 </>
               )}
             </>
@@ -267,6 +214,9 @@ export default function Shell() {
           TeamLink.Enterprise — HRMS + ATS + Accounts in one login · connected to the TeamLink Job Portal
         </footer>
       </div>
+
+      {/* Floating, role-aware assistant (bottom right). */}
+      <AiAssistant />
     </div>
   );
 }

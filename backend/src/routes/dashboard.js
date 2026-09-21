@@ -1,8 +1,12 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth } = require('../middleware/auth');
-const { requirementWhere, applicationWhere, scopeOf } = require('../utils/scope');
-const { STAGE_CODES, stageLabel } = require('../utils/atsVocab');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+const {
+  requirementWhere, applicationWhere, clientWhere, scopeOf,
+} = require('../utils/scope');
+const {
+  STAGE_CODES, stageLabel, applicationDueDate, applicationIsOverdue,
+} = require('../utils/atsVocab');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
   dashRange, inRange, currentFy, monthLabel, daysOverdue, invoiceAge,
@@ -283,6 +287,236 @@ router.get('/accounts', async (req, res) => {
     })),
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /api/dashboard/ats — the working ATS home.
+//
+// Deliberately NOT a KPI wall. Three things, in the order the work happens:
+//   1. My Pending Actions — the queues actually waiting on THIS person
+//   2. the action queue   — one row per item, every row carrying a next action
+//   3. My Work            — flat counts for the viewer's ATS role
+//
+// Every number comes out of utils/scope.js, the same `where` fragments the
+// lists behind them use, so a recruiter counts a recruiter's rows and a client
+// only their own company's. There is no second scoping path here.
+// ---------------------------------------------------------------------------
+
+// The five queues. `owners` is the ATS role the next move belongs to (the
+// owner column of utils/atsVocab STAGE_OWNER_ACTION); `to` is the list this
+// queue opens, already filtered to exactly the stages counted here.
+const PENDING_QUEUES = [
+  {
+    id: 'candidate-review',
+    label: 'Candidate Review',
+    stages: ['NEW', 'AI_INTERVIEW_COMPLETED', 'RECRUITER_REVIEW'],
+    owners: ['RECRUITER'],
+    action: 'Approve / Reject',
+    to: '/candidates?stage=NEW,AI_INTERVIEW_COMPLETED,RECRUITER_REVIEW',
+  },
+  {
+    id: 'bde-review',
+    label: 'BDE Review',
+    stages: ['WITH_BDE', 'BDE_APPROVED'],
+    owners: ['BDE'],
+    action: 'BDE Review',
+    to: '/candidates?stage=WITH_BDE,BDE_APPROVED',
+  },
+  {
+    id: 'client-decision',
+    label: 'Client Decision',
+    stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'],
+    owners: ['CLIENT', 'BDE'],
+    action: 'Client Decision',
+    to: '/candidates?stage=SHARED_WITH_CLIENT,CLIENT_REVIEW',
+  },
+  {
+    id: 'interview-feedback',
+    label: 'Interview Feedback',
+    stages: ['INTERVIEW_COMPLETED'],
+    owners: ['CLIENT', 'RECRUITER', 'BDE'],
+    action: 'Record Feedback',
+    to: '/ats/calendar',
+  },
+  {
+    id: 'joining-confirmation',
+    label: 'Joining Confirmation',
+    stages: ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'],
+    owners: ['RECRUITER', 'BDE'],
+    action: 'Confirm Joining',
+    to: '/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED',
+  },
+];
+
+// Roles that oversee other people's queues rather than owning one of their
+// own — they see every queue inside their own scope.
+const OVERSIGHT_ATS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
+
+const OPEN_REQUIREMENT_STATUSES = ['OPEN', 'Open'];
+const CLOSED_STAGES = ['JOINED', 'HIRED', 'REJECTED'];
+
+function today() { return new Date().toISOString().slice(0, 10); }
+function sameDay(value) { return value ? String(new Date(value).toISOString().slice(0, 10)) === today() : false; }
+
+router.get(
+  '/ats',
+  requireProduct('ats'),
+  requirePerm(null, 'dashboard', 'Pending Approvals', 'view'),
+  async (req, res) => {
+    const s = scopeOf(req.user);
+    const appScope = applicationWhere(req.user);
+    const reqScope = requirementWhere(req.user);
+
+    const [applications, requirements, clients] = await Promise.all([
+      prisma.application.findMany({
+        where: appScope,
+        include: {
+          candidate: true,
+          requirement: { include: { client: true, recruiter: true, bde: true } },
+        },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      prisma.requirement.findMany({ where: reqScope, include: { client: true } }),
+      prisma.client.findMany({ where: clientWhere(req.user) }),
+    ]);
+
+    // Which queues belong to this person. An oversight role sees them all —
+    // inside its own scope, which the `where` above has already applied.
+    const oversight = OVERSIGHT_ATS_ROLES.includes(s.atsRole);
+    const queues = PENDING_QUEUES.filter((q) => oversight || q.owners.includes(s.atsRole));
+
+    const rowsFor = (q) => applications.filter((a) => q.stages.includes(a.stage));
+
+    const pendingActions = queues.map((q) => ({
+      id: q.id, label: q.label, to: q.to, action: q.action, count: rowsFor(q).length,
+    }));
+    const pendingTotal = pendingActions.reduce((n, q) => n + q.count, 0);
+
+    // The action queue: one row per waiting item, each carrying the one move
+    // that advances it and the date its stage SLA runs out.
+    const queueRows = queues
+      .flatMap((q) => rowsFor(q).map((a) => ({
+        id: a.id,
+        candidateId: a.candidateId,
+        candidate: a.candidate ? a.candidate.name : '—',
+        requirement: a.requirement ? a.requirement.title : '—',
+        requirementId: a.requirementId,
+        client: a.requirement && a.requirement.client ? a.requirement.client.name : null,
+        stage: a.stage,
+        stageLabel: stageLabel(a.stage),
+        queue: q.label,
+        nextAction: q.action,
+        to: q.id === 'interview-feedback' ? '/ats/calendar' : `/candidates/${a.candidateId}`,
+        due: applicationDueDate(a),
+        overdue: applicationIsOverdue(a),
+      })))
+      .sort((a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')))
+      .slice(0, 12);
+
+    // --- the raw counts every role's "My Work" block is assembled from -----
+    const active = applications.filter((a) => !CLOSED_STAGES.includes(a.stage));
+    const distinct = (list) => new Set(list.map((a) => a.candidateId)).size;
+    const openRequirements = requirements.filter((r) => OPEN_REQUIREMENT_STATUSES.includes(r.status));
+    const draftRequirements = requirements.filter((r) => !OPEN_REQUIREMENT_STATUSES.includes(r.status) && r.status !== 'Closed');
+    const interviewsToday = applications.filter((a) => sameDay(a.interviewAt)
+      && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus || ''));
+    const interviewsUpcoming = applications.filter((a) => a.interviewAt
+      && new Date(a.interviewAt) >= new Date(today())
+      && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus || ''));
+    const overdue = active.filter(applicationIsOverdue);
+    const shared = applications.filter((a) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED',
+      'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED']
+      .includes(a.stage));
+    const selected = applications.filter((a) => ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage));
+    const joined = applications.filter((a) => ['JOINED', 'HIRED'].includes(a.stage));
+    const queueCount = (id) => (pendingActions.find((q) => q.id === id) || {}).count || 0;
+
+    const row = (label, value, to) => ({ label, value, to });
+    const CANDIDATES_ALL = '/candidates';
+    const REQUIREMENTS_ALL = '/requirements';
+
+    let myWork;
+    let myWorkTitle;
+    switch (s.atsRole) {
+      case 'RECRUITER':
+        myWorkTitle = 'My Work';
+        myWork = [
+          row('My Requirements', openRequirements.length, REQUIREMENTS_ALL),
+          row('My Candidates', distinct(active), CANDIDATES_ALL),
+          row('Interviews Today', interviewsToday.length, '/ats/calendar'),
+          row('Follow-ups Due', overdue.length, CANDIDATES_ALL),
+          row('Pending Actions', pendingTotal, CANDIDATES_ALL),
+        ];
+        break;
+      case 'BDE':
+        myWorkTitle = 'My Work';
+        myWork = [
+          row('My Clients', clients.length, '/clients'),
+          row('My Requirements', openRequirements.length, REQUIREMENTS_ALL),
+          row('Client Pending Decisions', queueCount('client-decision'), '/candidates?stage=SHARED_WITH_CLIENT,CLIENT_REVIEW'),
+          row('Client Interviews', interviewsUpcoming.length, '/ats/calendar'),
+          row('Selected / Joining', selected.length + joined.length, '/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED,JOINED'),
+        ];
+        break;
+      case 'TL':
+        myWorkTitle = 'My Team';
+        myWork = [
+          row('My Team Requirements', openRequirements.length, REQUIREMENTS_ALL),
+          row('My Team Candidates', distinct(active), CANDIDATES_ALL),
+          row('Recruiter Pending Actions', queueCount('candidate-review'), '/candidates?stage=NEW,AI_INTERVIEW_COMPLETED,RECRUITER_REVIEW'),
+          row('Approvals', draftRequirements.length, REQUIREMENTS_ALL),
+          row('Interviews', interviewsUpcoming.length, '/ats/calendar'),
+          row('Joinings', joined.length, '/candidates?stage=JOINED,HIRED'),
+        ];
+        break;
+      case 'STL':
+        myWorkTitle = `${s.departments.join(', ') || 'Department'} Activity`;
+        myWork = [
+          row('Department Requirements', openRequirements.length, REQUIREMENTS_ALL),
+          row('Department Candidates', distinct(active), CANDIDATES_ALL),
+          row('Pending Actions', pendingTotal, CANDIDATES_ALL),
+          row('Interviews', interviewsUpcoming.length, '/ats/calendar'),
+          row('Selected / Joining', selected.length + joined.length, '/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED,JOINED'),
+        ];
+        break;
+      case 'CLIENT':
+        myWorkTitle = 'My Company';
+        myWork = [
+          row('My Requirements', openRequirements.length, REQUIREMENTS_ALL),
+          row('Shared Candidates', distinct(shared), CANDIDATES_ALL),
+          row('Interviews', interviewsUpcoming.length, '/ats/calendar'),
+          row('Decisions', queueCount('client-decision') + queueCount('interview-feedback'), '/candidates?stage=SHARED_WITH_CLIENT,CLIENT_REVIEW'),
+          row('Agreements', clients.filter((c) => c.agreementStatus === 'ACTIVE').length, '/clients'),
+          row('Joinings', joined.length, '/candidates?stage=JOINED,HIRED'),
+        ];
+        break;
+      default:
+        // Super Admin / Admin / Manager — overall ATS activity, still as rows.
+        myWorkTitle = 'ATS Activity';
+        myWork = [
+          row('Open Requirements', openRequirements.length, REQUIREMENTS_ALL),
+          row('Active Candidates', distinct(active), CANDIDATES_ALL),
+          row('Clients', clients.length, '/clients'),
+          row('Pending Actions', pendingTotal, CANDIDATES_ALL),
+          row('Interviews Upcoming', interviewsUpcoming.length, '/ats/calendar'),
+          row('Past SLA', overdue.length, CANDIDATES_ALL),
+        ];
+    }
+
+    res.json({
+      role: s.atsRole,
+      scope: {
+        departments: s.departments,
+        global: s.global,
+        client: s.clientId ? (clients[0] ? clients[0].name : null) : null,
+      },
+      pendingTotal,
+      pendingActions,
+      queue: queueRows,
+      myWorkTitle,
+      myWork,
+    });
+  }
+);
 
 router.get('/', async (req, res) => {
   // Every dashboard number is scoped the way the lists behind it are: a client
