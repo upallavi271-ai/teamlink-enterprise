@@ -14,6 +14,7 @@ import {
 } from '../pipelineView';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 // The prototype's Add Candidate modal (openAddCandidateModal, line 8150),
 // section by section: A Personal, B Professional, C Education, D Skills,
@@ -241,22 +242,22 @@ export default function Candidates() {
             </label>
             <label className="field">
               <span>Gender</span>
-              <select value={form.gender} onChange={(e) => set({ gender: e.target.value })}>
+              <Combo value={form.gender} onChange={(e) => set({ gender: e.target.value })}>
                 {CANDIDATE_GENDERS.map((g) => <option key={g}>{g}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Current Location</span>
-              <select value={form.location} onChange={(e) => set({ location: e.target.value })}>
+              <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
                 {LOCS.map((l) => <option key={l}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Preferred Location</span>
-              <select value={form.preferredLocation} onChange={(e) => set({ preferredLocation: e.target.value })}>
+              <Combo creatable value={form.preferredLocation} onChange={(e) => set({ preferredLocation: e.target.value })}>
                 <option value="">Same as current</option>
                 {LOCS.map((l) => <option key={l}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
 
@@ -288,33 +289,33 @@ export default function Candidates() {
             </label>
             <label className="field">
               <span>Notice Period</span>
-              <select value={form.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })}>
+              <Combo value={form.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })}>
                 {CANDIDATE_NOTICE_PERIODS.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Availability</span>
-              <select value={form.availability} onChange={(e) => set({ availability: e.target.value })}>
+              <Combo value={form.availability} onChange={(e) => set({ availability: e.target.value })}>
                 {CANDIDATE_AVAILABILITY.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Job Preference</span>
-              <select value={form.jobPreference} onChange={(e) => set({ jobPreference: e.target.value })}>
+              <Combo value={form.jobPreference} onChange={(e) => set({ jobPreference: e.target.value })}>
                 {CANDIDATE_JOB_PREFERENCES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Employment Type</span>
-              <select value={form.preferredEmploymentType} onChange={(e) => set({ preferredEmploymentType: e.target.value })}>
+              <Combo value={form.preferredEmploymentType} onChange={(e) => set({ preferredEmploymentType: e.target.value })}>
                 {CANDIDATE_EMPLOYMENT_TYPES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Preferred Work Mode</span>
-              <select value={form.preferredWorkMode} onChange={(e) => set({ preferredWorkMode: e.target.value })}>
+              <Combo value={form.preferredWorkMode} onChange={(e) => set({ preferredWorkMode: e.target.value })}>
                 {CANDIDATE_WORK_MODES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
 
@@ -322,9 +323,9 @@ export default function Candidates() {
           <div className="grid-2">
             <label className="field">
               <span>Highest Qualification</span>
-              <select value={form.education} onChange={(e) => set({ education: e.target.value })}>
+              <Combo value={form.education} onChange={(e) => set({ education: e.target.value })}>
                 {CANDIDATE_EDUCATION.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Specialization</span>
@@ -383,16 +384,16 @@ export default function Candidates() {
           <div className="grid-2">
             <label className="field">
               <span>Source</span>
-              <select value={form.source} onChange={(e) => set({ source: e.target.value })}>
+              <Combo creatable value={form.source} onChange={(e) => set({ source: e.target.value })}>
                 {CANDIDATE_SOURCES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>First Source</span>
-              <select value={form.firstSource} onChange={(e) => set({ firstSource: e.target.value })}>
+              <Combo creatable value={form.firstSource} onChange={(e) => set({ firstSource: e.target.value })}>
                 <option value="">Same as source</option>
                 {CANDIDATE_FIRST_SOURCES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Source Campaign</span>
@@ -400,9 +401,9 @@ export default function Candidates() {
             </label>
             <label className="field">
               <span>Application Method</span>
-              <select value={form.applicationMethod} onChange={(e) => set({ applicationMethod: e.target.value })}>
+              <Combo value={form.applicationMethod} onChange={(e) => set({ applicationMethod: e.target.value })}>
                 {APPLICATION_METHODS.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
 
@@ -410,12 +411,12 @@ export default function Candidates() {
           <div className="grid-2">
             <label className="field">
               <span>Apply to Requirement</span>
-              <select value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })}>
+              <Combo value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })}>
                 <option value="">None — add to database only</option>
                 {requirements.filter((r) => r.status !== 'CLOSED').map((r) => (
                   <option key={r.id} value={r.id}>{r.title} — {r.internal ? 'TeamLink Internal' : r.client?.name}</option>
                 ))}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Requirement ID / Client</span>
@@ -493,41 +494,41 @@ export default function Candidates() {
 
           <div className="filter-row">
             <input type="text" placeholder="Search name or skill…" value={filters.search} onChange={(e) => setFilter({ search: e.target.value })} />
-            <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+            <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
               <option value="">All departments</option>
               {DEPTS.map((d) => <option key={d}>{d}</option>)}
-            </select>
-            <select value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
+            </Combo>
+            <Combo value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
               <option value="">All clients</option>
               {clientOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-            </select>
-            <select value={filters.requirementId} onChange={(e) => setFilter({ requirementId: e.target.value })}>
+            </Combo>
+            <Combo value={filters.requirementId} onChange={(e) => setFilter({ requirementId: e.target.value })}>
               <option value="">All requirements</option>
               {requirements.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
-            </select>
-            <select value={filters.recruiter} onChange={(e) => setFilter({ recruiter: e.target.value })}>
+            </Combo>
+            <Combo value={filters.recruiter} onChange={(e) => setFilter({ recruiter: e.target.value })}>
               <option value="">All recruiters</option>
               {team.filter((t) => t.role === 'RECRUITER').map((t) => <option key={t.id}>{t.name}</option>)}
-            </select>
-            <select value={filters.tl} onChange={(e) => setFilter({ tl: e.target.value })}>
+            </Combo>
+            <Combo value={filters.tl} onChange={(e) => setFilter({ tl: e.target.value })}>
               <option value="">All TLs</option>
               {tlNames.map((t) => <option key={t}>{t}</option>)}
-            </select>
-            <select value={filters.bde} onChange={(e) => setFilter({ bde: e.target.value })}>
+            </Combo>
+            <Combo value={filters.bde} onChange={(e) => setFilter({ bde: e.target.value })}>
               <option value="">All BDEs</option>
               {team.filter((t) => t.role === 'BDE').map((t) => <option key={t.id}>{t.name}</option>)}
-            </select>
-            <select value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
+            </Combo>
+            <Combo value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
               <option value="">All locations</option>
               {LOCS.map((l) => <option key={l}>{l}</option>)}
-            </select>
-            <select value={filters.source} onChange={(e) => setFilter({ source: e.target.value })}>
+            </Combo>
+            <Combo value={filters.source} onChange={(e) => setFilter({ source: e.target.value })}>
               <option value="">All sources</option>
               {CANDIDATE_FILTER_SOURCES.map((s) => <option key={s}>{s}</option>)}
-            </select>
+            </Combo>
             {/* Stage: the ten visible stages, each with its detailed statuses
                 nested underneath, so the fold costs nobody a filter. */}
-            <select value={filters.stage} onChange={(e) => setFilter({ stage: e.target.value })}>
+            <Combo value={filters.stage} onChange={(e) => setFilter({ stage: e.target.value })}>
               <option value="">All stages</option>
               {STAGE_GROUPS.map((g) => (
                 <optgroup key={g.id} label={g.label}>
@@ -541,11 +542,11 @@ export default function Candidates() {
                 <option value="stage:HOLD">Hold</option>
                 <option value="stage:REJECTED">Rejected</option>
               </optgroup>
-            </select>
-            <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
+            </Combo>
+            <Combo value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
               <option value="">All statuses</option>
               {LIFE_STATUSES.map((s) => <option key={s}>{s}</option>)}
-            </select>
+            </Combo>
             <input type="date" title="Applied from" value={filters.appliedFrom} onChange={(e) => setFilter({ appliedFrom: e.target.value })} />
             <input type="date" title="Applied to" value={filters.appliedTo} onChange={(e) => setFilter({ appliedTo: e.target.value })} />
             <button className="btn btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>

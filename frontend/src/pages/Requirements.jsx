@@ -12,6 +12,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { canRaiseRequirement } from '../permissions';
 import ClientModuleTabs from '../components/ClientModuleTabs.jsx';
+import Combo from '../components/Combo.jsx';
 
 // The prototype's Jobs / Requirements screen: requirementListShell() (6917),
 // renderRequirementList() (6937), openRequirementsHtml() (6832),
@@ -232,39 +233,39 @@ export default function Requirements() {
               value={filters.search}
               onChange={(e) => setFilter({ search: e.target.value })}
             />
-            <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+            <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
               <option value="">All departments</option>
               {DEPTS.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-            <select value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
+            </Combo>
+            <Combo value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
               <option value="">All clients</option>
               {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <select value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
+            </Combo>
+            <Combo value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
               <option value="">All locations</option>
               {LOCS.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-            <select value={filters.recruiterId} onChange={(e) => setFilter({ recruiterId: e.target.value })}>
+            </Combo>
+            <Combo value={filters.recruiterId} onChange={(e) => setFilter({ recruiterId: e.target.value })}>
               <option value="">All recruiters</option>
               {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-            <select value={filters.tlId} onChange={(e) => setFilter({ tlId: e.target.value })}>
+            </Combo>
+            <Combo value={filters.tlId} onChange={(e) => setFilter({ tlId: e.target.value })}>
               <option value="">All TLs</option>
               {tls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-            <select value={filters.bdeId} onChange={(e) => setFilter({ bdeId: e.target.value })}>
+            </Combo>
+            <Combo value={filters.bdeId} onChange={(e) => setFilter({ bdeId: e.target.value })}>
               <option value="">All BDEs</option>
               {bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-            <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
+            </Combo>
+            <Combo value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
               <option value="">All statuses</option>
               <option value="LIVE">Live (open → candidates available)</option>
               {REQUIREMENT_STATUS_CODES.map((s) => <option key={s} value={s}>{requirementStatusLabel(s)}</option>)}
-            </select>
-            <select value={filters.priority} onChange={(e) => setFilter({ priority: e.target.value })}>
+            </Combo>
+            <Combo value={filters.priority} onChange={(e) => setFilter({ priority: e.target.value })}>
               <option value="">All priorities</option>
               {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            </Combo>
             <input type="date" title="Created from" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} />
             <input type="date" title="Created to" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
             {activeFilterCount > 0 && (
@@ -419,9 +420,9 @@ export default function Requirements() {
             </label>
             <label className="field">
               <span>Requirement Type *</span>
-              <select value={form.type} onChange={(e) => set({ type: e.target.value })}>
+              <Combo value={form.type} onChange={(e) => set({ type: e.target.value })}>
                 {REQUIREMENT_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Job Title *</span>
@@ -429,9 +430,9 @@ export default function Requirements() {
             </label>
             <label className="field">
               <span>Department *</span>
-              <select value={form.department} onChange={(e) => set({ department: e.target.value })}>
+              <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
                 {DEPTS.map((d) => <option key={d}>{d}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Number of Openings *</span>
@@ -439,9 +440,9 @@ export default function Requirements() {
             </label>
             <label className="field">
               <span>Priority *</span>
-              <select value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
+              <Combo value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
                 {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Requirement Status</span>
@@ -459,10 +460,10 @@ export default function Requirements() {
               <div className="grid-2">
                 <label className="field">
                   <span>Client *</span>
-                  <select value={form.clientId} onChange={(e) => set({ clientId: e.target.value })}>
+                  <Combo value={form.clientId} onChange={(e) => set({ clientId: e.target.value })}>
                     <option value="">— Select —</option>
                     {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Agreement</span>
@@ -511,9 +512,9 @@ export default function Requirements() {
           <div className="grid-2">
             <label className="field">
               <span>Education</span>
-              <select value={form.education} onChange={(e) => set({ education: e.target.value })}>
+              <Combo creatable value={form.education} onChange={(e) => set({ education: e.target.value })}>
                 {EDUCATION_LEVELS.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Mandatory Skills * (comma separated)</span>
@@ -529,28 +530,28 @@ export default function Requirements() {
           <div className="grid-2">
             <label className="field">
               <span>Employment Type *</span>
-              <select value={form.employmentType} onChange={(e) => set({ employmentType: e.target.value })}>
+              <Combo value={form.employmentType} onChange={(e) => set({ employmentType: e.target.value })}>
                 {EMPLOYMENT_TYPES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Work Mode *</span>
-              <select value={form.workMode} onChange={(e) => set({ workMode: e.target.value })}>
+              <Combo value={form.workMode} onChange={(e) => set({ workMode: e.target.value })}>
                 {WORK_MODES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Work Location *</span>
-              <select value={form.location} onChange={(e) => set({ location: e.target.value })}>
+              <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
                 {LOCS.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Preferred Location</span>
-              <select value={form.preferredLocation} onChange={(e) => set({ preferredLocation: e.target.value })}>
+              <Combo value={form.preferredLocation} onChange={(e) => set({ preferredLocation: e.target.value })}>
                 <option value="">Any</option>
                 {LOCS.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Minimum Experience (yrs) *</span>
@@ -566,21 +567,21 @@ export default function Requirements() {
             </label>
             <label className="field">
               <span>Joining Timeline *</span>
-              <select value={form.joiningTimeline} onChange={(e) => set({ joiningTimeline: e.target.value })}>
+              <Combo value={form.joiningTimeline} onChange={(e) => set({ joiningTimeline: e.target.value })}>
                 {JOINING_TIMELINES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Maximum Notice Period</span>
-              <select value={form.noticePeriodMax} onChange={(e) => set({ noticePeriodMax: e.target.value })}>
+              <Combo value={form.noticePeriodMax} onChange={(e) => set({ noticePeriodMax: e.target.value })}>
                 {NOTICE_PERIODS_MAX.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Job Preference</span>
-              <select value={form.jobPreference} onChange={(e) => set({ jobPreference: e.target.value })}>
+              <Combo value={form.jobPreference} onChange={(e) => set({ jobPreference: e.target.value })}>
                 {JOB_PREFERENCES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
 
@@ -588,15 +589,15 @@ export default function Requirements() {
           <div className="grid-2">
             <label className="field">
               <span>Salary Type</span>
-              <select value={form.salaryType} onChange={(e) => set({ salaryType: e.target.value })}>
+              <Combo value={form.salaryType} onChange={(e) => set({ salaryType: e.target.value })}>
                 {SALARY_TYPES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Currency</span>
-              <select value={form.currency} onChange={(e) => set({ currency: e.target.value })}>
+              <Combo value={form.currency} onChange={(e) => set({ currency: e.target.value })}>
                 {CURRENCIES.map((x) => <option key={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Minimum Salary (₹L)</span>
@@ -617,38 +618,38 @@ export default function Requirements() {
           <div className="grid-2">
             <label className="field">
               <span>Assigned TL</span>
-              <select
+              <Combo
                 value={form.tlId}
                 onChange={(e) => set({ tlId: e.target.value, tl: tls.find((t) => t.id === e.target.value)?.name || '' })}
               >
                 <option value="">— Not assigned —</option>
                 {tls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Assigned Recruiter *</span>
-              <select value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
+              <Combo value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
                 <option value="">— Not assigned —</option>
                 {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>STL</span>
-              <select
+              <Combo
                 value={form.stlId}
                 onChange={(e) => set({ stlId: e.target.value, stl: stls.find((t) => t.id === e.target.value)?.name || '' })}
               >
                 <option value="">— None —</option>
                 {stls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              </Combo>
             </label>
             {!internal && (
               <label className="field">
                 <span>BDE</span>
-                <select value={form.bdeId} onChange={(e) => set({ bdeId: e.target.value })}>
+                <Combo value={form.bdeId} onChange={(e) => set({ bdeId: e.target.value })}>
                   <option value="">— Not assigned —</option>
                   {bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
             <label className="field">

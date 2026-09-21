@@ -9,6 +9,7 @@ import {
 import Logo from './Logo.jsx';
 import AiAssistant from './AiAssistant.jsx';
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
+import Combo from './Combo.jsx';
 
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
 // which tabs appear is decided entirely by the permission engine — see that
@@ -158,7 +159,7 @@ export default function Shell() {
           </form>
           <div className="topbar-right">
             {(user?.workspaces || []).length > 1 && (
-              <select
+              <Combo
                 className="rolechip"
                 aria-label="Workspace"
                 value={user.workspace}
@@ -166,7 +167,7 @@ export default function Shell() {
                 style={{ padding: '2px 6px' }}
               >
                 {user.workspaces.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
-              </select>
+              </Combo>
             )}
             <span className="rolechip">{workRoleLabel(user)}</span>
             <span className="rolechip" style={{ cursor: 'pointer' }} onClick={() => navTo('/admin/notifications')}>🔔 {unread}</span>

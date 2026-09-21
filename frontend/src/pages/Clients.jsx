@@ -10,6 +10,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import ClientModuleTabs from '../components/ClientModuleTabs.jsx';
+import Combo from '../components/Combo.jsx';
 
 // The prototype's Add Client modal (openAddClientModal, line 7296) is five
 // tabs; switchAddClientTab() names them in this order.
@@ -164,16 +165,16 @@ export default function Clients() {
                 </label>
                 <label className="field">
                   <span>Industry</span>
-                  <select value={form.industry} onChange={(e) => set({ industry: e.target.value })}>
+                  <Combo creatable value={form.industry} onChange={(e) => set({ industry: e.target.value })}>
                     <option value="">— Select —</option>
                     {CLIENT_INDUSTRIES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Owner Department</span>
-                  <select value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
+                  <Combo creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
                     {DEPTS.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Year of Establishment</span>
@@ -185,9 +186,9 @@ export default function Clients() {
                 </label>
                 <label className="field">
                   <span>Status</span>
-                  <select value={form.status} onChange={(e) => set({ status: e.target.value })}>
+                  <Combo value={form.status} onChange={(e) => set({ status: e.target.value })}>
                     {CLIENT_STATUSES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Active date (added on) *</span>
@@ -267,16 +268,16 @@ export default function Clients() {
                 </label>
                 <label className="field">
                   <span>State *</span>
-                  <select value={form.state} onChange={(e) => set({ state: e.target.value })}>
+                  <Combo value={form.state} onChange={(e) => set({ state: e.target.value })}>
                     <option value="">State</option>
                     {INDIAN_STATES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>City *</span>
-                  <select value={form.location} onChange={(e) => set({ location: e.target.value })}>
+                  <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
                     {LOCS.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
               </div>
 
@@ -284,30 +285,30 @@ export default function Clients() {
               <div className="grid-2">
                 <label className="field">
                   <span>Client Type</span>
-                  <select value={form.clientType} onChange={(e) => set({ clientType: e.target.value })}>
+                  <Combo value={form.clientType} onChange={(e) => set({ clientType: e.target.value })}>
                     <option value="">— Select —</option>
                     {CLIENT_TYPES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Client Priority</span>
-                  <select value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
+                  <Combo value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
                     {CLIENT_PRIORITIES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Primary Comm Mode</span>
-                  <select value={form.commPrimary} onChange={(e) => set({ commPrimary: e.target.value })}>
+                  <Combo value={form.commPrimary} onChange={(e) => set({ commPrimary: e.target.value })}>
                     <option value="">— Select —</option>
                     {COMM_MODES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Secondary Comm Mode</span>
-                  <select value={form.commSecondary} onChange={(e) => set({ commSecondary: e.target.value })}>
+                  <Combo value={form.commSecondary} onChange={(e) => set({ commSecondary: e.target.value })}>
                     <option value="">— Select —</option>
                     {COMM_MODES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
               </div>
             </>
@@ -330,9 +331,9 @@ export default function Clients() {
                 </label>
                 <label className="field">
                   <span>Business Type</span>
-                  <select value={form.businessType} onChange={(e) => set({ businessType: e.target.value })}>
+                  <Combo value={form.businessType} onChange={(e) => set({ businessType: e.target.value })}>
                     {BUSINESS_TYPES.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Recruitment Fee % *</span>
@@ -344,9 +345,9 @@ export default function Clients() {
                 </label>
                 <label className="field">
                   <span>Payment Terms</span>
-                  <select value={form.paymentTerms} onChange={(e) => set({ paymentTerms: e.target.value })}>
+                  <Combo value={form.paymentTerms} onChange={(e) => set({ paymentTerms: e.target.value })}>
                     {PAYMENT_TERMS.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Replacement / Guarantee Period</span>
@@ -358,9 +359,9 @@ export default function Clients() {
                 </label>
                 <label className="field">
                   <span>Invoice Trigger</span>
-                  <select value={form.invoiceTrigger} onChange={(e) => set({ invoiceTrigger: e.target.value })}>
+                  <Combo value={form.invoiceTrigger} onChange={(e) => set({ invoiceTrigger: e.target.value })}>
                     {INVOICE_TRIGGERS.map((x) => <option key={x}>{x}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Payment Due</span>
@@ -378,16 +379,16 @@ export default function Clients() {
             <div className="grid-2">
               <label className="field">
                 <span>Agreement Required</span>
-                <select value={form.agreementRequired} onChange={(e) => set({ agreementRequired: e.target.value })}>
+                <Combo value={form.agreementRequired} onChange={(e) => set({ agreementRequired: e.target.value })}>
                   <option>Yes</option>
                   <option>No</option>
-                </select>
+                </Combo>
               </label>
               <label className="field">
                 <span>Agreement Template</span>
-                <select value={form.agreementTemplate} onChange={(e) => set({ agreementTemplate: e.target.value })}>
+                <Combo value={form.agreementTemplate} onChange={(e) => set({ agreementTemplate: e.target.value })}>
                   {AGREEMENT_TEMPLATES.map((x) => <option key={x}>{x}</option>)}
-                </select>
+                </Combo>
               </label>
               <label className="field">
                 <span>Agreement Start Date</span>
@@ -469,9 +470,9 @@ export default function Clients() {
             <>
               <label className="field">
                 <span>Payment Risk Flag</span>
-                <select value={form.riskFlag} onChange={(e) => set({ riskFlag: e.target.value })}>
+                <Combo value={form.riskFlag} onChange={(e) => set({ riskFlag: e.target.value })}>
                   {RISK_FLAGS.map((x) => <option key={x}>{x}</option>)}
-                </select>
+                </Combo>
               </label>
               <label className="field">
                 <span>Risk Notes</span>

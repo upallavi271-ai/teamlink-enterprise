@@ -6,6 +6,7 @@ import {
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 const TICKET_STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'];
 const CLOSED = ['Resolved', 'Closed'];
@@ -50,32 +51,32 @@ function NewTicketModal({ meta, employees, isHR, onClose, onSaved }) {
         <div className="grid-2">
           <div className="field">
             <label>Employee *</label>
-            <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+            <Combo value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
               <option value="">Select employee</option>
               {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
+            </Combo>
           </div>
           <div className="field">
             <label>Assign to</label>
-            <select value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}>
+            <Combo value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}>
               <option value="">Unassigned</option>
               {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
+            </Combo>
           </div>
         </div>
       )}
       <div className="grid-2">
         <div className="field">
           <label>Category *</label>
-          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+          <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
             {meta.categories.map((c) => <option key={c}>{c}</option>)}
-          </select>
+          </Combo>
         </div>
         <div className="field">
           <label>Priority</label>
-          <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+          <Combo value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
             {meta.priorities.map((p) => <option key={p}>{p}</option>)}
-          </select>
+          </Combo>
         </div>
       </div>
       <div className="field"><label>Subject *</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
@@ -356,9 +357,9 @@ export default function Helpdesk({ view, onOpen, onBack }) {
               </div>
               {t.detail && <div className="cell-muted" style={{ fontSize: 12, marginTop: 4 }}>{t.detail}</div>}
               <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-                <select value={t.status} onChange={(e) => setStatus(t, e.target.value)}>
+                <Combo value={t.status} onChange={(e) => setStatus(t, e.target.value)}>
                   {TICKET_STATUSES.map((s) => <option key={s}>{s}</option>)}
-                </select>
+                </Combo>
                 <button className="btn btn-sm" onClick={() => onOpen('notes')}>Notes &amp; attachments</button>
               </div>
             </div>

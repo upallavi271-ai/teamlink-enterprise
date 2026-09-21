@@ -6,6 +6,7 @@ import {
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, ProgressBar, Modal,
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 
 // The prototype's three Engagement Survey feature tiles (SV_FEATURES, line 4429).
@@ -97,9 +98,9 @@ function RespondModal({ survey, onClose, onSaved }) {
       {survey.questions.map((q, i) => (
         <div className="field" key={i}>
           <label>{q}</label>
-          <select value={answers[i]} onChange={(e) => setAnswers(answers.map((a, n) => (n === i ? Number(e.target.value) : a)))}>
+          <Combo value={answers[i]} onChange={(e) => setAnswers(answers.map((a, n) => (n === i ? Number(e.target.value) : a)))}>
             {[1, 2, 3, 4, 5].map((v) => <option key={v} value={v}>{v} / 5</option>)}
-          </select>
+          </Combo>
         </div>
       ))}
       {error && <div className="error-text">{error}</div>}

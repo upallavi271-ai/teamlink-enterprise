@@ -4,6 +4,7 @@ import api from '../api';
 import Modal from '../components/Modal.jsx';
 import { atsRoleLabel } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
+import Combo from '../components/Combo.jsx';
 
 // Administration -> Employee Management — the prototype's employeeMgmtView()
 // (line 9754) and openAddEmployeeModal() (line 2857).
@@ -525,16 +526,16 @@ export default function Employees() {
           <h3>Transfer {transferTarget.name}</h3>
           <div className="grid-2">
             <label className="field"><span>Department</span>
-              <select required value={transferForm.department} onChange={(e) => setTransferForm({ ...transferForm, department: e.target.value, team: '' })}>
+              <Combo creatable required value={transferForm.department} onChange={(e) => setTransferForm({ ...transferForm, department: e.target.value, team: '' })}>
                 <option value="">Select department</option>
                 {depts.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
-              </select></label>
+              </Combo></label>
             {transferTeams.length > 0 && (
               <label className="field"><span>Team</span>
-                <select value={transferForm.team} onChange={(e) => setTransferForm({ ...transferForm, team: e.target.value })}>
+                <Combo creatable value={transferForm.team} onChange={(e) => setTransferForm({ ...transferForm, team: e.target.value })}>
                   <option value="">No team</option>
                   {transferTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-                </select></label>
+                </Combo></label>
             )}
             <label className="field"><span>Reason (optional)</span>
               <input value={transferForm.reason} onChange={(e) => setTransferForm({ ...transferForm, reason: e.target.value })} /></label>
@@ -549,14 +550,14 @@ export default function Employees() {
           type="text" placeholder="Search name, ID or email…"
           value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         />
-        <select value={filters.dept} onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}>
+        <Combo value={filters.dept} onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}>
           <option value="">All departments</option>
           {rowDepts.map((d) => <option key={d}>{d}</option>)}
-        </select>
-        <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
+        </Combo>
+        <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">All statuses</option>
           {(options?.statusFilter || ['Active', 'Notice Period', 'Relieved', 'Inactive']).map((s) => <option key={s}>{s}</option>)}
-        </select>
+        </Combo>
         <span className="cell-muted" style={{ alignSelf: 'center', fontSize: 12 }}>{filtered.length} employee(s)</span>
       </div>
 
@@ -693,9 +694,9 @@ export default function Employees() {
             <div className="grid-2">
               <label className="field">
                 <span>Section to open</span>
-                <select value={grantForm.section} onChange={(e) => setGrantForm({ ...grantForm, section: e.target.value })}>
+                <Combo value={grantForm.section} onChange={(e) => setGrantForm({ ...grantForm, section: e.target.value })}>
                   {(meConfig?.editAccessSections || ['All fields']).map((s) => <option key={s}>{s}</option>)}
-                </select>
+                </Combo>
               </label>
               <label className="field">
                 <span>Access window (hours)</span>
@@ -753,9 +754,9 @@ export default function Employees() {
             role below — the three-role split is a separate, deferred change, so they are shown here read-only.
           </div>
           <div className="field"><label>Role</label>
-            <select value={roleTarget.role || 'EMPLOYEE'} onChange={(e) => setRoleTarget({ ...roleTarget, role: e.target.value, productAccess: options.productAccess[e.target.value] })}>
+            <Combo value={roleTarget.role || 'EMPLOYEE'} onChange={(e) => setRoleTarget({ ...roleTarget, role: e.target.value, productAccess: options.productAccess[e.target.value] })}>
               {options.roles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-            </select></div>
+            </Combo></div>
           <div className="grid-3">
             <div className="field"><label>HRMS Role</label>
               <input value={(options.productAccess[roleTarget.role] || {}).hrms || '—'} disabled /></div>
@@ -765,21 +766,21 @@ export default function Employees() {
               <input value={(options.productAccess[roleTarget.role] || {}).accounts || '—'} disabled /></div>
           </div>
           <div className="field"><label>Scope (department / team)</label>
-            <select value={roleTarget.atsDepartment || ''} onChange={(e) => setRoleTarget({ ...roleTarget, atsDepartment: e.target.value })}>
+            <Combo creatable value={roleTarget.atsDepartment || ''} onChange={(e) => setRoleTarget({ ...roleTarget, atsDepartment: e.target.value })}>
               <option value="">Organization</option>
               {options.departments.map((d) => <option key={d}>{d}</option>)}
-            </select></div>
+            </Combo></div>
           <div className="grid-2">
             <div className="field"><label>STL</label>
-              <select value={roleTarget.stl || ''} onChange={(e) => setRoleTarget({ ...roleTarget, stl: e.target.value })}>
+              <Combo value={roleTarget.stl || ''} onChange={(e) => setRoleTarget({ ...roleTarget, stl: e.target.value })}>
                 <option value="">—</option>
                 {options.managerNames.map((n) => <option key={n}>{n}</option>)}
-              </select></div>
+              </Combo></div>
             <div className="field"><label>TL</label>
-              <select value={roleTarget.tl || ''} onChange={(e) => setRoleTarget({ ...roleTarget, tl: e.target.value })}>
+              <Combo value={roleTarget.tl || ''} onChange={(e) => setRoleTarget({ ...roleTarget, tl: e.target.value })}>
                 <option value="">—</option>
                 {options.managerNames.map((n) => <option key={n}>{n}</option>)}
-              </select></div>
+              </Combo></div>
           </div>
         </Modal>
       )}
@@ -851,9 +852,9 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
         <div className="field"><label>Date of birth</label>
           <input type="date" value={form.dateOfBirth} onChange={(e) => set({ dateOfBirth: e.target.value })} /></div>
         <div className="field"><label>Gender</label>
-          <select value={form.gender} onChange={(e) => set({ gender: e.target.value })}>
+          <Combo value={form.gender} onChange={(e) => set({ gender: e.target.value })}>
             {options.genders.map((g) => <option key={g}>{g}</option>)}
-          </select></div>
+          </Combo></div>
       </div>
 
       <div className="section-label">Contact</div>
@@ -863,36 +864,36 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
         <div className="field"><label>Mobile</label>
           <input type="text" placeholder="10 digits" value={form.phone} onChange={(e) => set({ phone: e.target.value })} /></div>
         <div className="field"><label>Location</label>
-          <select value={form.location} onChange={(e) => set({ location: e.target.value })}>
+          <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
             <option value="">—</option>
             {options.locations.map((l) => <option key={l}>{l}</option>)}
-          </select></div>
+          </Combo></div>
       </div>
 
       <div className="section-label">Position</div>
       <div className="grid-3">
         <div className="field"><label>Department</label>
-          <select value={form.department} onChange={(e) => set({ department: e.target.value })}>
+          <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
             <option value="">—</option>
             {options.departments.map((d) => <option key={d}>{d}</option>)}
-          </select></div>
+          </Combo></div>
         <div className="field"><label>Designation</label>
           <input type="text" placeholder="e.g. Senior Recruiter" value={form.designation} onChange={(e) => set({ designation: e.target.value })} /></div>
         <div className="field"><label>Reporting manager</label>
-          <select value={form.reportingManagerId} onChange={(e) => set({ reportingManagerId: e.target.value })}>
+          <Combo value={form.reportingManagerId} onChange={(e) => set({ reportingManagerId: e.target.value })}>
             <option value="">—</option>
             {employees.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select></div>
+          </Combo></div>
         <div className="field"><label>STL</label>
-          <select value={form.stl} onChange={(e) => set({ stl: e.target.value })}>
+          <Combo value={form.stl} onChange={(e) => set({ stl: e.target.value })}>
             <option value="">—</option>
             {options.managerNames.map((n) => <option key={n}>{n}</option>)}
-          </select></div>
+          </Combo></div>
         <div className="field"><label>TL</label>
-          <select value={form.tl} onChange={(e) => set({ tl: e.target.value })}>
+          <Combo value={form.tl} onChange={(e) => set({ tl: e.target.value })}>
             <option value="">—</option>
             {options.managerNames.map((n) => <option key={n}>{n}</option>)}
-          </select></div>
+          </Combo></div>
         <div className="field"><label>Team</label>
           <input type="text" placeholder="e.g. Section A" value={form.team} onChange={(e) => set({ team: e.target.value })} /></div>
       </div>
@@ -902,30 +903,30 @@ function AddEmployeeModal({ form, setForm, options, employees, onClose, onSave }
         <div className="field"><label>Date of joining</label>
           <input type="date" value={form.dateOfJoining} onChange={(e) => set({ dateOfJoining: e.target.value })} /></div>
         <div className="field"><label>Employment type</label>
-          <select value={form.employeeType} onChange={(e) => set({ employeeType: e.target.value })}>
+          <Combo value={form.employeeType} onChange={(e) => set({ employeeType: e.target.value })}>
             {options.empTypes.map((t) => <option key={t}>{t}</option>)}
-          </select></div>
+          </Combo></div>
         <div className="field"><label>Status</label>
-          <select value={form.employmentStatus} onChange={(e) => set({ employmentStatus: e.target.value })}>
+          <Combo value={form.employmentStatus} onChange={(e) => set({ employmentStatus: e.target.value })}>
             {options.empStatuses.map((s) => <option key={s}>{s}</option>)}
-          </select></div>
+          </Combo></div>
       </div>
 
       <div className="section-label">Product access — one login, three products</div>
       <div className="grid-3">
         <div className="field"><label>Role</label>
-          <select value={form.role} onChange={(e) => set({ role: e.target.value })}>
+          <Combo value={form.role} onChange={(e) => set({ role: e.target.value })}>
             {options.roles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-          </select></div>
+          </Combo></div>
         <div className="field"><label>HRMS role</label><input value={access.hrms || 'No Access'} disabled /></div>
         <div className="field"><label>ATS role</label><input value={access.ats || 'No Access'} disabled /></div>
         <div className="field"><label>Accounts role</label><input value={access.accounts || 'No Access'} disabled /></div>
         <div className="field"><label>ATS department scope</label>
-          <select value={form.atsDepartment} onChange={(e) => set({ atsDepartment: e.target.value })}>
+          <Combo creatable value={form.atsDepartment} onChange={(e) => set({ atsDepartment: e.target.value })}>
             <option value="">Own department</option>
             <option>All departments</option>
             {options.departments.map((d) => <option key={d}>{d}</option>)}
-          </select></div>
+          </Combo></div>
         {/* Optional and discouraged. Leave it empty and the employee gets a
             single-use link to choose their own password — no password is ever
             emailed, and the account has no guessable default in the meantime. */}

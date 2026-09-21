@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin } from '../permissions';
+import Combo from './Combo.jsx';
 
 
 // Generic list + create + (optional) status-decision page for the EmployeeRecord-backed
@@ -144,10 +145,10 @@ export default function SimpleRecordPage({
             {createByHrOnly && (
               <label className="field">
                 <span>Employee</span>
-                <select required value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+                <Combo required value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
                   <option value="">Select employee</option>
                   {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
             <label className="field"><span>{titleLabel}</span><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
@@ -156,10 +157,10 @@ export default function SimpleRecordPage({
               <label className="field">
                 <span>{categoryLabel}</span>
                 {categoryOptions.length > 0 ? (
-                  <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                  <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                     <option value="">Select</option>
                     {categoryOptions.map((c) => <option key={c}>{c}</option>)}
-                  </select>
+                  </Combo>
                 ) : (
                   <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
                 )}
@@ -168,9 +169,9 @@ export default function SimpleRecordPage({
             {showPriority && (
               <label className="field">
                 <span>Priority</span>
-                <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+                <Combo value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
                   <option>Low</option><option>Medium</option><option>High</option><option>Urgent</option>
-                </select>
+                </Combo>
               </label>
             )}
             {showLocation && <label className="field"><span>Location</span><input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></label>}

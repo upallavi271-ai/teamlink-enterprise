@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../api';
+import Combo from '../components/Combo.jsx';
 
 const money = (n) => `₹${Math.round(Number(n || 0)).toLocaleString('en-IN')}`;
 const money2 = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -142,9 +143,9 @@ export default function Office() {
 
       <div className="filter-row">
         <label className="field" style={{ minWidth: 240 }}><span>Period</span>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+          <Combo value={period} onChange={(e) => setPeriod(e.target.value)}>
             {PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
+          </Combo>
         </label>
       </div>
 
@@ -397,9 +398,9 @@ function Bills({
             <div className="small-muted">One table — group it whichever way you need, then open a row for the bills inside</div>
           </div>
           <label className="field"><span>Group by</span>
-            <select value={data.groupBy} onChange={(e) => { setGroupBy(e.target.value); setOpen({}); }}>
+            <Combo value={data.groupBy} onChange={(e) => { setGroupBy(e.target.value); setOpen({}); }}>
               {o.groupBy.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
+            </Combo>
           </label>
           <button className="btn btn-sm" onClick={() => printRows('Office Expenditure', data.rows.map((r) => ({
             Date: r.expenseDate, 'Paid to': r.vendor || '', Category: r.category, 'Bill no': r.billNumber || '',
@@ -552,34 +553,34 @@ function BillFilters({
     <>
       <div className="filter-row">
         <label className="field"><span>Category · {o.categories.length}{restCats.length ? ` · ${o.fitCategories.length} fit` : ''}</span>
-          <select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
+          <Combo value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
             {optionList(o.fitCategories, restCats, `All · ${o.categories.length}`,
               `Other categories · ${restCats.length} — picking one lets go of the vendor`)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ maxWidth: 230 }}><span>Vendor · {o.vendors.length}{restVendors.length ? ` · ${o.fitVendors.length} fit` : ''}</span>
-          <select value={f.vendor} onChange={(e) => setF({ ...f, vendor: e.target.value })}>
+          <Combo value={f.vendor} onChange={(e) => setF({ ...f, vendor: e.target.value })}>
             {optionList(o.fitVendors, restVendors, `All · ${o.vendors.length}`,
               `Other vendors · ${restVendors.length} — picking one lets go of the category`)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 170, flex: 1 }}><span>Search</span>
           <input value={f.q} placeholder="Description, bill no, remarks…" onChange={(e) => setF({ ...f, q: e.target.value })} />
         </label>
         <label className="field"><span>GST on the bill</span>
-          <select value={f.gst} onChange={(e) => setF({ ...f, gst: e.target.value })}>
+          <Combo value={f.gst} onChange={(e) => setF({ ...f, gst: e.target.value })}>
             <option>All</option>{o.gst.map((x) => <option key={x}>{x}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Status</span>
-          <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+          <Combo value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
             <option>All</option>{o.statuses.map((x) => <option key={x}>{x}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Payment mode</span>
-          <select value={f.mode} onChange={(e) => setF({ ...f, mode: e.target.value })}>
+          <Combo value={f.mode} onChange={(e) => setF({ ...f, mode: e.target.value })}>
             <option>All</option>{o.modes.map((x) => <option key={x}>{x}</option>)}
-          </select>
+          </Combo>
         </label>
       </div>
       <div className="filter-row" style={{ marginTop: -6 }}>
@@ -624,10 +625,10 @@ function ExpenseForm({
       </div>
       <div className="grid-3">
         <label className="field"><span>Category *</span>
-          <select value={form.entryKind} onChange={set('entryKind')}>
+          <Combo value={form.entryKind} onChange={set('entryKind')}>
             <option value="expense">Expense — money the office spent</option>
             <option value="hand">Hand loan or owner&apos;s money — not an expense</option>
-          </select>
+          </Combo>
           <div className="small-muted">A loan is not a cost — it stays out of profit and GST.</div>
         </label>
         <label className="field"><span>Expense date *</span><input type="date" required value={form.expenseDate} onChange={set('expenseDate')} /></label>
@@ -640,7 +641,7 @@ function ExpenseForm({
           <div className="small-muted">Not on the list? Type it and it is kept for next time.</div>
         </label>
         <label className="field"><span>Payment frequency</span>
-          <select value={form.frequency} onChange={set('frequency')}>{options.frequencies.map((x) => <option key={x}>{x}</option>)}</select>
+          <Combo value={form.frequency} onChange={set('frequency')}>{options.frequencies.map((x) => <option key={x}>{x}</option>)}</Combo>
         </label>
         <label className="field"><span>Custom months covered</span>
           <input type="number" min="1" placeholder="leave blank = by frequency" value={form.monthsCovered} onChange={set('monthsCovered')} />
@@ -652,36 +653,36 @@ function ExpenseForm({
           <input required type="number" step="0.01" value={form.baseAmount} onChange={set('baseAmount')} />
         </label>
         <label className="field"><span>GST applicable</span>
-          <select value={form.gstApplicable} onChange={set('gstApplicable')}><option>No</option><option>Yes</option></select>
+          <Combo value={form.gstApplicable} onChange={set('gstApplicable')}><option>No</option><option>Yes</option></Combo>
         </label>
         <label className="field"><span>GST rate</span>
-          <select value={form.gstRatePct} onChange={set('gstRatePct')} disabled={form.gstApplicable !== 'Yes'}>
+          <Combo value={form.gstRatePct} onChange={set('gstRatePct')} disabled={form.gstApplicable !== 'Yes'}>
             {options.gstRates.map((r) => <option key={r} value={r}>{r}%</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>TDS applicable</span>
-          <select value={form.tdsApplicable} onChange={set('tdsApplicable')}><option>No</option><option>Yes</option></select>
+          <Combo value={form.tdsApplicable} onChange={set('tdsApplicable')}><option>No</option><option>Yes</option></Combo>
         </label>
         <label className="field"><span>TDS rate</span>
-          <select value={form.tdsRatePct} onChange={set('tdsRatePct')} disabled={form.tdsApplicable !== 'Yes'}>
+          <Combo value={form.tdsRatePct} onChange={set('tdsRatePct')} disabled={form.tdsApplicable !== 'Yes'}>
             {options.tdsRates.map((r) => <option key={r} value={r}>{r}%</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Paid to / vendor</span><input value={form.vendor} onChange={set('vendor')} /></label>
         <label className="field"><span>Vendor GSTIN</span><input value={form.vendorGstin} onChange={set('vendorGstin')} placeholder="15 characters" /></label>
         <label className="field"><span>Type of supply</span>
-          <select value={form.supplyType} onChange={set('supplyType')}>{options.supplyTypes.map((x) => <option key={x}>{x}</option>)}</select>
+          <Combo value={form.supplyType} onChange={set('supplyType')}>{options.supplyTypes.map((x) => <option key={x}>{x}</option>)}</Combo>
         </label>
         <label className="field"><span>GST treatment</span>
-          <select value={form.gstTreatment} onChange={set('gstTreatment')}>{options.gstTreatments.map((x) => <option key={x}>{x}</option>)}</select>
+          <Combo value={form.gstTreatment} onChange={set('gstTreatment')}>{options.gstTreatments.map((x) => <option key={x}>{x}</option>)}</Combo>
         </label>
         <label className="field"><span>Bill / invoice no</span><input value={form.billNumber} onChange={set('billNumber')} /></label>
         <label className="field"><span>Location</span><input value={form.location} onChange={set('location')} /></label>
         <label className="field"><span>Payment status</span>
-          <select value={form.paidStatus} onChange={set('paidStatus')}><option>Paid</option><option>Pending</option></select>
+          <Combo value={form.paidStatus} onChange={set('paidStatus')}><option>Paid</option><option>Pending</option></Combo>
         </label>
         <label className="field"><span>Payment mode</span>
-          <select value={form.paymentMode} onChange={set('paymentMode')}>{options.modes.map((x) => <option key={x}>{x}</option>)}</select>
+          <Combo value={form.paymentMode} onChange={set('paymentMode')}>{options.modes.map((x) => <option key={x}>{x}</option>)}</Combo>
         </label>
         <label className="field"><span>Approved by</span><input value={form.approvedBy} onChange={set('approvedBy')} /></label>
         <label className="field" style={{ gridColumn: '1 / -1' }}><span>Remarks</span><input value={form.remarks} onChange={set('remarks')} /></label>
@@ -1135,10 +1136,10 @@ function Gst({ period }) {
     <>
       <div className="filter-row">
         <label className="field" style={{ minWidth: 240 }}><span>Focus one month</span>
-          <select value={sel} onChange={(e) => setSel(e.target.value)}>
+          <Combo value={sel} onChange={(e) => setSel(e.target.value)}>
             <option value="All">All months in this period ({data.rows.length})</option>
             {data.rows.slice().reverse().map((r) => <option key={r.month} value={r.month}>{r.label}</option>)}
-          </select>
+          </Combo>
         </label>
         <span style={{ flex: 1 }} />
         <button className="btn btn-sm" onClick={() => printRows('GST by vendor', data.vendors.map((v) => ({
@@ -1361,16 +1362,16 @@ function Pnl({ period }) {
     <>
       <div className="filter-row">
         <label className="field"><span>Month</span>
-          <select value={sel} onChange={(e) => setSel(e.target.value)}>
+          <Combo value={sel} onChange={(e) => setSel(e.target.value)}>
             <option value="All">All months ({data.rows.length})</option>
             {data.rows.slice().reverse().map((r) => <option key={r.month} value={r.month}>{r.label}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 260 }}><span>Basis</span>
-          <select value={basis} onChange={(e) => setBasis(e.target.value)}>
+          <Combo value={basis} onChange={(e) => setBasis(e.target.value)}>
             <option value="accrual">Accrual — work done &amp; bills raised</option>
             <option value="cash">Cash — money in &amp; out of the bank</option>
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 300, flex: 1 }}><span>What this means</span>
           <input

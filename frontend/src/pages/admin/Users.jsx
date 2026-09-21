@@ -4,6 +4,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { ATS_ROLE_LABELS, atsRoleLabel, DEPTS } from '../../atsVocab';
+import Combo from '../../components/Combo.jsx';
 
 // Users / Employee Management (the prototype's usersView, line 9893).
 //
@@ -329,22 +330,22 @@ export default function Users() {
               <input required value={empForm.name} onChange={(e) => setEmp({ name: e.target.value })} /></label>
 
             <label className="field"><span>Department</span>
-              <select required value={empForm.department} onChange={(e) => setEmp({ department: e.target.value })}>
+              <Combo creatable required value={empForm.department} onChange={(e) => setEmp({ department: e.target.value })}>
                 <option value="">Select department</option>
                 {(empOptions?.departments || []).map((d) => <option key={d}>{d}</option>)}
-              </select></label>
+              </Combo></label>
             {/* Straight off the DesignationRole table — the identity model
                 derives the ATS role, the product access and the landing
                 workspace from this choice, so there is no list to hard-code. */}
             <label className="field"><span>Role / Designation</span>
-              <select required value={empForm.designation} onChange={(e) => setEmp({ designation: e.target.value })}>
+              <Combo required value={empForm.designation} onChange={(e) => setEmp({ designation: e.target.value })}>
                 <option value="">Select role</option>
                 {(empOptions?.designations || []).map((d) => (
                   <option key={d.designation} value={d.designation}>
                     {d.designation}{d.atsRole ? ` — ATS ${atsRoleLabel(d.atsRole)}` : ''}
                   </option>
                 ))}
-              </select></label>
+              </Combo></label>
 
             <label className="field"><span>Email</span>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -421,12 +422,12 @@ export default function Users() {
           </div>
           <div className="grid-2">
             <label className="field"><span>Employee</span>
-              <select value={form.employeeId} onChange={(e) => pickEmployee(e.target.value)}>
+              <Combo value={form.employeeId} onChange={(e) => pickEmployee(e.target.value)}>
                 <option value="">— standalone login (no employee record) —</option>
                 {freeEmployees.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.name} — {emp.employeeCode}</option>
                 ))}
-              </select></label>
+              </Combo></label>
             <label className="field"><span>Full name *</span>
               <input required value={form.name} onChange={(e) => set({ name: e.target.value })} /></label>
             <label className="field"><span>Email *</span>
@@ -436,28 +437,28 @@ export default function Users() {
             <label className="field"><span>Temporary password *</span>
               <input required type="password" minLength="6" value={form.password} onChange={(e) => set({ password: e.target.value })} /></label>
             <label className="field"><span>Role *</span>
-              <select value={form.role} onChange={(e) => set({ role: e.target.value })}>
+              <Combo value={form.role} onChange={(e) => set({ role: e.target.value })}>
                 {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-              </select></label>
+              </Combo></label>
             <label className="field"><span>Department scope</span>
-              <select value={form.atsDepartment} onChange={(e) => set({ atsDepartment: e.target.value })}>
+              <Combo creatable value={form.atsDepartment} onChange={(e) => set({ atsDepartment: e.target.value })}>
                 <option value="">All departments</option>
                 {DEPTS.map((d) => <option key={d}>{d}</option>)}
-              </select></label>
+              </Combo></label>
             <label className="field"><span>Branch</span>
               <input value={form.branch} onChange={(e) => set({ branch: e.target.value })} /></label>
             <label className="field"><span>Team</span>
               <input value={form.team} onChange={(e) => set({ team: e.target.value })} placeholder="e.g. Section A" /></label>
             <label className="field"><span>Status</span>
-              <select value={form.status} onChange={(e) => set({ status: e.target.value })}>
+              <Combo value={form.status} onChange={(e) => set({ status: e.target.value })}>
                 {STATUSES.map((s) => <option key={s}>{s}</option>)}
-              </select></label>
+              </Combo></label>
             {form.role === 'CLIENT' && (
               <label className="field"><span>Client *</span>
-                <select required value={form.clientId} onChange={(e) => set({ clientId: e.target.value })}>
+                <Combo required value={form.clientId} onChange={(e) => set({ clientId: e.target.value })}>
                   <option value="">—</option>
                   {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Combo>
                 <span className="small-muted">A Client login sees only this company.</span></label>
             )}
           </div>
@@ -485,18 +486,18 @@ export default function Users() {
           type="text" placeholder="Search name, email, employee ID…"
           value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         />
-        <select value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
+        <Combo value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
           <option value="">All roles</option>
           {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-        </select>
-        <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
+        </Combo>
+        <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">All statuses</option>
           {STATUSES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select value={filters.department} onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))}>
+        </Combo>
+        <Combo value={filters.department} onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))}>
           <option value="">All departments</option>
           {DEPTS.map((d) => <option key={d}>{d}</option>)}
-        </select>
+        </Combo>
         <button className="btn btn-sm" onClick={() => setFilters({ q: '', role: '', status: '', department: '' })}>Clear</button>
         <span className="small-muted">{rows.length} login(s)</span>
       </div>
@@ -537,9 +538,9 @@ export default function Users() {
                   </label>
                 </td>
                 <td>
-                  <select style={{ minWidth: 120 }} value={u.atsRole || ''} onChange={(e) => setAtsRole(u, e.target.value)}>
+                  <Combo style={{ minWidth: 120 }} value={u.atsRole || ''} onChange={(e) => setAtsRole(u, e.target.value)}>
                     {ATS_WORK_ROLES.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
-                  </select>
+                  </Combo>
                 </td>
                 <td>
                   <label className="small-muted" style={{ whiteSpace: 'nowrap' }}>
@@ -573,9 +574,9 @@ export default function Users() {
                 <td className="cell-muted">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
                 <td className="cell-muted">{u.username || '—'}</td>
                 <td>
-                  <select style={{ minWidth: 130 }} value={u.role} onChange={(e) => changeRole(u, e.target.value)}>
+                  <Combo style={{ minWidth: 130 }} value={u.role} onChange={(e) => changeRole(u, e.target.value)}>
                     {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-                  </select>
+                  </Combo>
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn btn-sm" onClick={() => setEditing({
@@ -681,10 +682,10 @@ export default function Users() {
           <div className="field"><label>Assigned team</label>
             <input value={editing.team} onChange={(e) => setEditing({ ...editing, team: e.target.value })} placeholder="e.g. Section A" /></div>
           <div className="field"><label>Primary ATS department</label>
-            <select value={editing.atsDepartment} onChange={(e) => setEditing({ ...editing, atsDepartment: e.target.value })}>
+            <Combo creatable value={editing.atsDepartment} onChange={(e) => setEditing({ ...editing, atsDepartment: e.target.value })}>
               <option value="">All departments</option>
               {DEPTS.map((d) => <option key={d}>{d}</option>)}
-            </select></div>
+            </Combo></div>
           <div className="notice">
             Data scope. These are what the API itself enforces on every list and
             record — leave them empty to fall back to the employee's own

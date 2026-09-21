@@ -5,6 +5,7 @@ import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv, to12h } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow, Status } from '../components/proto.jsx';
 import { isAdmin, isHR as hasHrmsAdmin } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 const METHODS = ['Web Check-in', 'Mobile App', 'Biometric (Fingerprint)'];
 
@@ -178,9 +179,9 @@ function SelfServiceTab() {
       <PanelPad>
         <h3 style={{ fontSize: 14, marginBottom: 10 }}>Check in / Check out</h3>
         <div className="filter-row">
-          <select value={method} onChange={(e) => setMethod(e.target.value)}>
+          <Combo value={method} onChange={(e) => setMethod(e.target.value)}>
             {METHODS.map((m) => <option key={m}>{m}</option>)}
-          </select>
+          </Combo>
           <button className="btn btn-sm btn-primary" onClick={() => punch('In')}>Punch In</button>
           <button className="btn btn-sm" onClick={() => punch('Out')}>Punch Out</button>
         </div>
@@ -247,14 +248,14 @@ function BiometricTab() {
           <input type="date" value={filters.date} onChange={(e) => set('date', e.target.value)} />
           <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
           <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <select value={filters.department} onChange={(e) => set('department', e.target.value)}>
+          <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
             <option value="">All Departments</option>
             {departments.map((d) => <option key={d}>{d}</option>)}
-          </select>
-          <select value={filters.role} onChange={(e) => set('role', e.target.value)}>
+          </Combo>
+          <Combo value={filters.role} onChange={(e) => set('role', e.target.value)}>
             <option value="">All Roles</option>
             {roles.map((r) => <option key={r}>{r}</option>)}
-          </select>
+          </Combo>
           <button className="btn btn-sm" onClick={() => setFilters(EMPTY_BIO)}>Clear</button>
         </div>
       </div>
@@ -329,10 +330,10 @@ function PunchLogTab() {
           <label className="small-muted" style={{ alignSelf: 'center', margin: 0 }}>To</label>
           <input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} />
           <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <select value={filters.department} onChange={(e) => set('department', e.target.value)}>
+          <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
             <option value="">All Departments</option>
             {departments.map((d) => <option key={d}>{d}</option>)}
-          </select>
+          </Combo>
           <button className="btn btn-sm" onClick={() => setFilters(emptyFilters)}>Clear</button>
         </div>
       </div>
@@ -396,14 +397,14 @@ function ReportsTab() {
         <div className="filter-row">
           <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
           <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <select value={filters.department} onChange={(e) => set('department', e.target.value)}>
+          <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
             <option value="">All Departments</option>
             {departments.map((d) => <option key={d}>{d}</option>)}
-          </select>
-          <select value={filters.role} onChange={(e) => set('role', e.target.value)}>
+          </Combo>
+          <Combo value={filters.role} onChange={(e) => set('role', e.target.value)}>
             <option value="">All Roles</option>
             {roles.map((r) => <option key={r}>{r}</option>)}
-          </select>
+          </Combo>
         </div>
       </div>
       {report && (

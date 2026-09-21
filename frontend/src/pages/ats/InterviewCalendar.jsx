@@ -9,6 +9,7 @@ import {
 } from '../../atsVocab';
 import { canActOnPipeline } from '../../permissions';
 import { INTJOIN_TABS, HiringTypeChip } from './intjoinShared.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // The prototype's Interview Calendar (calendarView, line 9184): two tabs kept
 // deliberately apart, because an AI interview score is never mixed into
@@ -151,50 +152,50 @@ export default function InterviewCalendar() {
                 value={filters.q}
                 onChange={(e) => setFilter({ q: e.target.value })}
               />
-              <select value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
+              <Combo value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
                 <option value="">All statuses</option>
                 {INTERVIEW_STATUS_CODES.map((s) => <option key={s} value={s}>{interviewStatusLabel(s)}</option>)}
-              </select>
-              <select value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+              </Combo>
+              <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
                 <option value="">All departments</option>
                 {(opts.departments || []).map((d) => <option key={d}>{d}</option>)}
-              </select>
-              <select value={filters.requirement} onChange={(e) => setFilter({ requirement: e.target.value })}>
+              </Combo>
+              <Combo value={filters.requirement} onChange={(e) => setFilter({ requirement: e.target.value })}>
                 <option value="">All requirements</option>
                 {(opts.requirements || []).map((d) => <option key={d}>{d}</option>)}
-              </select>
-              <select value={filters.candidate} onChange={(e) => setFilter({ candidate: e.target.value })}>
+              </Combo>
+              <Combo value={filters.candidate} onChange={(e) => setFilter({ candidate: e.target.value })}>
                 <option value="">All candidates</option>
                 {(opts.candidates || []).map((d) => <option key={d}>{d}</option>)}
-              </select>
-              <select value={filters.hiringType} onChange={(e) => setFilter({ hiringType: e.target.value })}>
+              </Combo>
+              <Combo value={filters.hiringType} onChange={(e) => setFilter({ hiringType: e.target.value })}>
                 <option value="">All hiring types</option>
                 {(data.hiringTypes || []).map((d) => <option key={d}>{d}</option>)}
-              </select>
-              <select value={filters.type} onChange={(e) => setFilter({ type: e.target.value })}>
+              </Combo>
+              <Combo value={filters.type} onChange={(e) => setFilter({ type: e.target.value })}>
                 <option value="">All types</option>
                 {INTERVIEW_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </select>
-              <select value={filters.date} onChange={(e) => setFilter({ date: e.target.value })}>
+              </Combo>
+              <Combo value={filters.date} onChange={(e) => setFilter({ date: e.target.value })}>
                 <option value="">All dates</option>
                 {(opts.dates || []).map((d) => <option key={d} value={d}>{fmtDate(d)}</option>)}
-              </select>
-              <select value={filters.client} onChange={(e) => setFilter({ client: e.target.value })}>
+              </Combo>
+              <Combo value={filters.client} onChange={(e) => setFilter({ client: e.target.value })}>
                 <option value="">All clients</option>
                 {(opts.clients || []).map((c) => <option key={c}>{c}</option>)}
-              </select>
-              <select value={filters.recruiter} onChange={(e) => setFilter({ recruiter: e.target.value })}>
+              </Combo>
+              <Combo value={filters.recruiter} onChange={(e) => setFilter({ recruiter: e.target.value })}>
                 <option value="">All recruiters</option>
                 {(opts.recruiters || []).map((r) => <option key={r}>{r}</option>)}
-              </select>
-              <select value={filters.tl} onChange={(e) => setFilter({ tl: e.target.value })}>
+              </Combo>
+              <Combo value={filters.tl} onChange={(e) => setFilter({ tl: e.target.value })}>
                 <option value="">All TLs</option>
                 {(opts.tls || []).map((t) => <option key={t}>{t}</option>)}
-              </select>
-              <select value={filters.bde} onChange={(e) => setFilter({ bde: e.target.value })}>
+              </Combo>
+              <Combo value={filters.bde} onChange={(e) => setFilter({ bde: e.target.value })}>
                 <option value="">All BDEs</option>
                 {(opts.bdes || []).map((b) => <option key={b}>{b}</option>)}
-              </select>
+              </Combo>
               <label className="small-muted">From <input type="date" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} /></label>
               <label className="small-muted">To <input type="date" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} /></label>
               <button className="btn btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
@@ -396,17 +397,17 @@ function FeedbackForm({ dialog, setDialog, act }) {
           {FEEDBACK_CRITERIA.map((c) => (
             <label className="field" key={c.key}>
               <span>{c.label} (1–5)</span>
-              <select value={form[c.key]} onChange={(e) => set({ [c.key]: Number(e.target.value) })}>
+              <Combo value={form[c.key]} onChange={(e) => set({ [c.key]: Number(e.target.value) })}>
                 {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </Combo>
             </label>
           ))}
           <label className="field"><span>Score (0–100)</span>
             <input type="number" min="0" max="100" value={form.score} onChange={(e) => set({ score: e.target.value })} /></label>
           <label className="field"><span>Recommendation</span>
-            <select value={form.result} onChange={(e) => set({ result: e.target.value })}>
+            <Combo value={form.result} onChange={(e) => set({ result: e.target.value })}>
               {INTERVIEW_RECOMMENDATIONS.map((r) => <option key={r}>{r}</option>)}
-            </select></label>
+            </Combo></label>
         </div>
         <label className="field" style={{ marginBottom: 10 }}><span>Overall Feedback *</span>
           <textarea required rows="3" value={form.feedback} onChange={(e) => set({ feedback: e.target.value })} /></label>

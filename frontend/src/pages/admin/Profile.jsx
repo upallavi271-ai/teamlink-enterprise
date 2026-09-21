@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { workRoleLabel } from '../../permissions';
@@ -36,6 +37,14 @@ export default function Profile() {
       <div className="card">
         <div className="kv"><span className="k">Name</span><span>{user?.name}</span></div>
         <div className="kv"><span className="k">Role</span><span>{workRoleLabel(user)}</span></div>
+        <div className="kv"><span className="k">Employee profile</span>
+          <span>
+            <Link to="/my-profile">Open your employee profile</Link>
+            <span className="small-muted" style={{ marginLeft: 8 }}>
+              Personal, bank and document details, and the review lifecycle.
+            </span>
+          </span>
+        </div>
       </div>
 
       <div className="section-label" style={{ marginTop: 18 }}>Edit your account</div>

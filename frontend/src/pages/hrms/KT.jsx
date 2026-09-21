@@ -21,6 +21,7 @@ import {
   Panel, PanelHead, EmptyMini, QaRow, Modal, ScopeNote, Status,
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 const SUBTITLE = 'Every employee submits 3 unique HRMS-improvement ideas per week. '
   + 'AI screens for duplicates and scores each unique idea on originality, usefulness, impact, clarity, and feasibility.';
@@ -74,17 +75,17 @@ function LogKtModal({ employees, onClose, onSaved }) {
       <div className="grid-2">
         <div className="field">
           <label>From</label>
-          <select value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })}>
+          <Combo value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })}>
             <option value="">Select</option>
             {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
+          </Combo>
         </div>
         <div className="field">
           <label>To</label>
-          <select value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })}>
+          <Combo value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })}>
             <option value="">Select</option>
             {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
+          </Combo>
         </div>
       </div>
       {error && <div className="error-text">{error}</div>}

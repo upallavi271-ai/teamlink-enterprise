@@ -3,6 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
 import { canExportReports } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 
@@ -31,10 +32,10 @@ export default function AccountsReports() {
       </div>
 
       <div className="filter-row">
-        <select value={pick} onChange={(e) => setPick(e.target.value)}>
+        <Combo value={pick} onChange={(e) => setPick(e.target.value)}>
           <option value="">All clients</option>
           {data.receivables.map((r) => <option key={r.client}>{r.client}</option>)}
-        </select>
+        </Combo>
         <button className="btn btn-sm btn-primary" onClick={() => setClient(pick)}>Apply</button>
         <button className="btn btn-sm btn-ghost" onClick={() => { setPick(''); setClient(''); }}>Clear</button>
         {canExport

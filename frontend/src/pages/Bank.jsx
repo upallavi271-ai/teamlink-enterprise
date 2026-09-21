@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import Modal from '../components/Modal';
+import Combo from '../components/Combo.jsx';
 
 // Indian digit grouping with paise, as the accounting application prints it.
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
@@ -471,9 +472,9 @@ function AccountView({
         <span style={{ flex: 1 }} />
         <label className="small-muted">
           Per page{' '}
-          <select value={per} onChange={(e) => { setPer(Number(e.target.value)); setPage(0); }}>
+          <Combo value={per} onChange={(e) => { setPer(Number(e.target.value)); setPage(0); }}>
             {[50, 100, 200, 500].map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
+          </Combo>
         </label>
         <button className="btn btn-sm" disabled={p <= 0} onClick={() => setPage(p - 1)}>‹</button>
         <span className="small-muted">{total ? p * per + 1 : 0} – {Math.min(total, (p + 1) * per)}</span>
@@ -688,26 +689,26 @@ function Recon({
       <div className="filter-row">
         <label>
           Bank account
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+          <Combo value={accountId} onChange={(e) => setAccountId(e.target.value)}>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.bank}{a.accNo ? ` · ****${String(a.accNo).slice(-4)}` : ''}{a.name ? ` · ${a.name.slice(0, 22)}` : ''}
               </option>
             ))}
-          </select>
+          </Combo>
         </label>
         <label>
           Group by
-          <select value={group} onChange={(e) => { setGroup(e.target.value); setOpenKeys(null); }}>
+          <Combo value={group} onChange={(e) => { setGroup(e.target.value); setOpenKeys(null); }}>
             {BANK_GROUPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          </Combo>
         </label>
         <label>
           Client
-          <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
+          <Combo value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
             <option value="All">All</option>
             {clientNames.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          </Combo>
         </label>
         {group !== 'none' && (
           <button className="btn btn-sm" onClick={() => setOpenKeys(allOpen ? {} : Object.fromEntries(groups.map((g) => [g.key, 1])))}>
@@ -928,14 +929,14 @@ function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog }) {
           Match to {txn.suggestion.invoiceNumber}
         </button>
       )}
-      <select value={picked} onChange={(e) => onPick(e.target.value)} style={{ maxWidth: 230 }}>
+      <Combo value={picked} onChange={(e) => onPick(e.target.value)} style={{ maxWidth: 230 }}>
         <option value="">{r?.invoiceNumber ? '— change the invoice —' : '— choose the invoice —'}</option>
         {openInvoices.map((i) => (
           <option key={i.id} value={i.id}>
             {i.invoiceNumber || i.id.slice(-6)} · {i.client?.name?.slice(0, 20)} · {money(i.outstanding)}
           </option>
         ))}
-      </select>
+      </Combo>
       <button className="btn btn-sm" disabled={!picked || waiting('match')} onClick={() => act(txn.id, 'match', { invoiceId: picked })}>Post</button>
       <button className="btn btn-sm" title="Every invoice this could be, and a form to file it by hand" onClick={() => setDialog({ kind: 'catz', txn, tab: 'match' })}>Match…</button>
       <button className="btn btn-sm" disabled={waiting('ignore')} onClick={() => act(txn.id, 'ignore')}>Ignore</button>
@@ -1352,17 +1353,17 @@ function ImportDialog({ accountId, onClose, call }) {
       </div>
       <div className="field">
         <label>Skip lines already imported</label>
-        <select value={dedup} onChange={(e) => setDedup(e.target.value)}>
+        <Combo value={dedup} onChange={(e) => setDedup(e.target.value)}>
           <option value="Yes">Yes — safest</option>
           <option value="No">No — import everything</option>
-        </select>
+        </Combo>
       </div>
       <div className="field">
         <label>Post the credits automatically</label>
-        <select value={autoPost} onChange={(e) => setAutoPost(e.target.value)}>
+        <Combo value={autoPost} onChange={(e) => setAutoPost(e.target.value)}>
           <option value="yes">Yes — post every matched credit as soon as it is read</option>
           <option value="no">No — show me the matches, I will confirm each one</option>
-        </select>
+        </Combo>
         <div className="small-muted" style={{ marginTop: 4 }}>
           Only credits where the narration names a client who still owes money are posted. The oldest invoice is settled first,
           anything extra is left alone, and every posting can be undone.
@@ -1518,7 +1519,7 @@ function MarkDialog({ accountId, onClose, call }) {
         <div className="field"><label>Date</label><input type="date" value={f.date} onChange={set('date')} /></div>
         <div className="field">
           <label>What is this</label>
-          <select value={f.kind} onChange={set('kind')}>{MARK_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
+          <Combo value={f.kind} onChange={set('kind')}>{MARK_KINDS.map((k) => <option key={k}>{k}</option>)}</Combo>
         </div>
         <div className="field"><label>Balance as per bank</label><input value={f.balance} onChange={set('balance')} inputMode="decimal" placeholder="0.00" /></div>
         <div className="field"><label>Amount cleared</label><input value={f.cleared} onChange={set('cleared')} inputMode="decimal" placeholder="0.00" /></div>
@@ -1679,12 +1680,12 @@ function CatzDialog({ txn, startTab, onClose, call, act, load }) {
           <div className="grid-2">
             <div className="field">
               <label>What is this</label>
-              <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+              <Combo value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
                 <option value="expense">An office bill</option>
                 <option value="hand">A hand loan — not an expense</option>
                 <option value="transfer">Our own transfer — not an expense</option>
                 <option value="other">Other income</option>
-              </select>
+              </Combo>
             </div>
             {(form.kind === 'expense' || form.kind === 'other') && (
               <div className="field">

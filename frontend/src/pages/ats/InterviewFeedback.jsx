@@ -13,6 +13,7 @@ import { Link, NavLink } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 import {
   INTERVIEW_RECOMMENDATIONS, FEEDBACK_CRITERIA, interviewStatusLabel, interviewStatusClass, resultClass,
 } from '../../atsVocab';
@@ -199,16 +200,16 @@ function FeedbackForm({ kind, row, onClose, onSubmit }) {
           {FEEDBACK_CRITERIA.map((c) => (
             <label className="field" key={c.key}>
               <span>{c.label} (1–5)</span>
-              <select value={form[c.key]} onChange={(e) => set({ [c.key]: Number(e.target.value) })}>
+              <Combo value={form[c.key]} onChange={(e) => set({ [c.key]: Number(e.target.value) })}>
                 {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </Combo>
             </label>
           ))}
           <label className="field">
             <span>Recommendation</span>
-            <select value={form.recommendation} onChange={(e) => set({ recommendation: e.target.value })}>
+            <Combo value={form.recommendation} onChange={(e) => set({ recommendation: e.target.value })}>
               {INTERVIEW_RECOMMENDATIONS.map((r) => <option key={r}>{r}</option>)}
-            </select>
+            </Combo>
           </label>
           {kind === 'Internal' && (
             <label className="field">
@@ -245,9 +246,9 @@ function DecisionForm({ row, onClose, onSubmit }) {
       <form onSubmit={(e) => { e.preventDefault(); onSubmit(decision); }}>
         <label className="field" style={{ maxWidth: 280 }}>
           <span>Decision</span>
-          <select value={decision} onChange={(e) => setDecision(e.target.value)}>
+          <Combo value={decision} onChange={(e) => setDecision(e.target.value)}>
             {INTERVIEW_RECOMMENDATIONS.map((r) => <option key={r}>{r}</option>)}
-          </select>
+          </Combo>
         </label>
         <div className="small-muted" style={{ marginBottom: 10 }}>
           Selected moves the candidate on to Offers — as a {row.hiringType === 'TeamLink Internal Hire'

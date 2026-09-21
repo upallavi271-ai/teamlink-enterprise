@@ -6,6 +6,7 @@ import {
   statusClass, money, money2, fmtD, Stat, invoiceDocumentHtml,
 } from './Invoices.jsx';
 import { canManageAccounts } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -264,9 +265,9 @@ export default function InvoiceDetail() {
                 <input required type="number" step="0.01" max={pending} placeholder={pending.toFixed(2)} value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
               </label>
               <label className="field"><span>Payment method</span>
-                <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
+                <Combo value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
                   {PAY_METHODS.map((m) => <option key={m}>{m}</option>)}
-                </select>
+                </Combo>
               </label>
               <label className="field"><span>Transaction / reference ID</span>
                 <input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />

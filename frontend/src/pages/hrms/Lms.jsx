@@ -6,6 +6,7 @@ import {
   QaRow, NumHead, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
 import { can } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // Learning (LMS) — two stacked sections.
@@ -335,11 +336,11 @@ function EnrollModal({ courses, onClose, onSubmit }) {
       ) : (
         <label className="field">
           <span>Course</span>
-          <select value={id} onChange={(e) => setId(e.target.value)}>
+          <Combo value={id} onChange={(e) => setId(e.target.value)}>
             {available.map((c) => (
               <option key={c.id} value={c.id}>{c.title}{c.mandatory ? ' (Mandatory)' : ''}</option>
             ))}
-          </select>
+          </Combo>
         </label>
       )}
     </Modal>
@@ -362,9 +363,9 @@ function MaterialModal({ courses, preset, onClose, onSubmit }) {
     >
       <label className="field">
         <span>Course</span>
-        <select value={id} onChange={(e) => setId(e.target.value)}>
+        <Combo value={id} onChange={(e) => setId(e.target.value)}>
           {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-        </select>
+        </Combo>
       </label>
       <label className="field">
         <span>Why do you need the material offline?</span>

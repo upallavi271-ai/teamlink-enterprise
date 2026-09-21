@@ -4,6 +4,7 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin } from '../permissions';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
+import Combo from '../components/Combo.jsx';
 
 
 const EDIT_FIELDS = [
@@ -218,9 +219,9 @@ export default function EmployeeDetail() {
           <div className="grid-2">
             <label className="field">
               <span>Section to open</span>
-              <select value={grant.section} onChange={(e) => setGrant({ ...grant, section: e.target.value })}>
+              <Combo value={grant.section} onChange={(e) => setGrant({ ...grant, section: e.target.value })}>
                 {(config?.editAccessSections || ['All fields']).map((s) => <option key={s}>{s}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Access window (hours)</span>
@@ -322,9 +323,9 @@ export default function EmployeeDetail() {
               <div className="grid-2">
                 <label className="field">
                   <span>Section to open</span>
-                  <select value={grant.section} onChange={(e) => setGrant({ ...grant, section: e.target.value })}>
+                  <Combo value={grant.section} onChange={(e) => setGrant({ ...grant, section: e.target.value })}>
                     {(config?.editAccessSections || ['All fields']).map((s) => <option key={s}>{s}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Access window (hours)</span>
@@ -359,10 +360,10 @@ export default function EmployeeDetail() {
             <label className="field"><span>Email</span><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
             <label className="field">
               <span>Blood Group</span>
-              <select value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}>
+              <Combo value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}>
                 <option value="">Select</option>
                 {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((b) => <option key={b}>{b}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
 
@@ -370,9 +371,9 @@ export default function EmployeeDetail() {
           <div className="grid-2">
             <label className="field">
               <span>Address Type</span>
-              <select value={form.addressType} onChange={(e) => setForm({ ...form, addressType: e.target.value })}>
+              <Combo value={form.addressType} onChange={(e) => setForm({ ...form, addressType: e.target.value })}>
                 <option value="">Select type</option><option>Current</option><option>Permanent</option>
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Address Line 1</span><input value={form.addressLine1} onChange={(e) => setForm({ ...form, addressLine1: e.target.value })} /></label>
             <label className="field"><span>Address Line 2</span><input value={form.addressLine2} onChange={(e) => setForm({ ...form, addressLine2: e.target.value })} /></label>
@@ -399,17 +400,17 @@ export default function EmployeeDetail() {
             {formTeams.length > 0 && (
               <label className="field">
                 <span>Team</span>
-                <select value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })}>
+                <Combo creatable value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })}>
                   <option value="">No team</option>
                   {formTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
             <label className="field">
               <span>Branch</span>
-              <select value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })}>
+              <Combo creatable value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })}>
                 <option value="">Select branch</option><option>Bengaluru</option><option>Chennai</option><option>Hyderabad</option>
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Designation</span><input value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} /></label>
             <label className="field"><span>Location</span><input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></label>
@@ -417,9 +418,9 @@ export default function EmployeeDetail() {
             {isAdmin && (
               <label className="field">
                 <span>Status</span>
-                <select value={form.employmentStatus} onChange={(e) => setForm({ ...form, employmentStatus: e.target.value })}>
+                <Combo value={form.employmentStatus} onChange={(e) => setForm({ ...form, employmentStatus: e.target.value })}>
                   {['Active', 'On Probation', 'Notice Period', 'Exit Process', 'Relieved', 'Exited'].map((s) => <option key={s}>{s}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
           </div>
@@ -441,9 +442,9 @@ export default function EmployeeDetail() {
           <div className="grid-2">
             <label className="field">
               <span>Employment Type</span>
-              <select value={form.employmentExperience} onChange={(e) => setForm({ ...form, employmentExperience: e.target.value })}>
+              <Combo value={form.employmentExperience} onChange={(e) => setForm({ ...form, employmentExperience: e.target.value })}>
                 <option>Fresher</option><option>Experienced</option>
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Education details</span><input value={form.educationDetails} onChange={(e) => setForm({ ...form, educationDetails: e.target.value })} /></label>
             <label className="field"><span>Skills & certifications</span><input value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} /></label>

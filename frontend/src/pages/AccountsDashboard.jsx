@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
+import Combo from '../components/Combo.jsx';
 import {
   statusClass, money, money2, fmtD, Stat,
 } from './Invoices.jsx';
@@ -67,24 +68,24 @@ export default function AccountsDashboard() {
 
       <div className="filter-row">
         <label className="field"><span>Client · {data.filterOptions.clients.length} of {data.filterOptions.clientsEver}</span>
-          <select value={f.client} onChange={(e) => setF({ ...f, client: e.target.value })}>
+          <Combo value={f.client} onChange={(e) => setF({ ...f, client: e.target.value })}>
             <option>All</option>{data.filterOptions.clients.map((c) => <option key={c}>{c}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 230 }}><span>Period</span>
-          <select value={period || p.sel} onChange={(e) => setPeriod(e.target.value)}>
+          <Combo value={period || p.sel} onChange={(e) => setPeriod(e.target.value)}>
             {p.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Department</span>
-          <select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>
+          <Combo value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>
             <option>All</option>{data.filterOptions.departments.map((d) => <option key={d}>{d}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Status</span>
-          <select title="Received and Paid mean the same thing — the whole invoice is in" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+          <Combo title="Received and Paid mean the same thing — the whole invoice is in" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
             {data.filterOptions.statuses.map((s) => <option key={s}>{s}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 220 }}><span>Search anything</span>
           <input value={f.q} placeholder="Client, invoice no, GSTIN…" onChange={(e) => setF({ ...f, q: e.target.value })} />

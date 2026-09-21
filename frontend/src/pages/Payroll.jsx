@@ -5,6 +5,7 @@ import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv, inr } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol } from '../components/proto.jsx';
 import { canRunPayroll, isAdmin as hasAdminAccess } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -106,9 +107,9 @@ function SalaryStructuresTable({ department, canEdit }) {
         <div className="filter-row">
           <input placeholder="Employee ID…" value={filters.code} onChange={(e) => set('code', e.target.value)} />
           <input placeholder="Employee name…" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <select value={filters.payType} onChange={(e) => set('payType', e.target.value)}>
+          <Combo value={filters.payType} onChange={(e) => set('payType', e.target.value)}>
             <option value="">All Pay Types</option><option>Package</option><option>Stipend</option>
-          </select>
+          </Combo>
         </div>
       </div>
       <div className="tbl-wrap">
@@ -239,10 +240,10 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
   return (
     <div>
       <div className="filter-row" style={{ marginTop: 14, marginBottom: 12 }}>
-        <select value={department} onChange={(e) => setDepartment(e.target.value)}>
+        <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
           <option value="">All Departments</option>
           {departments.map((d) => <option key={d}>{d}</option>)}
-        </select>
+        </Combo>
         <input type="month" value={cycle} onChange={(e) => setCycle(e.target.value)} />
         <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={exportStructures}>Export</button>
       </div>
@@ -512,10 +513,10 @@ function ProcessTab({ canRun }) {
             <div className="field"><label>Month *</label><input type="month" required value={month} onChange={(e) => setMonth(e.target.value)} /></div>
             <div className="field">
               <label>Department (optional)</label>
-              <select value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
                 <option value="">All departments</option>
                 {departments.map((d) => <option key={d}>{d}</option>)}
-              </select>
+              </Combo>
             </div>
           </div>
           <button className="btn btn-primary btn-sm" type="submit">Calculate</button>
@@ -617,10 +618,10 @@ function PayslipsTab({ canRun }) {
           <div className="filter-row">
             <input placeholder="Employee ID…" value={filters.code} onChange={(e) => set('code', e.target.value)} />
             <input placeholder="Employee name…" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-            <select value={filters.department} onChange={(e) => set('department', e.target.value)}>
+            <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
               <option value="">All Departments</option>
               {departments.map((d) => <option key={d}>{d}</option>)}
-            </select>
+            </Combo>
             <span className="cell-muted" style={{ fontSize: 12, alignSelf: 'center' }}>{filtered.length} payslip(s)</span>
           </div>
         </div>

@@ -3,6 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Panel, PanelHead, EmptyMini, QaRow, Modal } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -36,10 +37,10 @@ function SetTargetModal({ employees, onClose, onSaved }) {
     >
       <div className="field">
         <label>Employee</label>
-        <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+        <Combo value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
           <option value="">Select employee</option>
           {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        </Combo>
       </div>
       <div className="field"><label>Goal</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Monthly target" /></div>
       <div className="grid-2">

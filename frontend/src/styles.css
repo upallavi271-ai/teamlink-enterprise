@@ -454,3 +454,31 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
   .ai-fab-label{display:none}
   .ai-panel{height:min(82vh,640px)}
 }
+
+/* --- Combo: a <select> you can also type into (components/Combo.jsx) ------
+   The control is an <input type=text>, so it already inherits the shared
+   input/select rule above — border, radius, padding, height and font all
+   match. Everything here is only the wrapper, the caret and the popup. */
+.combo{position:relative;display:block;width:100%}
+.combo input[type=text]{width:100%;padding-right:34px;text-overflow:ellipsis}
+.combo input[type=text]::placeholder{color:var(--ink-soft);opacity:.75}
+.combo.is-disabled{opacity:.6}
+.combo-caret{position:absolute;right:11px;top:50%;width:0;height:0;margin-top:-2px;pointer-events:none;
+  border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--ink-soft)}
+.combo-clear{position:absolute;right:24px;top:50%;transform:translateY(-50%);background:none;border:none;
+  color:var(--ink-soft);font-size:15px;line-height:1;padding:0 2px;cursor:pointer}
+.combo-clear:hover{color:var(--ink)}
+.filter-row .combo{width:auto;min-width:130px}
+.filter-row .combo input[type=text]{width:100%;min-width:0}
+.combo-pop{z-index:400}
+.combo-list{background:#fff;border:1px solid var(--line);border-radius:7px;overflow-y:auto;
+  box-shadow:0 10px 30px rgba(18,28,52,.18);padding:4px}
+.combo-opt{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:5px;font-size:13.5px;
+  color:var(--ink);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.combo-opt.active{background:var(--navy-tint)}
+.combo-opt.picked{font-weight:600}
+.combo-opt.disabled{color:var(--ink-soft);cursor:default;background:none}
+.combo-opt.create{color:var(--navy);border-top:1px solid var(--line-soft);border-radius:0 0 5px 5px}
+.combo-opt.create b{font-weight:600}
+.combo-dim{color:var(--ink-soft)}
+.combo-group{margin-left:auto;font-size:10.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.3px}

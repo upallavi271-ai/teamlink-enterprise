@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 
 export default function Projects() {
@@ -57,10 +58,10 @@ export default function Projects() {
           {p.assignments.length === 0 && <div className="small-muted">No one assigned yet.</div>}
           {isHR && (
             <div className="filter-row" style={{ marginTop: 10 }}>
-              <select value={assignForm[p.id] || ''} onChange={(e) => setAssignForm({ ...assignForm, [p.id]: e.target.value })}>
+              <Combo value={assignForm[p.id] || ''} onChange={(e) => setAssignForm({ ...assignForm, [p.id]: e.target.value })}>
                 <option value="">Assign employee…</option>
                 {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
+              </Combo>
               <button className="btn btn-sm" onClick={() => assign(p.id)}>Assign</button>
             </div>
           )}

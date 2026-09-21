@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 
 export default function Documents() {
@@ -49,10 +50,10 @@ export default function Documents() {
             <label className="field"><span>Title</span><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
             <label className="field">
               <span>Category</span>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                 <option>Policy</option>
                 <option>Compliance</option>
-              </select>
+              </Combo>
             </label>
           </div>
           <button className="btn btn-primary btn-sm" type="submit">Publish</button>

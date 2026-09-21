@@ -7,6 +7,7 @@ import {
 } from '../atsVocab';
 import { STAGE_GROUPS, groupContents, groupBadgeClass, groupIndexById } from '../pipelineView';
 import { can } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 // The candidate record, in nine tabs:
 //   Overview · Application · AI Match · Pipeline History · Interviews ·
@@ -593,9 +594,9 @@ export default function CandidateDetail() {
               <div className="grid-3">
                 <label className="field">
                   <span>Type</span>
-                  <select value={docDraft.docType} onChange={(e) => setDocDraft({ ...docDraft, docType: e.target.value })}>
+                  <Combo value={docDraft.docType} onChange={(e) => setDocDraft({ ...docDraft, docType: e.target.value })}>
                     {['Resume', 'ID', 'Certificate', 'Offer', 'Joining'].map((t) => <option key={t}>{t}</option>)}
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Document name</span>

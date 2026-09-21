@@ -3,6 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Panel, PanelHead, EmptyMini, QaRow, Modal } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 const CATEGORIES = ['Warning', 'Suspension', 'Termination', 'Other'];
 
@@ -36,16 +37,16 @@ function LogCaseModal({ employees, onClose, onSaved }) {
     >
       <div className="field">
         <label>Employee</label>
-        <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+        <Combo value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
           <option value="">Select employee</option>
           {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        </Combo>
       </div>
       <div className="field">
         <label>Category</label>
-        <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+        <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
           {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-        </select>
+        </Combo>
       </div>
       <div className="field"><label>Description</label><textarea rows="3" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} /></div>
       {error && <div className="error-text">{error}</div>}

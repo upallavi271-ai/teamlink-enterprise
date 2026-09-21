@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import Combo from '../../components/Combo.jsx';
 
 export const fmtDate = (iso) => (iso
   ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -98,10 +99,10 @@ export const EMPTY_INTJOIN_FILTERS = {
 
 export function IntJoinFilters({ filters, setFilter, opts, onClear, count, children }) {
   const sel = (key, blank, list) => (
-    <select value={filters[key]} onChange={(e) => setFilter({ [key]: e.target.value })}>
+    <Combo value={filters[key]} onChange={(e) => setFilter({ [key]: e.target.value })}>
       <option value="">{blank}</option>
       {(list || []).map((v) => <option key={v}>{v}</option>)}
-    </select>
+    </Combo>
   );
   return (
     <div className="filter-row" style={{ flexWrap: 'wrap' }}>

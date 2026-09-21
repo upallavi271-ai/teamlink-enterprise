@@ -3,6 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PanelPad, AssignRow, EmptyMini, TwoCol, QaRow, Modal } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 // The prototype's seeded award types (state.awardTypes, line 622 area).
 const AWARD_TYPES = [
@@ -40,16 +41,16 @@ function GiveRecognitionModal({ employees, onClose, onSaved }) {
     >
       <div className="field">
         <label>To</label>
-        <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+        <Combo value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
           <option value="">Select employee</option>
           {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        </Combo>
       </div>
       <div className="field">
         <label>Award type</label>
-        <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+        <Combo value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
           {AWARD_TYPES.map((a) => <option key={a.name} value={a.name}>{a.name} (+{a.points} pts)</option>)}
-        </select>
+        </Combo>
       </div>
       <div className="field"><label>Message</label><textarea rows="3" value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} /></div>
       {error && <div className="error-text">{error}</div>}

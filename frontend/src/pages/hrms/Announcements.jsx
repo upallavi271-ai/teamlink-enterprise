@@ -6,6 +6,7 @@ import {
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 const CATEGORIES = ['General', 'Policy', 'Event', 'Holiday'];
 
@@ -42,16 +43,16 @@ function NewAnnouncementModal({ departments, onClose, onSaved }) {
       <div className="grid-2">
         <div className="field">
           <label>Category</label>
-          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+          <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
             {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-          </select>
+          </Combo>
         </div>
         <div className="field">
           <label>Target</label>
-          <select value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })}>
+          <Combo value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })}>
             <option>All Employees</option>
             {departments.map((d) => <option key={d}>{d} Department</option>)}
-          </select>
+          </Combo>
         </div>
       </div>
       <div className="field">

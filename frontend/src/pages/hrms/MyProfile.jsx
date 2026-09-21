@@ -4,6 +4,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { hasTeamOversight } from '../../permissions';
 import ProfileStatusBanner, { STATUS_BADGE, statusLabel } from '../../components/ProfileStatusBanner.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // Only STL/TL are restricted to their own department — Manager/Assistant
 // Manager have cross-department oversight (matches backend/src/routes/employees.js).
@@ -163,10 +164,10 @@ export default function MyProfile() {
               <div className="grid-2">
                 <label className="field">
                   <span>Reason for requesting edit access</span>
-                  <select required value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)}>
+                  <Combo required value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)}>
                     <option value="">Select a reason</option>
                     {config.unlockRequestReasons.map((r) => <option key={r}>{r}</option>)}
-                  </select>
+                  </Combo>
                 </label>
               </div>
               <button className="btn btn-primary btn-sm" type="submit">Request Edit Access</button>
@@ -187,16 +188,16 @@ export default function MyProfile() {
             <label className="field"><span>Date of Birth</span><input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></label>
             <label className="field">
               <span>Gender</span>
-              <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+              <Combo value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
                 <option value="">Select</option><option>Male</option><option>Female</option><option>Other</option>
-              </select>
+              </Combo>
             </label>
             <label className="field">
               <span>Blood Group</span>
-              <select value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}>
+              <Combo value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}>
                 <option value="">Select</option>
                 {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((b) => <option key={b}>{b}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
 
@@ -204,9 +205,9 @@ export default function MyProfile() {
           <div className="grid-2">
             <label className="field">
               <span>Address Type</span>
-              <select value={form.addressType} onChange={(e) => setForm({ ...form, addressType: e.target.value })}>
+              <Combo value={form.addressType} onChange={(e) => setForm({ ...form, addressType: e.target.value })}>
                 <option value="">Select type</option><option>Current</option><option>Permanent</option>
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Address Line 1</span><input value={form.addressLine1} onChange={(e) => setForm({ ...form, addressLine1: e.target.value })} /></label>
             <label className="field"><span>Address Line 2</span><input value={form.addressLine2} onChange={(e) => setForm({ ...form, addressLine2: e.target.value })} /></label>
@@ -228,16 +229,16 @@ export default function MyProfile() {
           <div className="grid-2">
             <label className="field">
               <span>Branch</span>
-              <select value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })}>
+              <Combo creatable value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })}>
                 <option value="">Select branch</option><option>Bengaluru</option><option>Chennai</option><option>Hyderabad</option>
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Shift</span><input value={form.shift} onChange={(e) => setForm({ ...form, shift: e.target.value })} /></label>
             <label className="field">
               <span>Employment Type</span>
-              <select value={form.employmentExperience} onChange={(e) => setForm({ ...form, employmentExperience: e.target.value })}>
+              <Combo value={form.employmentExperience} onChange={(e) => setForm({ ...form, employmentExperience: e.target.value })}>
                 <option>Fresher</option><option>Experienced</option>
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Education details</span><input value={form.educationDetails} onChange={(e) => setForm({ ...form, educationDetails: e.target.value })} /></label>
             <label className="field"><span>Skills & certifications</span><input value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} /></label>

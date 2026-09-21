@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
+import Combo from '../components/Combo.jsx';
 
 import {
   ALL_STAGE_CODES, stageLabel, stageBadgeClass, priorityBadgeClass,
@@ -289,12 +290,12 @@ export default function RequirementDetail() {
           <button className="btn btn-sm" onClick={() => setDialog('posting')}>Preview Job Posting</button>
           {p.share && <button className="btn btn-sm" onClick={() => runAction('generate-jd')}>Generate job description</button>}
           {p.share && (
-            <select
+            <Combo
               value={r.portalSyncStatus || 'Not Synced'}
               onChange={(e) => runAction('portal-sync', { portalSyncStatus: e.target.value })}
             >
               {PORTAL_SYNC_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Combo>
           )}
         </div>
       </div>
@@ -416,9 +417,9 @@ export default function RequirementDetail() {
                       <td>{a.matchScore != null ? `${a.matchScore}%` : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
                       <td>
                         {p.pipeline ? (
-                          <select value={a.stage} onChange={(e) => setStage(a.id, e.target.value)}>
+                          <Combo value={a.stage} onChange={(e) => setStage(a.id, e.target.value)}>
                             {ALL_STAGE_CODES.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
-                          </select>
+                          </Combo>
                         ) : <span className="cell-muted">—</span>}
                       </td>
                     </tr>
@@ -435,10 +436,10 @@ export default function RequirementDetail() {
             <div className="card section">
               <h3 style={{ fontSize: 14, marginBottom: 10 }}>Link a candidate</h3>
               <form onSubmit={linkCandidate} className="filter-row" style={{ marginBottom: 0 }}>
-                <select value={linkCandidateId} onChange={(e) => setLinkCandidateId(e.target.value)}>
+                <Combo value={linkCandidateId} onChange={(e) => setLinkCandidateId(e.target.value)}>
                   <option value="">Select candidate</option>
                   {candidates.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Combo>
                 <button className="btn btn-sm btn-primary" type="submit">Add to pipeline</button>
               </form>
             </div>
@@ -561,17 +562,17 @@ export default function RequirementDetail() {
           </div>
           <label className="field">
             <span>Assigned TL</span>
-            <select value={assign.tlId} onChange={(e) => setAssign({ ...assign, tlId: e.target.value })}>
+            <Combo value={assign.tlId} onChange={(e) => setAssign({ ...assign, tlId: e.target.value })}>
               <option value="">— Not assigned —</option>
               {byRole('TL').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            </Combo>
           </label>
           <label className="field">
             <span>Assigned Recruiter</span>
-            <select value={assign.recruiterId} onChange={(e) => setAssign({ ...assign, recruiterId: e.target.value })}>
+            <Combo value={assign.recruiterId} onChange={(e) => setAssign({ ...assign, recruiterId: e.target.value })}>
               <option value="">— Not assigned —</option>
               {byRole('RECRUITER').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            </Combo>
           </label>
           <div className="field">
             <span>Co-recruiters</span>
@@ -596,17 +597,17 @@ export default function RequirementDetail() {
           </div>
           <label className="field">
             <span>BDE</span>
-            <select value={assign.bdeId} onChange={(e) => setAssign({ ...assign, bdeId: e.target.value })}>
+            <Combo value={assign.bdeId} onChange={(e) => setAssign({ ...assign, bdeId: e.target.value })}>
               <option value="">— Not assigned —</option>
               {byRole('BDE').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            </Combo>
           </label>
           <label className="field">
             <span>STL</span>
-            <select value={assign.stlId} onChange={(e) => setAssign({ ...assign, stlId: e.target.value })}>
+            <Combo value={assign.stlId} onChange={(e) => setAssign({ ...assign, stlId: e.target.value })}>
               <option value="">— None —</option>
               {byRole('STL').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            </Combo>
           </label>
           <label className="field">
             <span>Account Manager</span>

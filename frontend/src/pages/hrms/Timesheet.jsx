@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // Timesheet — "Track and assign work".
 //
@@ -339,13 +340,13 @@ export default function Timesheet({ standalone = false }) {
         </div>
         <div className="panel-pad">
           <div className="filter-row">
-            <select
+            <Combo
               value={filters.department}
               onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))}
             >
               <option value="">All departments</option>
               {(options?.departments || []).map((d) => <option key={d}>{d}</option>)}
-            </select>
+            </Combo>
             <input
               type="date" title="From date"
               value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))}
@@ -463,10 +464,10 @@ export default function Timesheet({ standalone = false }) {
                   would pre-empt these messages, and the wording of THESE is
                   the spec. validate() runs on submit and the API re-checks. */}
               <label className="field"><span>Select Department *</span>
-                <select value={form.department} onChange={(e) => set({ department: e.target.value })}>
+                <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
                   <option value="">-- Select Department --</option>
                   {(options?.departments || []).map((d) => <option key={d}>{d}</option>)}
-                </select>
+                </Combo>
                 {fieldErrors.department && <p className="error-text">{fieldErrors.department}</p>}
               </label>
               <label className="field"><span>Task Name *</span>
@@ -482,7 +483,7 @@ export default function Timesheet({ standalone = false }) {
               </label>
 
               <label className="field"><span>Assign To</span>
-                <select
+                <Combo
                   value={form.assigneeId}
                   onChange={(e) => set({ assigneeId: e.target.value })}
                   disabled={!canAssignOthers}
@@ -493,17 +494,17 @@ export default function Timesheet({ standalone = false }) {
                       {p.name}{p.designation ? ` — ${p.designation}` : ''}
                     </option>
                   ))}
-                </select>
+                </Combo>
                 <span className="small-muted">
                   Optional — leave blank for yourself.
                   {canAssignOthers ? '' : ' Your role assigns work to yourself only.'}
                 </span>
               </label>
               <label className="field"><span>Status *</span>
-                <select value={form.status} onChange={(e) => set({ status: e.target.value })}>
+                <Combo value={form.status} onChange={(e) => set({ status: e.target.value })}>
                   <option value="">-- Select Status --</option>
                   {(options?.statuses || []).map((s) => <option key={s}>{s}</option>)}
-                </select>
+                </Combo>
                 {fieldErrors.status && <p className="error-text">{fieldErrors.status}</p>}
               </label>
 
@@ -531,12 +532,12 @@ export default function Timesheet({ standalone = false }) {
             </div>
             {form.dependent && (
               <label className="field"><span>Waits on</span>
-                <select value={form.dependsOnId} onChange={(e) => set({ dependsOnId: e.target.value })}>
+                <Combo value={form.dependsOnId} onChange={(e) => set({ dependsOnId: e.target.value })}>
                   <option value="">— pick the task this one waits on —</option>
                   {tasks.filter((t) => t.id !== form.id).map((t) => (
                     <option key={t.id} value={t.id}>{t.name} — {t.assigneeName}</option>
                   ))}
-                </select>
+                </Combo>
                 <span className="small-muted">A dependency has to be a task you can reach.</span>
               </label>
             )}

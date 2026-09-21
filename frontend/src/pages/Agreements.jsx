@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api';
 import ClientModuleTabs from '../components/ClientModuleTabs.jsx';
+import Combo from '../components/Combo.jsx';
 import {
   AGREEMENT_STATUS_CODES, agreementStatusLabel, agreementBadgeClass, agreementIsActive,
   requirementIsLive, protoDate,
@@ -99,10 +100,10 @@ export default function Agreements() {
 
       <div className="filter-row">
         <input placeholder="Search client, code or agreement id…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <Combo value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All agreement statuses</option>
           {AGREEMENT_STATUS_CODES.map((s) => <option key={s} value={s}>{agreementStatusLabel(s)}</option>)}
-        </select>
+        </Combo>
         <span className="cell-muted" style={{ fontSize: 12 }}>{`${rows.length} agreement(s)`}</span>
       </div>
 

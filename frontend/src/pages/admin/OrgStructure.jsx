@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // Organization Structure — the prototype's adminOrgStructureView() (line
 // 10486). The approval & escalation chain requests travel down: leave,
@@ -212,9 +213,9 @@ export default function OrgStructure() {
           </>}
         >
           <div className="field"><label>Department</label>
-            <select value={addingTeam.departmentId} onChange={(e) => setAddingTeam({ ...addingTeam, departmentId: e.target.value })}>
+            <Combo value={addingTeam.departmentId} onChange={(e) => setAddingTeam({ ...addingTeam, departmentId: e.target.value })}>
               {data.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select></div>
+            </Combo></div>
           <div className="field"><label>Team name</label>
             <input type="text" value={addingTeam.name} onChange={(e) => setAddingTeam({ ...addingTeam, name: e.target.value })} /></div>
         </Modal>

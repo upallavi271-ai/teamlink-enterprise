@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 
 export default function Performance() {
@@ -49,10 +50,10 @@ export default function Performance() {
           <div className="grid-2">
             <label className="field">
               <span>Employee</span>
-              <select required value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+              <Combo required value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
                 <option value="">Select employee</option>
                 {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="field"><span>Period</span><input required placeholder="2026-H2" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} /></label>
             <label className="field"><span>Score (0-100)</span><input required type="number" min="0" max="100" value={form.score} onChange={(e) => setForm({ ...form, score: e.target.value })} /></label>

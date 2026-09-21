@@ -861,9 +861,16 @@ router.get('/employee-management', requirePerm(null, 'administration', 'Users', 
 // The option lists the Add Employee modal and the filter row render.
 router.get('/employee-management/options', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const [employees, departments] = await Promise.all([
-    prisma.employee.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
+    prisma.employee.findMany({ select: { name: true, department: true, location: true }, orderBy: { name: 'asc' } }),
     prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
   ]);
+  // The department and location pickers are CREATABLE (both columns are plain
+  // strings by design — see the Department model's comment in schema.prisma),
+  // so a value typed into Add Employee is not in the Department master table.
+  // Union the master list with the values actually on file, otherwise the very
+  // department someone just typed would be missing from the next dropdown.
+  const inUse = (key) => employees.map((e) => e[key]).filter(Boolean);
+  const union = (base, used) => [...new Set([...base, ...used])].sort((a, b) => a.localeCompare(b));
   res.json({
     // The id the next Add Employee will get, shown in the modal header.
     nextEmployeeCode: 'EMP-' + String(employees.length + 1).padStart(4, '0'),
@@ -871,8 +878,8 @@ router.get('/employee-management/options', requirePerm(null, 'administration', '
     empStatuses: EMP_STATUSES,
     genders: EMP_GENDERS,
     statusFilter: EMP_MGMT_STATUS_FILTER,
-    departments: departments.length ? departments.map((d) => d.name) : DEPTS,
-    locations: LOCS,
+    departments: union(departments.length ? departments.map((d) => d.name) : DEPTS, inUse('department')),
+    locations: union(LOCS, inUse('location')),
     managerNames: [...new Set(employees.map((e) => e.name))],
     roles: CATALOG_ROLES,
     designationRoles: await designationRows(),

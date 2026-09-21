@@ -3,6 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
 import { canExportReports } from '../../permissions';
+import Combo from '../../components/Combo.jsx';
 
 export default function AtsReports() {
   const { user } = useAuth();
@@ -27,10 +28,10 @@ export default function AtsReports() {
       </div>
 
       <div className="filter-row">
-        <select value={pick} onChange={(e) => setPick(e.target.value)}>
+        <Combo value={pick} onChange={(e) => setPick(e.target.value)}>
           <option value="">All clients</option>
           {rows.map((r) => <option key={r.client}>{r.client}</option>)}
-        </select>
+        </Combo>
         <button className="btn btn-sm btn-primary" onClick={() => setClient(pick)}>Apply</button>
         <button className="btn btn-sm btn-ghost" onClick={() => { setPick(''); setClient(''); }}>Clear</button>
         {canExport

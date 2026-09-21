@@ -43,7 +43,6 @@ const leaf = (to, label, perms, product) => ({ to, label, perms, product });
 
 export const HRMS_ITEMS = [
   leaf('/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
-  leaf('/my-profile', 'My Profile', null),
   leaf('/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
   leaf('/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
@@ -97,7 +96,7 @@ export const REPORTS_ITEMS = [
 
 function leafVisible(user, item) {
   if (item.product && !(user?.products || {})[item.product]) return false;
-  if (!item.perms) return true;                       // Notifications, Profile, My Profile
+  if (!item.perms) return true;                       // Notifications, Profile
   return item.perms.every(([m, f, a]) => (f ? can(user, null, m, f, a) : canModule(user, m)));
 }
 

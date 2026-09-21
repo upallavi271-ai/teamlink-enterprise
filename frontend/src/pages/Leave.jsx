@@ -5,6 +5,7 @@ import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, ScopeNote, TwoCol, Status, Modal } from '../components/proto.jsx';
 import { isAdmin, isHR as hasHrmsAdmin } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -44,18 +45,18 @@ function ApplyLeaveModal({ types, employees, isHR, onClose, onSaved }) {
       {isHR && (
         <div className="field">
           <label>Employee</label>
-          <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+          <Combo value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
             <option value="">Select employee</option>
             {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
+          </Combo>
         </div>
       )}
       <div className="grid-2">
         <div className="field">
           <label>Type</label>
-          <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+          <Combo value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
             {types.map((t) => <option key={t.id}>{t.name}</option>)}
-          </select>
+          </Combo>
         </div>
         <div className="field"><label>Days</label><input type="number" min="1" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} /></div>
         <div className="field"><label>From</label><input type="date" value={form.fromDate} onChange={(e) => setForm({ ...form, fromDate: e.target.value })} /></div>
@@ -173,14 +174,14 @@ function DashboardTab({ isHR, canEditPolicy, reloadKey, onReload }) {
   return (
     <div>
       <div className="filter-row" style={{ marginTop: 14, marginBottom: 12 }}>
-        <select value={filters.department} onChange={(e) => setFilters({ ...filters, department: e.target.value })}>
+        <Combo value={filters.department} onChange={(e) => setFilters({ ...filters, department: e.target.value })}>
           <option value="">All Departments</option>
           {departments.map((d) => <option key={d}>{d}</option>)}
-        </select>
-        <select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
+        </Combo>
+        <Combo value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
           <option value="">Leave Type</option>
           {types.map((t) => <option key={t.id} value={t.name}>{t.name} ({t.code})</option>)}
-        </select>
+        </Combo>
         <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={exportRequests}>Export</button>
       </div>
 
@@ -366,14 +367,14 @@ function ReportsTab({ reloadKey }) {
           <div className="filter-row">
             <input placeholder="Employee ID…" value={filters.code} onChange={(e) => set('code', e.target.value)} />
             <input placeholder="Employee name…" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-            <select value={filters.department} onChange={(e) => set('department', e.target.value)}>
+            <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
               <option value="">All Departments</option>
               {departments.map((d) => <option key={d}>{d}</option>)}
-            </select>
-            <select value={filters.role} onChange={(e) => set('role', e.target.value)}>
+            </Combo>
+            <Combo value={filters.role} onChange={(e) => set('role', e.target.value)}>
               <option value="">All Roles</option>
               {roles.map((r) => <option key={r}>{r}</option>)}
-            </select>
+            </Combo>
             <span className="cell-muted" style={{ fontSize: 12, alignSelf: 'center' }}>{scoped.length} of {requests.length}</span>
           </div>
         </div>

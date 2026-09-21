@@ -6,6 +6,7 @@ import { downloadCsv } from '../../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, QaRow } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin } from '../../permissions';
 import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
+import Combo from '../../components/Combo.jsx';
 
 const PERIODS = ['Today', 'This Week', 'This Month', 'This Quarter', 'This Year'];
 
@@ -37,26 +38,26 @@ function HrDashboard() {
   return (
     <div>
       <div className="filter-row" style={{ marginBottom: 16 }}>
-        <select value={filters.period} onChange={(e) => set('period', e.target.value)}>
+        <Combo value={filters.period} onChange={(e) => set('period', e.target.value)}>
           <option value="">Date Range</option>
           {PERIODS.map((p) => <option key={p}>{p}</option>)}
-        </select>
-        <select value={filters.department} onChange={(e) => set('department', e.target.value)}>
+        </Combo>
+        <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
           <option value="">Department</option>
           {o.departments.map((d) => <option key={d}>{d}</option>)}
-        </select>
-        <select value={filters.location} onChange={(e) => set('location', e.target.value)}>
+        </Combo>
+        <Combo value={filters.location} onChange={(e) => set('location', e.target.value)}>
           <option value="">Location</option>
           {o.locations.map((l) => <option key={l}>{l}</option>)}
-        </select>
-        <select value={filters.status} onChange={(e) => set('status', e.target.value)}>
+        </Combo>
+        <Combo value={filters.status} onChange={(e) => set('status', e.target.value)}>
           <option value="">Employee Status</option>
           {o.statuses.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select value={filters.manager} onChange={(e) => set('manager', e.target.value)}>
+        </Combo>
+        <Combo value={filters.manager} onChange={(e) => set('manager', e.target.value)}>
           <option value="">Reporting Manager</option>
           {o.managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
+        </Combo>
         {anyFilter && <button className="btn btn-sm" onClick={() => setFilters({ period: '', department: '', location: '', status: '', manager: '' })}>Clear Filters</button>}
         <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={exportCsv}>Export</button>
       </div>

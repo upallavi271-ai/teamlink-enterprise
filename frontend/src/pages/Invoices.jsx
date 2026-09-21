@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { canManageAccounts } from '../permissions';
+import Combo from '../components/Combo.jsx';
 
 
 // "Received and Paid mean the same thing — the whole invoice is in."
@@ -584,27 +585,27 @@ export default function Invoices() {
 
       <div className="filter-row">
         <label className="field"><span>Client · {data.clients.length}</span>
-          <select value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })}>
+          <Combo value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })}>
             <option>All</option>{data.clients.map((c) => <option key={c}>{c}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 210 }}><span>Period</span>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+          <Combo value={period} onChange={(e) => setPeriod(e.target.value)}>
             {data.period.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Department</span>
-          <select value={filters.dept} onChange={(e) => setFilters({ ...filters, dept: e.target.value })}>
+          <Combo value={filters.dept} onChange={(e) => setFilters({ ...filters, dept: e.target.value })}>
             <option>All</option>{data.departments.map((d) => <option key={d}>{d}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Recruiter · {data.recruiters.length}</span>
-          <select value={filters.rec} onChange={(e) => setFilters({ ...filters, rec: e.target.value })}>
+          <Combo value={filters.rec} onChange={(e) => setFilters({ ...filters, rec: e.target.value })}>
             <option>All</option>{data.recruiters.map((r) => <option key={r}>{r}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>GST charged</span>
-          <select
+          <Combo
             title="Yes / No read the invoice in front of you. Never, Always and Both ways read the client's whole history."
             value={filters.gstin}
             onChange={(e) => setFilters({ ...filters, gstin: e.target.value })}
@@ -617,12 +618,12 @@ export default function Invoices() {
               <option value="Always">Always charged GST · {stanceCount('always')}</option>
               <option value="Mixed">Both ways — worth a look · {stanceCount('mixed')}</option>
             </optgroup>
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Status</span>
-          <select title="Received and Paid mean the same thing — the whole invoice is in" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+          <Combo title="Received and Paid mean the same thing — the whole invoice is in" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
             {(data.payStatuses || FALLBACK_STATUS).map((s) => <option key={s}>{s}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field" style={{ minWidth: 220 }}><span>Search anything</span>
           <input value={filters.q} placeholder="Candidate, client, invoice no, position…" onChange={(e) => setFilters({ ...filters, q: e.target.value })} />
@@ -767,9 +768,9 @@ export default function Invoices() {
         ))}
         <button className="btn btn-sm" onClick={saveView}>＋ Save this view</button>
         <label className="field"><span>Group by</span>
-          <select value={group} onChange={(e) => { setGroup(e.target.value); setOpen({}); }}>
+          <Combo value={group} onChange={(e) => { setGroup(e.target.value); setOpen({}); }}>
             {GROUP_BY.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
+          </Combo>
         </label>
         <button className="btn btn-sm" onClick={() => setShowCols((v) => !v)}>▦ Columns</button>
       </div>
