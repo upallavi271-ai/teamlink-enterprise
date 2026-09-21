@@ -354,6 +354,8 @@ model Application {
   interviewEvents      InterviewEvent[]
   // cand_: virtual back-reference only — no column is added to Application.
   stageEvents          ApplicationStageEvent[]
+  // followup_: virtual back-reference only — no column is added to Application.
+  followUps            ApplicationFollowUp[]
 
   // AI interview detail (the calendar's second tab).
   aiInterviewDeadline  String?
@@ -1461,8 +1463,95 @@ model ApplicationStageEvent {
   actorRole     String?     // the actor's ATS working role at the time
   createdAt     DateTime    @default(now())
 
+  // --- followup_: the full Rejected / Hold record -------------------------
+  // "Rejected and Hold records must keep their full history — candidate,
+  // requirement, client, previous stage, who rejected, their role and side,
+  // reason category, detailed reason, comments, timestamp."
+  //
+  // candidateId / fromStage / actorUserId / actorName / actorRole / comment /
+  // createdAt were already here. These six close the rest of it. The
+  // requirement and client are SNAPSHOTTED, not only joined: a requirement can
+  // be retitled and a client renamed, and the record of why someone was
+  // rejected has to keep saying what it said at the time.
+  //
+  // `actorSide` is Internal vs Client — the same rejection reason means two
+  // different things depending on which side of the table it came from, and
+  // it is never inferred from actorRole at render time.
+  requirementId    String?
+  requirementTitle String?
+  clientId         String?
+  clientName       String?
+  actorSide        String?  // Internal | Client
+  reasonCategory   String?  // Skills Mismatch | Salary Expectation | …
+  reasonDetail     String?  // the detailed, free-text reason
+
   @@index([candidateId])
   @@index([applicationId])
+}
+
+// ---------------------------------------------------------------------------
+// followup_: THE FOLLOW-UP RECORD.
+//
+// One row per follow-up COMMITMENT on one application — not on a candidate.
+// A candidate with three live applications has three independent follow-up
+// threads, because the person chasing them, the thing being chased and the
+// date it is due are all properties of the application, never of the person.
+//
+// Recording a follow-up CLOSES the open one (completedAt, and lastContactedAt
+// stamps when contact actually happened) and opens the next. The table is
+// therefore the whole follow-up history; the application's CURRENT follow-up
+// is simply its newest row with completedAt still null.
+//
+// STATUS IS DERIVED, NEVER STORED. Upcoming / Due Today / Overdue is a
+// function of dueDate and today's date, computed at read time in
+// utils/followups.js. A stored status column would be wrong every midnight.
+// The one thing that IS stored is completion, because that is an event
+// somebody caused rather than a date arithmetic result.
+//
+// Owner / Owner Role / TL / BDE are snapshotted onto the row for the same
+// reason the rejection record snapshots its client: a follow-up that was
+// owned by one recruiter and later reassigned must still say who owed it.
+// ---------------------------------------------------------------------------
+model ApplicationFollowUp {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  candidateId   String
+  requirementId String?
+
+  ownerUserId   String?
+  ownerName     String?
+  ownerRole     String?   // Recruiter | BDE | TL | STL | …
+  tlUserId      String?
+  tlName        String?
+  bdeUserId     String?
+  bdeName       String?
+
+  lastContactedAt DateTime? // when contact actually happened
+  contactMode     String?   // Call | Email | WhatsApp | SMS | In Person
+  nextAction      String?   // what is owed next
+  dueDate         String?   // YYYY-MM-DD — what Upcoming/Due Today/Overdue is measured against
+  nextFollowUpAt  String?   // YYYY-MM-DD — when the next touch is planned
+  notes           String?
+
+  completedAt   DateTime?
+  completedById String?
+  completedNote String?
+
+  // Escalation, recorded so an alert fires ONCE. Recruiter -> TL -> Super
+  // Admin: see utils/followups.js escalateOverdue().
+  escalatedTlAt    DateTime?
+  escalatedAdminAt DateTime?
+
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([applicationId])
+  @@index([candidateId])
+  @@index([ownerUserId])
+  @@index([dueDate])
 }
 
 // Candidate communications — Email / SMS / WhatsApp.

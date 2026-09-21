@@ -13,6 +13,9 @@ const {
   dashRange, inRange, currentFy, monthLabel, daysOverdue, invoiceAge,
   periodOptions, PAY_STATUS, statusMatch,
 } = require('../utils/accounts');
+// followup_: the real follow-up record, replacing the stage-SLA stand-in that
+// "Follow-ups Due" used to be computed from.
+const { currentFollowUpsByApplication, escalateOverdue } = require('../utils/followups');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -430,6 +433,37 @@ router.get(
       && new Date(a.interviewAt) >= new Date(today())
       && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus || ''));
     const overdue = active.filter(applicationIsOverdue);
+
+    // --- followup_: REAL follow-ups -----------------------------------------
+    // "Follow-ups Due" used to be `overdue.length` — the STAGE SLA, because no
+    // follow-up record existed. It now counts actual follow-ups somebody
+    // committed to: Due Today + Overdue. The stage SLA is still what
+    // `overdue` / Pending Actions measures; the two are different questions
+    // and are no longer answered with the same number.
+    //
+    // Escalation is evaluated here as well as on the follow-up list, because
+    // this app has no scheduler — see utils/followups.js for the full
+    // consequence of that.
+    let followUpsDueToday = 0;
+    let followUpsOverdue = 0;
+    let followUpsUnset = 0;
+    try {
+      await escalateOverdue();
+      const currentFollowUps = await currentFollowUpsByApplication(active.map((a) => a.id));
+      active.forEach((a) => {
+        const f = currentFollowUps.get(a.id);
+        if (!f) { followUpsUnset += 1; return; }
+        if (f.status === 'Due Today') followUpsDueToday += 1;
+        else if (f.status === 'Overdue') followUpsOverdue += 1;
+      });
+    } catch (err) {
+      // A dashboard must render even when the follow-up read fails.
+      // eslint-disable-next-line no-console
+      console.error('Could not read follow-ups for the dashboard:', err.message);
+    }
+    const followUpsDue = followUpsDueToday + followUpsOverdue;
+    const FOLLOWUPS_DUE_LINK = '/candidates?followUp=Due%20Today,Overdue';
+    const FOLLOWUPS_OVERDUE_LINK = '/candidates?followUp=Overdue';
     const shared = applications.filter((a) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED',
       'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED']
       .includes(a.stage));
@@ -450,7 +484,8 @@ router.get(
           row('My Requirements', openRequirements.length, REQUIREMENTS_ALL),
           row('My Candidates', distinct(active), CANDIDATES_ALL),
           row('Interviews Today', interviewsToday.length, '/ats/calendar'),
-          row('Follow-ups Due', overdue.length, CANDIDATES_ALL),
+          row('Follow-ups Due', followUpsDue, FOLLOWUPS_DUE_LINK),
+          row('Overdue Follow-ups', followUpsOverdue, FOLLOWUPS_OVERDUE_LINK),
           row('Pending Actions', pendingTotal, CANDIDATES_ALL),
         ];
         break;
@@ -469,6 +504,9 @@ router.get(
         myWork = [
           row('My Team Requirements', openRequirements.length, REQUIREMENTS_ALL),
           row('My Team Candidates', distinct(active), CANDIDATES_ALL),
+          // A TL is the first escalation rung, so the overdue count is theirs
+          // to see, not only the recruiter's.
+          row('Overdue Follow-ups', followUpsOverdue, FOLLOWUPS_OVERDUE_LINK),
           row('Recruiter Pending Actions', queueCount('candidate-review'), '/candidates?stage=NEW,AI_INTERVIEW_COMPLETED,RECRUITER_REVIEW'),
           row('Approvals', draftRequirements.length, REQUIREMENTS_ALL),
           row('Interviews', interviewsUpcoming.length, '/ats/calendar'),

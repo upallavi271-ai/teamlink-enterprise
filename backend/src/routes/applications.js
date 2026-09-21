@@ -197,6 +197,21 @@ async function applyStageMove(user, applicationId, body = {}) {
   // One row per transition, carrying Who / When / Action / Comment. This is
   // what the candidate's Pipeline History tab renders; the stage column on the
   // application stays the single source of truth for WHERE they are now.
+  //
+  // followup_: REJECTED and HOLD keep their FULL record. Everything the user
+  // listed is on this one row — candidate, requirement, client, previous
+  // stage, who, their role, their SIDE, reason category, detailed reason,
+  // comment, timestamp. The requirement title and client name are snapshotted
+  // rather than only joined, because a rename must not rewrite history, and
+  // `actorSide` is recorded rather than inferred from the role later: an
+  // internal reject and a client reject mean two different things and the
+  // record has to say which it was.
+  //
+  // Nothing is required here, because the same function serves the stage
+  // dropdowns and the AI assistant's confirmed move as well as the Reject /
+  // Hold dialog — a missing reason must not lose a move that already happened.
+  // The dialog on the Candidate Detail screen is what actually asks for them.
+  const clientOfRequirement = existing.requirement && existing.requirement.client;
   await prisma.applicationStageEvent.create({
     data: {
       applicationId: application.id,
@@ -208,6 +223,15 @@ async function applyStageMove(user, applicationId, body = {}) {
       actorUserId: user.id,
       actorName: user.name,
       actorRole: user.atsRole || user.role,
+      actorSide: ['CLIENT'].includes(user.atsRole || user.role) ? 'Client' : 'Internal',
+      requirementId: existing.requirementId,
+      requirementTitle: existing.requirement ? existing.requirement.title : null,
+      clientId: existing.requirement ? existing.requirement.clientId : null,
+      clientName: existing.requirement && existing.requirement.internal
+        ? 'TeamLink Internal'
+        : (clientOfRequirement && clientOfRequirement.name) || null,
+      reasonCategory: body.reasonCategory || null,
+      reasonDetail: body.reasonDetail || null,
     },
   });
 
@@ -238,6 +262,26 @@ async function applyStageMove(user, applicationId, body = {}) {
     console.error('Could not record candidate communication:', err.message);
   }
 
+  // followup_: a closed application stops owing a follow-up. Without this an
+  // overdue follow-up on somebody who was rejected last week keeps escalating
+  // to the TL and then to the Super Admin forever. Completing it preserves the
+  // record — it is not deleted — and never rolls back the move.
+  if (['JOINED', 'HIRED', 'REJECTED'].includes(stage)) {
+    try {
+      await prisma.applicationFollowUp.updateMany({
+        where: { applicationId: application.id, completedAt: null },
+        data: {
+          completedAt: new Date(),
+          completedById: user.id,
+          completedNote: `Closed automatically — application moved to ${stageLabel(stage)}.`,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Could not close follow-ups on stage move:', err.message);
+    }
+  }
+
   await logAudit({
     userId: user.id,
     action: 'Application stage changed',
@@ -245,6 +289,9 @@ async function applyStageMove(user, applicationId, body = {}) {
     entityId: application.id,
     fromValue: existing.stage,
     toValue: stage,
+    reason: body.reasonCategory
+      ? [body.reasonCategory, body.reasonDetail].filter(Boolean).join(' — ')
+      : undefined,
   });
 
   // Tell whoever owns this requirement that the pipeline moved — the

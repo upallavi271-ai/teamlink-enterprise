@@ -4,7 +4,7 @@ const { requireAuth, requirePerm, can, requireProduct } = require('../middleware
 const {
   requirementWhere, matches, scopeOf, isAssignedTo, OUT_OF_SCOPE,
 } = require('../utils/scope');
-const { logAudit } = require('../utils/audit');
+const { logAudit, logFieldChanges } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { MATCH_THRESHOLD, SUGGESTION_THRESHOLD, rankCandidates } = require('../utils/matching');
 const {
@@ -272,8 +272,14 @@ router.get('/:id/activity', async (req, res) => {
     action: a.action,
     fromValue: a.fromValue,
     toValue: a.toValue,
+    // followup_: Edit Requirement writes one row per changed field, so the
+    // activity strip can say "Job Title: Staff Nurse → Staff Nurse (ICU)"
+    // instead of the bare "Requirement updated" it used to show.
+    field: a.field,
+    fieldLabel: a.fieldLabel,
+    reason: isClient(req.user) ? null : a.reason,
     createdAt: a.createdAt,
-    by: isClient(req.user) ? null : (a.user ? a.user.name : 'System'),
+    by: isClient(req.user) ? null : (a.user ? a.user.name : (a.actorName || 'System')),
   })));
 });
 
@@ -391,18 +397,151 @@ router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'creat
   res.status(201).json({ ...requirement, gateNote });
 });
 
-router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res) => {
-  // VIEW != EDIT: holding the edit action is not enough — the record has to be
-  // one this user is actually on, unless their scope is global.
-  const perms = await requirementPermissions(req.user, req.requirement);
-  if (!perms.edit) return res.status(403).json({ error: perms.readOnlyReason || OUT_OF_SCOPE.error });
+// ---------------------------------------------------------------------------
+// EDIT REQUIREMENT.
+//
+// Open a saved requirement and change its fields. The screen reuses the
+// Create Requirement form (frontend/src/components/RequirementForm.jsx — one
+// form, two modes), and this endpoint is the same PUT it always was, with two
+// things it was missing:
+//
+//   1. THE ASSIGNMENT CHAIN IS NOT AN EDIT. tlId / stlId / recruiterId /
+//      recruiterIds / bdeId / accountManager decide WHO CAN SEE THIS RECORD
+//      (utils/scope.js requirementWhere). Changing them is a scope change, so
+//      it needs the `assign` action, not `edit` — the same split POST
+//      /:id/assign already enforces. A recruiter holds `edit` on requirements
+//      they are assigned and does NOT hold `assign`; before this, `edit`
+//      quietly carried the whole chain with it and a recruiter could have
+//      handed their own requirement to somebody else, or taken someone
+//      else's co-recruiter seat, through the edit form.
+//
+//   2. A FIELD-LEVEL AUDIT TRAIL. "Requirement updated" with no values told
+//      nobody anything. Every changed field is now one row —
+//      Field · Old Value · New Value · Changed By · Changed At — written by
+//      the same utils/audit.js logFieldChanges() the employee lifecycle uses.
+// ---------------------------------------------------------------------------
 
-  const data = pickRequirement(req.body);
-  // status only moves through /activate, /assign and /status, which enforce
-  // the agreement gate — it is deliberately not editable here.
-  const requirement = await prisma.requirement.update({ where: { id: req.params.id }, data });
-  await logAudit({ userId: req.user.id, action: 'Requirement updated', entity: 'Requirement', entityId: requirement.id });
-  res.json(requirement);
+// The fields that decide scope. Kept next to the rule they serve.
+const ASSIGNMENT_FIELDS = ['recruiterId', 'bdeId', 'tlId', 'stlId', 'recruiterIds', 'accountManager'];
+
+// Human labels for the audit trail, so a row reads "Job Title" and not "title".
+const FIELD_LABELS = {
+  title: 'Job Title',
+  description: 'Description',
+  department: 'Department',
+  priority: 'Priority',
+  openings: 'Number of Openings',
+  closingDate: 'Closing Date',
+  internal: 'Requirement Type',
+  jobDescription: 'Job Description',
+  responsibilities: 'Responsibilities',
+  qualifications: 'Qualifications',
+  education: 'Education',
+  skills: 'Mandatory Skills',
+  goodToHaveSkills: 'Good-to-have Skills',
+  employmentType: 'Employment Type',
+  workMode: 'Work Mode',
+  location: 'Location',
+  preferredLocation: 'Preferred Location',
+  experience: 'Experience',
+  relevantExperience: 'Relevant Experience',
+  joiningTimeline: 'Joining Timeline',
+  noticePeriodMax: 'Maximum Notice Period',
+  jobPreference: 'Job Preference',
+  salaryType: 'Salary Type',
+  currency: 'Currency',
+  salary: 'Salary Range',
+  targetDate: 'Target Date',
+  postingSources: 'Posting Sources',
+  portalSyncStatus: 'Job Portal Sync',
+  recruiterId: 'Assigned Recruiter',
+  bdeId: 'BDE',
+  tlId: 'Assigned TL',
+  stlId: 'STL',
+  recruiterIds: 'Co-recruiters',
+  accountManager: 'Account Manager',
+  tl: 'TL (name)',
+  stl: 'STL (name)',
+};
+
+const sameValue = (a, b) => {
+  const norm = (v) => (v === null || v === undefined || v === '' ? '' : String(v));
+  return norm(a) === norm(b);
+};
+
+router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res, next) => {
+  try {
+    // VIEW != EDIT: holding the edit action is not enough — the record has to
+    // be one this user is actually on, unless their scope is global.
+    const perms = await requirementPermissions(req.user, req.requirement);
+    if (!perms.edit) return res.status(403).json({ error: perms.readOnlyReason || OUT_OF_SCOPE.error });
+
+    const before = req.requirement;
+    const data = pickRequirement(req.body);
+
+    // --- the assignment gate ------------------------------------------------
+    const touchedAssignment = ASSIGNMENT_FIELDS
+      .filter((k) => k in data && !sameValue(data[k], before[k]));
+    if (touchedAssignment.length && !perms.assign) {
+      return res.status(403).json({
+        error: 'Changing the assignment chain is a scope change and needs the assign permission, '
+          + 'not edit. Ask a TL or an admin to re-assign this requirement.',
+        fields: touchedAssignment.map((k) => FIELD_LABELS[k] || k),
+      });
+    }
+    // Fields the caller may not change are dropped rather than silently kept
+    // in the update — a request that tried nothing is never refused, so an
+    // edit form that round-trips unchanged assignment values still works.
+    if (!perms.assign) ASSIGNMENT_FIELDS.forEach((k) => { delete data[k]; });
+
+    // status only moves through /activate, /assign and /status, which enforce
+    // the agreement gate — it is deliberately not editable here.
+    delete data.status;
+    // The client is not editable here either: moving a requirement to another
+    // client re-decides the agreement gate and the whole commercial record.
+    delete data.clientId;
+
+    const changes = Object.keys(data)
+      .filter((k) => !sameValue(data[k], before[k]))
+      .map((k) => ({ field: k, label: FIELD_LABELS[k] || k, from: before[k], to: data[k] }));
+
+    if (!changes.length) {
+      return res.json({ ...before, unchanged: true });
+    }
+
+    const requirement = await prisma.requirement.update({ where: { id: before.id }, data });
+
+    // One summary row for the activity strip …
+    await logAudit({
+      userId: req.user.id,
+      action: 'Requirement updated',
+      entity: 'Requirement',
+      entityId: requirement.id,
+      actorName: req.user.name,
+      fromValue: `${changes.length} field(s)`,
+      toValue: changes.map((c) => c.label).join(', '),
+      reason: req.body.editReason || null,
+    });
+    // … and one row per field, so the trail says what actually changed.
+    await logFieldChanges({
+      userId: req.user.id,
+      actorName: req.user.name,
+      entity: 'Requirement',
+      entityId: requirement.id,
+      action: 'Requirement field changed',
+      changes,
+      approvalStatus: null, // an edit is not a review — see utils/audit.js
+      reason: req.body.editReason || null,
+    });
+
+    // Someone whose assignment changed finds out, exactly as POST /:id/assign
+    // already tells them.
+    if (touchedAssignment.length) await notifyAssignment(requirement, req.user.id, 'assignment updated');
+
+    return res.json({ ...requirement, changedFields: changes.map((c) => c.label) });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 // ---------------------------------------------------------------------------
