@@ -50,6 +50,7 @@ export default function Candidates() {
   const [filters, setFilters] = useState({
     ...EMPTY_FILTERS,
     stage: searchParams.get('stage') ? `stage:${searchParams.get('stage')}` : '',
+    status: searchParams.get('status') || '',
   });
   const [showForm, setShowForm] = useState(false);
   const [duplicate, setDuplicate] = useState('');
@@ -59,6 +60,23 @@ export default function Candidates() {
   const [view, setView] = useState(searchParams.get('view') || 'all');
   const [tab, setTab] = useState('pipeline');
   const [sources, setSources] = useState(null);
+
+  // The sidebar's Hold / Rejected / Selected / Screening entries and the
+  // dashboard's queue rows are all VIEWS of this one list, reached by query
+  // string. React Router keeps this component mounted when only the query
+  // changes, so the URL has to be re-read here — otherwise clicking one of
+  // those entries would leave the previous filter in place.
+  const qsStage = searchParams.get('stage') || '';
+  const qsStatus = searchParams.get('status') || '';
+  const qsView = searchParams.get('view') || '';
+  useEffect(() => {
+    setFilters((f) => ({
+      ...f,
+      stage: qsStage ? `stage:${qsStage}` : '',
+      status: qsStatus,
+    }));
+    if (qsView) setView(qsView);
+  }, [qsStage, qsStatus, qsView]);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
@@ -94,7 +112,10 @@ export default function Candidates() {
       // or one precise underlying status ("stage:INTERVIEW_COMPLETED"), so
       // folding the pipeline never costs anyone the fine-grained filter.
       if (filters.stage.startsWith('group:') && c.stageGroup !== filters.stage.slice(6)) return false;
-      if (filters.stage.startsWith('stage:') && c.currentStage !== filters.stage.slice(6)) return false;
+      // `stage:` may carry a comma-separated set, so one nav entry or one
+      // dashboard queue row can open a view spanning several stages.
+      if (filters.stage.startsWith('stage:')
+        && !filters.stage.slice(6).split(',').includes(c.currentStage)) return false;
 
       const apps = c.applications || [];
       const any = (pred) => apps.length > 0 && apps.some(pred);
