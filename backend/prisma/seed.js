@@ -15,6 +15,12 @@ async function main() {
     data: [
       { name: 'Team-A', departmentId: departmentsByName['Educational'].id },
       { name: 'Team-B', departmentId: departmentsByName['Educational'].id },
+      // The teams the scope tests exercise: a Medical TL sees Medical Team-A,
+      // an IT recruiter sees Section A, and neither sees the other's work.
+      { name: 'Medical Team-A', departmentId: departmentsByName['Medical'].id },
+      { name: 'Medical Team-B', departmentId: departmentsByName['Medical'].id },
+      { name: 'Section A', departmentId: departmentsByName['IT'].id },
+      { name: 'Business Development', departmentId: departmentsByName['BDE'].id },
     ],
   });
 
@@ -60,26 +66,143 @@ async function main() {
     },
   });
 
+  // -------------------------------------------------------------------------
+  // Designation -> ATS role mapping. THE mapping, as data: change a row here
+  // and every employee with that designation follows, in every department.
+  // There is no "Medical TL" role anywhere — only department=Medical plus
+  // designation=TL, which the engine resolves to atsRole=TL, scope=Medical.
+  // -------------------------------------------------------------------------
+  const DESIGNATION_ROLES = [
+    { designation: 'Super Admin', atsRole: 'SUPER_ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats', position: 0 },
+    { designation: 'Admin', atsRole: 'ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats', position: 1 },
+    { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: true, landing: 'ats', position: 2 },
+    { designation: 'Assistant Manager', atsRole: 'ASSISTANT_MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 3 },
+    { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 4 },
+    { designation: 'Senior Team Lead', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 5 },
+    { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 6 },
+    { designation: 'Team Lead', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 7 },
+    { designation: 'Recruiter', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 8 },
+    { designation: 'Senior Recruiter', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 9 },
+    { designation: 'BDE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats', position: 10 },
+    { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts', position: 11 },
+    { designation: 'HR Executive', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 12 },
+    { designation: 'Junior Developer', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 13 },
+    { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 14 },
+  ];
+  for (const row of DESIGNATION_ROLES) await prisma.designationRole.create({ data: row });
+
+  // -------------------------------------------------------------------------
+  // Demo logins. ONE EMPLOYEE = ONE USER = ONE LOGIN. Nobody here has a second
+  // "ATS" account: the same person works in ATS because their designation maps
+  // to an ATS role and their department supplies the scope.
+  //
+  // The demo password for every one of them is DEMO_PASSWORD below. It is
+  // documented in the README and printed at the end of this script — it is
+  // never shown anywhere in the UI.
+  // -------------------------------------------------------------------------
   const admin = await prisma.user.create({
-    data: { name: 'Vasu (Admin)', email: 'admin@teamlink.test', passwordHash: password, role: 'SUPER_ADMIN', username: 'admin@teamlink.test', branch: 'Hyderabad', team: 'Leadership' },
+    data: {
+      name: 'Vasu (Admin)', email: 'admin@teamlink.test', passwordHash: password, role: 'SUPER_ADMIN',
+      username: 'admin@teamlink.test', branch: 'Hyderabad', team: 'Leadership',
+      hrmsAccess: true, atsAccess: true, accountsAccess: true, atsRole: 'SUPER_ADMIN', landingWorkspace: 'ats',
+    },
   });
+  // Kiran Kumar — Department: Medical, HRMS Designation: Recruiter.
+  //   HRMS: employee self-service.  ATS: Recruiter, scoped to Medical.
+  const recruiterMedical = await prisma.user.create({
+    data: {
+      name: 'Kiran Kumar', email: 'kiran@teamlink.test', passwordHash: password, role: 'RECRUITER',
+      atsDepartment: 'Medical', username: 'kiran.kumar', branch: 'Hyderabad', team: 'Medical Team-A',
+      hrmsAccess: true, atsAccess: true, accountsAccess: false, atsRole: 'RECRUITER',
+      atsScopeDepartments: 'Medical', atsScopeTeams: 'Medical Team-A',
+    },
+  });
+  // The IT Recruiter — same role, different department, no separate record type.
   const recruiter = await prisma.user.create({
-    data: { name: 'Kiran Kumar', email: 'recruiter@teamlink.test', passwordHash: password, role: 'RECRUITER', atsDepartment: 'IT', username: 'kiran.kumar', branch: 'Hyderabad', team: 'Section A' },
+    data: {
+      name: 'Arun Nair', email: 'recruiter@teamlink.test', passwordHash: password, role: 'RECRUITER',
+      atsDepartment: 'IT', username: 'arun.nair', branch: 'Hyderabad', team: 'Section A',
+      hrmsAccess: true, atsAccess: true, accountsAccess: false, atsRole: 'RECRUITER',
+      atsScopeDepartments: 'IT', atsScopeTeams: 'Section A',
+    },
   });
   const bde = await prisma.user.create({
-    data: { name: 'Sanjay Mehta', email: 'bde@teamlink.test', passwordHash: password, role: 'BDE', atsDepartment: 'IT', username: 'sanjay.mehta', branch: 'Bengaluru', team: 'Business Development' },
+    data: {
+      name: 'Sanjay Mehta', email: 'bde@teamlink.test', passwordHash: password, role: 'BDE',
+      atsDepartment: 'BDE', username: 'sanjay.mehta', branch: 'Bengaluru', team: 'Business Development',
+      hrmsAccess: true, atsAccess: true, accountsAccess: false, atsRole: 'BDE',
+      atsScopeClients: `${orbit.id},${medivant.id}`,
+    },
   });
+  // Divya Rao — Department: Medical, HRMS Designation: TL.
+  //   HRMS: employee self-service.  ATS: TL, scoped to Medical.
+  const tlMedical = await prisma.user.create({
+    data: {
+      name: 'Divya Rao', email: 'divya@teamlink.test', passwordHash: password, role: 'TL',
+      atsDepartment: 'Medical', username: 'divya.rao', branch: 'Hyderabad', team: 'Medical Team-A',
+      hrmsAccess: true, atsAccess: true, accountsAccess: false, atsRole: 'TL',
+      atsScopeDepartments: 'Medical', atsScopeTeams: 'Medical Team-A',
+    },
+  });
+  // The IT TL — keeps the original tl@teamlink.test login working.
   const tl = await prisma.user.create({
-    data: { name: 'Divya Rao', email: 'tl@teamlink.test', passwordHash: password, role: 'TL', atsDepartment: 'IT', username: 'divya.rao', branch: 'Hyderabad', team: 'Section A' },
+    data: {
+      name: 'Rekha Nair', email: 'tl@teamlink.test', passwordHash: password, role: 'TL',
+      atsDepartment: 'IT', username: 'rekha.nair', branch: 'Hyderabad', team: 'Section A',
+      hrmsAccess: true, atsAccess: true, accountsAccess: false, atsRole: 'TL',
+      atsScopeDepartments: 'IT', atsScopeTeams: 'Section A',
+    },
+  });
+  // Multi-product employee: one login, three products, a workspace switcher —
+  // and never a second account or a role prompt.
+  const multiProduct = await prisma.user.create({
+    data: {
+      name: 'Priya Nambiar', email: 'multi@teamlink.test', passwordHash: password, role: 'MANAGER',
+      atsDepartment: 'Medical', username: 'priya.nambiar', branch: 'Hyderabad', team: 'Medical Team-A',
+      hrmsAccess: true, atsAccess: true, accountsAccess: true, atsRole: 'MANAGER',
+      // A Manager's scope is CONFIGURED, not automatically global: these two
+      // departments only, which is what utils/scope.js then enforces.
+      atsScopeDepartments: 'Medical,IT',
+    },
+  });
+  // Client A and Client B — external logins with no employee record.
+  await prisma.user.create({
+    data: {
+      name: 'Orbit Software Solutions (Client)', email: 'client@teamlink.test', passwordHash: password,
+      role: 'CLIENT', clientId: orbit.id, username: 'orbit.client', branch: 'Hyderabad',
+      hrmsAccess: false, atsAccess: true, accountsAccess: true, atsRole: 'CLIENT',
+    },
   });
   await prisma.user.create({
-    data: { name: 'Orbit Software Solutions (Client)', email: 'client@teamlink.test', passwordHash: password, role: 'CLIENT', clientId: orbit.id, username: 'orbit.client', branch: 'Hyderabad' },
+    data: {
+      name: 'Medivant Healthcare (Client)', email: 'clientb@teamlink.test', passwordHash: password,
+      role: 'CLIENT', clientId: medivant.id, username: 'medivant.client', branch: 'Bengaluru',
+      hrmsAccess: false, atsAccess: true, accountsAccess: true, atsRole: 'CLIENT',
+    },
   });
   const accountant = await prisma.user.create({
-    data: { name: 'Lakshmi Narayan', email: 'accountant@teamlink.test', passwordHash: password, role: 'ACCOUNTANT', username: 'lakshmi.narayan', branch: 'Hyderabad', team: 'Accounts' },
+    data: {
+      name: 'Lakshmi Narayan', email: 'accounts@teamlink.test', passwordHash: password, role: 'ACCOUNTANT',
+      username: 'lakshmi.narayan', branch: 'Hyderabad', team: 'Accounts',
+      hrmsAccess: true, atsAccess: false, accountsAccess: true, landingWorkspace: 'accounts',
+    },
   });
+  // A second accountant, so the original accountant@teamlink.test login keeps
+  // working without giving one person two accounts.
+  const accountant2 = await prisma.user.create({
+    data: {
+      name: 'Vikram Shetty', email: 'accountant@teamlink.test', passwordHash: password, role: 'ACCOUNTANT',
+      username: 'vikram.shetty', branch: 'Bengaluru', team: 'Accounts',
+      hrmsAccess: true, atsAccess: false, accountsAccess: true, landingWorkspace: 'accounts',
+    },
+  });
+  // HRMS-only employee — no ATS, no Accounts.
   const employeeUser = await prisma.user.create({
-    data: { name: 'Meera Iyer', email: 'employee@teamlink.test', passwordHash: password, role: 'EMPLOYEE', username: 'meera.iyer', branch: 'Hyderabad', team: 'HR' },
+    data: {
+      name: 'Meera Iyer', email: 'employee@teamlink.test', passwordHash: password, role: 'EMPLOYEE',
+      username: 'meera.iyer', branch: 'Hyderabad', team: 'HR',
+      hrmsAccess: true, atsAccess: false, accountsAccess: false, landingWorkspace: 'hrms',
+    },
   });
 
   // Requirement titles, skills, experience bands, locations, work modes and
@@ -98,7 +221,7 @@ async function main() {
       location: 'Hyderabad', preferredLocation: 'Hyderabad',
       joiningTimeline: 'Within 15 Days', noticePeriodMax: '30 Days', jobPreference: 'Permanent',
       salaryType: 'Annual CTC', currency: 'INR', salary: '₹14L - ₹20L',
-      closingDate: '2026-10-31', tl: 'Divya Rao', stl: 'Rekha Nair',
+      closingDate: '2026-10-31', tl: 'Rekha Nair', stl: 'Priya Nambiar',
     },
   });
   const req2 = await prisma.requirement.create({
@@ -107,6 +230,9 @@ async function main() {
       description: 'Run clinical trial sites end to end for a 200-bed multi-specialty group.',
       jobDescription: 'Run clinical trial sites end to end, owning protocol compliance, monitoring visits and regulatory submissions.',
       clientId: medivant.id, department: 'Medical', priority: 'Medium',
+      // Medical work: Kiran (Medical Recruiter) owns it, Divya (Medical TL)
+      // oversees it. An IT recruiter must never see this requirement.
+      recruiterId: recruiterMedical.id, bdeId: bde.id, tl: 'Divya Rao', stl: 'Priya Nambiar',
       skills: 'Clinical Trials, GCP, Regulatory Affairs', goodToHaveSkills: 'Data Analysis',
       experience: '3-6 yrs', relevantExperience: '3 yrs',
       education: 'B.Sc', employmentType: 'Full Time', workMode: 'Work From Office',
@@ -122,6 +248,7 @@ async function main() {
       title: 'Data Analyst',
       jobDescription: 'Own reporting and analysis across the Medivant clinical operations group.',
       clientId: medivant.id, department: 'Medical', priority: 'Low', status: 'DRAFT',
+      recruiterId: recruiterMedical.id, tl: 'Divya Rao',
       skills: 'SQL, Excel, Data Analysis, Python', goodToHaveSkills: 'Machine Learning',
       experience: '2-4 yrs', relevantExperience: '2 yrs',
       education: 'Any Degree', employmentType: 'Full Time', workMode: 'Work From Office',
@@ -207,6 +334,16 @@ async function main() {
       jobPreference: 'Permanent', preferredEmploymentType: 'Full Time', preferredWorkMode: 'Hybrid',
       education: 'B.Tech', specialization: 'Computer Science', institute: 'VNR VJIET', passingYear: '2019',
       resumeName: 'Sneha_Kulkarni.pdf', resumeScore: 86, profileStatus: 'Active',
+    },
+  });
+
+  // A candidate login: external, no employee record, and scoped to exactly one
+  // candidate row — their own profile, applications, interviews and documents.
+  await prisma.user.create({
+    data: {
+      name: 'Arjun Mehta', email: 'candidate@teamlink.test', passwordHash: password, role: 'CANDIDATE',
+      username: 'arjun.mehta', candidateId: cand1.id,
+      hrmsAccess: false, atsAccess: true, accountsAccess: false, atsRole: 'CANDIDATE',
     },
   });
 
@@ -365,24 +502,82 @@ async function main() {
       onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
     },
   });
+  // Kiran Kumar — Medical / Recruiter. The SAME record drives HRMS
+  // self-service and the ATS Recruiter workspace, scoped to Medical.
   const empKiran = await prisma.employee.create({
     data: {
-      userId: recruiter.id, employeeCode: 'EMP-002', name: 'Kiran Kumar', email: 'recruiter@teamlink.test',
-      department: 'IT', designation: 'Recruiter', location: 'Hyderabad', dateOfJoining: new Date('2023-07-15'), employmentStatus: 'Active',
+      userId: recruiterMedical.id, employeeCode: 'EMP-002', name: 'Kiran Kumar', email: 'kiran@teamlink.test',
+      department: 'Medical', team: 'Medical Team-A', designation: 'Recruiter',
+      location: 'Hyderabad', dateOfJoining: new Date('2023-07-15'), employmentStatus: 'Active',
       employeeType: 'Full-time', gender: 'Male', dateOfBirth: new Date('1994-11-02'),
       onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
     },
   });
+  // Divya Rao — Medical / TL. Same department, one rung up: ATS TL, Medical.
   const empDivya = await prisma.employee.create({
     data: {
-      userId: tl.id, employeeCode: 'EMP-003', name: 'Divya Rao', email: 'tl@teamlink.test',
-      department: 'IT', designation: 'Team Lead', location: 'Bengaluru', dateOfJoining: new Date('2022-01-10'), employmentStatus: 'Active',
+      userId: tlMedical.id, employeeCode: 'EMP-003', name: 'Divya Rao', email: 'divya@teamlink.test',
+      department: 'Medical', team: 'Medical Team-A', designation: 'TL',
+      location: 'Bengaluru', dateOfJoining: new Date('2022-01-10'), employmentStatus: 'Active',
       employeeType: 'Full-time', gender: 'Female', dateOfBirth: new Date('1990-06-20'),
       onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
     },
   });
+  // The IT Recruiter and IT TL — identical designations, different department,
+  // so identical ATS roles with a different scope. No new record type.
+  const empArun = await prisma.employee.create({
+    data: {
+      userId: recruiter.id, employeeCode: 'EMP-005', name: 'Arun Nair', email: 'recruiter@teamlink.test',
+      department: 'IT', team: 'Section A', designation: 'Recruiter',
+      location: 'Hyderabad', dateOfJoining: new Date('2023-02-01'), employmentStatus: 'Active',
+      employeeType: 'Full-time', gender: 'Male', onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
+    },
+  });
+  const empRekha = await prisma.employee.create({
+    data: {
+      userId: tl.id, employeeCode: 'EMP-006', name: 'Rekha Nair', email: 'tl@teamlink.test',
+      department: 'IT', team: 'Section A', designation: 'TL',
+      location: 'Hyderabad', dateOfJoining: new Date('2021-05-04'), employmentStatus: 'Active',
+      employeeType: 'Full-time', gender: 'Female', onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
+    },
+  });
+  const empSanjay = await prisma.employee.create({
+    data: {
+      userId: bde.id, employeeCode: 'EMP-007', name: 'Sanjay Mehta', email: 'bde@teamlink.test',
+      department: 'BDE', team: 'Business Development', designation: 'BDE',
+      location: 'Bengaluru', dateOfJoining: new Date('2022-09-12'), employmentStatus: 'Active',
+      employeeType: 'Full-time', gender: 'Male', onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
+    },
+  });
+  const empPriya = await prisma.employee.create({
+    data: {
+      userId: multiProduct.id, employeeCode: 'EMP-008', name: 'Priya Nambiar', email: 'multi@teamlink.test',
+      department: 'Medical', team: 'Medical Team-A', designation: 'Manager',
+      location: 'Hyderabad', dateOfJoining: new Date('2020-11-02'), employmentStatus: 'Active',
+      employeeType: 'Full-time', gender: 'Female', onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
+    },
+  });
+  const empLakshmi = await prisma.employee.create({
+    data: {
+      userId: accountant.id, employeeCode: 'EMP-009', name: 'Lakshmi Narayan', email: 'accounts@teamlink.test',
+      department: 'Accounts', team: 'Accounts', designation: 'Accountant',
+      location: 'Hyderabad', dateOfJoining: new Date('2021-08-16'), employmentStatus: 'Active',
+      employeeType: 'Full-time', gender: 'Female', onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
+    },
+  });
+  await prisma.employee.create({
+    data: {
+      userId: accountant2.id, employeeCode: 'EMP-010', name: 'Vikram Shetty', email: 'accountant@teamlink.test',
+      department: 'Accounts', team: 'Accounts', designation: 'Accountant',
+      location: 'Bengaluru', dateOfJoining: new Date('2023-04-03'), employmentStatus: 'Active',
+      employeeType: 'Full-time', gender: 'Male', onboardingTasks: tasks(6), profileStage: 'Locked', isLocked: true,
+    },
+  });
   const newJoinerUser = await prisma.user.create({
-    data: { name: 'Rahul Verma', email: 'rahul.verma@teamlink.test', passwordHash: password, role: 'EMPLOYEE' },
+    data: {
+      name: 'Rahul Verma', email: 'rahul.verma@teamlink.test', passwordHash: password, role: 'EMPLOYEE',
+      hrmsAccess: true, atsAccess: false, accountsAccess: false, landingWorkspace: 'hrms',
+    },
   });
   const empNewJoiner = await prisma.employee.create({
     data: {
@@ -594,14 +789,25 @@ async function main() {
 
   await prisma.auditLog.create({ data: { userId: admin.id, action: 'Demo data seeded', entity: 'System' } });
 
-  console.log('Seed complete. Demo logins (password: password123):');
-  console.log('  admin@teamlink.test      (Super Admin)');
-  console.log('  recruiter@teamlink.test  (Recruiter)');
-  console.log('  bde@teamlink.test        (BDE)');
-  console.log('  tl@teamlink.test         (TL)');
-  console.log('  accountant@teamlink.test (Accountant)');
-  console.log('  employee@teamlink.test   (Employee)');
-  console.log('  client@teamlink.test     (Client)');
+  console.log('Seed complete.');
+  console.log('');
+  console.log('DEMO PASSWORD for every login below: password123');
+  console.log('(documented here and in the README; never shown in the UI)');
+  console.log('');
+  console.log('  admin@teamlink.test       Super Admin              — all products, global');
+  console.log('  divya@teamlink.test       Medical / TL             — HRMS + ATS (TL, Medical)');
+  console.log('  kiran@teamlink.test       Medical / Recruiter      — HRMS + ATS (Recruiter, Medical)');
+  console.log('  recruiter@teamlink.test   IT / Recruiter           — HRMS + ATS (Recruiter, IT)');
+  console.log('  tl@teamlink.test          IT / TL                  — HRMS + ATS (TL, IT)');
+  console.log('  multi@teamlink.test       Medical / Manager        — HRMS + ATS + Accounts, one login');
+  console.log('  bde@teamlink.test         BDE                      — HRMS + ATS (BDE, assigned clients)');
+  console.log('  accounts@teamlink.test    Accountant               — Accounts + HRMS self-service');
+  console.log('  accountant@teamlink.test  Accountant (second)      — Accounts + HRMS self-service');
+  console.log('  employee@teamlink.test    HR Executive             — HRMS only');
+  console.log('  rahul.verma@teamlink.test Junior Developer         — HRMS only, profile unfilled');
+  console.log('  client@teamlink.test      Client A (Orbit)         — own company only');
+  console.log('  clientb@teamlink.test     Client B (Medivant)      — own company only');
+  console.log('  candidate@teamlink.test   Candidate (Arjun Mehta)  — own profile only');
 }
 
 main()

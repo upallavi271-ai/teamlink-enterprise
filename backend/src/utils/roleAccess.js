@@ -16,7 +16,11 @@
 // the only one that covers every module this app ships. The lists below are the
 // prototype's verbatim (ROLE_ACCESS_MODULES / ROLE_FEATURE_ACTIONS).
 
-const ROLE_FEATURE_ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'export', 'assign'];
+// The eight actions the permission engine understands. The prototype's matrix
+// carried seven; `configure` is added because settings/policy screens are a
+// real, separately-grantable action (attendance policy, CTC settings, leave
+// policy, integrations, the Role Catalog itself) that "edit" does not describe.
+const ROLE_FEATURE_ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'export', 'assign', 'configure'];
 
 const ROLE_ACCESS_MODULES = [
   { id: 'dashboard', label: 'Dashboard', features: ['KPI Overview', 'Department Strength', 'Pending Approvals', 'Alerts & Notifications', 'Upcoming Interviews', 'Quick Actions', 'Recruiter Leaderboard', 'Role & User Management'] },
@@ -25,16 +29,16 @@ const ROLE_ACCESS_MODULES = [
   { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores'] },
   { id: 'recruiterbde', label: 'Recruiter & BDE', features: ['Recruiter Workload', 'BDE Workload', 'Team View', 'Pending Actions'] },
   { id: 'interviews', label: 'Interview Calendar', features: ['Calendar View', 'Schedule Interview', 'AI Interview', 'Interview Feedback'] },
-  { id: 'hrms', label: 'HRMS', features: ['HRMS Dashboard', 'Attendance & Time', 'Leave & Holidays', 'Payroll & Compensation', 'Performance & Development', 'Employee Services'] },
+  { id: 'hrms', label: 'HRMS', features: ['HRMS Dashboard', 'Attendance & Time', 'Leave & Holidays', 'Payroll & Compensation', 'Performance & Development', 'Employee Services', 'Employee Management'] },
   { id: 'accounts', label: 'Accounts', features: ['Accounts Dashboard', 'Office & Expenses', 'Invoices', 'Bank & Reconciliation', 'Payments'] },
   { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports'] },
-  { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Notifications', 'Audit Logs'] },
+  { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs'] },
 ];
 
 // Roles this app actually issues, in the prototype's seniority order.
 const CATALOG_ROLES = [
   'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
-  'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE',
+  'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE', 'CANDIDATE',
 ];
 
 // The prototype's ROLE_SCOPE_DESC, mapped onto this app's role codes.
@@ -50,80 +54,15 @@ const ROLE_SCOPE_DESC = {
   CLIENT: 'Own company only',
   ACCOUNTANT: 'Payrolls, invoices and expenses only',
   EMPLOYEE: 'Own record only',
+  CANDIDATE: 'Own profile, applications and interviews only',
 };
 
-// Which modules a role reaches before anyone edits its access — the seed the
-// prototype's roleAccessFor() derives from role seniority. Super Admin and Admin
-// get everything (modules on, every action ticked); everyone else starts with
-// the modules their role already navigates to, view-only.
-const DEFAULT_MODULES = {
-  SUPER_ADMIN: ROLE_ACCESS_MODULES.map((m) => m.id),
-  ADMIN: ROLE_ACCESS_MODULES.map((m) => m.id),
-  MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'accounts', 'reports'],
-  ASSISTANT_MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
-  STL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
-  TL: ['dashboard', 'requirements', 'candidates', 'recruiterbde', 'interviews', 'hrms'],
-  RECRUITER: ['dashboard', 'requirements', 'candidates', 'interviews'],
-  BDE: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde'],
-  CLIENT: ['dashboard', 'requirements', 'candidates', 'interviews', 'accounts'],
-  ACCOUNTANT: ['dashboard', 'accounts', 'reports'],
-  EMPLOYEE: ['dashboard', 'hrms'],
-};
-
-// Derived, read-only product access for the Users screen. Main carries ONE
-// User.role; the prototype gives each login three independent product roles.
-// Until that split lands (see the note on User.role in schema.prisma), the
-// Users screen shows each login's HRMS / ATS / Accounts reach derived from its
-// single role rather than pretending three selects exist.
-const PRODUCT_ACCESS = {
-  SUPER_ADMIN: { hrms: 'Super Admin', ats: 'Super Admin', accounts: 'Super Admin' },
-  ADMIN: { hrms: 'Admin', ats: 'Admin', accounts: 'Admin' },
-  MANAGER: { hrms: 'Manager', ats: 'Manager', accounts: 'Manager' },
-  ASSISTANT_MANAGER: { hrms: 'Assistant Manager', ats: 'Assistant Manager', accounts: 'No Access' },
-  STL: { hrms: 'STL', ats: 'STL', accounts: 'No Access' },
-  TL: { hrms: 'TL', ats: 'TL', accounts: 'No Access' },
-  RECRUITER: { hrms: 'Employee', ats: 'Recruiter', accounts: 'No Access' },
-  BDE: { hrms: 'Employee', ats: 'BDE', accounts: 'No Access' },
-  CLIENT: { hrms: 'No Access', ats: 'Client', accounts: 'Accounts Viewer' },
-  ACCOUNTANT: { hrms: 'Employee', ats: 'No Access', accounts: 'Accountant' },
-  EMPLOYEE: { hrms: 'Employee', ats: 'No Access', accounts: 'No Access' },
-};
+// Default module reach, the per-role capability table and the RoleAccess merge
+// now live in ./permissions.js. This file stays pure catalog data plus the
+// payload sanitiser, so permissions.js can require it without a cycle.
 
 function moduleById(id) {
   return ROLE_ACCESS_MODULES.find((m) => m.id === id) || null;
-}
-
-function emptyActions(value = false) {
-  const out = {};
-  ROLE_FEATURE_ACTIONS.forEach((a) => { out[a] = value; });
-  return out;
-}
-
-// The access a role has before anything is persisted for it.
-function defaultAccessForRole(role, moduleId) {
-  const full = ['SUPER_ADMIN', 'ADMIN'].includes(role);
-  const enabled = full || (DEFAULT_MODULES[role] || []).includes(moduleId);
-  const mod = moduleById(moduleId);
-  const features = {};
-  (mod ? mod.features : []).forEach((f) => {
-    features[f] = full ? emptyActions(true) : { ...emptyActions(false), view: enabled };
-  });
-  return { moduleEnabled: enabled, features };
-}
-
-// Merge a persisted RoleAccess row (if any) over the defaults, so a module added
-// to the catalog later still shows up for roles saved before it existed.
-function mergeAccess(role, moduleId, row) {
-  const base = defaultAccessForRole(role, moduleId);
-  if (!row) return base;
-  let saved = {};
-  try { saved = row.features ? JSON.parse(row.features) : {}; } catch { saved = {}; }
-  const mod = moduleById(moduleId);
-  const features = {};
-  (mod ? mod.features : []).forEach((f) => {
-    features[f] = { ...base.features[f], ...(saved[f] || {}) };
-  });
-  return { moduleEnabled: !!row.moduleEnabled, features };
 }
 
 // Normalise an incoming feature payload down to known features and actions, so
@@ -145,9 +84,6 @@ module.exports = {
   ROLE_ACCESS_MODULES,
   CATALOG_ROLES,
   ROLE_SCOPE_DESC,
-  PRODUCT_ACCESS,
   moduleById,
-  defaultAccessForRole,
-  mergeAccess,
   sanitizeFeatures,
 };

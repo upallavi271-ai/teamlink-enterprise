@@ -5,8 +5,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import {
   statusClass, money, money2, fmtD, Stat, invoiceDocumentHtml,
 } from './Invoices.jsx';
+import { canManageAccounts } from '../permissions';
 
-const ACCOUNTS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
 const today = () => new Date().toISOString().slice(0, 10);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthOf = (d) => (d ? `${MONTHS[Number(String(d).slice(5, 7)) - 1]} ${String(d).slice(0, 4)}` : '—');
@@ -56,7 +56,7 @@ ${co.legalName}`;
 export default function InvoiceDetail() {
   const { id } = useParams();
   const { user } = useAuth();
-  const canManage = ACCOUNTS_ROLES.includes(user?.role);
+  const canManage = canManageAccounts(user);
   const [invoice, setInvoice] = useState(null);
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState('');

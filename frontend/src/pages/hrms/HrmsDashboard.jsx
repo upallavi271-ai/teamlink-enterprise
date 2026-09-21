@@ -4,8 +4,8 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, QaRow } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const PERIODS = ['Today', 'This Week', 'This Month', 'This Quarter', 'This Year'];
 
 // The HR/manager view: every tile, panel and the CSV export are computed by
@@ -224,7 +224,7 @@ function MyDashboard() {
 
 export default function HrmsDashboard() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
 
   return (
     <div>

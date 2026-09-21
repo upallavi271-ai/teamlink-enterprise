@@ -8,6 +8,8 @@ import {
   POSTING_SOURCES, priorityBadgeClass,
   requirementStatusLabel, agreementStatusLabel,
 } from '../atsVocab';
+import { useAuth } from '../context/AuthContext.jsx';
+import { canRaiseRequirement } from '../permissions';
 
 // The prototype's Jobs / Requirements screen: requirementListShell() (6917),
 // renderRequirementList() (6937), openRequirementsHtml() (6832),
@@ -56,6 +58,7 @@ const MONTH = (value) => {
 };
 
 export default function Requirements() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [requirements, setRequirements] = useState([]);
   const [clients, setClients] = useState([]);
@@ -180,9 +183,11 @@ export default function Requirements() {
           <h1>Jobs / Requirements</h1>
           <div className="page-sub">{requirements.length} requirements</div>
         </div>
-        <button className="btn btn-primary" onClick={() => { setForm(EMPTY); setError(''); setShowForm(true); }}>
-          Add Requirement
-        </button>
+        {canRaiseRequirement(user) && (
+          <button className="btn btn-primary" onClick={() => { setForm(EMPTY); setError(''); setShowForm(true); }}>
+            Add Requirement
+          </button>
+        )}
       </div>
 
       <div className="tabs" style={{ marginBottom: 12 }}>

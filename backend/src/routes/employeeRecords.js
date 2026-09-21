@@ -1,22 +1,24 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 // Backs the ~11 similarly-shaped HRMS self-service areas (KT, Targets,
 // Resignation, Recognition, Disciplinary, Shift Roster, Timesheet, Assets,
 // Expense Claims, Helpdesk, Access Requests, Weekly Ideas) off one EmployeeRecord
 // model, discriminated by `type`. Each router mounted from index.js is scoped
 // to its own type so the frontend just sees a normal-looking REST resource.
-function employeeRecordRouter(type, { decisionRoles = HR_ROLES, createRoles = null } = {}) {
+// `createRoles: true` means only someone with HRMS Employee Management reach
+// may raise this record type for another employee; the decision (approve/
+// reject) always needs hrms/Employee Services/approve from the engine.
+function employeeRecordRouter(type, { createRoles = null } = {}) {
   const router = express.Router();
   router.use(requireAuth);
 
   router.get('/', async (req, res) => {
     const where = { type };
-    if (req.user.role === 'EMPLOYEE') {
+    if (req.user.caps.hrmsSelfOnly) {
       const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
       if (!own) return res.json([]);
       where.employeeId = own.id;
@@ -29,7 +31,7 @@ function employeeRecordRouter(type, { decisionRoles = HR_ROLES, createRoles = nu
   });
 
   router.post('/', async (req, res) => {
-    if (createRoles && !createRoles.includes(req.user.role)) {
+    if (createRoles && !req.user.caps.hrmsManage) {
       return res.status(403).json({ error: "This isn't included in your role's permissions" });
     }
     const {
@@ -37,7 +39,7 @@ function employeeRecordRouter(type, { decisionRoles = HR_ROLES, createRoles = nu
       achieved, unit, fromName, toName, points,
     } = req.body;
     let employeeId = req.body.employeeId;
-    if (req.user.role === 'EMPLOYEE') {
+    if (req.user.caps.hrmsSelfOnly) {
       const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
       if (!own) return res.status(404).json({ error: 'No employee record linked to this account' });
       employeeId = own.id;
@@ -66,7 +68,7 @@ function employeeRecordRouter(type, { decisionRoles = HR_ROLES, createRoles = nu
     res.status(201).json(record);
   });
 
-  router.patch('/:id/status', requireRole(...decisionRoles), async (req, res) => {
+  router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res) => {
     const { status } = req.body;
     if (!status) return res.status(400).json({ error: 'status is required' });
     const record = await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { status } });
@@ -78,7 +80,7 @@ function employeeRecordRouter(type, { decisionRoles = HR_ROLES, createRoles = nu
   router.patch('/:id', async (req, res) => {
     const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Record not found' });
-    if (req.user.role === 'EMPLOYEE') {
+    if (req.user.caps.hrmsSelfOnly) {
       const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
       if (!own || existing.employeeId !== own.id) return res.status(403).json({ error: "This isn't included in your role's permissions" });
     }

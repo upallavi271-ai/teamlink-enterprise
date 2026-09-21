@@ -5,8 +5,8 @@ import {
   Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const TICKET_STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'];
 const CLOSED = ['Resolved', 'Closed'];
 
@@ -87,7 +87,7 @@ function NewTicketModal({ meta, employees, isHR, onClose, onSaved }) {
 
 export default function Helpdesk({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [meta, setMeta] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [employees, setEmployees] = useState([]);

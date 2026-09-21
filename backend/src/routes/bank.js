@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus,
@@ -10,8 +10,8 @@ const {
 const router = express.Router();
 router.use(requireAuth);
 
-const ACCOUNTS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
-router.use(requireRole(...ACCOUNTS_ROLES));
+router.use(requireProduct('accounts'));
+router.use(requirePerm('accounts', 'accounts', 'Bank & Reconciliation', 'view'));
 
 // ---------------------------------------------------------------------------
 // The reconciliation state machine

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
+import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin } from '../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 const EDIT_FIELDS = [
   'name', 'email', 'phone', 'department', 'team', 'designation', 'location', 'employmentStatus', 'employeeType',
@@ -17,8 +17,8 @@ export default function EmployeeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
-  const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
+  const isAdmin = hasAdminAccess(user);
   const [employee, setEmployee] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});

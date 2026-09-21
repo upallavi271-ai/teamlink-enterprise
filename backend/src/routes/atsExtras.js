@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+const { applicationWhere, requirementWhere, scopeOf } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const {
   INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TERMINAL,
@@ -10,6 +11,11 @@ const {
 
 const router = express.Router();
 router.use(requireAuth);
+// The whole router belongs to ATS: a login without ATS access, or without
+// view permission on this module, is refused at the door rather than handed
+// an empty list.
+router.use(requireProduct('ats'));
+router.use(requirePerm('ats', 'interviews', 'Calendar View', 'view'));
 
 // Recruiter & BDE workload view — the prototype's teamView() (line 9154):
 // Name / Role / Open Requirements / Active Pipeline, recruiters first, then
@@ -24,8 +30,15 @@ const TEAM_ROLE_LABELS = { RECRUITER: 'Recruiter', BDE: 'BDE', TL: 'TL', STL: 'S
 const CLOSED_PIPELINE_STAGES = ['JOINED', 'HIRED', 'REJECTED'];
 
 router.get('/team', async (req, res) => {
+  // A TL sees their own team; a recruiter sees themselves; admins see all.
+  const s = scopeOf(req.user);
   const people = await prisma.user.findMany({
-    where: { role: { in: ['RECRUITER', 'BDE', 'TL', 'STL'] } },
+    where: {
+      role: { in: ['RECRUITER', 'BDE', 'TL', 'STL'] },
+      ...(s.global ? {} : s.departments.length
+        ? { OR: [{ atsDepartment: { in: s.departments } }, { id: s.userId }] }
+        : { id: s.userId }),
+    },
   });
   const rows = await Promise.all(
     people.map(async (u) => {
@@ -67,9 +80,9 @@ const CALENDAR_INCLUDE = {
 
 // Clients only ever see their own company's interviews. Everyone else sees all.
 function calendarScope(user) {
-  return user.role === 'CLIENT' && user.clientId
-    ? { requirement: { clientId: user.clientId } }
-    : {};
+  // The same scope as every other ATS list: a client sees their own company's
+  // interviews, a recruiter their own assignments, a TL their department's.
+  return applicationWhere(user);
 }
 
 function interviewCode(app) {
@@ -180,11 +193,11 @@ router.get('/calendar', async (req, res) => {
   });
 });
 
-// Interviews are moved by the people who run them. Clients watch only.
-const IV_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE'];
+// Interviews are moved by the people who run them. Clients watch only. Who
+// that is comes from the permission engine (caps.atsAct), not a role list.
 
 async function loadInterview(req, res) {
-  if (!IV_ROLES.includes(req.user.role)) {
+  if (!req.user.caps.atsAct) {
     res.status(403).json({ error: "This action isn't included in your role's permissions" });
     return null;
   }
@@ -334,7 +347,7 @@ router.post('/interviews/:id/feedback', async (req, res) => {
 // resent, or handed to a recruiter for a manual screen.
 
 async function loadAi(req, res) {
-  if (!IV_ROLES.includes(req.user.role)) {
+  if (!req.user.caps.atsAct) {
     res.status(403).json({ error: "This action isn't included in your role's permissions" });
     return null;
   }

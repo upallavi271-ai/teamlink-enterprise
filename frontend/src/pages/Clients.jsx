@@ -7,6 +7,8 @@ import {
   CLIENT_TYPES, CLIENT_PRIORITIES, COMM_MODES, BUSINESS_TYPES, PAYMENT_TERMS,
   INVOICE_TRIGGERS, AGREEMENT_TEMPLATES, RISK_FLAGS,
 } from '../atsVocab';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../permissions';
 
 // The prototype's Add Client modal (openAddClientModal, line 7296) is five
 // tabs; switchAddClientTab() names them in this order.
@@ -45,6 +47,7 @@ const EMPTY = {
 };
 
 export default function Clients() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
@@ -107,7 +110,9 @@ export default function Clients() {
           <h1>Clients</h1>
           <div className="page-sub">{clients.length} client accounts</div>
         </div>
-        <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Client</button>
+        {can(user, 'ats', 'clients', 'Add Client', 'create') && (
+          <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Client</button>
+        )}
       </div>
 
       {showForm && (

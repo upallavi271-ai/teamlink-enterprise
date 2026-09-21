@@ -5,8 +5,8 @@ import api from '../api';
 import Modal from '../components/Modal.jsx';
 
 import { ALL_STAGE_CODES, stageLabel, requirementStatusLabel } from '../atsVocab';
+import { canEditRequirement } from '../permissions';
 
-const RAISE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'ASSISTANT_MANAGER'];
 
 const list = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -86,6 +86,8 @@ export default function RequirementDetail() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [requirement, setRequirement] = useState(null);
+  // Set when the API refuses this record for scope reasons.
+  const [denied, setDenied] = useState('');
   const [candidates, setCandidates] = useState([]);
   const [matching, setMatching] = useState([]);
   const [linkCandidateId, setLinkCandidateId] = useState('');
@@ -93,7 +95,9 @@ export default function RequirementDetail() {
   const [dialog, setDialog] = useState(null); // 'jd' | 'posting'
 
   function load() {
-    api.get(`/requirements/${id}`).then((res) => setRequirement(res.data));
+    api.get(`/requirements/${id}`)
+      .then((res) => setRequirement(res.data))
+      .catch((err) => setDenied(err.response?.data?.error || 'This record is not available to you'));
     api.get(`/requirements/${id}/matching-candidates`).then((res) => setMatching(res.data)).catch(() => setMatching([]));
   }
   useEffect(() => {
@@ -135,10 +139,11 @@ export default function RequirementDetail() {
     }
   }
 
+  if (denied) return <div className="notice">{denied}</div>;
   if (!requirement) return <div className="small-muted">Loading…</div>;
 
   const r = requirement;
-  const canManage = RAISE_ROLES.includes(user?.role);
+  const canManage = canEditRequirement(user);
   const clientName = r.internal ? 'TeamLink Internal' : r.client?.name || '—';
   const agreementSigned = r.internal || r.client?.agreementStatus === 'ACTIVE';
   const sources = list(r.postingSources);

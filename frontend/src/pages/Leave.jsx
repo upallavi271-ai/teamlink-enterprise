@@ -4,8 +4,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, ScopeNote, TwoCol, Status, Modal } from '../components/proto.jsx';
+import { isAdmin, isHR as hasHrmsAdmin } from '../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const today = () => new Date().toISOString().slice(0, 10);
 
 function capLabel(t) {
@@ -477,8 +477,8 @@ function HolidaysTab({ canManage }) {
 
 export default function Leave() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
-  const canEditPolicy = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
+  const canEditPolicy = isAdmin(user);
   const [applyOpen, setApplyOpen] = useState(false);
   const [types, setTypes] = useState([]);
   const [employees, setEmployees] = useState([]);

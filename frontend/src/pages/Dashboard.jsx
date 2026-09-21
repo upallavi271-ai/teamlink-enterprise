@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
-import { atsRoleLabel, stageLabel } from '../atsVocab';
+import { stageLabel } from '../atsVocab';
+import { isAdmin, isClientUser, canManageAccounts, workRoleLabel } from '../permissions';
 
 // ---------------------------------------------------------------------------
 // The prototype's viewMainDashboard() (line 2305) fans out to a dashboard per
@@ -111,13 +112,18 @@ function rupees(n) { return '₹' + Number(n || 0).toLocaleString('en-IN'); }
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const role = user?.role;
-  if (role === 'EMPLOYEE') return <EmployeeDashboard user={user} />;
-  if (role === 'RECRUITER') return <RecruiterDashboard user={user} />;
-  if (role === 'BDE') return <BdeDashboard user={user} />;
-  if (['TL', 'STL', 'ASSISTANT_MANAGER', 'MANAGER'].includes(role)) return <TeamDashboard user={user} />;
-  if (role === 'ACCOUNTANT') return <AccountantDashboard user={user} />;
-  if (role === 'CLIENT') return <ClientDashboard user={user} />;
+  // Which workspace someone lands on comes from their product access and their
+  // ATS working role — never from a role they picked at sign-in.
+  if (isClientUser(user)) return <ClientDashboard user={user} />;
+  if (isAdmin(user)) return <AdminDashboard user={user} />;
+  const atsRole = user?.atsRole;
+  if (user?.products?.ats && atsRole === 'RECRUITER') return <RecruiterDashboard user={user} />;
+  if (user?.products?.ats && atsRole === 'BDE') return <BdeDashboard user={user} />;
+  if (user?.products?.ats && ['TL', 'STL', 'ASSISTANT_MANAGER', 'MANAGER'].includes(atsRole)) {
+    return <TeamDashboard user={user} />;
+  }
+  if (user?.products?.accounts && canManageAccounts(user)) return <AccountantDashboard user={user} />;
+  if (user?.products?.hrms) return <EmployeeDashboard user={user} />;
   return <AdminDashboard user={user} />;
 }
 
@@ -138,7 +144,7 @@ function AdminDashboard({ user }) {
 
   return (
     <>
-      <PageHead name={user?.name} role={atsRoleLabel(user?.role)} />
+      <PageHead name={user?.name} role={workRoleLabel(user)} />
       <div className="statbar">
         <Stat n={stats.openRequirements} l="Open requirements" />
         <Stat n={stats.recruiterReview} l="Awaiting recruiter review" />
@@ -274,7 +280,7 @@ function TeamDashboard({ user }) {
   // scoping the applications to those requirements scopes the whole screen.
   const ids = new Set(reqs.map((r) => r.id));
   const scoped = apps.filter((a) => ids.has(a.requirementId));
-  const roleLabel = { TL: 'TL', STL: 'STL', ASSISTANT_MANAGER: 'Assistant Manager', MANAGER: 'Manager' }[user?.role];
+  const roleLabel = workRoleLabel(user);
 
   return (
     <>

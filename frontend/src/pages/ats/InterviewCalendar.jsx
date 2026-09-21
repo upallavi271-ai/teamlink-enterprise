@@ -6,6 +6,7 @@ import {
   INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TYPES, INTERVIEW_RESULTS,
   interviewStatusLabel, interviewStatusClass,
 } from '../../atsVocab';
+import { canActOnPipeline } from '../../permissions';
 
 // The prototype's Interview Calendar (calendarView, line 9184): two tabs kept
 // deliberately apart, because an AI interview score is never mixed into
@@ -18,7 +19,6 @@ import {
 const EMPTY_FILTERS = { q: '', status: '', type: '', date: '', client: '', recruiter: '', tl: '', bde: '' };
 
 // Roles that may move an interview. Clients watch; the API enforces this too.
-const CAN_ACT = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE'];
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -38,7 +38,7 @@ export default function InterviewCalendar() {
   const [notice, setNotice] = useState('');
   const [dialog, setDialog] = useState(null); // { kind, row, ...fields }
 
-  const canAct = CAN_ACT.includes(user?.role);
+  const canAct = canActOnPipeline(user);
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
 
   function load() {

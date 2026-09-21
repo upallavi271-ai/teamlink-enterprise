@@ -1,19 +1,18 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 router.get('/', async (req, res) => {
   const surveys = await prisma.survey.findMany({ include: { responses: true }, orderBy: { createdAt: 'desc' } });
   res.json(surveys.map((s) => ({ ...s, questions: JSON.parse(s.questions) })));
 });
 
-router.post('/', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async (req, res) => {
   const { title, questions } = req.body; // questions: string[]
   if (!title || !Array.isArray(questions) || questions.length === 0) {
     return res.status(400).json({ error: 'title and a non-empty questions array are required' });
@@ -24,7 +23,7 @@ router.post('/', requireRole(...HR_ROLES), async (req, res) => {
 });
 
 // Close a survey to new responses, or reopen it.
-router.patch('/:id/status', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const { status } = req.body; // Active | Closed
   if (!['Active', 'Closed'].includes(status)) return res.status(400).json({ error: 'status must be Active or Closed' });
   const survey = await prisma.survey.update({ where: { id: req.params.id }, data: { status } });

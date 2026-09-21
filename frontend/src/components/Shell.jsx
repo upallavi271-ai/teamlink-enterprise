@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
-import { atsRoleLabel } from '../atsVocab';
+import { can, canModule, workRoleLabel } from '../permissions';
 
 // ---------------------------------------------------------------------------
 // Nav structure is the prototype's, verbatim: SECTION_LABEL (line 2065) and
@@ -17,88 +17,83 @@ const SECTION_LABEL = {
   accounts: 'Accounts', admin: 'Administration', reports: 'Reports',
 };
 
-const HR_MANAGE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
-const TEAM_LEAD_ROLES = ['MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
-const ATS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'CLIENT'];
-const ACCOUNTS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT', 'CLIENT'];
-const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
-const REPORTS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ACCOUNTANT'];
-
+// Every nav item now names the (module, feature) it belongs to, and the
+// sidebar renders it only when the permission engine says the signed-in user
+// can view that feature. This is the SAME matrix the API enforces — the nav is
+// not a separate permission system, and hiding an item is never the control.
 const HRMS_ITEMS = [
-  ['/hrms', 'HRMS Dashboard'],
-  ['/attendance', 'Attendance & Time'],
-  ['/leave', 'Leave & Holidays'],
-  ['/payroll', 'Payroll & Compensation'],
-  ['/performance', 'Performance & Development'],
-  ['/employee-services', 'Employee Services'],
-];
-// Employees (and the leads who are also employees) keep their own fill-in
-// profile link — a main-only screen the prototype's sidebar has no slot for.
-const HRMS_ITEMS_EMPLOYEE = [
-  ['/hrms', 'HRMS Dashboard'],
-  ['/my-profile', 'My Profile'],
-  ...HRMS_ITEMS.slice(1),
+  ['/hrms', 'HRMS Dashboard', 'hrms', 'HRMS Dashboard'],
+  ['/my-profile', 'My Profile', 'hrms', null],
+  ['/attendance', 'Attendance & Time', 'hrms', 'Attendance & Time'],
+  ['/leave', 'Leave & Holidays', 'hrms', 'Leave & Holidays'],
+  ['/payroll', 'Payroll & Compensation', 'hrms', null],
+  ['/performance', 'Performance & Development', 'hrms', 'Performance & Development'],
+  ['/employee-services', 'Employee Services', 'hrms', 'Employee Services'],
 ];
 
 const ATS_ITEMS = [
-  ['/ats/dashboard', 'Dashboard'],
-  ['/requirements', 'Jobs / Requirements'],
-  ['/clients', 'Clients'],
-  ['/candidates', 'Candidates & Pipeline'],
-  ['/ats/team', 'Recruiter & BDE'],
-  ['/ats/calendar', 'Interview Calendar'],
+  // The ATS dashboard is a dashboard-module screen, but it belongs in the nav
+  // only for a login that actually has the ATS product.
+  ['/ats/dashboard', 'Dashboard', 'dashboard', 'KPI Overview', 'ats'],
+  ['/requirements', 'Jobs / Requirements', 'requirements', 'Requirement List'],
+  ['/clients', 'Clients', 'clients', 'Client List'],
+  ['/candidates', 'Candidates & Pipeline', 'candidates', 'Candidate List'],
+  ['/ats/team', 'Recruiter & BDE', 'recruiterbde', 'Team View'],
+  ['/ats/calendar', 'Interview Calendar', 'interviews', 'Calendar View'],
 ];
 
 const ACCOUNTS_ITEMS = [
-  ['/accounts/dashboard', 'Dashboard'],
-  ['/office', 'Office / Business'],
-  ['/invoices', 'Invoices'],
-  ['/bank', 'Bank & Reconciliation'],
+  ['/accounts/dashboard', 'Dashboard', 'accounts', 'Accounts Dashboard', 'accounts'],
+  ['/office', 'Office / Business', 'accounts', 'Office & Expenses'],
+  ['/invoices', 'Invoices', 'accounts', 'Invoices'],
+  ['/bank', 'Bank & Reconciliation', 'accounts', 'Bank & Reconciliation'],
 ];
 
 const ADMIN_ITEMS = [
-  ['/admin/company', 'Company Setup'],
-  // main-only: Departments & Teams admin (kept — it is the backing data for
-  // the department-scoped guards).
-  ['/admin/departments', 'Departments & Teams'],
-  ['/employees', 'Employee Management'],
-  ['/admin/users', 'Users'],
-  ['/admin/roles', 'Role Catalog'],
-  ['/admin/integrations', 'Integrations'],
-  ['/admin/org-structure', 'Organization Structure'],
-  ['/admin/notifications', 'Notifications'],
-  ['/admin/audit', 'Audit Logs'],
-  ['/admin/profile', 'Profile'],
+  ['/admin/company', 'Company Setup', 'administration', 'Company Setup'],
+  ['/admin/departments', 'Departments & Teams', 'administration', 'Departments & Teams'],
+  // Employee Management is an HRMS feature the Administration group links to,
+  // so HR roles reach it without being given the Administration module.
+  ['/employees', 'Employee Management', 'hrms', 'Employee Management'],
+  ['/admin/users', 'Users', 'administration', 'Users'],
+  ['/admin/roles', 'Role Catalog', 'administration', 'Role Catalog'],
+  ['/admin/integrations', 'Integrations', 'administration', 'Integrations'],
+  ['/admin/org-structure', 'Organization Structure', 'administration', 'Organization Structure'],
+  // Notifications and Profile are everyone's, whatever their role.
+  ['/admin/notifications', 'Notifications', null, null],
+  ['/admin/audit', 'Audit Logs', 'administration', 'Audit Logs'],
+  ['/admin/profile', 'Profile', null, null],
 ];
 
 const REPORTS_ITEMS = [
-  ['/reports/ats', 'ATS Reports'],
-  ['/reports/job-portal', 'Job Portal Reports'],
-  ['/reports/accounts', 'Accounts Reports'],
+  ['/reports/ats', 'ATS Reports', 'reports', 'ATS Reports'],
+  ['/reports/job-portal', 'Job Portal Reports', 'reports', 'Job Portal Reports'],
+  ['/reports/accounts', 'Accounts Reports', 'reports', 'Accounts Reports'],
 ];
 
 // Group render order is the prototype's sidebarHtml() order (line 2100):
-// HRMS, ATS, Accounts, Reports, Administration.
-function groupsForRole(role) {
+// HRMS, ATS, Accounts, Reports, Administration. Which groups and which items
+// appear is decided entirely by the permission matrix.
+function visibleItems(user, items) {
+  return items.filter(([, , moduleId, feature, product]) => {
+    if (product && !(user?.products || {})[product]) return false;
+    if (!moduleId) return true;              // Notifications, Profile, My Profile
+    if (!feature) return canModule(user, moduleId);
+    return can(user, null, moduleId, feature, 'view');
+  });
+}
+
+function groupsForUser(user) {
   const groups = [];
-  if (TEAM_LEAD_ROLES.includes(role) || role === 'EMPLOYEE') {
-    groups.push(['hrms', 'HRMS', HRMS_ITEMS_EMPLOYEE]);
-  } else if (HR_MANAGE_ROLES.includes(role)) {
-    groups.push(['hrms', 'HRMS', HRMS_ITEMS]);
-  }
-  if (ATS_ROLES.includes(role)) groups.push(['ats', 'ATS', ATS_ITEMS]);
-  if (ACCOUNTS_ROLES.includes(role)) groups.push(['accounts', 'Accounts', ACCOUNTS_ITEMS]);
-  if (REPORTS_ROLES.includes(role)) groups.push(['reports', 'Reports', REPORTS_ITEMS]);
-  if (ADMIN_ROLES.includes(role)) {
-    groups.push(['admin', 'Administration', ADMIN_ITEMS]);
-  } else {
-    // Non-admins still receive notifications and still own a profile — the
-    // prototype gives them nothing, so they get the two-item slice.
-    groups.push(['admin', 'Administration', [
-      ['/admin/notifications', 'Notifications'],
-      ['/admin/profile', 'Profile'],
-    ]]);
-  }
+  const add = (id, label, items) => {
+    const shown = visibleItems(user, items);
+    if (shown.length) groups.push([id, label, shown]);
+  };
+  add('hrms', 'HRMS', HRMS_ITEMS);
+  add('ats', 'ATS', ATS_ITEMS);
+  add('accounts', 'Accounts', ACCOUNTS_ITEMS);
+  add('reports', 'Reports', REPORTS_ITEMS);
+  add('admin', 'Administration', ADMIN_ITEMS);
   return groups;
 }
 
@@ -122,7 +117,7 @@ function initials(name) {
 }
 
 export default function Shell() {
-  const { user, logout } = useAuth();
+  const { user, logout, switchWorkspace } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [q, setQ] = useState('');
@@ -130,7 +125,7 @@ export default function Shell() {
   const [manual, setManual] = useState({});          // prototype's sidebarManualToggle
   const [unread, setUnread] = useState(0);
 
-  const groups = useMemo(() => groupsForRole(user?.role), [user?.role]);
+  const groups = useMemo(() => groupsForUser(user), [user]);
   const section = sectionOf(pathname);
 
   useEffect(() => {
@@ -222,7 +217,18 @@ export default function Shell() {
             />
           </form>
           <div className="topbar-right">
-            <span className="rolechip">{atsRoleLabel(user?.role)}</span>
+            {(user?.workspaces || []).length > 1 && (
+              <select
+                className="rolechip"
+                aria-label="Workspace"
+                value={user.workspace}
+                onChange={(e) => switchWorkspace(e.target.value).then((u) => navTo(u.landingPath))}
+                style={{ padding: '2px 6px' }}
+              >
+                {user.workspaces.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+              </select>
+            )}
+            <span className="rolechip">{workRoleLabel(user)}</span>
             <span className="rolechip" style={{ cursor: 'pointer' }} onClick={() => navTo('/admin/notifications')}>🔔 {unread}</span>
             <div className="avatar">{initials(user?.name)}</div>
             <button className="btn btn-ghost btn-sm" onClick={logout}>Sign Out</button>

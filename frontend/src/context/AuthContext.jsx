@@ -20,10 +20,21 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // The login response carries the whole resolved identity — employee record,
+  // product access, ATS role, data scope, landing page — plus the permission
+  // matrix the server enforces. Nothing here is chosen by the user.
   async function login(email, password) {
     const res = await api.post('/auth/login', { email, password });
     localStorage.setItem('tl_token', res.data.token);
     setUser(res.data.user);
+    return res.data.user;
+  }
+
+  // Switch product workspace. Never a role switch: the role does not change.
+  async function switchWorkspace(workspace) {
+    const res = await api.put('/auth/me/workspace', { workspace });
+    setUser(res.data);
+    return res.data;
   }
 
   function logout() {
@@ -31,7 +42,11 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading, login, logout, switchWorkspace }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

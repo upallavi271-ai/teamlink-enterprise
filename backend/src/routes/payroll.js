@@ -1,13 +1,12 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const { monthStats, monthLabel } = require('../utils/attendanceMath');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const PAYROLL_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
 
 async function getPolicy() {
   let config = await prisma.hrConfig.findFirst();
@@ -40,7 +39,7 @@ function salaryBreakup(annualCtc, cfg) {
 
 router.get('/', async (req, res) => {
   const where = {};
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.json([]);
     where.employeeId = own.id;
@@ -54,7 +53,7 @@ router.get('/', async (req, res) => {
 
 // ---- Salary structures ----
 
-router.get('/structure', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const cfg = await getPolicy();
   const employees = await prisma.employee.findMany({ include: { salaryStructure: true }, orderBy: { name: 'asc' } });
   res.json(
@@ -67,12 +66,12 @@ router.get('/structure', requireRole(...PAYROLL_ROLES), async (req, res) => {
 });
 
 // Reference CTC breakup for the "Standard Package" example shown on the Payroll dashboard.
-router.get('/reference-structure', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.get('/reference-structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const cfg = await getPolicy();
   res.json(salaryBreakup(Number(req.query.ctc) || 300000, cfg));
 });
 
-router.put('/structure/:employeeId', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const { payMode, ctc, stipend } = req.body;
   const cfg = await getPolicy();
   const data = {};
@@ -95,7 +94,7 @@ router.put('/structure/:employeeId', requireRole(...PAYROLL_ROLES), async (req, 
 
 // ---- CTC Split Settings (how CTC is broken into components) ----
 
-router.put('/ctc-settings', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.put('/ctc-settings', requirePerm(null, 'hrms', 'Payroll & Compensation', 'configure'), async (req, res) => {
   const fields = ['basicPctOfCtc', 'hraPctOfBasic', 'bonusPctOfBasic', 'employeePfPctOfBasic', 'employerPfPctOfBasic', 'employeePfMonthlyCap', 'employerPfMonthlyCap', 'gratuityPctOfBasic', 'professionalTaxFlat'];
   const config = await getPolicy();
   const data = {};
@@ -111,7 +110,7 @@ router.get('/policy', async (req, res) => {
   res.json(await getPolicy());
 });
 
-router.put('/policy', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.put('/policy', requirePerm(null, 'hrms', 'Payroll & Compensation', 'configure'), async (req, res) => {
   const {
     unmarkedDaysUnpaid, weekendsPaid, paidLeaveDaysPerMonth,
     payByHours, halfDayBySession, sessionSplit, halfDayHours, fullDayHours,
@@ -139,12 +138,12 @@ router.put('/policy', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
 
 // ---- Full & Final settlement requests ----
 
-router.get('/fnf', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.get('/fnf', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const requests = await prisma.fnfRequest.findMany({ include: { employee: true }, orderBy: { createdAt: 'desc' } });
   res.json(requests);
 });
 
-router.patch('/fnf/:id/process', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.patch('/fnf/:id/process', requirePerm(null, 'hrms', 'Payroll & Compensation', 'approve'), async (req, res) => {
   const { settlementAmount } = req.body;
   const fnf = await prisma.fnfRequest.update({
     where: { id: req.params.id },
@@ -237,7 +236,7 @@ async function calculatePayroll({ month, department, defaultCTC }) {
 }
 
 // Preview a cycle without writing anything — the Calculate step on Process Payroll.
-router.get('/preview', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.get('/preview', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const month = req.query.month;
   if (!month) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
   const existing = await prisma.payrollRun.findUnique({ where: { month } });
@@ -247,7 +246,7 @@ router.get('/preview', requireRole(...PAYROLL_ROLES), async (req, res) => {
 
 // Runs a payroll cycle for every active employee for a given month, writes a
 // payslip each and records the run so Reports can compare month over month.
-router.post('/run', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.post('/run', requirePerm(null, 'hrms', 'Payroll & Compensation', 'create'), async (req, res) => {
   const { month, defaultCTC, department } = req.body; // month = "YYYY-MM"
   if (!month) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
 
@@ -291,12 +290,12 @@ router.post('/run', requireRole(...PAYROLL_ROLES), async (req, res) => {
 
 // ---- Payroll runs ----
 
-router.get('/runs', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.get('/runs', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' } });
   res.json(runs);
 });
 
-router.patch('/runs/:id/paid', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.patch('/runs/:id/paid', requirePerm(null, 'hrms', 'Payroll & Compensation', 'approve'), async (req, res) => {
   const existing = await prisma.payrollRun.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Payroll run not found' });
   if (existing.status === 'Paid') return res.status(409).json({ error: 'This run is already marked paid.' });
@@ -307,7 +306,7 @@ router.patch('/runs/:id/paid', requireRole(...PAYROLL_ROLES), async (req, res) =
 
 // ---- Reports: month-over-month comparison, payout by period, payout by department ----
 
-router.get('/reports', requireRole(...PAYROLL_ROLES), async (req, res) => {
+router.get('/reports', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' } });
   const cfg = await getPolicy();
   const employees = await prisma.employee.findMany({ where: { employmentStatus: { not: 'Relieved' } }, include: { salaryStructure: true } });
@@ -350,10 +349,10 @@ router.get('/reports', requireRole(...PAYROLL_ROLES), async (req, res) => {
 router.get('/payslips/:id', async (req, res) => {
   const slip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { employee: true } });
   if (!slip) return res.status(404).json({ error: 'Payslip not found' });
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own || own.id !== slip.employeeId) return res.status(403).json({ error: "This isn't included in your role's permissions" });
-  } else if (!PAYROLL_ROLES.includes(req.user.role)) {
+  } else if (!req.user.caps.payrollManage) {
     return res.status(403).json({ error: "This isn't included in your role's permissions" });
   }
   const company = await prisma.company.findFirst();

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { isSuperAdmin as hasSuperAdmin } from '../../permissions';
 
 export default function Departments() {
   const { user } = useAuth();
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = hasSuperAdmin(user);
   const [depts, setDepts] = useState([]);
   const [newDept, setNewDept] = useState('');
   const [newTeam, setNewTeam] = useState({});

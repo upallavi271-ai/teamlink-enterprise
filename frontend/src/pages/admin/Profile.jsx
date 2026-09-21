@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { atsRoleLabel } from '../../atsVocab';
+import { workRoleLabel } from '../../permissions';
 
 // Profile — the prototype's adminProfileView() (line 10593) is a single card
 // with Name and Role. Main's editable form is kept below it: changing your own
@@ -35,7 +35,7 @@ export default function Profile() {
 
       <div className="card">
         <div className="kv"><span className="k">Name</span><span>{user?.name}</span></div>
-        <div className="kv"><span className="k">Role</span><span>{atsRoleLabel(user?.role)}</span></div>
+        <div className="kv"><span className="k">Role</span><span>{workRoleLabel(user)}</span></div>
       </div>
 
       <div className="section-label" style={{ marginTop: 18 }}>Edit your account</div>

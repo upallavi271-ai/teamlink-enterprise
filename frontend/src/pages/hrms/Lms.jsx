@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 export default function Lms() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [courses, setCourses] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [form, setForm] = useState({ title: '', category: '', duration: '' });

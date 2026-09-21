@@ -33,18 +33,39 @@ model User {
   name           String
   email          String   @unique
   passwordHash   String
-  // One login carries ONE product role today. The reference prototype gives each
-  // login three independent product roles (hrmsRole / atsRole / accountsRole) on
-  // the same account. That split touches every guard, route and screen in the
-  // app, so it is deliberately deferred: when it lands, add hrmsRole/atsRole/
-  // accountsRole here alongside `role`, backfill them from `role`, and switch
-  // middleware/auth.js requireRole() to read the product-specific column. Until
-  // then the Users screen derives per-product access from this single value —
-  // see backend/src/utils/roleAccess.js (PRODUCT_ACCESS).
+  // ONE EMPLOYEE = ONE USER = ONE LOGIN. `role` is the login's primary role
+  // code (SUPER_ADMIN … EMPLOYEE, CLIENT, CANDIDATE). It is not read directly
+  // by route guards any more: every guard goes through the permission engine
+  // in backend/src/utils/permissions.js, which resolves role -> RoleAccess
+  // matrix -> action, then applies data scope.
   role           String
   atsDepartment  String?
   clientId       String?
   client         Client?  @relation(fields: [clientId], references: [id])
+
+  // --- Identity & access (auth_rbac) -------------------------------------
+  // External candidate logins point at a Candidate row instead of an Employee.
+  // Plain scalar (no Prisma relation) so the migration stays ADD COLUMN only.
+  candidateId    String?
+
+  // Product access. Independent booleans — not every employee has every
+  // product. Null/absent is treated as "derive from designation" only at seed
+  // time; at runtime these are authoritative.
+  hrmsAccess     Boolean  @default(false)
+  atsAccess      Boolean  @default(false)
+  accountsAccess Boolean  @default(false)
+
+  // ATS working role, DERIVED from the employee's designation via the
+  // DesignationRole mapping table, or overridden per-user here. Never a
+  // department-qualified string like "Medical TL" — just "TL".
+  atsRole        String?
+  // Data scope. Comma-separated; empty/null means "the employee's own
+  // department / team". STLs carry several departments here.
+  atsScopeDepartments String?
+  atsScopeTeams       String?
+  atsScopeClients     String?
+  // Preferred landing workspace when several products are available.
+  landingWorkspace    String?
 
   // Login administration — the prototype's Users screen (usersView, line 9893).
   username       String?
@@ -1188,4 +1209,26 @@ model SyncLog {
   reason    String?
   recordRef String?
   createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Designation -> ATS role mapping (auth_rbac)
+//
+// THE mapping from HRMS designation to ATS working role. Configurable data,
+// never a switch statement: "Recruiter" -> RECRUITER, "TL" -> TL, and the
+// department the employee already sits in supplies the scope. The same ATS
+// role therefore works in any department — there is no "Medical TL" role.
+// Administration -> Users edits these rows.
+// ---------------------------------------------------------------------------
+model DesignationRole {
+  id          String   @id @default(cuid())
+  designation String   @unique
+  atsRole     String?  // RECRUITER | TL | STL | BDE | MANAGER | ASSISTANT_MANAGER | ADMIN | null
+  hrms        Boolean  @default(true)
+  ats         Boolean  @default(false)
+  accounts    Boolean  @default(false)
+  landing     String?  // ats | hrms | accounts — preferred workspace
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

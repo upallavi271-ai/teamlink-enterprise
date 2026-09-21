@@ -5,8 +5,8 @@ import {
   Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable,
 } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 // The prototype's ten Asset feature tiles, in its order (AS_FEATURES, line 4421).
 export const AS_FEATURES = [
@@ -24,7 +24,7 @@ export const AS_FEATURES = [
 
 export default function Assets({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [assets, setAssets] = useState([]);
   const [requests, setRequests] = useState([]);
   const [employees, setEmployees] = useState([]);

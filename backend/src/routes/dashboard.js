@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { requirementWhere, applicationWhere, scopeOf } = require('../utils/scope');
 const { STAGE_CODES, stageLabel } = require('../utils/atsVocab');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
@@ -284,9 +285,10 @@ router.get('/accounts', async (req, res) => {
 });
 
 router.get('/', async (req, res) => {
-  // A client only ever sees their own pipeline (prototype atsDashboard, line 6252).
-  const appScope = req.user.role === 'CLIENT' ? { requirement: { clientId: req.user.clientId } } : {};
-  const reqScope = req.user.role === 'CLIENT' ? { clientId: req.user.clientId } : {};
+  // Every dashboard number is scoped the way the lists behind it are: a client
+  // sees their own pipeline, a recruiter their own, a TL their department's.
+  const appScope = applicationWhere(req.user);
+  const reqScope = requirementWhere(req.user);
   const count = (where) => prisma.application.count({ where: { ...appScope, ...where } });
 
   const [
@@ -307,7 +309,17 @@ router.get('/', async (req, res) => {
     prisma.invoice.count({ where: { status: 'Pending' } }),
     prisma.invoice.count({ where: { status: 'Overdue' } }),
     prisma.application.groupBy({ by: ['stage'], where: appScope, _count: { stage: true } }),
-    prisma.user.findMany({ where: { role: 'RECRUITER' }, select: { id: true, name: true } }),
+    // Recruiter workload is scoped too: a Medical recruiter must not be shown
+    // the IT team's numbers.
+    prisma.user.findMany({
+      where: {
+        role: 'RECRUITER',
+        ...(scopeOf(req.user).global ? {} : scopeOf(req.user).departments.length
+          ? { OR: [{ atsDepartment: { in: scopeOf(req.user).departments } }, { id: req.user.id }] }
+          : { id: req.user.id }),
+      },
+      select: { id: true, name: true },
+    }),
   ]);
 
   // "Pipeline by stage": the prototype lists the 18 pipeline stages in order,

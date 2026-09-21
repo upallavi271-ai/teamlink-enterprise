@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 export default function Documents() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [documents, setDocuments] = useState([]);
   const [form, setForm] = useState({ title: '', category: 'Policy', mandatory: true, target: 'All Employees', uploadedDate: new Date().toISOString().slice(0, 10) });
 

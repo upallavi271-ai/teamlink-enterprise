@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Panel, PanelHead, EmptyMini, QaRow, Modal } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
 function SetTargetModal({ employees, onClose, onSaved }) {
@@ -55,7 +55,7 @@ function SetTargetModal({ employees, onClose, onSaved }) {
 
 export default function Targets() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [records, setRecords] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [open, setOpen] = useState(false);

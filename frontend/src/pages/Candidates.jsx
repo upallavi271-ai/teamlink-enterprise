@@ -9,6 +9,8 @@ import {
   CANDIDATE_EMPLOYMENT_TYPES, CANDIDATE_WORK_MODES, CANDIDATE_EDUCATION,
   stageBadgeClass, lifeStatusClass, aiStatusClass, protoDate, initials,
 } from '../atsVocab';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../permissions';
 
 // The prototype's Add Candidate modal (openAddCandidateModal, line 8150),
 // section by section: A Personal, B Professional, C Education, D Skills,
@@ -32,6 +34,7 @@ const EMPTY_FILTERS = {
 };
 
 export default function Candidates() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [candidates, setCandidates] = useState([]);
@@ -167,7 +170,9 @@ export default function Candidates() {
           <h1>Candidates &amp; Pipeline</h1>
           <div className="page-sub">{candidates.length} candidates in the database</div>
         </div>
-        <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Candidate</button>
+        {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
+          <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Candidate</button>
+        )}
       </div>
 
       {showForm && (

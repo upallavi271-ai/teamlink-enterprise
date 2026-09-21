@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
+import { isHR as hasHrmsAdmin } from '../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 // Generic list + create + (optional) status-decision page for the EmployeeRecord-backed
 // HRMS areas (KT, Targets, Resignation, Recognition, Disciplinary, Shift Roster, Timesheet,
@@ -28,7 +28,7 @@ export default function SimpleRecordPage({
   createByHrOnly = false, // when true, only HR roles see the create form (e.g. assigning goals/assets)
 }) {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [records, setRecords] = useState([]);
   const [employees, setEmployees] = useState([]);
   const emptyForm = { employeeId: '', title: '', detail: '', date: '', amount: '', hours: '', category: '', priority: 'Medium', location: '', progressPct: 0 };

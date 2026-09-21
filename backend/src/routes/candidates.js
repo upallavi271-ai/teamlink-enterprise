@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+const { requirementWhere, matches, scopeOf, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { computeMatch } = require('../utils/matching');
 const {
@@ -10,8 +11,27 @@ const {
 
 const router = express.Router();
 router.use(requireAuth);
+// The whole router belongs to ATS: a login without ATS access, or without
+// view permission on this module, is refused at the door rather than handed
+// an empty list.
+router.use(requireProduct('ats'));
+router.use(requirePerm('ats', 'candidates', 'Candidate List', 'view'));
 
-const RECRUITING_ROLES = ['SUPER_ADMIN', 'ADMIN', 'RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'];
+// A candidate is reachable only through an application on a requirement the
+// signed-in user's scope already covers — so a Medical recruiter never sees an
+// IT candidate, and one client never sees another client's shortlist. Computed
+// once here from utils/scope.js and applied to both the list and the record.
+function visibleApplications(user, applications) {
+  const s = scopeOf(user);
+  if (s.global) return applications;
+  // A candidate sees only their OWN applications — never another candidate's,
+  // even on a record they somehow reached.
+  if (s.role === 'CANDIDATE') {
+    return (applications || []).filter((a) => a.candidateId === s.candidateId);
+  }
+  const where = requirementWhere(user);
+  return (applications || []).filter((a) => a.requirement && matches(a.requirement, where));
+}
 
 // Candidates already on file with the same email or phone. Mirrors the
 // prototype's checkCandidateDuplicate() — used both by the Add Candidate form
@@ -31,9 +51,8 @@ async function findDuplicates({ email, phone, excludeId }) {
 // recent application: Current Stage, Owner, Next Action, Due Date, Match Score,
 // Status and AI Interview (renderCandidateList, line 8385). Owner/Next Action/
 // Due Date are derived from the stage so they can never drift.
-function decorate(candidate, { clientScoped } = {}) {
-  let applications = candidate.applications || [];
-  if (clientScoped) applications = applications.filter((a) => a.requirement && a.requirement.clientId === clientScoped);
+function decorate(candidate, { user } = {}) {
+  const applications = user ? visibleApplications(user, candidate.applications) : (candidate.applications || []);
 
   // candidateStageOf(): the most recent application decides the current stage.
   const latest = [...applications].sort((a, b) => String(b.id).localeCompare(String(a.id)))[0] || null;
@@ -63,15 +82,19 @@ router.get('/', async (req, res) => {
     orderBy: { createdAt: 'desc' },
   });
 
-  // A client never browses the candidate master — they only see people who
-  // have actually been put forward on their own requirements.
-  if (req.user.role === 'CLIENT') {
-    const scoped = candidates
-      .filter((c) => c.applications.some((a) => a.requirement && a.requirement.clientId === req.user.clientId))
-      .map((c) => decorate(c, { clientScoped: req.user.clientId }));
-    return res.json(scoped);
+  // Nobody browses the whole candidate master except a global role. A client
+  // sees only people put forward on their own requirements; a recruiter only
+  // people on requirements assigned to them; a TL only their department's.
+  const s = scopeOf(req.user);
+  if (s.global) return res.json(candidates.map((c) => decorate(c, { user: req.user })));
+  if (s.role === 'CANDIDATE') {
+    const own = candidates.filter((c) => c.id === s.candidateId);
+    return res.json(own.map((c) => decorate(c, { user: req.user })));
   }
-  res.json(candidates.map((c) => decorate(c)));
+  const scoped = candidates
+    .filter((c) => visibleApplications(req.user, c.applications).length > 0)
+    .map((c) => decorate(c, { user: req.user }));
+  return res.json(scoped);
 });
 
 // Must stay above /:id so "check-duplicate" isn't read as a candidate id.
@@ -92,17 +115,24 @@ router.get('/:id', async (req, res) => {
   });
   if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
 
-  const clientScoped = req.user.role === 'CLIENT' ? req.user.clientId : null;
-  const decorated = decorate(candidate, { clientScoped });
-  if (clientScoped && decorated.applications.length === 0) {
-    return res.status(403).json({ error: 'This record is outside your client scope' });
+  const s = scopeOf(req.user);
+  const decorated = decorate(candidate, { user: req.user });
+  // Server-side scope. A candidate login reaches exactly one record — its own.
+  // Everyone else reaches a candidate only through an application on a
+  // requirement their scope covers; no such application means refused, not
+  // rendered empty.
+  if (s.role === 'CANDIDATE') {
+    if (candidate.id !== s.candidateId) return res.status(403).json(OUT_OF_SCOPE);
+  } else if (!s.global && decorated.applications.length === 0) {
+    return res.status(403).json(OUT_OF_SCOPE);
   }
 
   // "Matching Requirements" tab: open requirements this candidate is not
   // already in the pipeline for, down to 50% (prototype candidateDetail).
+  // Scoped the same way, so a client never sees another client's openings.
   const linked = new Set(decorated.applications.map((a) => a.requirementId));
   const open = await prisma.requirement.findMany({
-    where: { status: 'OPEN', ...(clientScoped ? { clientId: clientScoped } : {}) },
+    where: { status: 'OPEN', ...requirementWhere(req.user) },
     include: { client: true },
   });
   const matchingRequirements = open
@@ -155,7 +185,7 @@ function pickCandidate(body) {
   return data;
 }
 
-router.post('/', requireRole(...RECRUITING_ROLES), async (req, res) => {
+router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), async (req, res) => {
   const { email, phone, allowDuplicate } = req.body;
   const data = pickCandidate(req.body);
   // Prototype saveNewCandidate() (line 8304) required fields, in its order.
@@ -208,7 +238,7 @@ router.post('/', requireRole(...RECRUITING_ROLES), async (req, res) => {
   res.status(201).json({ ...candidate, application });
 });
 
-router.put('/:id', requireRole(...RECRUITING_ROLES), async (req, res) => {
+router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res) => {
   const candidate = await prisma.candidate.update({ where: { id: req.params.id }, data: pickCandidate(req.body) });
   await logAudit({ userId: req.user.id, action: 'Candidate updated', entity: 'Candidate', entityId: candidate.id });
   res.json(candidate);

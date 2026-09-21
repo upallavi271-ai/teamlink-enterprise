@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PanelPad, AssignRow, EmptyMini, TwoCol } from '../../components/proto.jsx';
+import { isAdmin } from '../../permissions';
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 
 export default function OrgStructure() {
   const { user } = useAuth();
-  const canEdit = ADMIN_ROLES.includes(user?.role);
+  const canEdit = isAdmin(user);
   const [departments, setDepartments] = useState([]);
   const [teams, setTeams] = useState([]);
   const [employees, setEmployees] = useState([]);

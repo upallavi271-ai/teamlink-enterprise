@@ -1,12 +1,11 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const STATUSES = ['Available', 'Assigned', 'In Repair', 'Retired'];
 
 // The company asset inventory behind Employee Services → Assets. Unlike the
@@ -43,7 +42,7 @@ router.get('/', async (req, res) => {
   res.json(assets.map(present));
 });
 
-router.post('/', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async (req, res) => {
   const { name, category, purchaseDate, warrantyUntil } = req.body;
   if (!name) return res.status(400).json({ error: 'An asset name is required' });
   const asset = await prisma.asset.create({
@@ -63,7 +62,7 @@ router.post('/', requireRole(...HR_ROLES), async (req, res) => {
 });
 
 // Assign (or transfer) an asset to an employee.
-router.patch('/:id/assign', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/assign', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const { employeeId } = req.body;
   const asset = await prisma.asset.findUnique({ where: { id: req.params.id } });
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
@@ -78,7 +77,7 @@ router.patch('/:id/assign', requireRole(...HR_ROLES), async (req, res) => {
   res.json(present(updated));
 });
 
-router.patch('/:id/return', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/return', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const asset = await prisma.asset.findUnique({ where: { id: req.params.id }, include: { assignedTo: true } });
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   const updated = await prisma.asset.update({
@@ -95,7 +94,7 @@ router.patch('/:id/return', requireRole(...HR_ROLES), async (req, res) => {
 });
 
 // Toggle between In Repair and Available.
-router.patch('/:id/maintenance', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/maintenance', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const asset = await prisma.asset.findUnique({ where: { id: req.params.id } });
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   const status = asset.status === 'In Repair' ? 'Available' : 'In Repair';
@@ -108,7 +107,7 @@ router.patch('/:id/maintenance', requireRole(...HR_ROLES), async (req, res) => {
 });
 
 // Retiring keeps the record — it is never deleted.
-router.patch('/:id/retire', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/retire', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const asset = await prisma.asset.findUnique({ where: { id: req.params.id } });
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   const updated = await prisma.asset.update({
@@ -120,7 +119,7 @@ router.patch('/:id/retire', requireRole(...HR_ROLES), async (req, res) => {
   res.json(present(updated));
 });
 
-router.patch('/:id', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const { name, category, purchaseDate, warrantyUntil, status } = req.body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${STATUSES.join(', ')}` });
   const updated = await prisma.asset.update({

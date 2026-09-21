@@ -1,67 +1,29 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
-// The prototype's login (renderLogin, line 1997) is a passwordless role picker.
-// This repo is public, so the look is reproduced exactly — the same
-// login-shell / login-card / logo-lockup / role-opt markup, the same twelve
-// roles and roleDesc() copy, the same conditional Client and Candidate
-// pickers — but a real password field and the existing JWT flow sit behind it.
-// Picking a role only prefills that role's demo email.
-const ROLES = ['Super Admin', 'Admin', 'Manager', 'Assistant Manager', 'STL', 'TL',
-  'Recruiter', 'BDE', 'Client', 'Accountant', 'Employee', 'Candidate'];
-
-// roleDesc(), prototype line 2022 — verbatim.
-const ROLE_DESC = {
-  'Super Admin': 'Full access', Admin: 'Full access', Manager: 'Cross-module oversight',
-  'Assistant Manager': 'Team oversight', STL: 'Senior TL scope', TL: 'Team scope',
-  Recruiter: 'ATS recruiting', BDE: 'Client-facing sales', Client: 'Own requirements only',
-  Accountant: 'Accounts only', Employee: 'HRMS self-service',
-  Candidate: 'Own profile & applications only',
-};
-
-// Seeded demo logins (backend/prisma/seed.js). Roles with no seeded login
-// leave the email box alone so you can type a real one.
-const ROLE_EMAIL = {
-  'Super Admin': 'admin@teamlink.test',
-  Admin: 'admin@teamlink.test',
-  TL: 'tl@teamlink.test',
-  Recruiter: 'recruiter@teamlink.test',
-  BDE: 'bde@teamlink.test',
-  Client: 'client@teamlink.test',
-  Accountant: 'accountant@teamlink.test',
-  Employee: 'employee@teamlink.test',
-};
-
-// The prototype's client picker lists every client in its mock state. Here the
-// client you sign in as is whichever client login you use, so the picker lists
-// the seeded client logins.
-const CLIENT_LOGINS = [
-  { email: 'client@teamlink.test', label: 'Orbit Software Solutions (CLI-001)' },
-];
-
+// Email and password. Nothing else.
+//
+// The prototype's login was a role picker — twelve clickable role tiles, a
+// client dropdown and a candidate dropdown. It is gone, here and everywhere
+// else: a person's role is derived from their employee record (department +
+// designation), never chosen at sign-in. No demo password is displayed.
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [role, setRole] = useState('Admin');
-  const [clientEmail, setClientEmail] = useState(CLIENT_LOGINS[0].email);
-  const [email, setEmail] = useState('admin@teamlink.test');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-
-  function selectRole(r) {
-    setRole(r);
-    if (ROLE_EMAIL[r]) setEmail(r === 'Client' ? clientEmail : ROLE_EMAIL[r]);
-  }
 
   async function onSubmit(e) {
     e.preventDefault();
     setBusy(true);
     setError('');
     try {
-      await login(email, password);
-      navigate('/');
+      const user = await login(email, password);
+      navigate(user?.landingPath || '/', { replace: true });
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {
@@ -75,72 +37,74 @@ export default function Login() {
         <div className="logo-lockup">
           <div className="mark">TL</div>
           <div style={{ fontWeight: 600, fontSize: 16 }}>TeamLink Consultants</div>
-          <div className="small-muted">TeamLink.Enterprise</div>
-        </div>
-        <div className="small-muted" style={{ marginBottom: 12 }}>
-          Pick a role to prefill its demo login, then enter your password. One login covers HRMS, ATS and Accounts.
-        </div>
-        <div id="roleList">
-          {ROLES.map((r) => (
-            <div
-              key={r}
-              className={'role-opt' + (role === r ? ' sel' : '')}
-              data-role={r}
-              onClick={() => selectRole(r)}
-            >
-              <span>{r}</span>
-              <span className="small-muted">{ROLE_DESC[r]}</span>
-            </div>
-          ))}
+          <div className="small-muted">HRMS · TeamLink.Enterprise</div>
         </div>
 
-        {role === 'Client' && (
-          <div id="clientPickerWrap" style={{ marginTop: 10 }}>
-            <label>Which client?</label>
-            <select
-              id="clientPicker"
-              value={clientEmail}
-              onChange={(e) => { setClientEmail(e.target.value); setEmail(e.target.value); }}
-            >
-              {CLIENT_LOGINS.map((c) => <option key={c.email} value={c.email}>{c.label}</option>)}
-            </select>
-          </div>
-        )}
-
-        {role === 'Candidate' && (
-          <div id="candPickerWrap" style={{ marginTop: 10 }}>
-            <label>Which candidate?</label>
-            <div className="small-muted">
-              Candidates do not sign in here — applications and status live on the{' '}
-              <Link className="link-btn" to="/careers">public Job Portal</Link>.
-            </div>
-          </div>
-        )}
+        <div className="small-muted" style={{ marginBottom: 16 }}>
+          Sign in with your work email. One login covers HRMS, ATS and Accounts —
+          your access follows your role.
+        </div>
 
         <div style={{ marginTop: 10 }}>
           <label htmlFor="loginEmail">Email</label>
-          <input id="loginEmail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </div>
-        <div style={{ marginTop: 10 }}>
-          <label htmlFor="loginPassword">Password</label>
           <input
-            id="loginPassword"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
+            id="loginEmail"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
+            placeholder="you@teamlink.test"
             required
           />
         </div>
-        {error && <div className="error-text">{error}</div>}
+
+        <div style={{ marginTop: 12 }}>
+          <label htmlFor="loginPassword">Password</label>
+          <div style={{ position: 'relative' }}>
+            <input
+              id="loginPassword"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              style={{ paddingRight: 64 }}
+              required
+            />
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              style={{
+                position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 0, cursor: 'pointer', fontSize: 12,
+              }}
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 8, textAlign: 'right' }}>
+          <button
+            type="button"
+            className="link-btn"
+            style={{ background: 'none', border: 0, cursor: 'pointer', fontSize: 12 }}
+            onClick={() => setError('Ask an administrator to reset your password from Administration → Users.')}
+          >
+            Forgot Password?
+          </button>
+        </div>
+
+        {error && <div className="error-text" style={{ marginTop: 10 }}>{error}</div>}
 
         <button
           className="btn btn-primary"
-          style={{ width: '100%', justifyContent: 'center', marginTop: 12 }}
+          style={{ width: '100%', justifyContent: 'center', marginTop: 16 }}
           type="submit"
           disabled={busy}
         >
-          {busy ? 'Logging in…' : 'Log In'}
+          {busy ? 'Signing in…' : 'Sign In'}
         </button>
       </form>
     </div>

@@ -1,12 +1,14 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const {
   ROLE_FEATURE_ACTIONS, ROLE_ACCESS_MODULES, CATALOG_ROLES, ROLE_SCOPE_DESC,
-  PRODUCT_ACCESS, moduleById, mergeAccess, sanitizeFeatures,
+  moduleById, sanitizeFeatures,
 } = require('../utils/roleAccess');
+const { mergeAccess, invalidateRoleAccess } = require('../utils/permissions');
+const { invalidateDesignationMap, FALLBACK_DESIGNATION_MAP } = require('../utils/identity');
 const {
   INTEGRATION_CATALOG, INTEGRATION_GROUPS, SYNC_ENTITIES, ORG_STRUCTURE_DEFAULT,
   COMPANY_POLICIES, COMPANY_DEFAULTS, EMP_TYPES, EMP_STATUSES, EMP_GENDERS,
@@ -17,9 +19,32 @@ const { DEPTS, LOCS } = require('../utils/atsVocab');
 const router = express.Router();
 router.use(requireAuth);
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
-const SUPER_ADMIN_ONLY = ['SUPER_ADMIN'];
-const ALL_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE'];
+const ALL_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE', 'CANDIDATE'];
+const ATS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'CLIENT'];
+
+// The Users screen's product columns used to be DERIVED from the single role.
+// They are stored, editable columns now: hrmsAccess / atsAccess /
+// accountsAccess, plus the derived-but-overridable atsRole and the data scope.
+function productAccessOf(user) {
+  return {
+    hrms: user.hrmsAccess ? 'Yes' : 'No Access',
+    ats: user.atsAccess ? (user.atsRole || 'Yes') : 'No Access',
+    accounts: user.accountsAccess ? 'Yes' : 'No Access',
+  };
+}
+
+function scopeLabelOf(user, emp) {
+  if (user.role === 'CLIENT') return `Client: ${user.client?.name || 'not assigned'}`;
+  if (user.role === 'CANDIDATE') return 'Own profile only';
+  if (['SUPER_ADMIN', 'ADMIN'].includes(user.role)) return 'All departments';
+  const depts = String(user.atsScopeDepartments || user.atsDepartment || emp?.department || '')
+    .split(',').map((d) => d.trim()).filter(Boolean);
+  const teams = String(user.atsScopeTeams || user.team || emp?.team || '')
+    .split(',').map((d) => d.trim()).filter(Boolean);
+  if (!depts.length) return 'Own records';
+  if (user.atsRole === 'TL' && teams.length) return `${depts.join(', ')} · team ${teams.join(', ')}`;
+  return `${depts.join(', ')} department${depts.length > 1 ? 's' : ''}`;
+}
 
 // ---- Users ----
 //
@@ -27,13 +52,55 @@ const ALL_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'
 // line 9893) shows fifteen columns per login and lets an admin change roles,
 // suspend a login and reset a password inline.
 //
-// NOTE ON ROLES: the prototype gives each login three independent product roles
-// (hrmsRole / atsRole / accountsRole). Main carries one User.role, and splitting
-// it is a separate, deliberately deferred change. The three product columns
-// below are therefore DERIVED read-only (utils/roleAccess.js PRODUCT_ACCESS).
-// When the split lands, replace `productAccess` with the three stored columns
-// and turn the single `role` select in the UI into three.
+// Product access is REAL now: hrmsAccess / atsAccess / accountsAccess are
+// independent stored booleans, the ATS working role is derived from the
+// employee's designation (and overridable per user), and the data scope is
+// stored departments / teams / clients. There is never a second login for the
+// same person, and the role is never chosen at sign-in.
 const USER_STATUSES = ['Active', 'Inactive', 'Suspended'];
+
+// The designation -> ATS role mapping, as data. Falls back to the seeded
+// defaults until the table has rows.
+async function designationRows() {
+  const rows = await prisma.designationRole.findMany({ orderBy: [{ position: 'asc' }, { designation: 'asc' }] });
+  return rows.length ? rows : FALLBACK_DESIGNATION_MAP;
+}
+
+// The default product reach of each role, read off the designation mapping so
+// there is one source for it. Display only: what a login actually has is its
+// own hrmsAccess / atsAccess / accountsAccess columns.
+async function defaultProductAccessByRole() {
+  const rows = await designationRows();
+  const out = {};
+  for (const role of CATALOG_ROLES) {
+    const row = rows.find((r) => r.atsRole === role);
+    const external = ['CLIENT', 'CANDIDATE'].includes(role);
+    const hrms = row ? row.hrms : !external;
+    const ats = row ? row.ats : external;
+    const accounts = row ? row.accounts : (role === 'ACCOUNTANT' || external);
+    out[role] = {
+      hrms: hrms ? 'Yes' : 'No Access',
+      ats: ats ? (role === 'CANDIDATE' ? 'Candidate' : role) : 'No Access',
+      accounts: accounts ? 'Yes' : 'No Access',
+    };
+  }
+  return out;
+}
+
+// Normalises the product / role / scope half of a Users-screen payload.
+function accessPatch(body) {
+  const data = {};
+  const p = body.products || {};
+  if (body.hrmsAccess !== undefined || p.hrms !== undefined) data.hrmsAccess = !!(body.hrmsAccess ?? p.hrms);
+  if (body.atsAccess !== undefined || p.ats !== undefined) data.atsAccess = !!(body.atsAccess ?? p.ats);
+  if (body.accountsAccess !== undefined || p.accounts !== undefined) data.accountsAccess = !!(body.accountsAccess ?? p.accounts);
+  if (body.atsRole !== undefined) data.atsRole = body.atsRole || null;
+  if (body.atsScopeDepartments !== undefined) data.atsScopeDepartments = body.atsScopeDepartments || null;
+  if (body.atsScopeTeams !== undefined) data.atsScopeTeams = body.atsScopeTeams || null;
+  if (body.atsScopeClients !== undefined) data.atsScopeClients = body.atsScopeClients || null;
+  if (body.landingWorkspace !== undefined) data.landingWorkspace = body.landingWorkspace || null;
+  return data;
+}
 
 // The wide row the Users table renders: login + linked employee + reach.
 async function shapeUser(user) {
@@ -52,7 +119,12 @@ async function shapeUser(user) {
     email: user.email,
     username: user.username || user.email,
     role: user.role,
-    productAccess: PRODUCT_ACCESS[user.role] || { hrms: 'No Access', ats: 'No Access', accounts: 'No Access' },
+    productAccess: productAccessOf(user),
+    products: { hrms: !!user.hrmsAccess, ats: !!user.atsAccess, accounts: !!user.accountsAccess },
+    atsRole: user.atsRole || null,
+    atsScopeDepartments: user.atsScopeDepartments || '',
+    atsScopeTeams: user.atsScopeTeams || '',
+    atsScopeClients: user.atsScopeClients || '',
     status: user.status || 'Active',
     employeeId: emp ? emp.employeeCode : null,
     employeeRecordId: emp ? emp.id : null,
@@ -61,12 +133,9 @@ async function shapeUser(user) {
     branch: user.branch || emp?.branch || emp?.location || null,
     team: user.team || emp?.team || null,
     atsDepartment: user.atsDepartment,
-    // "Scope — how far their access reaches", the prototype's userScopeLabel().
-    scope: user.role === 'CLIENT'
-      ? `Client: ${user.client?.name || 'not assigned'}`
-      : user.atsDepartment
-        ? `${user.atsDepartment} department`
-        : ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.role) ? 'All departments' : 'Own records',
+    // "Scope — how far their access reaches", the prototype's userScopeLabel(),
+    // now computed from the real stored scope rather than one department field.
+    scope: scopeLabelOf(user, emp),
     assignedClients: [...new Set(clientNames)],
     assignedRequirements: requirements.length,
     lastLoginAt: user.lastLoginAt,
@@ -74,7 +143,7 @@ async function shapeUser(user) {
   };
 }
 
-router.get('/users', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/users', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const users = await prisma.user.findMany({
     include: { employee: true, client: true },
     orderBy: { name: 'asc' },
@@ -83,7 +152,7 @@ router.get('/users', requireRole(...ADMIN_ROLES), async (req, res) => {
 });
 
 // Employees with no login yet — the "Create login" picker on the Users screen.
-router.get('/users/employees-without-login', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/users/employees-without-login', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const employees = await prisma.employee.findMany({
     where: { userId: null },
     select: { id: true, employeeCode: true, name: true, email: true, department: true, team: true, designation: true, branch: true, location: true },
@@ -92,7 +161,7 @@ router.get('/users/employees-without-login', requireRole(...ADMIN_ROLES), async 
   res.json(employees);
 });
 
-router.post('/users', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/users', requirePerm(null, 'administration', 'Users', 'create'), async (req, res) => {
   const { name, email, password, role, atsDepartment, clientId, employeeId, branch, team, username, status } = req.body;
   if (!name || !email || !password || !role) return res.status(400).json({ error: 'name, email, password and role are required' });
   if (!ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
@@ -107,6 +176,7 @@ router.post('/users', requireRole(...ADMIN_ROLES), async (req, res) => {
     data: {
       name, email, passwordHash, role, atsDepartment, clientId,
       branch, team, username: username || email, status: status || 'Active',
+      ...accessPatch(req.body),
     },
   });
 
@@ -122,7 +192,7 @@ router.post('/users', requireRole(...ADMIN_ROLES), async (req, res) => {
   res.status(201).json(await shapeUser(await prisma.user.findUnique({ where: { id: user.id }, include: { employee: true, client: true } })));
 });
 
-router.put('/users/:id', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/users/:id', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const { name, role, atsDepartment, branch, team, status, username } = req.body;
   if (role && !ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
   if (status && !USER_STATUSES.includes(status)) return res.status(400).json({ error: 'Unknown status' });
@@ -131,7 +201,7 @@ router.put('/users/:id', requireRole(...ADMIN_ROLES), async (req, res) => {
 
   const user = await prisma.user.update({
     where: { id: req.params.id },
-    data: { name, role, atsDepartment, branch, team, status, username },
+    data: { name, role, atsDepartment, branch, team, status, username, ...accessPatch(req.body) },
     include: { employee: true, client: true },
   });
   if (role && role !== existing.role) {
@@ -147,7 +217,7 @@ router.put('/users/:id', requireRole(...ADMIN_ROLES), async (req, res) => {
 });
 
 // Suspend / restore a login without touching its role.
-router.post('/users/:id/toggle-status', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/users/:id/toggle-status', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'User not found' });
   if (existing.id === req.user.id) return res.status(409).json({ error: 'You cannot disable your own login' });
@@ -157,7 +227,7 @@ router.post('/users/:id/toggle-status', requireRole(...ADMIN_ROLES), async (req,
   res.json(await shapeUser(user));
 });
 
-router.post('/users/:id/reset-password', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/users/:id/reset-password', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const { password } = req.body;
   if (!password || String(password).length < 6) return res.status(400).json({ error: 'A password of at least 6 characters is required' });
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
@@ -166,6 +236,45 @@ router.post('/users/:id/reset-password', requireRole(...ADMIN_ROLES), async (req
   // The new password is never echoed back or logged.
   await logAudit({ userId: req.user.id, action: `Password reset for ${existing.name}`, entity: 'User', entityId: existing.id, toValue: 'Reset' });
   res.json({ ok: true });
+});
+
+// ---- Designation -> ATS role mapping ----
+//
+// THE mapping. Data, not a switch statement: change "Recruiter -> RECRUITER"
+// here and every Recruiter in every department follows, because the department
+// supplies the scope and the designation supplies the role. There is no
+// "Medical TL" anywhere in the system, only department=Medical + designation=TL.
+router.get('/designation-roles', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
+  res.json({
+    rows: await designationRows(),
+    atsRoles: ATS_ROLES,
+    designations: [...new Set((await prisma.employee.findMany({ select: { designation: true } }))
+      .map((e) => e.designation).filter(Boolean))].sort(),
+  });
+});
+
+router.put('/designation-roles/:designation', requirePerm(null, 'administration', 'Users', 'configure'), async (req, res) => {
+  const designation = decodeURIComponent(req.params.designation);
+  const { atsRole, hrms, ats, accounts, landing } = req.body;
+  if (atsRole && !ATS_ROLES.includes(atsRole)) return res.status(400).json({ error: 'Unknown ATS role' });
+  const data = {
+    atsRole: atsRole || null,
+    hrms: hrms !== undefined ? !!hrms : true,
+    ats: ats !== undefined ? !!ats : !!atsRole,
+    accounts: accounts !== undefined ? !!accounts : false,
+    landing: landing || null,
+  };
+  const row = await prisma.designationRole.upsert({
+    where: { designation },
+    create: { designation, ...data },
+    update: data,
+  });
+  invalidateDesignationMap();
+  await logAudit({
+    userId: req.user.id, action: 'Designation mapping changed', entity: 'DesignationRole',
+    entityId: designation, toValue: atsRole || 'No ATS role',
+  });
+  res.json(row);
 });
 
 // ---- Role catalog ----
@@ -205,7 +314,7 @@ router.get('/role-catalog/modules', (req, res) => {
 });
 
 // One role's full matrix: every module, every feature, every action.
-router.get('/role-catalog/:role/access', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Role Catalog', 'view'), async (req, res) => {
   const { role } = req.params;
   if (!CATALOG_ROLES.includes(role)) return res.status(404).json({ error: 'Unknown role' });
   const rows = await prisma.roleAccess.findMany({ where: { role } });
@@ -231,11 +340,13 @@ async function upsertRoleAccess(role, moduleId, patch) {
     create: { role, moduleId, moduleEnabled: next.moduleEnabled, features: JSON.stringify(next.features) },
     update: { moduleEnabled: next.moduleEnabled, features: JSON.stringify(next.features) },
   });
+  // The permission engine caches the matrix; an admin's edit must bite now.
+  invalidateRoleAccess(role);
   return next;
 }
 
 // Turn a whole module on or off for a role.
-router.put('/role-catalog/:role/modules/:moduleId', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/role-catalog/:role/modules/:moduleId', requirePerm(null, 'administration', 'Role Catalog', 'configure'), async (req, res) => {
   const { role, moduleId } = req.params;
   if (!CATALOG_ROLES.includes(role)) return res.status(404).json({ error: 'Unknown role' });
   const mod = moduleById(moduleId);
@@ -252,7 +363,7 @@ router.put('/role-catalog/:role/modules/:moduleId', requireRole(...ADMIN_ROLES),
 });
 
 // Save one module's feature x action grid for a role.
-router.put('/role-catalog/:role/modules/:moduleId/features', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/role-catalog/:role/modules/:moduleId/features', requirePerm(null, 'administration', 'Role Catalog', 'configure'), async (req, res) => {
   const { role, moduleId } = req.params;
   if (!CATALOG_ROLES.includes(role)) return res.status(404).json({ error: 'Unknown role' });
   const mod = moduleById(moduleId);
@@ -278,7 +389,7 @@ router.get('/departments', async (req, res) => {
   res.json(departments);
 });
 
-router.post('/departments', requireRole(...SUPER_ADMIN_ONLY), async (req, res) => {
+router.post('/departments', requirePerm(null, 'administration', 'Departments & Teams', 'create'), async (req, res) => {
   const { name } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   try {
@@ -291,7 +402,7 @@ router.post('/departments', requireRole(...SUPER_ADMIN_ONLY), async (req, res) =
   }
 });
 
-router.delete('/departments/:id', requireRole(...SUPER_ADMIN_ONLY), async (req, res) => {
+router.delete('/departments/:id', requirePerm(null, 'administration', 'Departments & Teams', 'delete'), async (req, res) => {
   const department = await prisma.department.findUnique({ where: { id: req.params.id } });
   if (!department) return res.status(404).json({ error: 'Department not found' });
   await prisma.team.deleteMany({ where: { departmentId: req.params.id } });
@@ -300,7 +411,7 @@ router.delete('/departments/:id', requireRole(...SUPER_ADMIN_ONLY), async (req, 
   res.json({ ok: true });
 });
 
-router.post('/departments/:id/teams', requireRole(...SUPER_ADMIN_ONLY), async (req, res) => {
+router.post('/departments/:id/teams', requirePerm(null, 'administration', 'Departments & Teams', 'create'), async (req, res) => {
   const { name } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   const department = await prisma.department.findUnique({ where: { id: req.params.id } });
@@ -315,7 +426,7 @@ router.post('/departments/:id/teams', requireRole(...SUPER_ADMIN_ONLY), async (r
   }
 });
 
-router.delete('/teams/:id', requireRole(...SUPER_ADMIN_ONLY), async (req, res) => {
+router.delete('/teams/:id', requirePerm(null, 'administration', 'Departments & Teams', 'delete'), async (req, res) => {
   const team = await prisma.team.findUnique({ where: { id: req.params.id } });
   if (!team) return res.status(404).json({ error: 'Team not found' });
   await prisma.team.delete({ where: { id: req.params.id } });
@@ -359,7 +470,7 @@ router.get('/company', async (req, res) => {
   res.json(shapeCompany(company, departments, teams));
 });
 
-router.put('/company', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/company', requirePerm(null, 'administration', 'Company Setup', 'edit'), async (req, res) => {
   const { name, email, phone, hq, address } = req.body;
   let company = await prisma.company.findFirst();
   if (!company) company = await prisma.company.create({ data: { name: name || COMPANY_DEFAULTS.name } });
@@ -412,7 +523,7 @@ router.post('/notifications/read-all', async (req, res) => {
 });
 
 // ---- Audit logs ----
-router.get('/audit', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/audit', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res) => {
   const logs = await prisma.auditLog.findMany({ include: { user: true }, orderBy: { createdAt: 'desc' }, take: 200 });
   res.json(logs);
 });
@@ -447,7 +558,8 @@ function shapeEmployeeMgmtRow(e) {
     employmentStatus: e.employmentStatus || 'Active',
     userId: u ? u.id : null,
     role: u ? u.role : null,
-    productAccess: u ? (PRODUCT_ACCESS[u.role] || null) : null,
+    productAccess: u ? productAccessOf(u) : null,
+    atsRole: u ? u.atsRole : null,
     atsDepartment: u ? u.atsDepartment : null,
     // "No login" is the prototype's own wording for an employee with no account.
     loginStatus: u ? (u.status || 'Active') : 'No login',
@@ -457,13 +569,13 @@ function shapeEmployeeMgmtRow(e) {
 
 const EMP_MGMT_INCLUDE = { user: true, reportingManager: true };
 
-router.get('/employee-management', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/employee-management', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const employees = await prisma.employee.findMany({ include: EMP_MGMT_INCLUDE, orderBy: { name: 'asc' } });
   res.json(employees.map(shapeEmployeeMgmtRow));
 });
 
 // The option lists the Add Employee modal and the filter row render.
-router.get('/employee-management/options', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/employee-management/options', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const [employees, departments] = await Promise.all([
     prisma.employee.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
     prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
@@ -479,13 +591,17 @@ router.get('/employee-management/options', requireRole(...ADMIN_ROLES), async (r
     locations: LOCS,
     managerNames: [...new Set(employees.map((e) => e.name))],
     roles: CATALOG_ROLES,
-    productAccess: PRODUCT_ACCESS,
+    designationRoles: await designationRows(),
+    // What a new login of each role gets by default, read off the designation
+    // mapping. Display only — the authoritative values are the per-user
+    // booleans, editable on Administration -> Users.
+    productAccess: await defaultProductAccessByRole(),
   });
 });
 
 // Add Employee — the employee record and the login are created together.
 // One employee, one user, one login; a second account is never needed later.
-router.post('/employee-management', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/employee-management', requirePerm(null, 'administration', 'Users', 'create'), async (req, res) => {
   const {
     name, dateOfBirth, gender, email, phone, location, department, designation,
     reportingManagerId, stl, tl, team, dateOfJoining, employeeType, employmentStatus,
@@ -550,7 +666,7 @@ router.post('/employee-management', requireRole(...ADMIN_ROLES), async (req, res
 
 // Create Login — attaches a login to an employee who has none. Never a second
 // identity for someone who already has one.
-router.post('/employee-management/:id/create-login', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/employee-management/:id/create-login', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (employee.userId) return res.status(409).json({ error: 'That employee already has a login' });
@@ -579,7 +695,7 @@ router.post('/employee-management/:id/create-login', requireRole(...ADMIN_ROLES)
 });
 
 // Activate / Deactivate the employee's login.
-router.post('/employee-management/:id/toggle-login', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/employee-management/:id/toggle-login', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
   if (!employee || !employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
   if (employee.user.id === req.user.id) return res.status(409).json({ error: 'You cannot disable your own login' });
@@ -591,7 +707,7 @@ router.post('/employee-management/:id/toggle-login', requireRole(...ADMIN_ROLES)
   res.json(shapeEmployeeMgmtRow(fresh));
 });
 
-router.post('/employee-management/:id/reset-password', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/employee-management/:id/reset-password', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const { password } = req.body;
   if (!password || String(password).length < 6) return res.status(400).json({ error: 'A password of at least 6 characters is required' });
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
@@ -604,7 +720,7 @@ router.post('/employee-management/:id/reset-password', requireRole(...ADMIN_ROLE
 
 // Assign Roles — product access on the SAME login, plus the reporting chain
 // (STL / TL) the prototype's table shows but never writes.
-router.put('/employee-management/:id/roles', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/employee-management/:id/roles', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const { role, atsDepartment, stl, tl } = req.body;
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
@@ -632,7 +748,7 @@ router.put('/employee-management/:id/roles', requireRole(...ADMIN_ROLES), async 
 });
 
 // The View modal: the employee's details, their login and their recent activity.
-router.get('/employee-management/:id', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/employee-management/:id', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   // NOTE: the prototype filters its activity list by `a.record`, a key logAudit
@@ -682,7 +798,7 @@ router.get('/org-structure', async (req, res) => {
   });
 });
 
-router.post('/org-structure', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/org-structure', requirePerm(null, 'administration', 'Organization Structure', 'create'), async (req, res) => {
   const { name, description } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'A role name is required' });
   const rows = await orgRoles();
@@ -695,7 +811,7 @@ router.post('/org-structure', requireRole(...ADMIN_ROLES), async (req, res) => {
 
 // Drag-reorder: the client sends the whole chain in its new order. Declared
 // before /:id so "reorder" is never read as a role id.
-router.put('/org-structure/reorder', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/org-structure/reorder', requirePerm(null, 'administration', 'Organization Structure', 'edit'), async (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order) || !order.length) return res.status(400).json({ error: 'order must be an array of role ids' });
   const rows = await orgRoles();
@@ -715,7 +831,7 @@ router.put('/org-structure/reorder', requireRole(...ADMIN_ROLES), async (req, re
   res.json(await prisma.orgRole.findMany({ orderBy: { position: 'asc' } }));
 });
 
-router.put('/org-structure/:id', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/org-structure/:id', requirePerm(null, 'administration', 'Organization Structure', 'edit'), async (req, res) => {
   const { name, description, approveDays } = req.body;
   const existing = await prisma.orgRole.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Role not found' });
@@ -732,7 +848,7 @@ router.put('/org-structure/:id', requireRole(...ADMIN_ROLES), async (req, res) =
 });
 
 // Pause / Resume — a paused role is skipped when a request escalates.
-router.post('/org-structure/:id/toggle-pause', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/org-structure/:id/toggle-pause', requirePerm(null, 'administration', 'Organization Structure', 'edit'), async (req, res) => {
   const existing = await prisma.orgRole.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Role not found' });
   if (existing.system) return res.status(409).json({ error: 'A system role cannot be paused' });
@@ -799,7 +915,7 @@ async function jobPortalStats() {
   return { candidates, applications, requirements, needsMapping, failed };
 }
 
-router.get('/integrations', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/integrations', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const rows = await prisma.integration.findMany();
   const channels = INTEGRATION_CATALOG.map((c) => shapeIntegration(c, rows.find((r) => r.id === c.id)));
   res.json({
@@ -811,7 +927,7 @@ router.get('/integrations', requireRole(...ADMIN_ROLES), async (req, res) => {
   });
 });
 
-router.get('/integrations/job-portal', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/integrations/job-portal', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const [stats, log, row] = await Promise.all([
     jobPortalStats(),
     prisma.syncLog.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
@@ -834,7 +950,7 @@ router.get('/integrations/job-portal', requireRole(...ADMIN_ROLES), async (req, 
 
 // Sync — for the Job Portal this really re-counts what has come across from
 // the public careers site and writes a log row. No external API is called.
-router.post('/integrations/job-portal/sync', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/integrations/job-portal/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const stats = await jobPortalStats();
   const synced = stats.candidates + stats.applications;
   const row = await integrationRow('jobportal');
@@ -860,7 +976,7 @@ router.post('/integrations/job-portal/sync', requireRole(...ADMIN_ROLES), async 
   res.json({ ok: true, synced, failed: stats.failed, previousState: row.state });
 });
 
-router.post('/integrations/job-portal/log/:id/retry', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/integrations/job-portal/log/:id/retry', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const entry = await prisma.syncLog.findUnique({ where: { id: req.params.id } });
   if (!entry) return res.status(404).json({ error: 'Log entry not found' });
   const updated = await prisma.syncLog.update({ where: { id: req.params.id }, data: { status: 'Success', reason: 'Retried successfully' } });
@@ -868,7 +984,7 @@ router.post('/integrations/job-portal/log/:id/retry', requireRole(...ADMIN_ROLES
   res.json(updated);
 });
 
-router.get('/integrations/:id/history', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/integrations/:id/history', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const events = await prisma.integrationEvent.findMany({ where: { integrationId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 25 });
@@ -883,7 +999,7 @@ router.get('/integrations/:id/history', requireRole(...ADMIN_ROLES), async (req,
 
 // Save & Connect — configuration only; the prototype never contacts a provider
 // and neither does this.
-router.put('/integrations/:id/configure', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const incoming = req.body.values || {};
@@ -905,7 +1021,7 @@ router.put('/integrations/:id/configure', requireRole(...ADMIN_ROLES), async (re
   res.json(shapeIntegration(channel, row));
 });
 
-router.post('/integrations/:id/connect', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/integrations/:id/connect', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const row = await integrationRow(channel.id);
@@ -923,7 +1039,7 @@ router.post('/integrations/:id/connect', requireRole(...ADMIN_ROLES), async (req
   res.json(shapeIntegration(channel, next));
 });
 
-router.post('/integrations/:id/disconnect', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const row = await integrationRow(channel.id);
@@ -933,7 +1049,7 @@ router.post('/integrations/:id/disconnect', requireRole(...ADMIN_ROLES), async (
   res.json(shapeIntegration(channel, next));
 });
 
-router.post('/integrations/:id/test', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const row = await integrationRow(channel.id);
@@ -957,7 +1073,7 @@ router.post('/integrations/:id/test', requireRole(...ADMIN_ROLES), async (req, r
   res.json({ ...shapeIntegration(channel, next), result });
 });
 
-router.post('/integrations/:id/sync', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   const row = await integrationRow(channel.id);

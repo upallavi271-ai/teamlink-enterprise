@@ -4,8 +4,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv, inr } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol } from '../components/proto.jsx';
+import { canRunPayroll, isAdmin as hasAdminAccess } from '../permissions';
 
-const PAYROLL_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 function monthLabel(m) {
@@ -653,8 +653,8 @@ function PayslipsTab({ canRun }) {
 
 export default function Payroll() {
   const { user } = useAuth();
-  const canRun = PAYROLL_ROLES.includes(user?.role);
-  const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role);
+  const canRun = canRunPayroll(user);
+  const isAdmin = hasAdminAccess(user);
   const [tab, setTab] = useState('dashboard');
 
   const banner = isAdmin

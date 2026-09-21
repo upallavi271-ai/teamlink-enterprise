@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import SimpleRecordPage from '../../components/SimpleRecordPage.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 function ShiftPatterns() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [patterns, setPatterns] = useState([]);
   const [form, setForm] = useState({ name: '', startTime: '', endTime: '' });
 

@@ -1,12 +1,11 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 // Inclusive calendar-day span of a leave request, used when the client doesn't
 // send an explicit `days` (e.g. a half-day request that overrides it).
@@ -49,7 +48,7 @@ async function ensureBalances(employeeIds) {
 
 router.get('/', async (req, res) => {
   const where = {};
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.json([]);
     where.employeeId = own.id;
@@ -84,7 +83,7 @@ router.post('/', async (req, res) => {
   const { type, fromDate, toDate, reason } = req.body;
   let employeeId = req.body.employeeId;
   let employee;
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
     employeeId = employee.id;
@@ -107,7 +106,7 @@ router.post('/', async (req, res) => {
 // Approving a request of leaveReasonThresholdDays or more requires picking one of
 // the configured approval reasons; rejecting always requires free text. Approvals
 // draw the days down from the employee's balance for that leave type.
-router.patch('/:id/decision', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'approve'), async (req, res) => {
   const { status, approvalReason, rejectReason } = req.body; // Approved | Rejected | Cancelled
   if (!['Approved', 'Rejected', 'Cancelled'].includes(status)) return res.status(400).json({ error: 'status must be Approved, Rejected or Cancelled' });
   const existing = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
@@ -158,7 +157,7 @@ router.patch('/:id/decision', requireRole(...HR_ROLES), async (req, res) => {
 router.get('/balances', async (req, res) => {
   const types = (await prisma.leaveType.findMany({ orderBy: { name: 'asc' } })).filter((t) => t.active);
   let employees;
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     employees = own ? [own] : [];
   } else {
@@ -186,7 +185,7 @@ router.get('/balances', async (req, res) => {
 
 // Adjust an employee's entitlement for one leave type (e.g. an opening balance
 // carried over from last year).
-router.put('/balances/:employeeId', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.put('/balances/:employeeId', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { type, total, taken } = req.body;
   if (!type) return res.status(400).json({ error: 'type is required' });
   const balance = await prisma.leaveBalance.upsert({
@@ -200,7 +199,7 @@ router.put('/balances/:employeeId', requireRole('SUPER_ADMIN', 'ADMIN'), async (
 
 // ---- Department-wise "who is on leave today" ----
 
-router.get('/on-leave-today', requireRole(...HR_ROLES), async (req, res) => {
+router.get('/on-leave-today', requirePerm(null, 'hrms', 'Leave & Holidays', 'export'), async (req, res) => {
   const today = req.query.date || new Date().toISOString().slice(0, 10);
   const employees = await prisma.employee.findMany({ where: { employmentStatus: { not: 'Relieved' } } });
   const approved = await prisma.leaveRequest.findMany({
@@ -221,7 +220,7 @@ router.patch('/:id/cancel-request', async (req, res) => {
   const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
   const existing = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Leave request not found' });
-  if (req.user.role === 'EMPLOYEE' && (!own || existing.employeeId !== own.id)) {
+  if (req.user.caps.hrmsSelfOnly && (!own || existing.employeeId !== own.id)) {
     return res.status(403).json({ error: "This isn't included in your role's permissions" });
   }
   const leave = await prisma.leaveRequest.update({ where: { id: req.params.id }, data: { status: 'Cancellation Requested' } });
@@ -231,21 +230,20 @@ router.patch('/:id/cancel-request', async (req, res) => {
 
 // ---- Leave policy: types, reasons, holidays (configurable by Super Admin/Admin) ----
 
-const POLICY_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 
 router.get('/types', async (req, res) => {
   const types = await prisma.leaveType.findMany({ orderBy: { name: 'asc' } });
   res.json(types);
 });
 
-router.post('/types', requireRole(...POLICY_ROLES), async (req, res) => {
+router.post('/types', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { code, name, cap, unit, carries } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'code and name are required' });
   const type = await prisma.leaveType.create({ data: { code, name, cap: Number(cap) || 0, unit: unit || 'yr', carries: !!carries } });
   res.status(201).json(type);
 });
 
-router.put('/types/:id', requireRole(...POLICY_ROLES), async (req, res) => {
+router.put('/types/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { cap, active } = req.body;
   const type = await prisma.leaveType.update({ where: { id: req.params.id }, data: { cap: cap != null ? Number(cap) : undefined, active } });
   await logAudit({ userId: req.user.id, action: 'Leave type updated', entity: 'LeaveType', entityId: type.id });
@@ -257,14 +255,14 @@ router.get('/reasons', async (req, res) => {
   res.json(reasons);
 });
 
-router.post('/reasons', requireRole(...POLICY_ROLES), async (req, res) => {
+router.post('/reasons', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { label } = req.body;
   if (!label) return res.status(400).json({ error: 'label is required' });
   const reason = await prisma.leaveReason.create({ data: { label } });
   res.status(201).json(reason);
 });
 
-router.put('/reasons/:id', requireRole(...POLICY_ROLES), async (req, res) => {
+router.put('/reasons/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { active } = req.body;
   const reason = await prisma.leaveReason.update({ where: { id: req.params.id }, data: { active } });
   res.json(reason);
@@ -283,7 +281,7 @@ router.get('/concurrency-policy', async (req, res) => {
   });
 });
 
-router.put('/concurrency-policy', requireRole(...POLICY_ROLES), async (req, res) => {
+router.put('/concurrency-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { concurrentLeaveCapPct, concurrentLeaveCapFlat, leaveReasonThresholdDays } = req.body;
   let cfg = await prisma.hrConfig.findFirst();
   if (!cfg) cfg = await prisma.hrConfig.create({ data: {} });
@@ -304,7 +302,7 @@ router.get('/holidays', async (req, res) => {
   res.json(holidays);
 });
 
-router.post('/holidays', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/holidays', requirePerm(null, 'hrms', 'Leave & Holidays', 'create'), async (req, res) => {
   const { name, date, type } = req.body;
   if (!name || !date) return res.status(400).json({ error: 'name and date are required' });
   const holiday = await prisma.holiday.create({ data: { name, date, type: type || 'Festival' } });
@@ -312,7 +310,7 @@ router.post('/holidays', requireRole(...HR_ROLES), async (req, res) => {
   res.status(201).json(holiday);
 });
 
-router.delete('/holidays/:id', requireRole(...HR_ROLES), async (req, res) => {
+router.delete('/holidays/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'edit'), async (req, res) => {
   const holiday = await prisma.holiday.findUnique({ where: { id: req.params.id } });
   if (!holiday) return res.status(404).json({ error: 'Holiday not found' });
   await prisma.holiday.delete({ where: { id: req.params.id } });

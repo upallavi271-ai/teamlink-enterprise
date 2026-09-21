@@ -2,11 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { hasTeamOversight } from '../../permissions';
 
-const TEAM_LEAD_ROLES = ['MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 // Only STL/TL are restricted to their own department — Manager/Assistant
 // Manager have cross-department oversight (matches backend/src/routes/employees.js).
-const DEPT_SCOPED_ROLES = ['STL', 'TL'];
 
 const emptyForm = {
   phone: '', email: '', dateOfBirth: '', gender: '', bloodGroup: '',
@@ -18,8 +17,8 @@ const emptyForm = {
 
 export default function MyProfile() {
   const { user } = useAuth();
-  const isTeamLead = TEAM_LEAD_ROLES.includes(user?.role);
-  const isDeptScoped = DEPT_SCOPED_ROLES.includes(user?.role);
+  const isTeamLead = hasTeamOversight(user);
+  const isDeptScoped = hasTeamOversight(user);
   const [employee, setEmployee] = useState(null);
   const [config, setConfig] = useState(null);
   const [error, setError] = useState('');

@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import {
   stageLabel, stageBadgeClass, lifeStatusClass, aiStatusClass, protoDate,
 } from '../atsVocab';
+import { isClientUser } from '../permissions';
 
 // The prototype's candidateDetail() (line 8447): Overview, Applications (n),
 // Matching Requirements, Interviews, Activity Timeline, plus Rejection History
@@ -15,11 +16,15 @@ export default function CandidateDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const [candidate, setCandidate] = useState(null);
+  // Set when the API refuses this record for scope reasons.
+  const [denied, setDenied] = useState('');
   const [tab, setTab] = useState('overview');
   const [error, setError] = useState('');
 
   function load() {
-    api.get(`/candidates/${id}`).then((res) => setCandidate(res.data));
+    api.get(`/candidates/${id}`)
+      .then((res) => setCandidate(res.data))
+      .catch((err) => setDenied(err.response?.data?.error || 'This record is not available to you'));
   }
   useEffect(load, [id]);
 
@@ -33,10 +38,11 @@ export default function CandidateDetail() {
     }
   }
 
+  if (denied) return <div className="notice">{denied}</div>;
   if (!candidate) return <div className="small-muted">Loading…</div>;
 
   const c = candidate;
-  const isClient = user?.role === 'CLIENT';
+  const isClient = isClientUser(user);
   const applications = c.applications || [];
   const matching = c.matchingRequirements || [];
   const interviews = applications.filter((a) => a.interviewStatus);

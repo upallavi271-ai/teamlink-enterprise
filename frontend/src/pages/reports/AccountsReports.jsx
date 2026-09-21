@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
+import { canExportReports } from '../../permissions';
 
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
-const EXPORT_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
 
 export default function AccountsReports() {
   const { user } = useAuth();
-  const canExport = EXPORT_ROLES.includes(user?.role);
+  const canExport = canExportReports(user, 'Accounts Reports');
   const [data, setData] = useState(null);
   const [client, setClient] = useState('');
   const [pick, setPick] = useState('');

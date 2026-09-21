@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -26,7 +26,7 @@ router.get('/', async (req, res) => {
   res.json({ roles: parse(await config()) });
 });
 
-router.put('/', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.put('/', requirePerm(null, 'administration', 'Organization Structure', 'configure'), async (req, res) => {
   const { roles } = req.body;
   if (!Array.isArray(roles) || roles.length === 0) return res.status(400).json({ error: 'roles must be a non-empty array' });
   const cfg = await config();

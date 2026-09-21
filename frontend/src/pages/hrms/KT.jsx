@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Panel, PanelPad, PanelHead, AssignRow, EmptyMini, QaRow, Modal } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 function LogKtModal({ employees, onClose, onSaved }) {
   const [form, setForm] = useState({ topic: '', from: '', to: '' });
@@ -85,7 +85,7 @@ function SubmitIdeaModal({ onClose, onSaved }) {
 
 export default function KT() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [records, setRecords] = useState([]);
   const [ideas, setIdeas] = useState([]);
   const [employees, setEmployees] = useState([]);

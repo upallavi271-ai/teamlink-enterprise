@@ -1,12 +1,11 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 router.get('/', async (req, res) => {
   const projects = await prisma.project.findMany({ include: { assignments: { include: { employee: true } } }, orderBy: { createdAt: 'desc' } });
@@ -19,7 +18,7 @@ router.get('/:id', async (req, res) => {
   res.json(project);
 });
 
-router.post('/', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/', requirePerm(null, 'hrms', 'Performance & Development', 'create'), async (req, res) => {
   const { name, status } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   const project = await prisma.project.create({ data: { name, status: status || 'Active' } });
@@ -27,7 +26,7 @@ router.post('/', requireRole(...HR_ROLES), async (req, res) => {
   res.status(201).json(project);
 });
 
-router.post('/:id/assign', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/:id/assign', requirePerm(null, 'hrms', 'Performance & Development', 'edit'), async (req, res) => {
   const { employeeId, role } = req.body;
   if (!employeeId) return res.status(400).json({ error: 'employeeId is required' });
   const assignment = await prisma.projectAssignment.create({ data: { projectId: req.params.id, employeeId, role } });

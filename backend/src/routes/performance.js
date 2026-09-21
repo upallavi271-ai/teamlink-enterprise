@@ -1,16 +1,15 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 router.get('/', async (req, res) => {
   const where = {};
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.json([]);
     where.employeeId = own.id;
@@ -21,7 +20,7 @@ router.get('/', async (req, res) => {
   res.json(reviews);
 });
 
-router.post('/', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/', requirePerm(null, 'hrms', 'Performance & Development', 'create'), async (req, res) => {
   const { employeeId, period, score, notes } = req.body;
   if (!employeeId || !period || score == null) return res.status(400).json({ error: 'employeeId, period and score are required' });
   const band = score >= 75 ? 'High' : score >= 50 ? 'Medium' : 'Low';

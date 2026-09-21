@@ -1,12 +1,11 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 // Notice Period is where a resignation starts; Relieved and Withdrawn are terminal.
 const STATUSES = ['Notice Period', 'Accepted', 'Relieved', 'Withdrawn'];
@@ -67,7 +66,7 @@ function present(record, days) {
 
 router.get('/', async (req, res) => {
   const where = { type: 'RESIGNATION' };
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.json([]);
     where.employeeId = own.id;
@@ -84,7 +83,7 @@ router.get('/', async (req, res) => {
 
 // Summary for the Resignation screen: how many are serving notice, how many have
 // been relieved, the configured notice period and the standard exit checklist.
-router.get('/summary', requireRole(...HR_ROLES), async (req, res) => {
+router.get('/summary', requirePerm(null, 'hrms', 'Employee Services', 'export'), async (req, res) => {
   const [records, days] = await Promise.all([
     prisma.employeeRecord.findMany({ where: { type: 'RESIGNATION' } }),
     noticePeriodDays(),
@@ -103,7 +102,7 @@ router.get('/summary', requireRole(...HR_ROLES), async (req, res) => {
 router.post('/', async (req, res) => {
   const { title, detail, date, resignationDate } = req.body;
   let employeeId = req.body.employeeId;
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.status(404).json({ error: 'No employee record linked to this account' });
     employeeId = own.id;
@@ -115,7 +114,7 @@ router.post('/', async (req, res) => {
   const days = await noticePeriodDays();
   const from = resignationDate || new Date().toISOString().slice(0, 10);
   // HR may set an agreed last working day; otherwise it is resignation date + notice.
-  const lastWorkingDate = (req.user.role !== 'EMPLOYEE' && date) ? date : noticeEnd(from, days);
+  const lastWorkingDate = (!req.user.caps.hrmsSelfOnly && date) ? date : noticeEnd(from, days);
 
   const record = await prisma.employeeRecord.create({
     data: { type: 'RESIGNATION', employeeId, title: title || 'Resignation', detail, date: lastWorkingDate, status: 'Notice Period' },
@@ -125,7 +124,7 @@ router.post('/', async (req, res) => {
   res.status(201).json(present(record, days));
 });
 
-router.patch('/:id/status', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res) => {
   const { status } = req.body;
   if (!STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${STATUSES.join(', ')}` });
   const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
@@ -153,7 +152,7 @@ router.patch('/:id/status', requireRole(...HR_ROLES), async (req, res) => {
 });
 
 // Agreeing a different last working day (early release or an extension).
-router.patch('/:id', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res) => {
   const { date, detail } = req.body;
   const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.type !== 'RESIGNATION') return res.status(404).json({ error: 'Resignation not found' });

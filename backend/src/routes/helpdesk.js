@@ -1,12 +1,11 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 const TICKET_CATEGORIES = ['IT Support', 'HR Query', 'Facilities', 'Payroll Query', 'Other'];
 const TICKET_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
@@ -64,7 +63,7 @@ function parseNotes(raw) {
 // Internal notes are never shown to the employee who raised the ticket.
 function present(ticket, req) {
   const notes = parseNotes(ticket.notes);
-  const isOwnTicket = req.user.role === 'EMPLOYEE';
+  const isOwnTicket = req.user.caps.hrmsSelfOnly;
   return {
     ...ticket,
     notes: isOwnTicket ? notes.filter((n) => !n.internal) : notes,
@@ -76,7 +75,7 @@ function present(ticket, req) {
 
 async function loadScoped(req, where = {}) {
   const filter = { type: 'HELPDESK', ...where };
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return [];
     filter.employeeId = own.id;
@@ -100,7 +99,7 @@ router.get('/', async (req, res) => {
   if (req.query.status) where.status = req.query.status;
   if (req.query.category) where.category = req.query.category;
   if (req.query.priority) where.priority = req.query.priority;
-  if (req.user.role !== 'EMPLOYEE' && req.query.employeeId) where.employeeId = req.query.employeeId;
+  if (!req.user.caps.hrmsSelfOnly && req.query.employeeId) where.employeeId = req.query.employeeId;
   const tickets = await loadScoped(req, where);
   const assignees = await prisma.employee.findMany({ where: { id: { in: tickets.map((t) => t.assignedTo).filter(Boolean) } } });
   const nameOf = Object.fromEntries(assignees.map((a) => [a.id, a.name]));
@@ -110,7 +109,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const { title, detail, category, priority, assignedTo } = req.body;
   let employeeId = req.body.employeeId;
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.status(404).json({ error: 'No employee record linked to this account' });
     employeeId = own.id;
@@ -137,7 +136,7 @@ router.patch('/:id/status', async (req, res) => {
   if (!TICKET_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${TICKET_STATUSES.join(', ')}` });
   const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.type !== 'HELPDESK') return res.status(404).json({ error: 'Ticket not found' });
-  if (!HR_ROLES.includes(req.user.role)) return res.status(403).json({ error: "This isn't included in your role's permissions" });
+  if (!req.user.caps.hrmsManage) return res.status(403).json({ error: "This isn't included in your role's permissions" });
   if (existing.status === status) return res.json(present(existing, req));
 
   const data = { status };
@@ -156,19 +155,19 @@ router.patch('/:id/status', async (req, res) => {
   res.json(present(ticket, req));
 });
 
-router.patch('/:id/assign', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/assign', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const ticket = await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { assignedTo: req.body.assignedTo || null } });
   await logAudit({ userId: req.user.id, action: 'Ticket assigned', entity: 'EmployeeRecord', entityId: ticket.id, toValue: req.body.assignedTo || 'Unassigned' });
   res.json(present(ticket, req));
 });
 
-router.patch('/:id/escalate', requireRole(...HR_ROLES), async (req, res) => {
+router.patch('/:id/escalate', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const ticket = await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { escalated: true } });
   await logAudit({ userId: req.user.id, action: 'Ticket escalated', entity: 'EmployeeRecord', entityId: ticket.id });
   res.json(present(ticket, req));
 });
 
-router.post('/:id/notes', requireRole(...HR_ROLES), async (req, res) => {
+router.post('/:id/notes', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
   const { text, internal } = req.body;
   if (!String(text || '').trim()) return res.status(400).json({ error: 'text is required' });
   const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
@@ -183,7 +182,7 @@ router.post('/:id/notes', requireRole(...HR_ROLES), async (req, res) => {
 router.patch('/:id/csat', async (req, res) => {
   const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.type !== 'HELPDESK') return res.status(404).json({ error: 'Ticket not found' });
-  if (req.user.role === 'EMPLOYEE') {
+  if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own || own.id !== existing.employeeId) return res.status(403).json({ error: "This isn't included in your role's permissions" });
   }
@@ -195,7 +194,7 @@ router.patch('/:id/csat', async (req, res) => {
 
 // ---- Dashboard, reports & analytics ----
 
-router.get('/analytics', requireRole(...HR_ROLES), async (req, res) => {
+router.get('/analytics', requirePerm(null, 'hrms', 'Employee Services', 'export'), async (req, res) => {
   const tickets = await prisma.employeeRecord.findMany({ where: { type: 'HELPDESK' }, include: { employee: true } });
   const agents = await prisma.employee.findMany({ where: { id: { in: tickets.map((t) => t.assignedTo).filter(Boolean) } } });
   const nameOf = Object.fromEntries(agents.map((a) => [a.id, a.name]));

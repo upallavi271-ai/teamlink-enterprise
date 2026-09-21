@@ -2,8 +2,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
+import { canManageAccounts } from '../permissions';
 
-const ACCOUNTS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
 
 // "Received and Paid mean the same thing — the whole invoice is in."
 const FALLBACK_STATUS = ['All', 'Pending', 'Received', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'];
@@ -250,7 +250,7 @@ const BLANK_FILTERS = { client: 'All', dept: 'All', rec: 'All', gstin: 'All', st
 
 export default function Invoices() {
   const { user } = useAuth();
-  const canManage = ACCOUNTS_ROLES.includes(user?.role);
+  const canManage = canManageAccounts(user);
 
   const [data, setData] = useState(null);
   const [error, setError] = useState('');

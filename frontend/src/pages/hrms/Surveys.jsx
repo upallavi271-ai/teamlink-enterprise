@@ -5,8 +5,8 @@ import {
   Panel, PanelPad, PanelHead, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, ProgressBar, Modal,
 } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 
 // The prototype's three Engagement Survey feature tiles (SV_FEATURES, line 4429).
 export const SV_FEATURES = [
@@ -109,7 +109,7 @@ function RespondModal({ survey, onClose, onSaved }) {
 
 export default function Surveys({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [surveys, setSurveys] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [responding, setResponding] = useState(null);

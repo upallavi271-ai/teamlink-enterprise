@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PanelPad, AssignRow, EmptyMini, TwoCol, QaRow, Modal } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 // The prototype's seeded award types (state.awardTypes, line 622 area).
 const AWARD_TYPES = [
   { name: 'Above & Beyond', points: 50 },
@@ -59,7 +59,7 @@ function GiveRecognitionModal({ employees, onClose, onSaved }) {
 
 export default function Recognition() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [records, setRecords] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [open, setOpen] = useState(false);

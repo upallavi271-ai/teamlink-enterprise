@@ -1,20 +1,39 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+const { clientWhere, scopeOf, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { buildAgreementDocument, nextAgreementId, newEsignToken } = require('../utils/agreement');
 
 const router = express.Router();
 router.use(requireAuth);
+// The whole router belongs to ATS: a login without ATS access, or without
+// view permission on this module, is refused at the door rather than handed
+// an empty list.
+router.use(requireProduct('ats'));
+router.use(requirePerm('ats', 'clients', 'Client List', 'view'));
+
+// Every /:id endpoint below — read and write — is scope-checked in one place,
+// so a client login can never reach another client's record by URL.
+router.param('id', async (req, res, next, id) => {
+  const client = await prisma.client.findUnique({ where: { id } });
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const s = scopeOf(req.user);
+  if (!s.global && s.role === 'CLIENT' && client.id !== s.clientId) {
+    return res.status(403).json(OUT_OF_SCOPE);
+  }
+  req.client = client;
+  return next();
+});
 
 router.get('/', async (req, res) => {
-  // Clients see only their own record.
-  if (req.user.role === 'CLIENT') {
-    const client = await prisma.client.findUnique({ where: { id: req.user.clientId } });
-    return res.json(client ? [client] : []);
-  }
-  const clients = await prisma.client.findMany({ orderBy: { name: 'asc' } });
+  // Scoped by utils/scope.js: a client sees their own company, a BDE their
+  // assigned clients, everyone else the clients they hold a requirement for.
+  const clients = await prisma.client.findMany({
+    where: clientWhere(req.user),
+    orderBy: { name: 'asc' },
+  });
   res.json(clients);
 });
 
@@ -40,9 +59,6 @@ router.get('/agreement-preview', (req, res) => {
 router.get('/:id', async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  if (req.user.role === 'CLIENT' && client.id !== req.user.clientId) {
-    return res.status(403).json({ error: 'This record is outside your client scope' });
-  }
   res.json(client);
 });
 
@@ -79,7 +95,7 @@ function pickClient(body) {
   return data;
 }
 
-router.post('/', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (req, res) => {
   const data = pickClient(req.body);
   // Prototype saveNewClient(): the full save requires company name, location
   // and the three primary-contact fields. Saving as a draft skips the checks.
@@ -105,7 +121,7 @@ router.post('/', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
   res.status(201).json(withDoc);
 });
 
-router.put('/:id', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async (req, res) => {
   const client = await prisma.client.update({ where: { id: req.params.id }, data: pickClient(req.body) });
   await logAudit({ userId: req.user.id, action: 'Client updated', entity: 'Client', entityId: client.id });
   res.json(client);
@@ -120,9 +136,8 @@ router.put('/:id', requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
 // document confirms it, and TeamLink then activates it. Only an ACTIVE
 // agreement lets a requirement for that client be activated or posted.
 
-const AGREEMENT_EDIT_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 
-router.post('/:id/agreement/generate', requireRole(...AGREEMENT_EDIT_ROLES), async (req, res) => {
+router.post('/:id/agreement/generate', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (['CONFIRMED', 'ACTIVE'].includes(client.agreementStatus)) {
@@ -137,7 +152,7 @@ router.post('/:id/agreement/generate', requireRole(...AGREEMENT_EDIT_ROLES), asy
   res.json(updated);
 });
 
-router.post('/:id/agreement/send', requireRole(...AGREEMENT_EDIT_ROLES), async (req, res) => {
+router.post('/:id/agreement/send', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (!client.agreementDocument) return res.status(400).json({ error: 'Generate the agreement document first' });
@@ -173,12 +188,9 @@ router.post('/:id/agreement/send', requireRole(...AGREEMENT_EDIT_ROLES), async (
 
 // Signed from inside the app by the client's own login (the public link route
 // in routes/public.js is the no-login equivalent).
-router.post('/:id/agreement/confirm', requireRole('CLIENT', 'SUPER_ADMIN', 'ADMIN'), async (req, res) => {
+router.post('/:id/agreement/confirm', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'approve'), async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  if (req.user.role === 'CLIENT' && client.id !== req.user.clientId) {
-    return res.status(403).json({ error: 'This record is outside your client scope' });
-  }
   if (client.agreementStatus !== 'SENT') {
     return res.status(400).json({ error: 'No pending agreement to sign' });
   }
@@ -214,7 +226,7 @@ router.post('/:id/agreement/confirm', requireRole('CLIENT', 'SUPER_ADMIN', 'ADMI
 
 // Resend an agreement already out for signature — the prototype's
 // resendAgreement() (line 7981). The status stays Sent.
-router.post('/:id/agreement/resend', requireRole(...AGREEMENT_EDIT_ROLES), async (req, res) => {
+router.post('/:id/agreement/resend', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (client.agreementStatus !== 'SENT') return res.status(400).json({ error: 'No agreement is currently out for signature' });
@@ -230,7 +242,7 @@ router.post('/:id/agreement/resend', requireRole(...AGREEMENT_EDIT_ROLES), async
 // The final step: TeamLink activates the confirmed agreement, which is what
 // unblocks requirements for this client — the prototype's activateAgreement()
 // (line 7998). Confirming alone is not enough.
-router.post('/:id/agreement/activate', requireRole(...AGREEMENT_EDIT_ROLES), async (req, res) => {
+router.post('/:id/agreement/activate', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id: req.params.id } });
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (client.agreementStatus === 'ACTIVE') return res.status(400).json({ error: 'This agreement is already Active' });

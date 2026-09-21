@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+const { invoiceWhere, matches, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, dueDateFor,
@@ -11,8 +12,11 @@ const {
 
 const router = express.Router();
 router.use(requireAuth);
+// Accounts product + Invoices view. A client login reaches its own invoices
+// (scoped by utils/scope.js); a recruiter reaches none.
+router.use(requireProduct('accounts'));
+router.use(requirePerm('accounts', 'accounts', 'Invoices', 'view'));
 
-const ACCOUNTS_ROLES = ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'];
 
 // Everything an invoice row needs on screen, computed the same way everywhere:
 // total = amount + GST - TDS, outstanding = total - received.
@@ -119,7 +123,7 @@ async function pendingJoinGroups() {
 // Raise the invoice for one client/joining-month group, or for all of them.
 // Nothing about the billing changes — the fee, GST and TDS come from the
 // client record; only the number and the dates are written.
-router.post('/register/raise', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.post('/register/raise', requirePerm('accounts', 'accounts', 'Invoices', 'create'), async (req, res) => {
   const plan = await pendingJoinGroups();
   const wanted = req.body.all
     ? plan.groups
@@ -168,8 +172,7 @@ router.post('/register/raise', requireRole(...ACCOUNTS_ROLES), async (req, res) 
 });
 
 router.get('/', async (req, res) => {
-  const where = {};
-  if (req.user.role === 'CLIENT') where.clientId = req.user.clientId;
+  const where = { ...invoiceWhere(req.user) };
   if (req.query.clientId) where.clientId = req.query.clientId;
   const invoices = await prisma.invoice.findMany({
     where,
@@ -185,7 +188,7 @@ router.get('/', async (req, res) => {
 
 // Receivables summary for the accountant dashboard and reports.
 router.get('/summary', async (req, res) => {
-  const where = req.user.role === 'CLIENT' ? { clientId: req.user.clientId } : {};
+  const where = invoiceWhere(req.user);
   const invoices = await prisma.invoice.findMany({ where });
   const rows = invoices.map(decorate);
   const bucket = (status) => {
@@ -213,7 +216,7 @@ router.get('/summary', async (req, res) => {
 // once on the server so the table, the chips and the totals never disagree.
 // ---------------------------------------------------------------------------
 router.get('/register', async (req, res) => {
-  const where = req.user.role === 'CLIENT' ? { clientId: req.user.clientId } : {};
+  const where = invoiceWhere(req.user);
   const invoices = await prisma.invoice.findMany({
     where,
     include: {
@@ -351,9 +354,7 @@ router.get('/:id/document', async (req, res) => {
     },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (req.user.role === 'CLIENT' && invoice.clientId !== req.user.clientId) {
-    return res.status(403).json({ error: 'This record is outside your client scope' });
-  }
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
   const co = (await prisma.company.findFirst()) || {};
   const cli = invoice.client || {};
 
@@ -446,14 +447,12 @@ router.get('/:id', async (req, res) => {
     include: { client: true, candidate: true, requirement: true, payments: { orderBy: { date: 'asc' } } },
   });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (req.user.role === 'CLIENT' && invoice.clientId !== req.user.clientId) {
-    return res.status(403).json({ error: 'This record is outside your client scope' });
-  }
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
   const synced = await syncStatus(invoice);
   res.json(decorate(synced));
 });
 
-router.post('/', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.post('/', requirePerm('accounts', 'accounts', 'Invoices', 'create'), async (req, res) => {
   const { clientId, candidateId, requirementId, amount, gst, tds, invoiceDate, dueDate, paymentTerms, notes } = req.body;
   if (!clientId || !amount || !invoiceDate) return res.status(400).json({ error: 'clientId, amount and invoiceDate are required' });
   const client = await prisma.client.findUnique({ where: { id: clientId } });
@@ -489,7 +488,7 @@ router.post('/', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
 
 // Record a receipt. Several of these can land on one invoice, which is how an
 // invoice reaches "Partially Paid" and then "Paid".
-router.post('/:id/payments', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.post('/:id/payments', requirePerm('accounts', 'accounts', 'Payments', 'create'), async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   if (invoice.status === 'Cancelled') return res.status(400).json({ error: 'This invoice is cancelled' });
@@ -528,7 +527,7 @@ router.post('/:id/payments', requireRole(...ACCOUNTS_ROLES), async (req, res) =>
   res.status(201).json({ invoice: decorate(updated), payment });
 });
 
-router.delete('/:id/payments/:paymentId', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.delete('/:id/payments/:paymentId', requirePerm('accounts', 'accounts', 'Payments', 'delete'), async (req, res) => {
   const payment = await prisma.invoicePayment.findUnique({ where: { id: req.params.paymentId } });
   if (!payment || payment.invoiceId !== req.params.id) return res.status(404).json({ error: 'Payment not found' });
   if (payment.bankTxnId) {
@@ -547,7 +546,7 @@ router.delete('/:id/payments/:paymentId', requireRole(...ACCOUNTS_ROLES), async 
 });
 
 // Kept for the existing UI: settles whatever is still outstanding in one go.
-router.patch('/:id/pay', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   if (invoice.status === 'Cancelled') return res.status(400).json({ error: 'This invoice is cancelled' });
@@ -570,7 +569,7 @@ router.patch('/:id/pay', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
   res.json(decorate(updated));
 });
 
-router.patch('/:id/cancel', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.patch('/:id/cancel', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   if (invoice.status === 'Cancelled') return res.status(400).json({ error: 'Already cancelled' });
@@ -587,7 +586,7 @@ router.patch('/:id/cancel', requireRole(...ACCOUNTS_ROLES), async (req, res) => 
 
 // Form 16A against an invoice the client deducted TDS on. Until it is in hand
 // the register keeps the invoice in its "TDS to collect" total.
-router.patch('/:id/tds-certificate', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.patch('/:id/tds-certificate', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   if (Number(invoice.tds || 0) <= 0.5) return res.status(400).json({ error: 'No TDS was deducted on this invoice' });
@@ -608,7 +607,7 @@ router.patch('/:id/tds-certificate', requireRole(...ACCOUNTS_ROLES), async (req,
 });
 
 // Record that the invoice went to the client, and how.
-router.patch('/:id/sent', requireRole(...ACCOUNTS_ROLES), async (req, res) => {
+router.patch('/:id/sent', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   const via = ['Email', 'WhatsApp', 'Post', 'By hand'].includes(req.body.via) ? req.body.via : 'Email';

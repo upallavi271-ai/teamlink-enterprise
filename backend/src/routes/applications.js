@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
@@ -8,6 +8,11 @@ const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
 
 const router = express.Router();
 router.use(requireAuth);
+// The whole router belongs to ATS: a login without ATS access, or without
+// view permission on this module, is refused at the door rather than handed
+// an empty list.
+router.use(requireProduct('ats'));
+router.use(requirePerm('ats', 'candidates', 'Applications', 'view'));
 
 // Who is allowed to move an application INTO each stage. Admins/Super Admins always allowed.
 // The three AI_INTERVIEW_* stages sit between NEW and RECRUITER_REVIEW: a
@@ -105,9 +110,8 @@ router.get('/', async (req, res) => {
 
 // Adding someone to a pipeline is a recruiting action — the prototype gates it
 // on the "candidates: create" permission, so a CLIENT or EMPLOYEE cannot do it.
-const PIPELINE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'];
 
-router.post('/', requireRole(...PIPELINE_ROLES), async (req, res) => {
+router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), async (req, res) => {
   const { candidateId, requirementId } = req.body;
   if (!candidateId || !requirementId) return res.status(400).json({ error: 'candidateId and requirementId are required' });
 
@@ -147,8 +151,13 @@ router.patch('/:id/stage', async (req, res) => {
 
   const allowedRoles = STAGE_OWNERS[stage];
   if (!allowedRoles) return res.status(400).json({ error: 'Unknown stage' });
-  const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(req.user.role);
-  if (!isAdmin && !allowedRoles.includes(req.user.role)) {
+  // STAGE_OWNERS is pipeline workflow (who owns a stage), not access control:
+  // the access half is caps.atsAct, resolved from the permission engine.
+  if (!req.user.caps.atsAct) {
+    return res.status(403).json({ error: "This action isn't included in your role's permissions" });
+  }
+  const isAdmin = req.user.caps.hrmsManage && req.user.caps.accountsManage;
+  if (!isAdmin && !allowedRoles.includes(req.user.atsRole || req.user.role)) {
     return res.status(403).json({ error: "Moving to this stage isn't included in your role's permissions" });
   }
 

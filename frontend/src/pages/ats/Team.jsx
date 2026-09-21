@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { isClientUser } from '../../permissions';
 
 // The prototype's teamView() (line 9154).
 export default function Team() {
@@ -11,7 +12,7 @@ export default function Team() {
     api.get('/ats/team').then((res) => setRows(res.data)).catch(() => setRows([]));
   }, []);
 
-  if (user?.role === 'CLIENT') {
+  if (isClientUser(user)) {
     return (
       <div className="empty">
         <h3>Not available for your role</h3>

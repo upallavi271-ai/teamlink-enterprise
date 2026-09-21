@@ -33,7 +33,9 @@ const resignationRoutes = require('./routes/resignations');
 const hrmsDashboardRoutes = require('./routes/hrmsDashboard');
 const escalationRoutes = require('./routes/escalation');
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
+// hrManagedCreate: only someone with HRMS Employee Management reach may
+// create these record types for another employee. Resolved by the permission
+// engine at request time (req.user.caps.hrmsManage), not by a role list here.
 
 const app = express();
 app.use(cors());
@@ -72,13 +74,13 @@ app.use('/api/hrms/escalation', escalationRoutes);
 // routers, because they carry real workflow (SLA/escalation/CSAT; notice period
 // and the employment-status mirror) that the generic CRUD router can't express.
 app.use('/api/kt', employeeRecordRouter('KT'));
-app.use('/api/targets', employeeRecordRouter('TARGET', { createRoles: HR_ROLES }));
+app.use('/api/targets', employeeRecordRouter('TARGET', { createRoles: true }));
 app.use('/api/resignations', resignationRoutes);
-app.use('/api/recognition', employeeRecordRouter('RECOGNITION', { createRoles: HR_ROLES }));
-app.use('/api/disciplinary', employeeRecordRouter('DISCIPLINARY', { createRoles: HR_ROLES }));
+app.use('/api/recognition', employeeRecordRouter('RECOGNITION', { createRoles: true }));
+app.use('/api/disciplinary', employeeRecordRouter('DISCIPLINARY', { createRoles: true }));
 app.use('/api/shift-roster', employeeRecordRouter('SHIFT'));
 app.use('/api/timesheet', employeeRecordRouter('TIMESHEET'));
-app.use('/api/assets', employeeRecordRouter('ASSET', { createRoles: HR_ROLES }));
+app.use('/api/assets', employeeRecordRouter('ASSET', { createRoles: true }));
 app.use('/api/expenses', employeeRecordRouter('EXPENSE'));
 app.use('/api/helpdesk', helpdeskRoutes);
 // Company asset inventory (Employee Services → Assets). /api/assets above stays

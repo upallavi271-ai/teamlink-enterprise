@@ -1,11 +1,10 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const DAY_MS = 86400000;
 
 // True when an anniversary of `dateStr` falls within the next `days` days.
@@ -32,7 +31,7 @@ function matchesFilters(e, q) {
 
 // Everything the HRMS Dashboard shows, computed against the same filtered
 // employee set so every tile, panel and the CSV export agree with each other.
-router.get('/', requireRole(...HR_ROLES), async (req, res) => {
+router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const thirtyDaysAgo = new Date(Date.now() - 30 * DAY_MS);
 

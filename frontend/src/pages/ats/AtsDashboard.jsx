@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { isClientUser } from '../../permissions';
 
 // The prototype's atsDashboard() (line 6252): a six-tile statbar, then a
 // two-column split with "Pipeline by stage" on the left and "Recruiter
@@ -26,7 +27,7 @@ export default function AtsDashboard() {
 
   if (!data) return <div className="small-muted">Loading…</div>;
 
-  const isClient = user?.role === 'CLIENT';
+  const isClient = isClientUser(user);
   const stats = [
     [data.openRequirements, 'Open requirements'],
     [data.recruiterReview, 'Recruiter review'],

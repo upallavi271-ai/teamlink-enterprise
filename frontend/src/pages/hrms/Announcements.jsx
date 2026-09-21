@@ -5,8 +5,8 @@ import {
   PanelPad, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
+import { isHR as hasHrmsAdmin } from '../../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const CATEGORIES = ['General', 'Policy', 'Event', 'Holiday'];
 
 // The prototype's three Announcement feature tiles (AN_FEATURES, line 4428).
@@ -66,7 +66,7 @@ function NewAnnouncementModal({ departments, onClose, onSaved }) {
 
 export default function Announcements({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
   const [announcements, setAnnouncements] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);

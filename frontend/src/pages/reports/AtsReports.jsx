@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
-
-const EXPORT_ROLES = ['SUPER_ADMIN', 'ADMIN', 'BDE', 'TL'];
+import { canExportReports } from '../../permissions';
 
 export default function AtsReports() {
   const { user } = useAuth();
-  const canExport = EXPORT_ROLES.includes(user?.role);
+  const canExport = canExportReports(user, 'ATS Reports');
   const [rows, setRows] = useState([]);
   const [client, setClient] = useState('');   // applied filter
   const [pick, setPick] = useState('');       // what the box is showing

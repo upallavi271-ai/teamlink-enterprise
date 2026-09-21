@@ -7,8 +7,8 @@ import {
   agreementStatusLabel, agreementBadgeClass, stageLabel, stageBadgeClass,
   requirementStatusLabel, protoDate,
 } from '../atsVocab';
+import { canManageAgreement, isClientUser } from '../permissions';
 
-const AGREEMENT_EDIT_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 
 // The prototype's clientDetail() (line 7487): left column holds Client
 // details, Requirements (n) and Candidates shared with this client; the right
@@ -23,6 +23,8 @@ export default function ClientDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const [client, setClient] = useState(null);
+  // Set when the API refuses this record for scope reasons.
+  const [denied, setDenied] = useState('');
   const [requirements, setRequirements] = useState([]);
   const [signing, setSigning] = useState({ signedByName: '', signedByTitle: '' });
   const [signingLink, setSigningLink] = useState('');
@@ -32,7 +34,9 @@ export default function ClientDetail() {
   const [showAgreement, setShowAgreement] = useState(false);
 
   function load() {
-    api.get(`/clients/${id}`).then((res) => setClient(res.data));
+    api.get(`/clients/${id}`)
+      .then((res) => setClient(res.data))
+      .catch((err) => setDenied(err.response?.data?.error || 'This record is not available to you'));
     api.get(`/requirements?clientId=${id}`).then((res) => setRequirements(res.data));
     api.get('/applications')
       .then((res) => setShared(res.data.filter((a) => a.requirement?.clientId === id && SHARED_STAGES.includes(a.stage))))
@@ -64,11 +68,12 @@ export default function ClientDetail() {
     }
   }
 
+  if (denied) return <div className="notice">{denied}</div>;
   if (!client) return <div className="small-muted">Loading…</div>;
 
   const c = client;
-  const canManage = AGREEMENT_EDIT_ROLES.includes(user?.role);
-  const canSign = user?.role === 'CLIENT' && user?.clientId === c.id && c.agreementStatus === 'SENT';
+  const canManage = canManageAgreement(user);
+  const canSign = isClientUser(user) && user?.clientId === c.id && c.agreementStatus === 'SENT';
   const status = agreementStatusLabel(c.agreementStatus);
 
   return (

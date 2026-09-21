@@ -1,27 +1,34 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requireRole, isDeptScopedRole } = require('../middleware/auth');
+const { requireAuth, requirePerm, can, requireProduct } = require('../middleware/auth');
+const { requirementWhere, matches, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { MATCH_THRESHOLD, SUGGESTION_THRESHOLD, rankCandidates } = require('../utils/matching');
 
 const router = express.Router();
 router.use(requireAuth);
+// The whole router belongs to ATS: a login without ATS access, or without
+// view permission on this module, is refused at the door rather than handed
+// an empty list.
+router.use(requireProduct('ats'));
+router.use(requirePerm('ats', 'requirements', 'Requirement List', 'view'));
 
-const RAISE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'ASSISTANT_MANAGER'];
-// Match suggestions read across the whole candidate master, so they stay
-// inside the TeamLink team — a client never browses the candidate pool.
-const MATCHING_ROLES = [...RAISE_ROLES, 'RECRUITER', 'BDE'];
-
-async function scopedWhere(user) {
-  if (user.role === 'CLIENT') return { clientId: user.clientId };
-  if (user.role === 'RECRUITER') return { recruiterId: user.id };
-  if (user.role === 'BDE') return { bdeId: user.id };
-  if (isDeptScopedRole(user.role) && user.atsDepartment) return { department: user.atsDepartment };
-  return {};
-}
+// Scope is not decided here any more. utils/scope.js owns it, and the same rule
+// drives the list query, the single-record check and the frontend's UI — so a
+// record the user cannot reach is refused by the API, not merely hidden.
+//
+// One router.param covers EVERY /:id endpoint below — read and write alike —
+// so no route can forget to scope-check.
+router.param('id', async (req, res, next, id) => {
+  const requirement = await prisma.requirement.findUnique({ where: { id } });
+  if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
+  if (!matches(requirement, requirementWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  req.requirement = requirement;
+  return next();
+});
 
 router.get('/', async (req, res) => {
-  const where = await scopedWhere(req.user);
+  const where = requirementWhere(req.user);
   if (req.query.status) where.status = req.query.status;
   if (req.query.clientId) where.clientId = req.query.clientId;
   const found = await prisma.requirement.findMany({
@@ -46,7 +53,8 @@ router.get('/', async (req, res) => {
 
   // How many candidates in the master list clear the match threshold for each
   // requirement — the prototype's matchingCandidateCount(), computed live.
-  if (!MATCHING_ROLES.includes(req.user.role)) return res.json(requirements);
+  const showMatches = await can(req.user, 'ats', 'requirements', 'Matching Candidates', 'view');
+  if (!showMatches) return res.json(requirements);
   const candidates = await prisma.candidate.findMany();
   res.json(
     requirements.map((r) => ({ ...r, matchingCandidates: rankCandidates(candidates, r).length }))
@@ -59,9 +67,6 @@ router.get('/:id', async (req, res) => {
     include: { client: true, recruiter: true, bde: true, applications: { include: { candidate: true } } },
   });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
-  if (req.user.role === 'CLIENT' && requirement.clientId !== req.user.clientId) {
-    return res.status(403).json({ error: 'This record is outside your client scope' });
-  }
 
   // Openings / Filled / Remaining, and the count of candidates at or above the
   // 70% match threshold — the prototype's reqFilled(), reqRemaining() and
@@ -80,7 +85,7 @@ router.get('/:id', async (req, res) => {
 // Suggested candidates for this requirement — everyone not already in the
 // pipeline who clears the match threshold, ranked, with the reasons behind the
 // score. Mirrors the prototype's matchingCandidatesFor()/matchingCandidatesView().
-router.get('/:id/matching-candidates', requireRole(...MATCHING_ROLES), async (req, res) => {
+router.get('/:id/matching-candidates', requirePerm('ats', 'requirements', 'Matching Candidates', 'view'), async (req, res) => {
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
 
@@ -125,7 +130,7 @@ function pickRequirement(body) {
   return data;
 }
 
-router.post('/', requireRole(...RAISE_ROLES), async (req, res) => {
+router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'create'), async (req, res) => {
   const { clientId, status } = req.body;
   const data = pickRequirement(req.body);
   // Prototype saveNewRequirement(): title, full job description and at least
@@ -173,7 +178,7 @@ router.post('/', requireRole(...RAISE_ROLES), async (req, res) => {
   res.status(201).json(requirement);
 });
 
-router.put('/:id', requireRole(...RAISE_ROLES), async (req, res) => {
+router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res) => {
   const data = pickRequirement(req.body);
   // status only moves through /activate and /toggle-status, which enforce the
   // agreement gate — it is deliberately not editable here.
@@ -184,7 +189,7 @@ router.put('/:id', requireRole(...RAISE_ROLES), async (req, res) => {
 
 // Activate a draft requirement — the prototype's activateRequirement() refuses
 // until the client's service agreement has actually been signed.
-router.post('/:id/activate', requireRole(...RAISE_ROLES), async (req, res) => {
+router.post('/:id/activate', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
   const existing = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
   if (!existing) return res.status(404).json({ error: 'Requirement not found' });
   if (existing.status === 'OPEN') return res.status(400).json({ error: 'This requirement is already open' });
@@ -204,7 +209,7 @@ router.post('/:id/activate', requireRole(...RAISE_ROLES), async (req, res) => {
 });
 
 // Open/close toggle — the prototype's toggleRequirementStatus().
-router.post('/:id/toggle-status', requireRole(...RAISE_ROLES), async (req, res) => {
+router.post('/:id/toggle-status', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
   const existing = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Requirement not found' });
   const status = existing.status === 'OPEN' ? 'CLOSED' : 'OPEN';
@@ -219,7 +224,7 @@ router.post('/:id/toggle-status', requireRole(...RAISE_ROLES), async (req, res) 
 // Templated job description built from the requirement + client — the
 // prototype's jobDescriptionHtml(). Saved onto description, which is what the
 // public Job Portal (routes/public.js) already shows candidates.
-router.post('/:id/generate-jd', requireRole(...RAISE_ROLES), async (req, res) => {
+router.post('/:id/generate-jd', requirePerm('ats', 'requirements', 'Job Posting', 'edit'), async (req, res) => {
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
 

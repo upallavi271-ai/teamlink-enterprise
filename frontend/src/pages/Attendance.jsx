@@ -4,8 +4,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv, to12h } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow, Status } from '../components/proto.jsx';
+import { isAdmin, isHR as hasHrmsAdmin } from '../permissions';
 
-const HR_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
 const METHODS = ['Web Check-in', 'Mobile App', 'Biometric (Fingerprint)'];
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -581,8 +581,8 @@ function RegularizationTab({ isHR }) {
 
 export default function Attendance() {
   const { user } = useAuth();
-  const isHR = HR_ROLES.includes(user?.role);
-  const canEditPolicy = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role);
+  const isHR = hasHrmsAdmin(user);
+  const canEditPolicy = isAdmin(user);
   const [tab, setTab] = useState('dashboard');
 
   return (

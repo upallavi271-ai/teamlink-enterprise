@@ -11,24 +11,24 @@ import { ATS_ROLE_LABELS, atsRoleLabel, DEPTS } from '../../atsVocab';
 // identity: the "Create login" form picks an employee who has none yet and
 // attaches a login to that same record.
 //
-// ROLE MODEL — READ THIS BEFORE EXTENDING.
-// The prototype gives each login THREE independent product roles on the same
-// account (hrmsRole / atsRole / accountsRole) and renders three inline selects
-// per row. Main carries a single User.role, and splitting it touches every
-// guard, route and screen, so it is deliberately deferred. Here, therefore:
-//   * the one editable select per row is `role`;
-//   * the HRMS / ATS / Accounts columns are DERIVED and read-only, computed by
-//     backend/src/utils/roleAccess.js (PRODUCT_ACCESS).
-// When the three-role split lands, replace the single <select> below with three
-// (one per product, calling changeRole with the matching field) and drop the
-// derived `productAccess` columns — the rest of this screen is unaffected.
+// ROLE MODEL.
+// Each login now carries THREE independent product-access booleans (HRMS /
+// ATS / Accounts) on the same account, an ATS working role derived from the
+// employee's designation, and a stored data scope. The HRMS / ATS / Accounts
+// columns below are therefore REAL and EDITABLE — a tick grants the product, a
+// select sets the ATS role, and Edit sets the department / team / client scope.
+// Changing any of them changes what the API itself allows, not just the UI.
 
 const ROLES = Object.keys(ATS_ROLE_LABELS);
 const STATUSES = ['Active', 'Inactive', 'Suspended'];
 
+const ATS_WORK_ROLES = ['', 'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'CLIENT'];
+
 const EMPTY_FORM = {
   employeeId: '', name: '', email: '', username: '', password: '',
   role: 'EMPLOYEE', atsDepartment: '', branch: '', team: '', status: 'Active', clientId: '',
+  hrmsAccess: true, atsAccess: false, accountsAccess: false, atsRole: '',
+  atsScopeDepartments: '', atsScopeTeams: '',
 };
 
 function statusClass(status) {
@@ -88,6 +88,18 @@ export default function Users() {
     }
   }
 
+  // Grant or revoke one product on this login. Never a second account.
+  function setProduct(u, product, value) {
+    const key = { hrms: 'hrmsAccess', ats: 'atsAccess', accounts: 'accountsAccess' }[product];
+    run(() => api.put(`/admin/users/${u.id}`, { [key]: value }),
+      `${u.name} — ${product.toUpperCase()} access ${value ? 'granted' : 'removed'} (same login).`);
+  }
+
+  function setAtsRole(u, atsRole) {
+    run(() => api.put(`/admin/users/${u.id}`, { atsRole: atsRole || null, atsAccess: !!atsRole }),
+      `${u.name} — ATS role: ${atsRole || 'none'} (scope stays ${u.scope}).`);
+  }
+
   function changeRole(u, role) {
     // The change lands on the user's next login — it never creates a second account.
     run(() => api.put(`/admin/users/${u.id}`, { role }),
@@ -96,7 +108,14 @@ export default function Users() {
 
   async function saveEditing() {
     const ok = await run(
-      () => api.put(`/admin/users/${editing.id}`, { branch: editing.branch, team: editing.team, atsDepartment: editing.atsDepartment || null }),
+      () => api.put(`/admin/users/${editing.id}`, {
+        branch: editing.branch,
+        team: editing.team,
+        atsDepartment: editing.atsDepartment || null,
+        atsScopeDepartments: editing.atsScopeDepartments || null,
+        atsScopeTeams: editing.atsScopeTeams || null,
+        atsScopeClients: editing.atsScopeClients || null,
+      }),
       `${editing.name} updated.`,
     );
     if (ok) setEditing(null);
@@ -274,12 +293,24 @@ export default function Users() {
                 <td className="cell-muted">{u.department || '—'}</td>
                 <td className="cell-muted">{u.branch || '—'}</td>
                 <td className="cell-muted">{u.team || '—'}</td>
-                {/* The prototype has three editable selects here. Main stores one
-                    role, so these three show its derived product access and the
-                    editable select is the appended "Role" column. */}
-                <td><select style={{ minWidth: 120 }} value={u.productAccess?.hrms || 'No Access'} disabled readOnly><option>{u.productAccess?.hrms || 'No Access'}</option></select></td>
-                <td><select style={{ minWidth: 120 }} value={u.productAccess?.ats || 'No Access'} disabled readOnly><option>{u.productAccess?.ats || 'No Access'}</option></select></td>
-                <td><select style={{ minWidth: 120 }} value={u.productAccess?.accounts || 'No Access'} disabled readOnly><option>{u.productAccess?.accounts || 'No Access'}</option></select></td>
+                {/* Real, editable product access — one login, three products. */}
+                <td>
+                  <label className="small-muted" style={{ whiteSpace: 'nowrap' }}>
+                    <input type="checkbox" checked={!!u.products?.hrms} onChange={(e) => setProduct(u, 'hrms', e.target.checked)} />{' '}
+                    {u.products?.hrms ? 'HRMS' : 'No Access'}
+                  </label>
+                </td>
+                <td>
+                  <select style={{ minWidth: 120 }} value={u.atsRole || ''} onChange={(e) => setAtsRole(u, e.target.value)}>
+                    {ATS_WORK_ROLES.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
+                  </select>
+                </td>
+                <td>
+                  <label className="small-muted" style={{ whiteSpace: 'nowrap' }}>
+                    <input type="checkbox" checked={!!u.products?.accounts} onChange={(e) => setProduct(u, 'accounts', e.target.checked)} />{' '}
+                    {u.products?.accounts ? 'Accounts' : 'No Access'}
+                  </label>
+                </td>
                 <td><span className={'status ' + statusClass(u.status)}>{u.status}</span></td>
                 <td className="cell-muted">{u.scope}</td>
                 <td className="cell-muted">{u.assignedClients?.length ? u.assignedClients.join(', ') : '—'}</td>
@@ -293,7 +324,13 @@ export default function Users() {
                   </select>
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  <button className="btn btn-sm" onClick={() => setEditing({ id: u.id, name: u.name, branch: u.branch || '', team: u.team || '', atsDepartment: u.atsDepartment || '' })}>Edit</button>{' '}
+                  <button className="btn btn-sm" onClick={() => setEditing({
+                    id: u.id, name: u.name, branch: u.branch || '', team: u.team || '',
+                    atsDepartment: u.atsDepartment || '',
+                    atsScopeDepartments: u.atsScopeDepartments || '',
+                    atsScopeTeams: u.atsScopeTeams || '',
+                    atsScopeClients: u.atsScopeClients || '',
+                  })}>Edit</button>{' '}
                   <button className="btn btn-sm" disabled={u.id === me?.id} onClick={() => toggleStatus(u)}>
                     {u.status === 'Active' ? 'Disable' : 'Enable'}
                   </button>{' '}
@@ -328,11 +365,33 @@ export default function Users() {
             <input value={editing.branch} onChange={(e) => setEditing({ ...editing, branch: e.target.value })} /></div>
           <div className="field"><label>Assigned team</label>
             <input value={editing.team} onChange={(e) => setEditing({ ...editing, team: e.target.value })} placeholder="e.g. Section A" /></div>
-          <div className="field"><label>ATS department scope</label>
+          <div className="field"><label>Primary ATS department</label>
             <select value={editing.atsDepartment} onChange={(e) => setEditing({ ...editing, atsDepartment: e.target.value })}>
               <option value="">All departments</option>
               {DEPTS.map((d) => <option key={d}>{d}</option>)}
             </select></div>
+          <div className="notice">
+            Data scope. These are what the API itself enforces on every list and
+            record — leave them empty to fall back to the employee's own
+            department and team. An STL carries several departments here.
+          </div>
+          <div className="field"><label>Department scope (comma-separated)</label>
+            <input
+              value={editing.atsScopeDepartments}
+              onChange={(e) => setEditing({ ...editing, atsScopeDepartments: e.target.value })}
+              placeholder="e.g. Medical,IT"
+            /></div>
+          <div className="field"><label>Team scope (comma-separated)</label>
+            <input
+              value={editing.atsScopeTeams}
+              onChange={(e) => setEditing({ ...editing, atsScopeTeams: e.target.value })}
+              placeholder="e.g. Medical Team-A"
+            /></div>
+          <div className="field"><label>Client scope (BDE — client ids, comma-separated)</label>
+            <input
+              value={editing.atsScopeClients}
+              onChange={(e) => setEditing({ ...editing, atsScopeClients: e.target.value })}
+            /></div>
         </Modal>
       )}
     </div>
