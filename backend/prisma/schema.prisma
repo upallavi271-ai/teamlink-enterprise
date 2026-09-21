@@ -1532,6 +1532,18 @@ model Task {
   // authoritative for every permission and scope decision.
   assigneeName   String
   assignedByName String
+  // The lifecycle stamps. `status` says where the task is NOW; these say when
+  // it got there, which is what the report needs to say anything about time.
+  startedAt      DateTime?
+  completedAt    DateTime?
+  // The review leg: 'Not Submitted' -> 'Pending Review' -> 'Approved' or
+  // 'Changes Requested'. A task completed before this column existed keeps the
+  // default, because it never went through a review.
+  reviewState    String   @default("Not Submitted")
+  reviewedById   String?
+  reviewedByName String?
+  reviewedAt     DateTime?
+  reviewNote     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

@@ -48,6 +48,32 @@ function statusClass(status) {
   return 'new';
 }
 
+function reviewClass(state) {
+  if (state === 'Approved') return 'approved';
+  if (state === 'Pending Review') return 'hold';
+  if (state === 'Changes Requested') return 'rejected';
+  return 'new';
+}
+
+// --- Validation -------------------------------------------------------------
+//
+// THE WORDING IS THE SPEC. These exact sentences are what the field shows, and
+// backend/src/routes/tasks.js refuses the same five things with the same five
+// sentences — the browser check is a courtesy, the API is the gate. Returning
+// a map keyed by field name is what lets each message sit under its own box
+// instead of one banner at the top.
+function validate(form) {
+  const errors = {};
+  if (!form.department || !form.department.trim()) errors.department = 'Please select a department.';
+  if (!form.name || !form.name.trim()) errors.name = 'Please enter a task name.';
+  if (!form.status) errors.status = 'Please select a status.';
+  if (!form.startDate) errors.startDate = 'Please select a start date.';
+  if (form.startDate && form.endDate && form.endDate < form.startDate) {
+    errors.endDate = 'End date cannot be before start date.';
+  }
+  return errors;
+}
+
 // The prototype has no segmented control, so the No / Yes toggle is built from
 // two of its own buttons — the selected one carries .btn-primary.
 function YesNo({ value, onChange }) {
@@ -84,8 +110,22 @@ export default function Timesheet({ standalone = false }) {
   const [comments, setComments] = useState(null); // { task, rows, draft }
   const [reports, setReports] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [review, setReview] = useState(null); // { task, decision, note }
+  const [busyId, setBusyId] = useState('');
 
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  // Typing in a box clears that box's message, so a corrected field stops
+  // shouting before the next submit.
+  const set = (patch) => {
+    setForm((f) => ({ ...f, ...patch }));
+    setFieldErrors((e) => {
+      const next = { ...e };
+      Object.keys(patch).forEach((k) => delete next[k]);
+      // Start and end are judged together, so fixing either clears the pair.
+      if (patch.startDate !== undefined || patch.endDate !== undefined) delete next.endDate;
+      return next;
+    });
+  };
 
   const load = useCallback(() => {
     const params = {};
@@ -108,6 +148,13 @@ export default function Timesheet({ standalone = false }) {
 
   const people = options?.assignable || [];
   const canAssignOthers = !!options?.canAssignOthers;
+  // Signing work off is its own permission (hrms / Employee Services /
+  // approve), resolved by the server — this only hides the button.
+  const canReview = !!options?.canReview;
+  const myId = options?.me?.id;
+  // Who may drive Start / Complete: the person the work is for, the person who
+  // handed it out, or a lead who may edit it. The API asks the same question.
+  const mayWork = (t) => !!myId && (t.assigneeId === myId || t.assignedById === myId || canAssignOthers);
   const nameOf = useMemo(() => {
     const map = {};
     people.forEach((p) => { map[p.userId] = p.name; });
@@ -115,7 +162,7 @@ export default function Timesheet({ standalone = false }) {
   }, [people]);
 
   function openNew() {
-    setError(''); setNotice('');
+    setError(''); setNotice(''); setFieldErrors({});
     const f = emptyForm(options);
     // The department defaults to the one this login works in when there is
     // only one it can pick.
@@ -124,7 +171,7 @@ export default function Timesheet({ standalone = false }) {
   }
 
   function openEdit(task) {
-    setError(''); setNotice('');
+    setError(''); setNotice(''); setFieldErrors({});
     setForm({
       id: task.id,
       department: task.department || '',
@@ -142,7 +189,18 @@ export default function Timesheet({ standalone = false }) {
 
   async function submit(e) {
     e.preventDefault();
-    setError(''); setSaving(true);
+    setError('');
+    // VALIDATION RUNS BEFORE CREATE. Nothing is sent while a required box is
+    // empty or the dates are the wrong way round; the messages appear under
+    // the boxes they belong to.
+    const errors = validate(form);
+    if (Object.keys(errors).length) {
+      setFieldErrors(errors);
+      setError('Please correct the highlighted fields.');
+      return;
+    }
+    setFieldErrors({});
+    setSaving(true);
     const body = {
       department: form.department,
       name: form.name,
@@ -167,9 +225,56 @@ export default function Timesheet({ standalone = false }) {
       setForm(null);
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'That task could not be saved.');
+      const data = err.response?.data || {};
+      // The API names the field it refused, so a server-side refusal lands
+      // under the same box the browser check would have used.
+      if (data.field) setFieldErrors({ [data.field]: data.error });
+      setError(data.error || 'That task could not be saved.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  // --- The lifecycle: start -> complete -> review ---------------------------
+  //
+  // Each button is one API call; the row re-reads from the server afterwards,
+  // so what is on screen is what was actually stored, never an optimistic
+  // guess. The buttons are hidden when the transition does not apply, and the
+  // API refuses it anyway.
+  async function act(task, path, successText) {
+    setError(''); setNotice(''); setBusyId(task.id);
+    try {
+      await api.post(`/tasks/${task.id}/${path}`, {});
+      setNotice(successText);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'That could not be done.');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function submitReview(e) {
+    e.preventDefault();
+    setError('');
+    if (review.decision === 'changes' && !review.note.trim()) {
+      setError('Say what needs changing.');
+      return;
+    }
+    setBusyId(review.task.id);
+    try {
+      await api.post(`/tasks/${review.task.id}/review`, {
+        decision: review.decision, note: review.note.trim(),
+      });
+      setNotice(review.decision === 'approve'
+        ? `"${review.task.name}" approved.`
+        : `"${review.task.name}" sent back for changes.`);
+      setReview(null);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'That review could not be saved.');
+    } finally {
+      setBusyId('');
     }
   }
 
@@ -263,16 +368,57 @@ export default function Timesheet({ standalone = false }) {
                   <tr key={t.id}>
                     <td>
                       <b>{t.name}</b>{' '}
-                      <span className={`status ${statusClass(t.status)}`}>{t.status}</span>
+                      <span className={`status ${statusClass(t.status)}`}>{t.status}</span>{' '}
+                      {t.reviewState && t.reviewState !== 'Not Submitted' && (
+                        <span className={`status ${reviewClass(t.reviewState)}`}>{t.reviewState}</span>
+                      )}
                       {t.subTaskName && <div className="small-muted">Sub task: {t.subTaskName}</div>}
                       <div className="small-muted">{t.department || '—'}</div>
                       <div className="small-muted">
                         Assigned to {t.assigneeName} · Assigned by {t.assignedByName}
                       </div>
+                      {t.reviewedByName && (
+                        <div className="small-muted">
+                          Reviewed by {t.reviewedByName}
+                          {t.reviewNote ? ` — ${t.reviewNote}` : ''}
+                        </div>
+                      )}
                     </td>
                     <td className="cell-muted">{ddmmyyyy(t.startDate)}</td>
                     <td className="cell-muted">{ddmmyyyy(t.endDate)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
+                      {/* The workflow, in the order it happens. A button only
+                          appears where its transition is actually available. */}
+                      {mayWork(t) && ['Not Started', 'On Hold'].includes(t.status) && (
+                        <>
+                          <button
+                            className="btn btn-sm btn-primary" disabled={busyId === t.id}
+                            onClick={() => act(t, 'start', `"${t.name}" started.`)}
+                          >
+                            Start
+                          </button>{' '}
+                        </>
+                      )}
+                      {mayWork(t) && t.status === 'In Progress' && (
+                        <>
+                          <button
+                            className="btn btn-sm btn-primary" disabled={busyId === t.id}
+                            onClick={() => act(t, 'complete', `"${t.name}" completed and sent for review.`)}
+                          >
+                            Complete
+                          </button>{' '}
+                        </>
+                      )}
+                      {canReview && t.reviewState === 'Pending Review' && (
+                        <>
+                          <button
+                            className="btn btn-sm" disabled={busyId === t.id}
+                            onClick={() => { setError(''); setNotice(''); setReview({ task: t, decision: 'approve', note: '' }); }}
+                          >
+                            Review
+                          </button>{' '}
+                        </>
+                      )}
                       <button className="btn btn-sm" onClick={() => openEdit(t)}>Edit</button>{' '}
                       <button
                         className="btn btn-sm btn-ghost" title="Comments"
@@ -313,14 +459,19 @@ export default function Timesheet({ standalone = false }) {
           <form id="task-form" onSubmit={submit}>
             {error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
             <div className="grid-2">
+              {/* `required` is left off on purpose: the browser's own bubble
+                  would pre-empt these messages, and the wording of THESE is
+                  the spec. validate() runs on submit and the API re-checks. */}
               <label className="field"><span>Select Department *</span>
-                <select required value={form.department} onChange={(e) => set({ department: e.target.value })}>
+                <select value={form.department} onChange={(e) => set({ department: e.target.value })}>
                   <option value="">-- Select Department --</option>
                   {(options?.departments || []).map((d) => <option key={d}>{d}</option>)}
                 </select>
+                {fieldErrors.department && <p className="error-text">{fieldErrors.department}</p>}
               </label>
               <label className="field"><span>Task Name *</span>
-                <input required value={form.name} onChange={(e) => set({ name: e.target.value })} />
+                <input value={form.name} onChange={(e) => set({ name: e.target.value })} />
+                {fieldErrors.name && <p className="error-text">{fieldErrors.name}</p>}
               </label>
 
               <label className="field"><span>Task Description</span>
@@ -349,22 +500,29 @@ export default function Timesheet({ standalone = false }) {
                 </span>
               </label>
               <label className="field"><span>Status *</span>
-                <select required value={form.status} onChange={(e) => set({ status: e.target.value })}>
+                <select value={form.status} onChange={(e) => set({ status: e.target.value })}>
                   <option value="">-- Select Status --</option>
                   {(options?.statuses || []).map((s) => <option key={s}>{s}</option>)}
                 </select>
+                {fieldErrors.status && <p className="error-text">{fieldErrors.status}</p>}
               </label>
 
               {/* The left cell of this row is empty in the design — Task Start
                   Date sits beside Assign To's helper line. */}
               <div />
               <label className="field"><span>Task Start Date *</span>
-                <input required type="date" value={form.startDate} onChange={(e) => set({ startDate: e.target.value })} />
+                <input type="date" value={form.startDate} onChange={(e) => set({ startDate: e.target.value })} />
+                {fieldErrors.startDate && <p className="error-text">{fieldErrors.startDate}</p>}
               </label>
             </div>
 
             <label className="field"><span>Task End Date</span>
+              {/* No `min` here on purpose, for the same reason `required` is
+                  left off above: the browser's native range bubble ("Value
+                  must be 21-09-2026 or later") would fire first and the
+                  specified message would never be seen. validate() owns it. */}
               <input type="date" value={form.endDate} onChange={(e) => set({ endDate: e.target.value })} />
+              {fieldErrors.endDate && <p className="error-text">{fieldErrors.endDate}</p>}
             </label>
 
             <div className="field">
@@ -382,6 +540,64 @@ export default function Timesheet({ standalone = false }) {
                 <span className="small-muted">A dependency has to be a task you can reach.</span>
               </label>
             )}
+          </form>
+        </Modal>
+      )}
+
+      {/* ---- Review ------------------------------------------------------- */}
+      {review && (
+        <Modal
+          title={`Review — ${review.task.name}`}
+          onClose={() => setReview(null)}
+          foot={<>
+            <button className="btn" type="button" onClick={() => setReview(null)}>Cancel</button>
+            <button
+              className="btn btn-primary" type="submit" form="task-review"
+              disabled={busyId === review.task.id}
+            >
+              {review.decision === 'approve' ? 'Approve' : 'Request changes'}
+            </button>
+          </>}
+        >
+          <form id="task-review" onSubmit={submitReview}>
+            <div className="small-muted" style={{ marginBottom: 10 }}>
+              {review.task.department || '—'} · completed by {review.task.assigneeName}
+              {review.task.completedAt ? ` on ${new Date(review.task.completedAt).toLocaleString()}` : ''}
+              {review.task.endDate ? ` · due ${ddmmyyyy(review.task.endDate)}` : ' · no due date'}
+            </div>
+            <div className="field">
+              <span>Decision</span>
+              <div style={{ display: 'inline-flex' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm${review.decision === 'approve' ? ' btn-primary' : ''}`}
+                  style={{ borderRadius: '8px 0 0 8px' }}
+                  onClick={() => setReview((r) => ({ ...r, decision: 'approve' }))}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm${review.decision === 'changes' ? ' btn-primary' : ''}`}
+                  style={{ borderRadius: '0 8px 8px 0', marginLeft: -1 }}
+                  onClick={() => setReview((r) => ({ ...r, decision: 'changes' }))}
+                >
+                  Request changes
+                </button>
+              </div>
+            </div>
+            <label className="field">
+              <span>Reviewer note {review.decision === 'changes' ? '*' : ''}</span>
+              <textarea
+                rows="3" value={review.note}
+                onChange={(e) => setReview((r) => ({ ...r, note: e.target.value }))}
+              />
+              <span className="small-muted">
+                {review.decision === 'approve'
+                  ? 'Optional. The note is added to the task’s comment thread.'
+                  : 'Required — the task reopens as In Progress with this note on it.'}
+              </span>
+            </label>
           </form>
         </Modal>
       )}
@@ -438,7 +654,19 @@ export default function Timesheet({ standalone = false }) {
                 <div className="statitem"><div className="n">{reports.overdue}</div><div className="l">Overdue</div></div>
                 <div className="statitem"><div className="n">{reports.dueToday}</div><div className="l">Due today</div></div>
                 <div className="statitem"><div className="n">{reports.noDueDate}</div><div className="l">No due date</div></div>
+                <div className="statitem"><div className="n">{reports.awaitingReview ?? 0}</div><div className="l">Awaiting review</div></div>
+                <div className="statitem"><div className="n">{reports.approved ?? 0}</div><div className="l">Approved</div></div>
+                <div className="statitem">
+                  <div className="n">{reports.onTime?.rate == null ? '—' : `${reports.onTime.rate}%`}</div>
+                  <div className="l">On time</div>
+                </div>
               </div>
+              {reports.onTime?.judged > 0 && (
+                <div className="small-muted" style={{ marginTop: -4, marginBottom: 10 }}>
+                  On time measured over {reports.onTime.judged} completed task(s) with a due date —{' '}
+                  {reports.onTime.onTime} on time, {reports.onTime.late} late.
+                </div>
+              )}
 
               <div className="section-label">By status</div>
               <div className="tbl-wrap">
@@ -452,14 +680,36 @@ export default function Timesheet({ standalone = false }) {
                 </table>
               </div>
 
+              {!!(reports.byReview || []).length && (
+                <>
+                  <div className="section-label">By review state</div>
+                  <div className="tbl-wrap">
+                    <table>
+                      <thead><tr><th>Review</th><th>Tasks</th></tr></thead>
+                      <tbody>
+                        {reports.byReview.map((r) => (
+                          <tr key={r.state}><td>{r.state}</td><td>{r.count}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
               <div className="section-label">By person</div>
               <div className="tbl-wrap">
                 <table>
-                  <thead><tr><th>Assignee</th><th>Total</th><th>Open</th><th>Completed</th><th>Overdue</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Assignee</th><th>Total</th><th>Open</th><th>Completed</th>
+                      <th>Awaiting review</th><th>Approved</th><th>Overdue</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {reports.byPerson.map((r) => (
                       <tr key={r.userId}>
-                        <td>{r.name}</td><td>{r.total}</td><td>{r.open}</td><td>{r.completed}</td><td>{r.overdue}</td>
+                        <td>{r.name}</td><td>{r.total}</td><td>{r.open}</td><td>{r.completed}</td>
+                        <td>{r.awaitingReview ?? 0}</td><td>{r.approved ?? 0}</td><td>{r.overdue}</td>
                       </tr>
                     ))}
                   </tbody>
