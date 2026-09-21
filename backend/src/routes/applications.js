@@ -1,6 +1,9 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+// The pipeline's workflow-action guard. Stage ownership is part of THE
+// permission engine now, not a role list in this file.
+const { canMoveToStage } = require('../utils/permissions');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
@@ -26,28 +29,14 @@ router.use(requirePerm('ats', 'candidates', 'Applications', 'view'));
 // records it as completed before the human review starts.
 // The 20 keys and their order match STAGE_CODES + EXTRA_STAGE_CODES in
 // backend/src/utils/atsVocab.js. Labels are never derived from these codes.
-const STAGE_OWNERS = {
-  NEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  AI_INTERVIEW_REQUIRED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  AI_INTERVIEW_SCHEDULED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  AI_INTERVIEW_COMPLETED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  RECRUITER_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  RECRUITER_APPROVED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  WITH_BDE: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  BDE_APPROVED: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  SHARED_WITH_CLIENT: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  CLIENT_REVIEW: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  CLIENT_SHORTLISTED: ['CLIENT', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  INTERVIEW_SCHEDULED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  INTERVIEW_COMPLETED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  SELECTED: ['CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  OFFER: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  OFFER_ACCEPTED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  JOINED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  HIRED: ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  REJECTED: ['RECRUITER', 'BDE', 'CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  HOLD: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-};
+// STAGE_OWNERS MOVED to backend/src/utils/permissions.js.
+//
+// It was a SECOND permission system: a role list, inside a route handler,
+// deciding who may act — exactly what this app does not do anywhere else.
+// It is now part of the engine (permissions.js STAGE_OWNERS /
+// STAGE_WORKFLOW_ACTIONS / canMoveToStage), resolved against the ATS
+// PRODUCT ROLE like every other ATS decision, and the frontend reads the
+// resolved form of it from /auth/me instead of re-deciding it.
 
 router.get('/', async (req, res) => {
   // STEP 6 OF THE ENGINE — DATA SCOPE. This list had the module guard above
@@ -143,17 +132,12 @@ async function applyStageMove(user, applicationId, body = {}) {
   const { stage, interviewAt, comment } = body;
   if (!stage) return { status: 400, body: { error: 'stage is required' } };
 
-  const allowedRoles = STAGE_OWNERS[stage];
-  if (!allowedRoles) return { status: 400, body: { error: 'Unknown stage' } };
-  // STAGE_OWNERS is pipeline workflow (who owns a stage), not access control:
-  // the access half is caps.atsAct, resolved from the permission engine.
-  if (!user.caps.atsAct) {
-    return { status: 403, body: { error: "This action isn't included in your role's permissions" } };
-  }
-  const isAdmin = user.caps.hrmsManage && user.caps.accountsManage;
-  if (!isAdmin && !allowedRoles.includes(user.atsRole || user.role)) {
-    return { status: 403, body: { error: "Moving to this stage isn't included in your role's permissions" } };
-  }
+  // BOTH HALVES, in the engine. Access first (may this login act on the
+  // pipeline at all, resolved against its ATS product role), then WORKFLOW
+  // OWNERSHIP (does its ATS role own this stage) — seeing a record has never
+  // implied acting on it and neither does being able to edit one.
+  const refusal = await canMoveToStage(user, stage);
+  if (refusal) return refusal;
 
   const existing = await prisma.application.findUnique({
     where: { id: applicationId },
@@ -277,5 +261,7 @@ router.patch('/:id/stage', async (req, res, next) => {
 });
 
 module.exports = router;
-module.exports.STAGE_OWNERS = STAGE_OWNERS;
+// Re-exported from the engine so any older importer of this name keeps
+// working and there is still only ONE table.
+module.exports.STAGE_OWNERS = require('../utils/permissions').STAGE_OWNERS;
 module.exports.applyStageMove = applyStageMove;

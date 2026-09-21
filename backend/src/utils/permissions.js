@@ -7,8 +7,26 @@
 // every former requireRole(...) site is now requirePerm(...) below.
 //
 // Order of checks, exactly as specified:
-//   user identity -> product access -> role -> module permission
-//     -> action permission -> data scope -> record ownership/assignment
+//   USER -> ACTIVE PRODUCT -> PRODUCT ROLE -> MODULE -> FEATURE -> ACTION
+//        -> SCOPE -> ALLOW/DENY
+//
+// THREE INDEPENDENT PRODUCT ROLES. A login is not one role any more:
+//
+//   USER
+//    ├── HRMS Role      → Employee
+//    ├── ATS Role       → Recruiter
+//    └── Accounts Role  → None
+//
+// Being an Employee in HRMS must NOT deny Recruiter actions in ATS, so the
+// role this engine resolves is the role for the PRODUCT THE MODULE BELONGS TO
+// (roleForProduct below), not the login's account-level `role`. A product
+// role of 'NONE' (or absent) is refused outright, whatever the other two say.
+//
+// `role` keeps the account-level job: Super Admin / Admin, and the external
+// CLIENT / CANDIDATE account kinds. It is one of the roles consulted for the
+// PRODUCT-AGNOSTIC modules (dashboard, reports, administration), which resolve
+// against every role the login holds — so a login that is an Employee in HRMS
+// and a Recruiter in ATS reaches the ATS dashboard and the ATS reports.
 //
 // The module/feature/action matrix it reads is the SAME RoleAccess table that
 // Administration -> Role Catalog edits. Until a role's row is saved the engine
@@ -20,22 +38,63 @@
 const prisma = require('../db');
 const {
   ROLE_ACCESS_MODULES, ROLE_FEATURE_ACTIONS, moduleById,
+  PRODUCT_OF_MODULE, PRODUCTS, productKeyOf, NO_ROLE,
 } = require('./roleAccess');
 
-// Which product a module belongs to. `null` = always-on core surface
-// (dashboard, reports, administration) gated by role alone.
-const PRODUCT_OF_MODULE = {
-  dashboard: null,
-  requirements: 'ats',
-  clients: 'ats',
-  candidates: 'ats',
-  recruiterbde: 'ats',
-  interviews: 'ats',
-  hrms: 'hrms',
-  accounts: 'accounts',
-  reports: null,
-  administration: null,
-};
+// The three products a role can be held in. Everything else is core.
+const ROLE_PRODUCTS = ['hrms', 'ats', 'accounts'];
+
+// ---------------------------------------------------------------------------
+// STEP 3 OF THE ENGINE — THE PRODUCT ROLE.
+//
+// roleForProduct(user, 'ats') is the ONLY place the app decides which role
+// answers for a product. The stored per-user column wins; a login that
+// predates the three columns falls back to its account-level `role` for any
+// product it actually holds, which is exactly what the engine used before,
+// so nothing loses access on day one.
+// ---------------------------------------------------------------------------
+const namedRole = (value) => (value && value !== NO_ROLE ? value : null);
+
+function roleForProduct(user, product) {
+  if (!user || !ROLE_PRODUCTS.includes(product)) return null;
+  const products = user.products || {};
+  if (!products[product]) return null;
+  const stored = product === 'hrms' ? user.hrmsRole
+    : product === 'ats' ? user.atsRole
+      : user.accountsRole;
+  return namedRole(stored) || user.role || null;
+}
+
+// The three product roles at a glance — what the Users screen renders and
+// what the identity carries.
+function productRolesOf(user) {
+  return {
+    hrms: roleForProduct(user, 'hrms') || NO_ROLE,
+    ats: roleForProduct(user, 'ats') || NO_ROLE,
+    accounts: roleForProduct(user, 'accounts') || NO_ROLE,
+  };
+}
+
+// Which role(s) answer for a module.
+//   * a product module  → exactly one role, the product's
+//   * a core module     → every role the login holds, account-level `role`
+//                         included, because Dashboard / Reports /
+//                         Administration are not any one product's
+const NO_SUCH_ROLE = '__no_role__';
+
+function rolesFor(user, product) {
+  if (ROLE_PRODUCTS.includes(product)) {
+    const role = roleForProduct(user, product);
+    return role ? [role] : [];
+  }
+  const set = new Set();
+  if (user.role) set.add(user.role);
+  ROLE_PRODUCTS.forEach((p) => {
+    const r = roleForProduct(user, p);
+    if (r) set.add(r);
+  });
+  return [...set];
+}
 
 const ALL_ROLES = [
   'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
@@ -342,19 +401,44 @@ function defaultAccessForRole(role, moduleId) {
   return { moduleEnabled: listed && anyGranted, features };
 }
 
-// Merge a persisted RoleAccess row over the defaults, so a feature added to the
-// catalog later still works for roles saved before it existed.
-function mergeAccess(role, moduleId, row) {
+// Merge persisted RoleAccess row(s) over the defaults, so a feature added to
+// the catalog later still works for roles saved before it existed.
+//
+// Rows are applied in order, so a PRODUCT-SPECIFIC row ('ats') is merged over
+// the product-agnostic '*' row: a role saved before products existed keeps
+// exactly the access it had, and an admin can then differ it per product.
+function mergeAccess(role, moduleId, ...rows) {
+  const present = rows.filter(Boolean);
   const base = defaultAccessForRole(role, moduleId);
-  if (!row) return base;
-  let saved = {};
-  try { saved = row.features ? JSON.parse(row.features) : {}; } catch { saved = {}; }
+  if (!present.length) return base;
   const mod = moduleById(moduleId);
-  const features = {};
-  (mod ? mod.features : []).forEach((f) => {
-    features[f] = { ...base.features[f], ...(saved[f] || {}) };
+  let out = base;
+  present.forEach((row) => {
+    let saved = {};
+    try { saved = row.features ? JSON.parse(row.features) : {}; } catch { saved = {}; }
+    const features = {};
+    (mod ? mod.features : []).forEach((f) => {
+      features[f] = { ...out.features[f], ...(saved[f] || {}) };
+    });
+    out = { moduleEnabled: !!row.moduleEnabled, features };
   });
-  return { moduleEnabled: !!row.moduleEnabled, features };
+  return out;
+}
+
+// OR together several roles' access on one module. Used for the core modules,
+// which answer to every role a login holds.
+function unionAccess(moduleId, list) {
+  const mod = moduleById(moduleId);
+  const names = mod ? mod.features : [];
+  if (!list.length) return { moduleEnabled: false, features: Object.fromEntries(names.map((f) => [f, emptyActions(false)])) };
+  const features = {};
+  names.forEach((f) => {
+    features[f] = {};
+    ROLE_FEATURE_ACTIONS.forEach((a) => {
+      features[f][a] = list.some((x) => !!(x.features[f] && x.features[f][a]));
+    });
+  });
+  return { moduleEnabled: list.some((x) => x.moduleEnabled), features };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +452,9 @@ function invalidateRoleAccess(role) {
   if (role) cache.delete(role); else cache.clear();
 }
 
-async function accessFor(role, moduleId) {
+// accessFor(role, moduleId, product) — the stored matrix for ONE role on ONE
+// module, in ONE product. `product` defaults to the module's own product key.
+async function accessFor(role, moduleId, product) {
   const now = Date.now();
   let entry = cache.get(role);
   if (!entry || now - entry.at > CACHE_MS) {
@@ -380,12 +466,22 @@ async function accessFor(role, moduleId) {
     }
     const modules = {};
     ROLE_ACCESS_MODULES.forEach((m) => {
-      modules[m.id] = mergeAccess(role, m.id, rows.find((r) => r.moduleId === m.id));
+      const star = rows.find((r) => r.moduleId === m.id && (r.product || '*') === '*');
+      const byProduct = {};
+      PRODUCTS.forEach((p) => {
+        if (p.id === '*') { byProduct['*'] = mergeAccess(role, m.id, star); return; }
+        const specific = rows.find((r) => r.moduleId === m.id && r.product === p.id);
+        byProduct[p.id] = mergeAccess(role, m.id, star, specific);
+      });
+      modules[m.id] = byProduct;
     });
     entry = { at: now, modules };
     cache.set(role, entry);
   }
-  return entry.modules[moduleId] || { moduleEnabled: false, features: {} };
+  const key = product || productKeyOf(moduleId);
+  const mod = entry.modules[moduleId];
+  if (!mod) return { moduleEnabled: false, features: {} };
+  return mod[key] || mod['*'] || { moduleEnabled: false, features: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -399,22 +495,29 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   if (!user || !user.id) return false;
   if (user.status && user.status !== 'Active') return false;
 
-  // 2. product access
+  // 2. ACTIVE PRODUCT
   const owningProduct = product || PRODUCT_OF_MODULE[moduleId] || null;
-  if (owningProduct && ['hrms', 'ats', 'accounts'].includes(owningProduct)) {
-    const products = user.products || {};
-    if (!products[owningProduct]) return false;
-  }
+  const isProduct = ROLE_PRODUCTS.includes(owningProduct);
+  if (isProduct && !(user.products || {})[owningProduct]) return false;
 
-  // 3. role
-  const role = user.role;
-  if (!role) return false;
+  // 3. PRODUCT ROLE — the role for THIS product, never the account-level one.
+  //    accountsRole = None means Accounts is refused however senior the
+  //    login's HRMS or ATS role is.
+  const roles = rolesFor(user, isProduct ? owningProduct : null);
+  if (!roles.length) return false;
 
   // 4. module permission + 5. action permission
-  const access = await accessFor(role, moduleId);
-  if (!access.moduleEnabled) return false;
-  const actions = access.features[feature];
-  if (!actions || !actions[action]) return false;
+  const key = isProduct ? owningProduct : '*';
+  let granted = false;
+  for (const role of roles) {
+    // eslint-disable-next-line no-await-in-loop
+    const access = await accessFor(role, moduleId, key);
+    if (access.moduleEnabled && access.features[feature] && access.features[feature][action]) {
+      granted = true;
+      break;
+    }
+  }
+  if (!granted) return false;
 
   // 6/7. data scope and record ownership
   if (record !== undefined && record !== null) {
@@ -422,6 +525,104 @@ async function can(user, product, moduleId, feature, action, record = undefined)
     if (!recordInScope(user, moduleId, record)) return false;
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// WORKFLOW ACTIONS ARE NOT VIEW/EDIT.  (§17)
+//
+// Seeing a record must not imply acting on it, and holding `candidates /
+// Pipeline Stages / edit` must not imply owning every stage. The pipeline has
+// an OWNER at each point:
+//
+//   Recruiter Review   → a Recruiter may Reject / Hold / Send to BDE
+//   With BDE           → a BDE may Share with Client
+//   Shared with Client → a Client may Shortlist / Reject / Interview Decision
+//
+// Both halves are checked, in this order:
+//   1. ACCESS   — can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit'),
+//                 the ordinary matrix answer, resolved against the ATS
+//                 PRODUCT ROLE. An HRMS Manager who is not in ATS fails here.
+//   2. OWNERSHIP— STAGE_OWNERS[targetStage] names the ATS roles that own the
+//                 move. A Recruiter cannot Share with Client; a Client cannot
+//                 move a candidate into Recruiter Review.
+//
+// This table used to live in routes/applications.js, which made it a SECOND
+// permission system sitting beside this one. It lives here now, it is
+// resolved against the ATS product role like everything else in ATS, and the
+// route calls canMoveToStage().
+//
+// The 20 keys and their order match STAGE_CODES + EXTRA_STAGE_CODES in
+// backend/src/utils/atsVocab.js. Labels are never derived from these codes.
+const STAGE_OWNERS = {
+  NEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  AI_INTERVIEW_REQUIRED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  AI_INTERVIEW_SCHEDULED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  AI_INTERVIEW_COMPLETED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  RECRUITER_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  RECRUITER_APPROVED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  WITH_BDE: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  BDE_APPROVED: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  SHARED_WITH_CLIENT: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  CLIENT_REVIEW: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  CLIENT_SHORTLISTED: ['CLIENT', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  INTERVIEW_SCHEDULED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  INTERVIEW_COMPLETED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  SELECTED: ['CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  OFFER: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  OFFER_ACCEPTED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  JOINED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  HIRED: ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  REJECTED: ['RECRUITER', 'BDE', 'CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  HOLD: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+};
+
+// The named buttons §17 asks for, per CURRENT stage. `to` is the target stage,
+// so the owner of the button is STAGE_OWNERS[to] and there is no second list
+// to keep in step. The frontend reads the resolved form of this from
+// /auth/me, so a button is shown only to the login that owns the move.
+const STAGE_WORKFLOW_ACTIONS = {
+  RECRUITER_REVIEW: [
+    { id: 'send_to_bde', label: 'Send to BDE', to: 'WITH_BDE' },
+    { id: 'hold', label: 'Hold', to: 'HOLD' },
+    { id: 'reject', label: 'Reject', to: 'REJECTED' },
+  ],
+  WITH_BDE: [
+    { id: 'share_with_client', label: 'Share with Client', to: 'SHARED_WITH_CLIENT' },
+    { id: 'hold', label: 'Hold', to: 'HOLD' },
+    { id: 'reject', label: 'Reject', to: 'REJECTED' },
+  ],
+  SHARED_WITH_CLIENT: [
+    { id: 'shortlist', label: 'Shortlist', to: 'CLIENT_SHORTLISTED' },
+    { id: 'interview_decision', label: 'Interview Decision', to: 'INTERVIEW_SCHEDULED' },
+    { id: 'reject', label: 'Reject', to: 'REJECTED' },
+  ],
+};
+
+// Which target stages this login may move a candidate to. Access half first,
+// ownership half second — a login that fails the access half gets an empty
+// list, not a shorter one.
+async function allowedStagesFor(user) {
+  const mayAct = await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
+  if (!mayAct) return [];
+  // Super Admin / Admin own every stage, as they always have.
+  const global = rolesFor(user, null).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r));
+  const atsRole = roleForProduct(user, 'ats');
+  return Object.keys(STAGE_OWNERS)
+    .filter((stage) => global || STAGE_OWNERS[stage].includes(atsRole));
+}
+
+// The guard routes/applications.js calls. Returns null when allowed, or the
+// { status, body } refusal to send.
+async function canMoveToStage(user, stage) {
+  if (!STAGE_OWNERS[stage]) return { status: 400, body: { error: 'Unknown stage' } };
+  if (!await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit')) {
+    return { status: 403, body: { error: "This action isn't included in your role's permissions" } };
+  }
+  const global = rolesFor(user, null).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r));
+  if (!global && !STAGE_OWNERS[stage].includes(roleForProduct(user, 'ats'))) {
+    return { status: 403, body: { error: "Moving to this stage isn't included in your role's permissions" } };
+  }
+  return null;
 }
 
 const DENIED = { error: "This action isn't included in your role's permissions" };
@@ -459,28 +660,65 @@ function requireProduct(product) {
   };
 }
 
-// The whole matrix for one role — what the nav and the Role Catalog read.
-async function accessMatrix(role) {
+// The whole matrix for one role, in one product — what the Role Catalog reads.
+async function accessMatrix(role, product) {
   const out = {};
   for (const m of ROLE_ACCESS_MODULES) {
     // eslint-disable-next-line no-await-in-loop
-    out[m.id] = await accessFor(role, m.id);
+    out[m.id] = await accessFor(role, m.id, product);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// THE EFFECTIVE MATRIX FOR ONE LOGIN — what /auth/me hands the browser.
+//
+// This is the whole three-role model collapsed into the one shape the
+// frontend already reads, so the sidebar, the landing page and every button
+// read the SAME answer can() gives: each module resolved against ITS
+// product's role, the core modules against every role the login holds.
+// ---------------------------------------------------------------------------
+async function effectiveMatrix(user) {
+  const out = {};
+  for (const m of ROLE_ACCESS_MODULES) {
+    const owning = PRODUCT_OF_MODULE[m.id];
+    const isProduct = ROLE_PRODUCTS.includes(owning);
+    if (isProduct && !(user.products || {})[owning]) {
+      out[m.id] = defaultAccessForRole(NO_SUCH_ROLE, m.id);
+      continue;
+    }
+    const roles = rolesFor(user, isProduct ? owning : null);
+    const key = isProduct ? owning : '*';
+    // eslint-disable-next-line no-await-in-loop
+    const list = await Promise.all(roles.map((r) => accessFor(r, m.id, key)));
+    out[m.id] = list.length ? unionAccess(m.id, list) : defaultAccessForRole(NO_SUCH_ROLE, m.id);
   }
   return out;
 }
 
 module.exports = {
   PRODUCT_OF_MODULE,
+  ROLE_PRODUCTS,
   DEFAULT_MODULES,
   DEFAULT_RULES,
   SET,
+  NO_ROLE,
+  roleForProduct,
+  productRolesOf,
+  rolesFor,
   can,
   requirePerm,
   requireProduct,
   accessFor,
   accessMatrix,
+  effectiveMatrix,
   defaultAccessForRole,
   mergeAccess,
+  unionAccess,
   invalidateRoleAccess,
+  STAGE_OWNERS,
+  STAGE_WORKFLOW_ACTIONS,
+  allowedStagesFor,
+  canMoveToStage,
   DENIED,
 };

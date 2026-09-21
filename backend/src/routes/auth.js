@@ -4,7 +4,25 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { resolveIdentity, tokenPayload } = require('../utils/identity');
-const { accessMatrix } = require('../utils/permissions');
+const { effectiveMatrix, allowedStagesFor, STAGE_WORKFLOW_ACTIONS } = require('../utils/permissions');
+
+// Everything the browser needs to render this login: the identity, the
+// EFFECTIVE permission matrix (every module resolved against ITS product's
+// role — HRMS by hrmsRole, ATS by atsRole, Accounts by accountsRole, the core
+// modules against every role the login holds) and the pipeline stages this
+// login OWNS, which is the workflow half of §17 and is not implied by being
+// able to see a record.
+async function sessionPayload(identity) {
+  const [access, allowedStages] = await Promise.all([
+    effectiveMatrix(identity),
+    allowedStagesFor(identity),
+  ]);
+  return {
+    ...identity,
+    access,
+    workflow: { allowedStages, stageActions: STAGE_WORKFLOW_ACTIONS },
+  };
+}
 
 const router = express.Router();
 
@@ -41,13 +59,13 @@ router.post('/login', async (req, res) => {
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   const token = jwt.sign(tokenPayload(identity), process.env.JWT_SECRET, { expiresIn: '8h' });
-  res.json({ token, user: { ...identity, access: await accessMatrix(identity.role) } });
+  res.json({ token, user: await sessionPayload(identity) });
 });
 
 // The resolved identity plus the permission matrix the frontend renders its
 // nav and its action buttons from — the SAME matrix the server enforces.
 router.get('/me', requireAuth, async (req, res) => {
-  res.json({ ...req.user, access: await accessMatrix(req.user.role) });
+  res.json(await sessionPayload(req.user));
 });
 
 router.put('/me', requireAuth, async (req, res) => {
@@ -72,7 +90,7 @@ router.put('/me/workspace', requireAuth, async (req, res) => {
   }
   await prisma.user.update({ where: { id: req.user.id }, data: { landingWorkspace: workspace } });
   const identity = await resolveIdentity(req.user.id);
-  res.json({ ...identity, access: await accessMatrix(identity.role) });
+  res.json(await sessionPayload(identity));
 });
 
 module.exports = router;

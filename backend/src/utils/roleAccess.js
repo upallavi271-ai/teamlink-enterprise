@@ -50,6 +50,47 @@ const ROLE_ACCESS_MODULES = [
   { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs'] },
 ];
 
+// ---------------------------------------------------------------------------
+// THE PRODUCT DIMENSION — Product → Module → Feature → Action.
+//
+// A module belongs to exactly one product, or to none. `null` = an always-on
+// core surface (dashboard, reports, administration) that is not part of any
+// one product and is resolved against every role the login holds.
+//
+// This lived in permissions.js. It moves here because the Role Catalog now
+// groups its modules by product and roleAccess.js must not import
+// permissions.js (permissions.js imports this file).
+// ---------------------------------------------------------------------------
+const PRODUCTS = [
+  { id: 'ats', label: 'ATS' },
+  { id: 'hrms', label: 'HRMS' },
+  { id: 'accounts', label: 'Accounts' },
+  { id: '*', label: 'Core (all products)' },
+];
+
+const PRODUCT_OF_MODULE = {
+  dashboard: null,
+  requirements: 'ats',
+  clients: 'ats',
+  candidates: 'ats',
+  recruiterbde: 'ats',
+  interviews: 'ats',
+  hrms: 'hrms',
+  accounts: 'accounts',
+  reports: null,
+  administration: null,
+};
+
+// The RoleAccess.product value a module's rows are stored under. A
+// product-agnostic module stores '*'.
+function productKeyOf(moduleId) {
+  return PRODUCT_OF_MODULE[moduleId] || '*';
+}
+
+// "No role in this product." Stored on User.hrmsRole / atsRole / accountsRole
+// and on DesignationRole, and refused outright by the engine.
+const NO_ROLE = 'NONE';
+
 // Roles this app actually issues, in the prototype's seniority order.
 const CATALOG_ROLES = [
   'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
@@ -99,6 +140,10 @@ module.exports = {
   ROLE_ACCESS_MODULES,
   CATALOG_ROLES,
   ROLE_SCOPE_DESC,
+  PRODUCTS,
+  PRODUCT_OF_MODULE,
+  productKeyOf,
+  NO_ROLE,
   moduleById,
   sanitizeFeatures,
 };

@@ -2,7 +2,13 @@
 // Data scope — step 6/7 of the permission engine.
 //
 // Visibility is never role alone. It is
-//   user + product + role + department + team + client + ownership + permission.
+//   user + product + PRODUCT ROLE + department + team + client + ownership
+//   + permission.
+//
+// And the role is the one for the product being asked about: requirements,
+// clients, candidates and the pipeline are scoped by the ATS role, employees
+// by the HRMS role, invoices by the Accounts role. An HRMS Employee who is an
+// ATS Recruiter is scoped as a Recruiter in ATS and as an employee in HRMS.
 //
 // Everything here runs ON THE SERVER and produces Prisma `where` fragments that
 // list endpoints must spread in. A hidden button is not access control; the
@@ -28,18 +34,32 @@ function csv(value) {
 }
 
 // The resolved scope for a user. `identity.js` puts these fields on req.user.
+// 'NONE' is a product the login does not work in — never a role name to
+// match against.
+const named = (v) => (v && v !== 'NONE' ? v : null);
+
 function scopeOf(user) {
   const u = user || {};
   const departments = csv(u.atsScopeDepartments).length
     ? csv(u.atsScopeDepartments)
     : (u.department ? [u.department] : []);
   const teams = csv(u.atsScopeTeams).length ? csv(u.atsScopeTeams) : (u.team ? [u.team] : []);
-  const configuredGlobal = CONFIGURABLE_GLOBAL_ROLES.includes(u.role)
+  // The three product roles, each falling back to the account-level role for
+  // a login that predates them — the same value this file read before.
+  const atsRole = named(u.atsRole) || u.role;
+  const hrmsRole = named(u.hrmsRole) || u.role;
+  const accountsRole = named(u.accountsRole) || u.role;
+  // A login is globally scoped if it is Super Admin / Admin ANYWHERE — in its
+  // account-level role or in any one of its product roles.
+  const held = [u.role, named(u.hrmsRole), named(u.atsRole), named(u.accountsRole)].filter(Boolean);
+  const configuredGlobal = held.some((r) => CONFIGURABLE_GLOBAL_ROLES.includes(r))
     && !csv(u.atsScopeDepartments).length;
   return {
-    global: GLOBAL_SCOPE_ROLES.includes(u.role) || configuredGlobal,
+    global: held.some((r) => GLOBAL_SCOPE_ROLES.includes(r)) || configuredGlobal,
     role: u.role,
-    atsRole: u.atsRole || u.role,
+    hrmsRole,
+    accountsRole,
+    atsRole,
     userId: u.id,
     departments,
     teams,
@@ -144,8 +164,8 @@ function portalRequirementWhere(user, { publishedOnly = false } = {}) {
 function clientWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  if (s.role === 'CLIENT') return { id: s.clientId || '__none__' };
-  if (s.role === 'CANDIDATE') return { id: '__none__' };
+  if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
+  if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
   // A BDE is scoped to the clients assigned to them; where none are assigned
   // they fall back to the clients they hold a requirement for.
   if (s.atsRole === 'BDE') {
@@ -172,7 +192,7 @@ function clientWhere(user) {
 function applicationWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  if (s.atsRole === 'CANDIDATE' || s.role === 'CANDIDATE') {
+  if (s.atsRole === 'CANDIDATE') {
     return { candidateId: s.candidateId || '__none__' };
   }
   return { requirement: requirementWhere(user) };
@@ -200,25 +220,30 @@ const CLIENT_SHARED_STAGES = [
 function candidateWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  if (s.role === 'CANDIDATE') return { id: s.candidateId || '__none__' };
+  if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
   return { applications: { some: applicationWhere(user) } };
 }
 
 // --- Invoices --------------------------------------------------------------
+// An invoice is an ACCOUNTS record, so the ACCOUNTS role scopes it. A login
+// whose accountsRole is None never reaches this function — can() has already
+// refused the module.
 function invoiceWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  if (s.role === 'ACCOUNTANT') return {};
-  if (s.role === 'CLIENT') return { clientId: s.clientId || '__none__' };
+  if (s.accountsRole === 'ACCOUNTANT') return {};
+  if (s.accountsRole === 'CLIENT' || s.role === 'CLIENT') return { clientId: s.clientId || '__none__' };
   return { id: '__none__' };
 }
 
 // --- Employees -------------------------------------------------------------
 // HR roles see their scope's employees; everyone else sees only themselves.
+// An employee record is an HRMS record, so the HRMS role scopes it: an HRMS
+// Employee sees only themselves even when their ATS role is a TL.
 function employeeWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  if (['STL', 'TL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.role) && s.departments.length) {
+  if (['STL', 'TL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
     return { department: { in: s.departments } };
   }
   return { id: s.employeeId || '__none__' };
@@ -237,10 +262,10 @@ function recordInScope(user, moduleId, record) {
       if (s.atsRole === 'CLIENT') return record.id === s.clientId;
       return true;
     case 'candidates':
-      if (s.role === 'CANDIDATE') return record.id === s.candidateId;
+      if (s.atsRole === 'CANDIDATE') return record.id === s.candidateId;
       return true;
     case 'accounts':
-      if (s.role === 'CLIENT') return record.clientId === s.clientId;
+      if (s.accountsRole === 'CLIENT' || s.role === 'CLIENT') return record.clientId === s.clientId;
       return true;
     default:
       return true;
