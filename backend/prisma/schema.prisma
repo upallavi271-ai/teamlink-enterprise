@@ -1450,3 +1450,82 @@ model CandidateDocument {
 
   @@index([candidateId])
 }
+
+// =============================================================================
+// TIMESHEET — tasks, task comments, and email verification codes (tsheet_)
+//
+// THREE NEW TABLES. Nothing here alters an existing table: the migration is
+// CREATE TABLE + CREATE INDEX only, so the SQLite table-rebuild trap that
+// silently drops columns added by other migrations cannot be triggered.
+//
+// Task.assigneeId / assignedById are PLAIN SCALARS holding a User.id, not
+// Prisma relations — exactly like User.candidateId above. A relation would put
+// back-reference fields on User, and this branch does not touch that model.
+// =============================================================================
+
+// One row per task on the Timesheet screen's My Tasks list.
+model Task {
+  id             String   @id @default(cuid())
+  name           String
+  department     String?
+  description    String?
+  subTaskName    String?
+  status         String   @default("Not Started")
+  // Stored as YYYY-MM-DD, the value an <input type="date"> carries. The screen
+  // renders them dd-mm-yyyy; the wire format never depends on a locale.
+  startDate      String?
+  endDate        String?
+  // "Dependent Task — No / Yes". `dependsOnId` names the task it waits on when
+  // the answer is Yes; the flag alone would say nothing.
+  dependent      Boolean  @default(false)
+  dependsOnId    String?
+  // Who the work is FOR and who handed it over. Both are User.id — one
+  // employee = one user = one login, so there is no second identity to pick.
+  assigneeId     String
+  assignedById   String
+  // Names as they stood when the task was created, so a row still reads
+  // correctly after someone is renamed or leaves. The ids above stay
+  // authoritative for every permission and scope decision.
+  assigneeName   String
+  assignedByName String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  comments       TaskComment[]
+
+  @@index([assigneeId])
+  @@index([assignedById])
+  @@index([department])
+}
+
+// The comment button on the task row. Anyone who can reach the task can read
+// and add one — the thread is the task's own audit of what happened.
+model TaskComment {
+  id         String   @id @default(cuid())
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId   String
+  authorName String
+  text       String
+  createdAt  DateTime @default(now())
+
+  @@index([taskId])
+}
+
+// The one-time code Add Employee sends to verify an address before the account
+// exists. The code itself is NEVER stored — only a SHA-256 hash of it — and a
+// row dies on expiry, on `attempts` reaching the cap, or once consumed.
+model EmailVerification {
+  id            String    @id @default(cuid())
+  email         String
+  purpose       String    @default("employee-signup")
+  codeHash      String
+  expiresAt     DateTime
+  attempts      Int       @default(0)
+  verifiedAt    DateTime?
+  consumedAt    DateTime?
+  requestedById String?
+  createdAt     DateTime  @default(now())
+
+  @@index([email])
+}

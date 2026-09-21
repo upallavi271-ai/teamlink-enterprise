@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
@@ -8,7 +9,7 @@ const {
   moduleById, sanitizeFeatures,
 } = require('../utils/roleAccess');
 const { mergeAccess, invalidateRoleAccess } = require('../utils/permissions');
-const { invalidateDesignationMap, FALLBACK_DESIGNATION_MAP } = require('../utils/identity');
+const { invalidateDesignationMap, FALLBACK_DESIGNATION_MAP, mappingFor } = require('../utils/identity');
 const {
   INTEGRATION_CATALOG, INTEGRATION_GROUPS, SYNC_ENTITIES, ORG_STRUCTURE_DEFAULT,
   COMPANY_POLICIES, COMPANY_DEFAULTS, EMP_TYPES, EMP_STATUSES, EMP_GENDERS,
@@ -242,6 +243,271 @@ router.post('/users/:id/reset-password', requirePerm(null, 'administration', 'Us
   // The new password is never echoed back or logged.
   await logAudit({ userId: req.user.id, action: `Password reset for ${existing.name}`, entity: 'User', entityId: existing.id, toValue: 'Reset' });
   res.json({ ok: true });
+});
+
+// ---- Add Employee: email one-time codes ----
+//
+// "Send OTP" on the Add Employee form. The address has to be provable BEFORE
+// an account exists for it, so verification is its own short-lived record
+// rather than something hung off User.
+//
+// WHAT IS STORED. Never the code — only a SHA-256 hash of `email:code`, with a
+// ten-minute expiry and an attempt counter that caps guessing at five. A row
+// is consumed the moment the employee is created, and asking for a new code
+// retires every earlier one for that address.
+//
+// HONEST WITH NO PROVIDER. utils/mailer.js emailConfig() is the one place that
+// decides whether email is switched on. When it is not, nothing is generated
+// and nothing is stored: the response says exactly why, the button on the form
+// says the same, and no code is ever claimed to have been sent.
+const OTP_TTL_MINUTES = 10;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_PURPOSE = 'employee-signup';
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+const normalEmail = (email) => String(email || '').trim().toLowerCase();
+const hashOtp = (email, code) => crypto.createHash('sha256')
+  .update(`${normalEmail(email)}:${String(code).trim()}`).digest('hex');
+
+// The live, unconsumed, unexpired verification for an address, if any.
+async function liveVerification(email) {
+  return prisma.emailVerification.findFirst({
+    where: {
+      email: normalEmail(email),
+      purpose: OTP_PURPOSE,
+      consumedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+router.post('/email-otp/send', requirePerm(null, 'administration', 'Users', 'create'), async (req, res) => {
+  const email = normalEmail(req.body.email);
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
+  const taken = await prisma.user.findUnique({ where: { email } });
+  if (taken) return res.status(409).json({ error: 'That email already has a login.' });
+
+  const cfg = await mailer.emailConfig();
+  if (!cfg.configured) {
+    // Recorded, not transmitted — the same vocabulary the mail worker uses.
+    return res.json({
+      configured: false,
+      sent: false,
+      reason: cfg.reason,
+      message: `No email channel is configured, so no code was sent — ${cfg.reason} Set up Administration → Integrations → Email (SMTP) to verify an address. The employee can still be created without verification.`,
+    });
+  }
+
+  // A fresh request retires every earlier code for this address.
+  await prisma.emailVerification.updateMany({
+    where: { email, purpose: OTP_PURPOSE, consumedAt: null },
+    data: { consumedAt: new Date() },
+  });
+
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  const row = await prisma.emailVerification.create({
+    data: {
+      email, purpose: OTP_PURPOSE, codeHash: hashOtp(email, code), expiresAt, requestedById: req.user.id,
+    },
+  });
+
+  const sender = await senderIdentity(req.user).catch(() => ({}));
+  const sent = await mailer.sendMail({
+    to: email,
+    subject: 'TeamLink — your verification code',
+    text: [
+      `Your TeamLink verification code is ${code}.`,
+      '',
+      `It expires in ${OTP_TTL_MINUTES} minutes and can be entered ${OTP_MAX_ATTEMPTS} times at most.`,
+      '',
+      `Requested by ${req.user.name} while creating your employee record.`,
+      'If you were not expecting this, ignore this message — no account is created until the code is entered.',
+    ].join('\n'),
+    senderEmail: sender.email,
+    senderName: sender.name,
+  });
+
+  if (!sent.ok) {
+    await prisma.emailVerification.update({ where: { id: row.id }, data: { consumedAt: new Date() } });
+    return res.status(502).json({
+      configured: true, sent: false, error: `The provider did not accept it — ${sent.error}`,
+    });
+  }
+  // The code itself is never logged.
+  await logAudit({
+    userId: req.user.id, action: 'Verification code sent', entity: 'EmailVerification', entityId: row.id, toValue: email,
+  });
+  res.json({
+    configured: true, sent: true, expiresAt, attemptsAllowed: OTP_MAX_ATTEMPTS, ttlMinutes: OTP_TTL_MINUTES,
+  });
+});
+
+router.post('/email-otp/verify', requirePerm(null, 'administration', 'Users', 'create'), async (req, res) => {
+  const email = normalEmail(req.body.email);
+  const code = String(req.body.code || '').trim();
+  if (!code) return res.status(400).json({ error: 'Enter the code that was emailed.' });
+  const row = await liveVerification(email);
+  if (!row) return res.status(400).json({ error: 'No live code for that address — send one first.' });
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Too many attempts on that code — send a new one.' });
+  }
+  const attempts = row.attempts + 1;
+  if (row.codeHash !== hashOtp(email, code)) {
+    await prisma.emailVerification.update({ where: { id: row.id }, data: { attempts } });
+    const left = OTP_MAX_ATTEMPTS - attempts;
+    return res.status(400).json({
+      error: left > 0 ? `That code is not right — ${left} attempt(s) left.` : 'That code is not right, and the attempts are used up. Send a new one.',
+    });
+  }
+  await prisma.emailVerification.update({ where: { id: row.id }, data: { attempts, verifiedAt: new Date() } });
+  res.json({ verified: true, email });
+});
+
+// ---- Add Employee — the employee record and the login, created together ----
+//
+// The form on the Users screen. Department + Role/Designation are what the
+// identity model derives everything else from: utils/identity.js mappingFor()
+// reads the DesignationRole TABLE (never a hard-coded list) for the ATS role,
+// the product access and the landing workspace, and the department becomes the
+// login's data scope. One employee = one user = one login.
+router.get('/add-employee/options', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
+  const [departments, rows, count, cfg] = await Promise.all([
+    prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
+    designationRows(),
+    prisma.employee.count(),
+    mailer.emailConfig(),
+  ]);
+  res.json({
+    departments: departments.length ? departments.map((d) => d.name) : DEPTS,
+    // Straight off the DesignationRole table — this is the Role / Designation
+    // picker, and each row says what that designation will actually grant.
+    designations: rows.map((r) => ({
+      designation: r.designation,
+      atsRole: r.atsRole || null,
+      products: { hrms: !!r.hrms, ats: !!r.ats, accounts: !!r.accounts },
+      landing: r.landing || null,
+    })),
+    nextEmployeeCode: `EMP-${String(count + 1).padStart(4, '0')}`,
+    email: { configured: cfg.configured, reason: cfg.configured ? null : cfg.reason },
+  });
+});
+
+// The login's primary role code for a designation. The ATS role is the
+// designation's own when it has one; a designation with no ATS role but
+// Accounts access is an accountant; everything else is a plain employee.
+function loginRoleFor(mapping) {
+  if (!mapping) return 'EMPLOYEE';
+  if (mapping.atsRole && ALL_ROLES.includes(mapping.atsRole)) return mapping.atsRole;
+  if (mapping.accounts && !mapping.ats) return 'ACCOUNTANT';
+  return 'EMPLOYEE';
+}
+
+router.post('/add-employee', requirePerm(null, 'administration', 'Users', 'create'), async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const email = normalEmail(req.body.email);
+  const department = String(req.body.department || '').trim();
+  const designation = String(req.body.designation || '').trim();
+  const password = String(req.body.password || '');
+  const wantedCode = String(req.body.employeeId || '').trim();
+
+  if (!name) return res.status(400).json({ error: 'Enter the full name.' });
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
+  if (!department) return res.status(400).json({ error: 'Select a department.' });
+  if (!designation) return res.status(400).json({ error: 'Select a role / designation.' });
+  if (password.length < 6) return res.status(400).json({ error: 'The login password must be at least 6 characters.' });
+
+  if (await prisma.user.findUnique({ where: { email } })) {
+    return res.status(409).json({ error: 'That email already has a login.' });
+  }
+  const dupEmployee = await prisma.employee.findFirst({ where: { email } });
+  if (dupEmployee) {
+    return res.status(409).json({ error: `${dupEmployee.name} (${dupEmployee.employeeCode}) already has that email.` });
+  }
+
+  // THE EMAIL GATE. Where a channel exists the address must have been proved
+  // by a code; where none exists we say so and go ahead unverified rather than
+  // pretending a code was ever sent.
+  const cfg = await mailer.emailConfig();
+  let verification = null;
+  if (cfg.configured) {
+    verification = await liveVerification(email);
+    if (!verification || !verification.verifiedAt) {
+      return res.status(400).json({
+        error: 'Verify this email first — send the code with Send OTP and enter it.',
+      });
+    }
+  }
+
+  // Employee ID: the one typed, or the next free EMP-nnnn.
+  let employeeCode = wantedCode;
+  if (employeeCode) {
+    if (await prisma.employee.findUnique({ where: { employeeCode } })) {
+      return res.status(409).json({ error: `Employee ID ${employeeCode} is already taken.` });
+    }
+  } else {
+    const count = await prisma.employee.count();
+    employeeCode = `EMP-${String(count + 1).padStart(4, '0')}`;
+    // eslint-disable-next-line no-await-in-loop
+    while (await prisma.employee.findUnique({ where: { employeeCode } })) {
+      employeeCode = `EMP-${String(Number(employeeCode.slice(4)) + 1).padStart(4, '0')}`;
+    }
+  }
+
+  // Role and scope are DERIVED, never typed: designation -> DesignationRole.
+  const mapping = await mappingFor(designation);
+  const role = loginRoleFor(mapping);
+
+  const user = await prisma.user.create({
+    data: {
+      name,
+      email,
+      passwordHash: await bcrypt.hash(password, 10),
+      role,
+      username: email,
+      status: 'Active',
+      atsDepartment: department,
+      atsRole: mapping && mapping.atsRole ? mapping.atsRole : null,
+      atsScopeDepartments: department,
+      hrmsAccess: mapping ? !!mapping.hrms : true,
+      atsAccess: mapping ? !!mapping.ats : false,
+      accountsAccess: mapping ? !!mapping.accounts : false,
+      landingWorkspace: (mapping && mapping.landing) || null,
+    },
+  });
+  const employee = await prisma.employee.create({
+    data: {
+      employeeCode, name, email, department, designation,
+      employmentStatus: 'Active', userId: user.id,
+    },
+    include: EMP_MGMT_INCLUDE,
+  });
+
+  if (verification) {
+    await prisma.emailVerification.update({ where: { id: verification.id }, data: { consumedAt: new Date() } });
+  }
+  // The password is never echoed back and never logged.
+  await logAudit({
+    userId: req.user.id,
+    action: `Employee and login created${verification ? ' (email verified by code)' : ' (email unverified — no SMTP channel)'}`,
+    entity: 'Employee',
+    entityId: employee.id,
+    toValue: `${employeeCode} · ${designation} · ${role}`,
+  });
+
+  res.status(201).json({
+    employee: shapeEmployeeMgmtRow(employee),
+    login: {
+      id: user.id, email: user.email, role: user.role, atsRole: user.atsRole,
+      products: { hrms: user.hrmsAccess, ats: user.atsAccess, accounts: user.accountsAccess },
+      scope: department,
+    },
+    emailVerified: !!verification,
+    emailChannel: cfg.configured
+      ? 'verified by one-time code'
+      : `not verified — no email channel is configured (${cfg.reason})`,
+  });
 });
 
 // ---- Designation -> ATS role mapping ----
