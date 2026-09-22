@@ -170,7 +170,10 @@ export const isCandidateUser = (user) => !!(user && user.role === 'CANDIDATE');
 export function prettyRole(code) {
   return (code || '')
     .split('_').map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')
-    .replace('Stl', 'STL').replace('Tl', 'TL').replace('Bde', 'BDE');
+    // Initialisms. 'Hr' is anchored so it can never rewrite a word that merely
+    // starts with those two letters.
+    .replace('Stl', 'STL').replace('Tl', 'TL').replace('Bde', 'BDE')
+    .replace(/\bHr\b/, 'HR');
 }
 
 export function workRoleLabel(user, workspace) {

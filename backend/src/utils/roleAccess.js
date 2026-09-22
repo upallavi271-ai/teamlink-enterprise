@@ -46,7 +46,11 @@ const ROLE_ACCESS_MODULES = [
   { id: 'interviews', label: 'Interviews & Joining', features: ['Calendar View', 'Schedule Interview', 'AI Interview', 'Interview Feedback', 'Client Feedback', 'Offers', 'Joining', 'Internal Hiring'] },
   { id: 'hrms', label: 'HRMS', features: ['HRMS Dashboard', 'Attendance & Time', 'Leave & Holidays', 'Payroll & Compensation', 'Performance & Development', 'Employee Services', 'Employee Management'] },
   { id: 'accounts', label: 'Accounts', features: ['Accounts Dashboard', 'Office & Expenses', 'Invoices', 'Bank & Reconciliation', 'Payments'] },
-  { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports'] },
+  // HRMS Reports is a feature of its own, beside the ATS and the Accounts
+  // ones, because a report follows the product it reports on: the HR desk
+  // (§6) reads HRMS reporting and never the recruitment or the finance
+  // ledgers, and an accountant never reads the HRMS ones.
+  { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports', 'HRMS Reports'] },
   { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs'] },
 ];
 
@@ -92,8 +96,12 @@ function productKeyOf(moduleId) {
 const NO_ROLE = 'NONE';
 
 // Roles this app actually issues, in the prototype's seniority order.
+// 'HR' (§6) sits with the other people who administer HRMS records. It is an
+// HRMS-ONLY role: HRMS + HRMS Reports + Dashboard, every employee in the
+// company visible, and no ATS or Accounts reach whatsoever unless that person
+// is separately given a role in those products.
 const CATALOG_ROLES = [
-  'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
+  'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR',
   'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE', 'CANDIDATE',
 ];
 
@@ -101,10 +109,11 @@ const CATALOG_ROLES = [
 const ROLE_SCOPE_DESC = {
   SUPER_ADMIN: 'Company-wide (all departments, full access)',
   ADMIN: 'Company-wide (all departments, full access)',
-  MANAGER: 'All departments, cross-department oversight',
-  ASSISTANT_MANAGER: 'All departments, cross-department oversight (restricted admin settings)',
+  MANAGER: 'All departments, cross-department oversight — view only',
+  ASSISTANT_MANAGER: 'All departments, cross-department oversight — view only',
   STL: 'All departments, cross-department oversight — single STL',
   TL: 'Single department — own team only',
+  HR: 'Every employee in the company — HRMS only, no ATS or Accounts',
   RECRUITER: 'Own assigned candidates only',
   BDE: 'BDE department workflow',
   CLIENT: 'Own company only',

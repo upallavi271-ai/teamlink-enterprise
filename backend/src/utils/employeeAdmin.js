@@ -23,7 +23,7 @@ const { FALLBACK_DESIGNATION_MAP } = require('./identity');
 const { CATALOG_ROLES, NO_ROLE } = require('./roleAccess');
 
 const ALL_ROLES = [
-  'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
+  'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR',
   'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE', 'CANDIDATE',
 ];
 const ATS_ROLES = [
@@ -57,6 +57,9 @@ function scopeLabelOf(user, emp) {
   if (user.role === 'CLIENT') return `Client: ${user.client?.name || 'not assigned'}`;
   if (user.role === 'CANDIDATE') return 'Own profile only';
   if (['SUPER_ADMIN', 'ADMIN'].includes(user.role)) return 'All departments';
+  // HR (§6) is company-wide in HRMS — "all employees are visible to HR" — so
+  // its row must not read "HR department", which is where the person SITS.
+  if (user.hrmsRole === 'HR') return 'All employees (HRMS)';
   const depts = String(user.atsScopeDepartments || user.atsDepartment || emp?.department || '')
     .split(',').map((d) => d.trim()).filter(Boolean);
   const teams = String(user.atsScopeTeams || user.team || emp?.team || '')
@@ -104,6 +107,14 @@ async function defaultProductAccessByRole() {
 function loginRoleFor(mapping) {
   if (!mapping) return 'EMPLOYEE';
   if (mapping.atsRole && ALL_ROLES.includes(mapping.atsRole)) return mapping.atsRole;
+  // AN HRMS-ONLY DESIGNATION MAY STILL NAME A REAL ROLE. 'HR' (§6) is one: the
+  // designation carries no ATS role at all, and without this line the login
+  // would come out a plain EMPLOYEE and the HR desk would see only itself.
+  // The pre-existing rows are unchanged by it — an 'Accountant' row derives
+  // hrmsRole=ACCOUNTANT and still returns ACCOUNTANT, an 'Employee' row
+  // derives EMPLOYEE and still returns EMPLOYEE.
+  const hrms = mapping.hrmsRole && mapping.hrmsRole !== NO_ROLE ? mapping.hrmsRole : null;
+  if (hrms && !mapping.ats && ALL_ROLES.includes(hrms)) return hrms;
   if (mapping.accounts && !mapping.ats) return 'ACCOUNTANT';
   return 'EMPLOYEE';
 }

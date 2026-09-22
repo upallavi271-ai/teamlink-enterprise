@@ -48,6 +48,12 @@ const FALLBACK_DESIGNATION_MAP = [
   { designation: 'BDE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'Business Development Executive', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts' },
+  // THE HR DESK (§6). An HRMS-ONLY designation that names its HRMS role
+  // explicitly — without `hrmsRole` it would fall to the implied EMPLOYEE and
+  // the HR desk would see only its own record. No ATS and no Accounts: a
+  // person who is both HR and a recruiter gets the ATS role on their USER row,
+  // never from this designation.
+  { designation: 'HR', hrmsRole: 'HR', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms' },
   { designation: 'HR Executive', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms' },
   { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms' },
 ];

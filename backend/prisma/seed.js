@@ -99,9 +99,13 @@ async function main() {
     { designation: 'Senior Recruiter', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 9 },
     { designation: 'BDE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats', position: 10 },
     { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts', position: 11 },
-    { designation: 'HR Executive', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 12 },
-    { designation: 'Junior Developer', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 13 },
-    { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 14 },
+    // THE HR DESK (§6) — HRMS ONLY, every employee visible, no ATS and no
+    // Accounts. It names its HRMS role explicitly because there is no ATS role
+    // to derive one from; without it the designation would imply EMPLOYEE.
+    { designation: 'HR', hrmsRole: 'HR', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 12 },
+    { designation: 'HR Executive', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 13 },
+    { designation: 'Junior Developer', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 14 },
+    { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 15 },
   ];
   // DERIVATION STAYS IN THE TABLE, and the table carries ALL THREE product
   // roles now. The rows above name only the ATS role because that is the one
@@ -113,13 +117,22 @@ async function main() {
   const NO_ROLE = 'NONE';
   const impliedRoleOf = (r) => (r.atsRole
     || (r.accounts && !r.ats ? 'ACCOUNTANT' : 'EMPLOYEE'));
+  // A row that NAMES a product role keeps it — that is how 'HR' gets an HRMS
+  // role there is no ATS role to derive. Everything else derives as before.
+  const namedRole = (v) => (v && v !== NO_ROLE ? v : null);
   const withProductRoles = (r) => ({
     ...r,
-    hrmsRole: r.hrms ? impliedRoleOf(r) : NO_ROLE,
-    accountsRole: r.accounts ? impliedRoleOf(r) : NO_ROLE,
+    hrmsRole: r.hrms ? (namedRole(r.hrmsRole) || impliedRoleOf(r)) : NO_ROLE,
+    accountsRole: r.accounts ? (namedRole(r.accountsRole) || impliedRoleOf(r)) : NO_ROLE,
   });
+  // upsert, not create: migration hrrole_hr_role inserts the 'HR' mapping row
+  // so that an already-migrated database picks the role up without a re-seed,
+  // and `migrate reset && seed` must not then collide on it.
   for (const row of DESIGNATION_ROLES) {
-    await prisma.designationRole.create({ data: withProductRoles(row) });
+    const data = withProductRoles(row);
+    await prisma.designationRole.upsert({
+      where: { designation: data.designation }, create: data, update: data,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -899,6 +912,9 @@ async function main() {
     const m = designationByName[name];
     if (!m) return 'EMPLOYEE';
     if (m.atsRole) return m.atsRole;
+    // An HRMS-only designation that NAMES its HRMS role keeps it — 'HR' (§6).
+    // Same rule as utils/employeeAdmin.js loginRoleFor().
+    if (m.hrmsRole && m.hrmsRole !== NO_ROLE && !m.ats) return m.hrmsRole;
     if (m.accounts && !m.ats) return 'ACCOUNTANT';
     return 'EMPLOYEE';
   }
@@ -1085,6 +1101,16 @@ async function main() {
   const cEmployee = await staffLogin({
     email: 'employee@teamlink.com', name: 'Kavya Reddy', department: 'HR',
     designation: 'Employee',
+  });
+
+  // --- The HR desk (§6) ------------------------------------------------------
+  // HRMS ONLY, and NOT department-scoped: every employee in the company is
+  // visible to HR, which is what makes it different from the Manager / STL /
+  // TL rows above. Nothing here is a special case — the designation maps to
+  // hrmsRole=HR, atsRole=NONE, accountsRole=NONE, and the engine does the rest.
+  const cHr = await staffLogin({
+    email: 'hr@teamlink.com', name: 'Meghana Rao', department: 'HR',
+    team: 'Leadership', designation: 'HR',
   });
 
   // --- External logins: no employee record, scope pinned to one row ---------
@@ -1290,7 +1316,7 @@ async function main() {
 
   // A little HRMS substance for the new logins, so HRMS is not empty for them.
   await prisma.attendance.createMany({
-    data: [cMedical1, cIt1, cMfg1, cEdu1, cAccountant, cEmployee].map((s) => ({
+    data: [cMedical1, cIt1, cMfg1, cEdu1, cAccountant, cEmployee, cHr].map((s) => ({
       employeeId: s.employee.id, date: today, status: 'Present', checkIn: '09:05', checkOut: '18:15',
     })),
   });
@@ -1372,6 +1398,7 @@ async function main() {
   console.log('  bde1@teamlink.com                     BDE / BDE                 -> BDE, assigned clients (Vertex, Nalanda, Orbit)');
   console.log('  accounts@teamlink.com                 Accounts / Accountant     -> ACCOUNTANT, Accounts + HRMS self-service');
   console.log('  employee@teamlink.com                 HR / Employee             -> EMPLOYEE, HRMS self-service only');
+  console.log('  hr@teamlink.com                       HR / HR                   -> HR, HRMS only, EVERY employee, no ATS/Accounts');
   console.log('  client@teamlink.com                   Client A (Orbit)          -> own company only');
   console.log('  clientb@teamlink.com                  Client B (Medivant)       -> own company only');
   console.log('  candidate@teamlink.com                Candidate (Sharath K.)    -> own profile only');

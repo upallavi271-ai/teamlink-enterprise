@@ -102,7 +102,7 @@ function rolesFor(user, product) {
 }
 
 const ALL_ROLES = [
-  'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL',
+  'SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR',
   'RECRUITER', 'BDE', 'CLIENT', 'ACCOUNTANT', 'EMPLOYEE', 'CANDIDATE',
 ];
 
@@ -112,8 +112,11 @@ const ALL_ROLES = [
 const SET = {
   SUPER: ['SUPER_ADMIN'],
   ADMIN: ['SUPER_ADMIN', 'ADMIN'],
-  // routes/*.js HR_ROLES
-  HR: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'],
+  // routes/*.js HR_ROLES — everyone who administers OTHER PEOPLE'S HRMS
+  // records rather than only their own. 'HR' (§6) is the one role in this set
+  // that is HRMS-ONLY: it holds no ATS or Accounts role at all, and it is the
+  // one member that is NOT department-scoped (utils/scope.js hrmsGlobal).
+  HR: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR'],
   // routes/invoices.js + bank.js + office.js ACCOUNTS_ROLES, payroll.js PAYROLL_ROLES
   ACCOUNTS: ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'],
   // routes/candidates.js RECRUITING_ROLES
@@ -138,7 +141,7 @@ const SET = {
   // what "unless explicitly granted" means in an app with a real matrix.
   PORTAL_ACT: ['SUPER_ADMIN', 'ADMIN', 'TL', 'RECRUITER', 'BDE'],
   // Everyone who works inside TeamLink (no external logins).
-  STAFF: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'],
+  STAFF: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'],
   EVERYONE: ALL_ROLES,
 };
 
@@ -150,6 +153,22 @@ const DEFAULT_MODULES = {
   ASSISTANT_MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   STL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   TL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms'],
+  // HR (§6) — HRMS AND NOTHING ELSE.
+  //
+  // Dashboard, HRMS, HRMS Reports, Notifications and Profile. There is no
+  // `requirements` / `clients` / `candidates` / `recruiterbde` / `interviews`
+  // and no `accounts` in this list, so ATS internal recruitment data, the
+  // recruiter pipeline, the BDE workflow, client recruitment data, invoices,
+  // bank reconciliation and finance are all refused — by the matrix, before
+  // any product boolean is even consulted. `administration` is absent for the
+  // same reason it is absent for MANAGER: Notifications and Profile are
+  // everyone's and carry no permission (frontend/src/nav.js ADMIN_ITEMS),
+  // while the Administration screens proper are Super Admin / Admin.
+  //
+  // HR is a PRODUCT ROLE IN HRMS, never a special case outside the per-product
+  // model: the same person may be HR in HRMS and a Recruiter in ATS, and the
+  // engine resolves each module against its own product's role as usual.
+  HR: ['dashboard', 'hrms', 'reports'],
   // A recruiter reads the client directory (their requirements name a client)
   // but cannot create or edit one — see DEFAULT_RULES.
   RECRUITER: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'recruiterbde', 'hrms'],
@@ -369,6 +388,11 @@ const DEFAULT_RULES = [
   { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['view'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE'] },
   { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE', 'TL'] },
   { module: 'reports', features: ['Accounts Reports'], actions: ['view', 'export'], roles: [...SET.ACCOUNTS, 'MANAGER'] },
+  // HRMS Reports follow the same rule: they belong to HRMS, so the people who
+  // administer HRMS records get them and nobody else does. This is the report
+  // surface §6 gives HR, and it is the reason HR holds the `reports` module
+  // at all — an HR login never reaches the ATS or the Accounts reports.
+  { module: 'reports', features: ['HRMS Reports'], actions: ['view', 'export'], roles: SET.HR },
 
   // --- Administration ----------------------------------------------------
   // requireRole(...ADMIN_ROLES) throughout routes/admin.js.
@@ -391,6 +415,32 @@ const DEFAULT_RULES = [
 // Super Admin / Admin: global. Admin still loses the SUPER-only capabilities
 // above, which are listed explicitly rather than blanket-granted.
 const GLOBAL_ROLES = ['SUPER_ADMIN'];
+
+// ---------------------------------------------------------------------------
+// MANAGER AND ASSISTANT MANAGER ARE VIEW-ONLY.  (§3, §4)
+//
+// Both keep EVERY module they had — Dashboard, HRMS, ATS, Accounts, Reports —
+// and everything read-only inside them: View, Search, Filter, Sort, Open
+// detail, View reports, Export where the matrix already allowed it. What they
+// lose is the ability to WRITE.
+//
+// It is done HERE, on the defaults, and not by editing forty rules one by one,
+// because doing it once is the only way it cannot be forgotten when a rule is
+// added later: a new grant to MANAGER written into DEFAULT_RULES tomorrow is
+// stripped by this same pass.
+//
+// "unless explicitly granted in Role Catalog" still works, and works exactly
+// as it does for every other role: mergeAccess() lays the STORED RoleAccess
+// row over these defaults, so ticking `edit` for MANAGER in Role Catalog
+// grants it. This strips the DEFAULT, not the capability.
+//
+// `view` and `export` survive (read), and so does `assign` — re-assigning a
+// requirement or naming a client's account manager is the oversight work these
+// two roles are for, and §3/§4 names Create / Edit / Delete / Approve /
+// configuration as what they must not do.
+// ---------------------------------------------------------------------------
+const VIEW_ONLY_ROLES = ['MANAGER', 'ASSISTANT_MANAGER'];
+const WRITE_ACTIONS = ['create', 'edit', 'delete', 'approve', 'configure'];
 
 function emptyActions(value = false) {
   const out = {};
@@ -421,6 +471,12 @@ function defaultAccessForRole(role, moduleId) {
       });
     });
   });
+
+  // §3 / §4 — the view-only pass. Runs AFTER every rule has been applied, so
+  // it cannot be out-run by a rule added later.
+  if (VIEW_ONLY_ROLES.includes(role)) {
+    names.forEach((f) => WRITE_ACTIONS.forEach((a) => { features[f][a] = false; }));
+  }
 
   const anyGranted = names.some((f) => ROLE_FEATURE_ACTIONS.some((a) => features[f][a]));
   const listed = (DEFAULT_MODULES[role] || []).includes(moduleId);

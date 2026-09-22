@@ -10,3 +10,5 @@ backend/prisma/dev.db-journal
 ~$*.md
 uploads/
 .teamlink-uploads/
+backend/prisma/*.db
+backend/prisma/*.db-journal
