@@ -99,26 +99,46 @@ export function mayRenderSection(user, pathname) {
   }
 }
 
-// leaf: { to, label, perms: [[module, feature, action], ...], product }
+// leaf: { icon, to, label, perms: [[module, feature, action], ...], product }
 // A leaf with several perms needs all of them.
 // `unless` is the mirror of `perms`: an entry carrying it is hidden from a
 // login that HAS those permissions. One entry needs it — HRMS -> Employees,
 // which exists for the leads who do not reach Administration.
-const leaf = (to, label, perms, product, unless) => ({ to, label, perms, product, unless });
+//
+// THE ICONS (§19) ARE DECORATION AND NOTHING ELSE.
+//
+// One emoji per entry, the user's own mapping, rendered by Shell.jsx in a
+// fixed-width column so every label still starts on the same vertical line.
+// Where this app has an entry their list does not name — Performance &
+// Development, Departments & Teams, the three report screens, the public Job
+// Portal link — the icon is picked from the same visual family, and a report
+// of a product carries that product's own icon.
+//
+// No icon takes part in a permission decision. `perms` is untouched by the
+// icon pass: which entries exist, and who may see them, is unchanged.
+const leaf = (icon, to, label, perms, product, unless) => ({
+  icon, to, label, perms, product, unless,
+});
+
+// The group headings, and the standalone Dashboard entry above them.
+export const SECTION_ICON = {
+  dashboard: '🏠', hrms: '👥', ats: '🎯',
+  accounts: '💰', reports: '📊', admin: '⚙️',
+};
 
 export const HRMS_ITEMS = [
-  leaf('/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
+  leaf('📊', '/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
   // "Employees in assigned department" / "Team employees" (§15). The SAME
   // screen and the SAME scoped endpoint as Administration -> Employee
   // Management; only the entry point differs, and `unless` keeps Super Admin
   // and Admin from seeing it listed twice (they get the Administration one).
-  leaf('/employees', 'Employees', [['hrms', 'Employee Management', 'view']], null,
+  leaf('👤', '/employees', 'Employees', [['hrms', 'Employee Management', 'view']], null,
     [['administration', 'Users', 'view']]),
-  leaf('/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
-  leaf('/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
-  leaf('/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
-  leaf('/performance', 'Performance & Development', [['hrms', 'Performance & Development', 'view']]),
-  leaf('/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
+  leaf('🕐', '/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
+  leaf('🏖️', '/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
+  leaf('💵', '/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
+  leaf('📈', '/performance', 'Performance & Development', [['hrms', 'Performance & Development', 'view']]),
+  leaf('🛎️', '/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
 ];
 
 // The reference prototype's ATS navigation is flat — six entries, no
@@ -128,8 +148,8 @@ export const HRMS_ITEMS = [
 // Feedback screens still exist and are still routed — they are reachable by
 // URL and from the screens that link to them, just not listed here.
 export const ATS_ITEMS = [
-  leaf('/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'),
-  leaf('/requirements', 'Jobs / Requirements', [['requirements', 'Requirement List', 'view']]),
+  leaf('📊', '/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'),
+  leaf('💼', '/requirements', 'Jobs / Requirements', [['requirements', 'Requirement List', 'view']]),
   // NO "Job Portal" ENTRY HERE, DELIBERATELY. The Job Portal is not a
   // top-level ATS module; it is a workspace INSIDE Jobs / Requirements —
   //   Jobs / Requirements → Job Portal → Publish → Sync → Applications
@@ -140,17 +160,17 @@ export const ATS_ITEMS = [
   // internal workspace or the client-facing view from the SAME permission
   // matrix the API enforces, so the ATS sidebar stays flat, exactly as the
   // reference prototype has it.
-  leaf('/clients', 'Clients', [['clients', 'Client List', 'view']]),
-  leaf('/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
-  leaf('/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
-  leaf('/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
+  leaf('🏢', '/clients', 'Clients', [['clients', 'Client List', 'view']]),
+  leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
+  leaf('👔', '/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
+  leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
 ];
 
 export const ACCOUNTS_ITEMS = [
-  leaf('/accounts/dashboard', 'Dashboard', [['accounts', 'Accounts Dashboard', 'view']], 'accounts'),
-  leaf('/office', 'Office / Business', [['accounts', 'Office & Expenses', 'view']]),
-  leaf('/invoices', 'Invoices', [['accounts', 'Invoices', 'view']]),
-  leaf('/bank', 'Bank & Reconciliation', [['accounts', 'Bank & Reconciliation', 'view']]),
+  leaf('📊', '/accounts/dashboard', 'Dashboard', [['accounts', 'Accounts Dashboard', 'view']], 'accounts'),
+  leaf('🏢', '/office', 'Office / Business', [['accounts', 'Office & Expenses', 'view']]),
+  leaf('🧾', '/invoices', 'Invoices', [['accounts', 'Invoices', 'view']]),
+  leaf('🏦', '/bank', 'Bank & Reconciliation', [['accounts', 'Bank & Reconciliation', 'view']]),
 ];
 
 // ADMINISTRATION — §15, exactly.
@@ -177,22 +197,22 @@ export const ACCOUNTS_ITEMS = [
 //     wrong. The TL's access did not go away: it moved to where the matrix
 //     puts it, HRMS -> Employees, pointing at the same scoped screen.
 export const ADMIN_ITEMS = [
-  leaf('/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
-  leaf('/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
-  leaf('/employees', 'Employee Management', [['administration', 'Users', 'view']]),
-  leaf('/admin/users', 'Users', [['administration', 'Users', 'view']]),
-  leaf('/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
-  leaf('/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
-  leaf('/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
-  leaf('/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
-  leaf('/admin/notifications', 'Notifications', null),
-  leaf('/admin/profile', 'Profile', null),
+  leaf('🏢', '/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
+  leaf('🗂️', '/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
+  leaf('👥', '/employees', 'Employee Management', [['administration', 'Users', 'view']]),
+  leaf('👤', '/admin/users', 'Users', [['administration', 'Users', 'view']]),
+  leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
+  leaf('🔌', '/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
+  leaf('🏗️', '/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
+  leaf('📜', '/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
+  leaf('🔔', '/admin/notifications', 'Notifications', null),
+  leaf('👤', '/admin/profile', 'Profile', null),
 ];
 
 export const REPORTS_ITEMS = [
-  leaf('/reports/ats', 'ATS Reports', [['reports', 'ATS Reports', 'view']]),
-  leaf('/reports/job-portal', 'Job Portal Reports', [['reports', 'Job Portal Reports', 'view']]),
-  leaf('/reports/accounts', 'Accounts Reports', [['reports', 'Accounts Reports', 'view']]),
+  leaf('🎯', '/reports/ats', 'ATS Reports', [['reports', 'ATS Reports', 'view']]),
+  leaf('🌐', '/reports/job-portal', 'Job Portal Reports', [['reports', 'Job Portal Reports', 'view']]),
+  leaf('💰', '/reports/accounts', 'Accounts Reports', [['reports', 'Accounts Reports', 'view']]),
 ];
 
 function leafVisible(user, item) {
@@ -221,7 +241,7 @@ export function groupsForUser(user) {
   const groups = [];
   const add = (id, label, items) => {
     const shown = visibleItems(user, items);
-    if (shown.length) groups.push([id, label, shown]);
+    if (shown.length) groups.push([id, label, shown, SECTION_ICON[id]]);
   };
   // Labels come from sectionLabel(), so an external login can never be shown
   // an internal product name in the sidebar.

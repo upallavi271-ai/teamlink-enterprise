@@ -1,20 +1,66 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { stageLabel } from '../atsVocab';
-import { isAdmin, isClientUser, canManageAccounts, workRoleLabel } from '../permissions';
+import { can, canModule, isClientUser, workRoleLabel } from '../permissions';
+import { REPORTS_ITEMS, visibleItems } from '../nav';
 
 // ---------------------------------------------------------------------------
-// The prototype's viewMainDashboard() (line 2305) fans out to a dashboard per
-// role — dashboardAdmin, dashboardEmployee, dashboardRecruiter, dashboardBDE,
-// dashboardTL, dashboardAccountant, dashboardClient (lines 2316-2530). Tiles,
-// their labels, their order, the two-column layout and the card headings below
-// are all the prototype's; the numbers come from this app's real APIs.
+// THE OVERALL DASHBOARD (§18).
+//
+// One screen, assembled from one block per product the login actually holds:
+//
+//   HRMS       Employees | Attendance | Leave | Payroll
+//   ATS        Requirements | Candidates | Interviews | Selected | Joined
+//   Accounts   Invoices | Payments | Outstanding | Reconciliation
+//   Reports    the report screens this login may open
+//
+// WHICH BLOCKS APPEAR IS THE PERMISSION ENGINE'S ANSWER, NOT A ROLE NAME.
+// This screen used to switch on `user.atsRole` and render one of seven
+// hand-written layouts, so the matrix and the dashboard could drift apart.
+// Every block below is gated on canModule()/can() from ../permissions.js —
+// the same matrix /auth/me sends and the API enforces — which is what makes
+// §18's narrowing fall out of the matrix rather than out of a role name:
+//
+//   Super Admin / Admin   all three products, plus the report links
+//   Manager               the same categories, scoped, and read-only because
+//                         the screens behind the rows are read-only for them
+//   STL                   their department; TL their own and their team's
+//   Recruiter             their own ATS work
+//   HR                    HRMS only            Accountant  Accounts only
+//   Employee              their own HRMS records only
+//   Client                their own client dashboard, and nothing else
+//
+// A login that does not hold a product cannot be shown that product's block,
+// whatever their role is called.
+//
+// EVERY NUMBER COMES FROM AN ALREADY-SCOPED ENDPOINT — the same one the list
+// behind the row reads. Nothing here is computed from a role, re-filtered in
+// the browser, or estimated:
+//
+//   GET /api/employees            departmentWhere() — a TL's 7, a manager's
+//                                 20, an admin's 27, and 403 for the rest
+//   GET /api/attendance?date=…    employeeRecordWhere() — the team's day, or
+//   GET /api/leave                only your own row if that is all you hold
+//   GET /api/payroll?month=…      payslips, yours or your departments'
+//   GET /api/helpdesk             your own service requests
+//   GET /api/dashboard/ats        the ATS rows, queues and action list, scoped
+//                                 by utils/scope.js per ATS role
+//   GET /api/dashboard            Selected / Joined, from that same scope
+//   GET /api/dashboard/accounts   invoices, received, outstanding, bank
+//   GET /api/applications         a client's own shared candidates
+//
+// The company-wide GET /api/hrms/dashboard is deliberately NOT used here: it
+// counts every employee in the company for anyone holding the HRMS Dashboard
+// feature, which would print 27 employees on a TL's screen directly under a
+// notice saying they are scoped to one department.
+//
+// AND IT IS ROWS, NOT A KPI WALL: compact "label · figure" rows that link into
+// the list the figure was counted from, plus an action list where there is an
+// action — the shape the ATS home already uses.
 // ---------------------------------------------------------------------------
 
-// statusBadge(), prototype line ~2650 — the exact status-class map, keyed here
-// by the stage codes this app stores.
 const STAGE_BADGE = {
   NEW: 'new', AI_INTERVIEW_REQUIRED: 'new', AI_INTERVIEW_SCHEDULED: 'interview',
   AI_INTERVIEW_COMPLETED: 'interview', RECRUITER_REVIEW: 'review', RECRUITER_APPROVED: 'approved',
@@ -23,68 +69,86 @@ const STAGE_BADGE = {
   SELECTED: 'selected', OFFER: 'offer', OFFER_ACCEPTED: 'offer', JOINED: 'joined', HIRED: 'joined',
   REJECTED: 'rejected', HOLD: 'hold',
 };
-function StageBadge({ stage }) {
-  return <span className={`status ${STAGE_BADGE[stage] || 'new'}`}>{stageLabel(stage)}</span>;
+
+function rupees(n) { return '₹' + Number(n || 0).toLocaleString('en-IN'); }
+
+// One compact row: label left, figure right, the whole row a link into the
+// list the figure was counted from.
+function Row({ label, value, to, sub }) {
+  const navigate = useNavigate();
+  const blank = value === null || value === undefined;
+  const zero = blank || value === 0 || value === '0';
+  return (
+    <div className="assign-row" data-goto="1" onClick={() => navigate(to)}>
+      <span>
+        {label}
+        {sub && <span className="small-muted" style={{ marginLeft: 8 }}>{sub}</span>}
+      </span>
+      <span className={'row-count' + (zero ? ' row-zero' : '')}>{blank ? '—' : value}</span>
+    </div>
+  );
 }
 
-// actionNeeded(), prototype line 2386.
-const ACTION_NEEDED = {
-  RECRUITER_REVIEW: 'Approve / reject / hold',
-  WITH_BDE: 'BDE review',
-  SHARED_WITH_CLIENT: 'Awaiting client decision',
-};
-
-function Stat({ n, l }) {
-  return <div className="statitem"><div className="n">{n}</div><div className="l">{l}</div></div>;
+function Panel({ title, right, children }) {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h3>{title}</h3>
+        {right ? <span className="small-muted">{right}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
 }
 
-function PageHead({ name, role, extra }) {
+function PageHead({ user, extra }) {
+  const name = String(user?.name || '').replace(/\(.*\)/, '').trim();
   return (
     <div className="page-head">
       <div>
         <h1>Dashboard</h1>
         <div className="page-sub">
-          Welcome back, {String(name || '').replace(/\(.*\)/, '').trim()} · {role}{extra || ''}
+          Welcome back, {name} · {workRoleLabel(user)}{extra || ''}
         </div>
       </div>
     </div>
   );
 }
 
-function priorityClass(p) {
-  return p === 'High' || p === 'Urgent' ? 'rejected' : p === 'Medium' ? 'review' : 'applied';
-}
-
-function PipelineTable({ rows, cols = 4, empty = 'Nothing pending — all caught up.', withAction = false }) {
-  const navigate = useNavigate();
+// The queue as an action list: one row per item, each carrying the single move
+// that advances it. Straight from /api/dashboard/ats.
+function ActionList({ rows, navigate }) {
+  const today = new Date().toISOString().slice(0, 10);
   return (
-    <div className="tbl-wrap">
+    <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
       <table>
         <thead>
-          <tr>
-            <th>Candidate</th><th>Requirement</th><th>Stage</th>
-            {withAction && <th>Action needed</th>}<th />
-          </tr>
+          <tr><th>Candidate</th><th>Requirement</th><th>Stage</th><th>Next action</th><th>Due</th></tr>
         </thead>
         <tbody>
-          {rows.map((a) => (
-            <tr className="row-link" key={a.id} onClick={() => navigate(`/candidates/${a.candidateId}`)}>
-              <td>{a.candidate?.name}</td>
-              <td>{a.requirement?.title}</td>
-              <td><StageBadge stage={a.stage} /></td>
-              {withAction && <td className="small-muted">{ACTION_NEEDED[a.stage] || 'Review'}</td>}
+          {rows.map((r) => (
+            <tr key={r.id} className="row-link" onClick={() => navigate(r.to)}>
+              <td>{r.candidate}</td>
               <td>
-                <button
-                  className="btn btn-sm"
-                  onClick={(e) => { e.stopPropagation(); navigate(`/candidates/${a.candidateId}`); }}
-                >
-                  Open
-                </button>
+                {r.requirement}
+                {r.client && <div className="small-muted">{r.client}</div>}
+              </td>
+              <td><span className={`status ${STAGE_BADGE[r.stage] || 'new'}`}>{r.stageLabel}</span></td>
+              <td><span className="link-btn">{r.nextAction} →</span></td>
+              <td>
+                {!r.due ? <span className="small-muted">—</span>
+                  : r.overdue ? <span className="status overdue">Overdue</span>
+                    : r.due === today ? <span className="status pending">Today</span>
+                      : <span className="small-muted">{r.due}</span>}
               </td>
             </tr>
           ))}
           {rows.length === 0 && (
-            <tr><td colSpan={cols + (withAction ? 1 : 0)} className="small-muted" style={{ padding: 16 }}>{empty}</td></tr>
+            <tr>
+              <td colSpan="5" className="small-muted" style={{ padding: 16 }}>
+                Nothing is waiting on you — every item in your scope has moved on.
+              </td>
+            </tr>
           )}
         </tbody>
       </table>
@@ -92,286 +156,275 @@ function PipelineTable({ rows, cols = 4, empty = 'Nothing pending — all caught
   );
 }
 
-function ActivityTimeline({ items }) {
-  return (
-    <div className="timeline">
-      {items.map((a, i) => (
-        <div className="timeline-item" key={i}>
-          <div className="timeline-date">{new Date(a.date).toLocaleString()}</div>
-          <div className="timeline-label">{a.user} — {a.action} ({a.entity})</div>
-        </div>
-      ))}
-      {items.length === 0 && <div className="small-muted">No activity yet.</div>}
-    </div>
-  );
-}
-
-function rupees(n) { return '₹' + Number(n || 0).toLocaleString('en-IN'); }
-
 // ---------------------------------------------------------------------------
 
 export default function Dashboard() {
   const { user } = useAuth();
-  // Which workspace someone lands on comes from their product access and their
-  // ATS working role — never from a role they picked at sign-in.
+  // A client is outside this company: their dashboard is their own company's
+  // pipeline and nothing else — never an internal product block, even where
+  // their login carries a product flag for the portal screens.
   if (isClientUser(user)) return <ClientDashboard user={user} />;
-  if (isAdmin(user)) return <AdminDashboard user={user} />;
-  const atsRole = user?.atsRole;
-  if (user?.products?.ats && atsRole === 'RECRUITER') return <RecruiterDashboard user={user} />;
-  if (user?.products?.ats && atsRole === 'BDE') return <BdeDashboard user={user} />;
-  if (user?.products?.ats && ['TL', 'STL', 'ASSISTANT_MANAGER', 'MANAGER'].includes(atsRole)) {
-    return <TeamDashboard user={user} />;
-  }
-  if (user?.products?.accounts && canManageAccounts(user)) return <AccountantDashboard user={user} />;
-  if (user?.products?.hrms) return <EmployeeDashboard user={user} />;
-  return <AdminDashboard user={user} />;
+  return <ProductDashboard user={user} />;
 }
 
-// --- dashboardAdmin (prototype line 2316) ---------------------------------
-function AdminDashboard({ user }) {
-  const [stats, setStats] = useState(null);
-  const [apps, setApps] = useState([]);
-  const [reqs, setReqs] = useState([]);
+function ProductDashboard({ user }) {
+  const navigate = useNavigate();
+
+  // --- what this login may be shown, straight from the matrix -------------
+  const hasHrms = canModule(user, 'hrms');
+  // Other people's records, or only your own? Employee Management is the line
+  // §15 draws between a lead/HR view and an employee's own corner.
+  const seesTeam = can(user, 'hrms', 'hrms', 'Employee Management', 'view');
+  const seesAttendance = can(user, 'hrms', 'hrms', 'Attendance & Time', 'view');
+  const seesLeave = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'view');
+  const seesPayroll = can(user, 'hrms', 'hrms', 'Payroll & Compensation', 'view');
+  const seesServices = can(user, 'hrms', 'hrms', 'Employee Services', 'view');
+
+  // There is no module called 'ats': the ATS is requirements + clients +
+  // candidates + recruiterbde + interviews. Holding the product is not the
+  // same as being given any of them, so both are asked.
+  const hasAts = !!(user && user.products && user.products.ats)
+    && ['requirements', 'candidates', 'clients', 'interviews', 'recruiterbde']
+      .some((m) => canModule(user, m));
+  const atsQueues = hasAts && can(user, null, 'dashboard', 'Pending Approvals', 'view');
+
+  const hasAccounts = canModule(user, 'accounts') && can(user, 'accounts', 'accounts', 'Invoices', 'view');
+  const seesBank = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
+
+  const reportLinks = visibleItems(user, REPORTS_ITEMS);
+
+  const [ats, setAts] = useState(null);      // /dashboard/ats
+  const [core, setCore] = useState(null);    // /dashboard
+  const [hrms, setHrms] = useState(null);    // the scoped HRMS lists
+  const [acc, setAcc] = useState(null);      // /dashboard/accounts
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/dashboard').then((r) => setStats(r.data)).catch(() => setStats({}));
-    api.get('/applications').then((r) => setApps(r.data)).catch(() => setApps([]));
-    api.get('/requirements', { params: { status: 'OPEN' } }).then((r) => setReqs(r.data)).catch(() => setReqs([]));
-  }, []);
+    let alive = true;
+    const today = new Date().toISOString().slice(0, 10);
+    const month = today.slice(0, 7);
+    // Every request is caught. One refusal, or one slow table, must not take
+    // the whole dashboard down — and an unhandled rejection here has history.
+    const get = (url, params) => api.get(url, params ? { params } : undefined)
+      .then((r) => r.data).catch(() => null);
+    const none = Promise.resolve(null);
 
-  if (!stats) return <div className="small-muted">Loading dashboard…</div>;
-  const pending = apps.filter((a) => ['RECRUITER_REVIEW', 'WITH_BDE', 'SHARED_WITH_CLIENT'].includes(a.stage)).slice(0, 6);
+    Promise.all([
+      atsQueues ? get('/dashboard/ats') : none,
+      hasAts ? get('/dashboard') : none,
+      hasHrms
+        ? Promise.all([
+          seesTeam ? get('/employees') : none,
+          seesAttendance ? get('/attendance', { date: today }) : none,
+          seesLeave ? get('/leave') : none,
+          seesPayroll ? get('/payroll', { month }) : none,
+          seesServices ? get('/helpdesk') : none,
+        ]).then(([employees, attendance, leave, payslips, tickets]) => ({
+          employees, attendance, leave, payslips, tickets,
+        }))
+        : none,
+      hasAccounts ? get('/dashboard/accounts') : none,
+    ])
+      .then(([a, c, h, ac]) => {
+        if (!alive) return;
+        setAts(a); setCore(c); setHrms(h); setAcc(ac); setLoading(false);
+      })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user && user.id, user && user.workspace]);
+
+  if (loading) return <div className="small-muted">Loading dashboard…</div>;
+
+  const departments = String(user?.atsScopeDepartments || user?.department || '')
+    .split(',').map((d) => d.trim()).filter(Boolean);
+  const scoped = !!(ats && ats.scope && !ats.scope.global && departments.length);
+
+  // --- HRMS figures, all from the scoped lists above ----------------------
+  const leave = (hrms && hrms.leave) || [];
+  const attendance = (hrms && hrms.attendance) || [];
+  const payslips = (hrms && hrms.payslips) || [];
+  const tickets = (hrms && hrms.tickets) || [];
+  const present = attendance.filter((a) => ['Present', 'Late'].includes(a.status)).length;
+  const myToday = attendance[0] ? attendance[0].status : 'Not marked';
+  const leavePending = leave.filter((l) => l.status === 'Pending').length;
+  const ticketsOpen = tickets.filter((t) => !['Resolved', 'Closed'].includes(t.status)).length;
+
+  // --- ATS: Selected and Joined, from /api/dashboard's scoped counts ------
+  const stage = (code) => ((core && core.pipelineByStage) || [])
+    .find((s) => s.stage === code)?.count || 0;
+  const selected = stage('SELECTED') + stage('OFFER') + stage('OFFER_ACCEPTED');
+  const joined = core ? core.hiringOutcomes : null;
+  // The role-shaped rows /dashboard/ats already writes ("My Requirements",
+  // "My Team Candidates", "Department Requirements"…). Selected and Joined are
+  // appended only where that set does not already carry them.
+  const atsRows = (ats && ats.myWork) || [];
+  const carries = (word) => atsRows.some((r) => r.label.toLowerCase().includes(word));
+
+  const nothing = !hasHrms && !hasAts && !hasAccounts && reportLinks.length === 0;
 
   return (
     <>
-      <PageHead name={user?.name} role={workRoleLabel(user)} />
-      <div className="statbar">
-        <Stat n={stats.openRequirements} l="Open requirements" />
-        <Stat n={stats.recruiterReview} l="Awaiting recruiter review" />
-        <Stat n={stats.withBde} l="Awaiting BDE review" />
-        <Stat n={stats.clientReview} l="With client" />
-        <Stat n={stats.interviewsUpcoming} l="Interviews scheduled" />
-        <Stat n={stats.invoicesOverdue} l="Overdue invoices" />
-      </div>
+      <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} />
 
-      <div className="two-col">
-        <div>
-          <div className="card section">
-            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Pending actions</h3>
-            <PipelineTable rows={pending} withAction />
-          </div>
-          <div className="card section">
-            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Recent activity</h3>
-            <ActivityTimeline items={stats.recentActivity || []} />
-          </div>
-        </div>
-        <div>
-          <div className="card section">
-            <h3 style={{ fontSize: 13, marginBottom: 10 }}>Requirement priority</h3>
-            {reqs.slice(0, 5).map((r) => (
-              <Link className="kv" to={`/requirements/${r.id}`} key={r.id} style={{ display: 'flex' }}>
-                <span className="k">{r.title}</span>
-                <span className={`status ${priorityClass(r.priority)}`}>{r.priority}</span>
-              </Link>
-            ))}
-            {reqs.length === 0 && <div className="small-muted">No open requirements.</div>}
-          </div>
-          <div className="card">
-            <h3 style={{ fontSize: 13, marginBottom: 10 }}>Job Portal Connection</h3>
-            <div className="kv"><span className="k">Status</span><span><span className="conn-dot ok" />Connected</span></div>
-            <div className="kv"><span className="k">Public site</span><span>/careers</span></div>
-            <div className="kv"><span className="k">Open positions live</span><span>{stats.openRequirements}</span></div>
-            <Link className="link-btn" to="/admin/integrations" style={{ display: 'block', marginTop: 8 }}>
-              Manage integration →
-            </Link>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// --- dashboardRecruiter (prototype line 2432) ------------------------------
-function RecruiterDashboard({ user }) {
-  const [reqs, setReqs] = useState([]);
-  const [apps, setApps] = useState([]);
-  useEffect(() => {
-    api.get('/requirements').then((r) => setReqs(r.data)).catch(() => setReqs([]));
-    api.get('/applications').then((r) => setApps(r.data)).catch(() => setApps([]));
-  }, []);
-
-  const myReqs = reqs.filter((r) => r.recruiterId === user?.id);
-  const myIds = new Set(myReqs.map((r) => r.id));
-  const mine = apps.filter((a) => myIds.has(a.requirementId));
-  const pendingAction = mine.filter((a) => ['NEW', 'RECRUITER_REVIEW', 'HOLD'].includes(a.stage));
-
-  return (
-    <>
-      <PageHead name={user?.name} role="Recruiter" />
-      <div className="statbar">
-        <Stat n={myReqs.filter((r) => r.status === 'OPEN').length} l="My requirements" />
-        <Stat n={pendingAction.length} l="Candidates to review" />
-        <Stat n={mine.filter((a) => a.interviewStatus === 'SCHEDULED').length} l="Interviews" />
-        <Stat n={mine.filter((a) => a.stage === 'SELECTED').length} l="Selected" />
-        <Stat n={mine.filter((a) => ['JOINED', 'HIRED'].includes(a.stage)).length} l="Joined" />
-      </div>
-      <div className="card section">
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Candidates needing my review</h3>
-        <PipelineTable rows={pendingAction.slice(0, 8)} />
-      </div>
-      <div className="card">
-        <h3 style={{ fontSize: 13, marginBottom: 10 }}>My requirements</h3>
-        {myReqs.map((r) => (
-          <Link className="kv" to={`/requirements/${r.id}`} key={r.id} style={{ display: 'flex' }}>
-            <span className="k">{r.title} — {r.client?.name}</span>
-            <span className={`status ${priorityClass(r.priority)}`}>{r.priority}</span>
-          </Link>
-        ))}
-        {myReqs.length === 0 && <div className="small-muted">No requirements assigned.</div>}
-      </div>
-    </>
-  );
-}
-
-// --- dashboardBDE (prototype line 2459) ------------------------------------
-function BdeDashboard({ user }) {
-  const [reqs, setReqs] = useState([]);
-  const [apps, setApps] = useState([]);
-  useEffect(() => {
-    api.get('/requirements').then((r) => setReqs(r.data)).catch(() => setReqs([]));
-    api.get('/applications').then((r) => setApps(r.data)).catch(() => setApps([]));
-  }, []);
-
-  const myReqs = reqs.filter((r) => r.bdeId === user?.id);
-  const myIds = new Set(myReqs.map((r) => r.id));
-  const mine = apps.filter((a) => myIds.has(a.requirementId));
-  const withBde = mine.filter((a) => a.stage === 'WITH_BDE');
-
-  return (
-    <>
-      <PageHead name={user?.name} role="BDE" />
-      <div className="statbar">
-        <Stat n={myReqs.filter((r) => r.status === 'OPEN').length} l="Requirements" />
-        <Stat n={withBde.length} l="Candidates with BDE" />
-        <Stat n={mine.filter((a) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage)).length} l="Shared with client" />
-        <Stat n={mine.filter((a) => ['CLIENT_SHORTLISTED', 'REJECTED'].includes(a.stage)).length} l="Client responses" />
-      </div>
-      <div className="card">
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Pending BDE review</h3>
-        <PipelineTable rows={withBde.slice(0, 8)} empty="Nothing pending." />
-      </div>
-    </>
-  );
-}
-
-// --- dashboardTL (prototype line 2483) -------------------------------------
-function TeamDashboard({ user }) {
-  const [stats, setStats] = useState(null);
-  const [reqs, setReqs] = useState([]);
-  const [apps, setApps] = useState([]);
-  useEffect(() => {
-    api.get('/dashboard').then((r) => setStats(r.data)).catch(() => setStats({}));
-    api.get('/requirements', { params: { status: 'OPEN' } }).then((r) => setReqs(r.data)).catch(() => setReqs([]));
-    api.get('/applications').then((r) => setApps(r.data)).catch(() => setApps([]));
-  }, []);
-  if (!stats) return <div className="small-muted">Loading dashboard…</div>;
-
-  // /requirements is already department-scoped on the server for STL/TL, so
-  // scoping the applications to those requirements scopes the whole screen.
-  const ids = new Set(reqs.map((r) => r.id));
-  const scoped = apps.filter((a) => ids.has(a.requirementId));
-  const roleLabel = workRoleLabel(user);
-
-  return (
-    <>
-      <PageHead name={user?.name} role={roleLabel} extra={user?.atsDepartment ? ` · ${user.atsDepartment} department` : ''} />
-      {user?.atsDepartment && (
+      {scoped && (
         <div className="notice">
-          Scoped to your assigned department ({user.atsDepartment}) — requirements, candidates and interviews
-          outside it are not shown here.
+          Scoped to {departments.length > 1 ? 'your assigned departments' : 'your assigned department'}
+          {` (${departments.join(', ')})`} — requirements, candidates, interviews and employee records
+          outside it are not counted here.
         </div>
       )}
-      <div className="statbar">
-        <Stat n={reqs.length} l="Team requirements" />
-        <Stat n={new Set(scoped.map((a) => a.candidateId)).size} l="Team candidates" />
-        <Stat n={scoped.filter((a) => ['RECRUITER_REVIEW', 'WITH_BDE'].includes(a.stage)).length} l="Pending approvals" />
-        <Stat n={scoped.filter((a) => a.interviewStatus === 'SCHEDULED').length} l="Interviews" />
-        <Stat n={scoped.filter((a) => ['SELECTED', 'JOINED', 'HIRED'].includes(a.stage)).length} l="Selections" />
-      </div>
-      <div className="card section">
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Recent team activity</h3>
-        <ActivityTimeline items={stats.recentActivity || []} />
-      </div>
-      <div className="card">
-        <h3 style={{ fontSize: 13, marginBottom: 10 }}>Recruiter workload</h3>
-        {(stats.recruiterWorkload || []).map((r) => (
-          <div className="kv" key={r.name}><span className="k">{r.name}</span><span>{r.requirements} open requirements</span></div>
-        ))}
-        {(stats.recruiterWorkload || []).length === 0 && <div className="small-muted">No recruiters on file.</div>}
-      </div>
+
+      {/* --- HRMS ------------------------------------------------------- */}
+      {hasHrms && hrms && (
+        <Panel
+          title="HRMS"
+          right={!seesTeam ? 'My own records'
+            : scoped ? (departments.length > 1 ? 'Your departments' : 'Your department')
+              : 'Today'}
+        >
+          {seesTeam && (
+            <Row
+              label="Employees"
+              value={hrms.employees ? hrms.employees.length : null}
+              sub={hrms.employees
+                ? `${hrms.employees.filter((e) => e.employmentStatus === 'Active').length} active`
+                : null}
+              to="/employees"
+            />
+          )}
+          {seesAttendance && (
+            <Row
+              label="Attendance"
+              value={seesTeam ? present : myToday}
+              sub={seesTeam ? 'marked present today' : 'today'}
+              to="/attendance"
+            />
+          )}
+          {seesLeave && (
+            <Row
+              label="Leave"
+              value={leavePending}
+              sub={seesTeam ? 'awaiting a decision' : 'requests pending'}
+              to="/leave"
+            />
+          )}
+          {seesPayroll && (
+            <Row label="Payroll" value={payslips.length} sub="payslips this month" to="/payroll" />
+          )}
+          {!seesTeam && seesServices && (
+            <Row label="Employee Services" value={ticketsOpen} sub="open requests" to="/employee-services" />
+          )}
+        </Panel>
+      )}
+
+      {/* --- ATS -------------------------------------------------------- */}
+      {hasAts && (
+        <Panel
+          title={ats ? ats.myWorkTitle : 'ATS'}
+          right={ats && ats.scope && ats.scope.global ? 'All departments' : null}
+        >
+          {atsRows.map((w) => <Row key={w.label} label={w.label} value={w.value} to={w.to} />)}
+          {!carries('selected') && (
+            <Row label="Selected" value={selected} to="/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED" />
+          )}
+          {!carries('joining') && !carries('joined') && (
+            <Row label="Joined" value={joined} to="/candidates?stage=JOINED,HIRED" />
+          )}
+          {atsRows.length === 0 && !core && (
+            <div className="empty-mini">Your ATS figures could not be read just now.</div>
+          )}
+        </Panel>
+      )}
+
+      {/* The ATS queues, and then what to do about them. */}
+      {atsQueues && ats && (
+        <>
+          <Panel title="Pending actions" right={String(ats.pendingTotal)}>
+            {ats.pendingActions.length === 0 && (
+              <div className="empty-mini">No queues are assigned to your role.</div>
+            )}
+            {ats.pendingActions.map((p) => (
+              <Row key={p.id} label={p.label} value={p.count} to={p.to} sub={p.count ? p.action : null} />
+            ))}
+          </Panel>
+
+          <Panel
+            title="What needs an action"
+            right={`${ats.queue.length} item${ats.queue.length === 1 ? '' : 's'}`}
+          >
+            <ActionList rows={ats.queue.slice(0, 8)} navigate={navigate} />
+          </Panel>
+        </>
+      )}
+
+      {/* --- Accounts --------------------------------------------------- */}
+      {hasAccounts && acc && (
+        <Panel title="Accounts">
+          <Row label="Invoices" value={acc.invoices} sub={`${acc.pending} pending`} to="/invoices" />
+          <Row label="Payments" value={rupees(acc.received)} sub="received" to="/invoices" />
+          <Row label="Outstanding" value={rupees(acc.outstanding)} sub={`${acc.overdue} overdue`} to="/invoices" />
+          {seesBank && (
+            <Row label="Reconciliation" value={acc.unreconciled} sub="transactions unmatched" to="/bank" />
+          )}
+        </Panel>
+      )}
+
+      {hasAccounts && acc && (acc.needsAttention || []).length > 0 && (
+        <Panel title="Invoices needing attention" right={String(acc.needsAttention.length)}>
+          <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
+            <table>
+              <thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                {acc.needsAttention.map((i) => (
+                  <tr key={i.id} className="row-link" onClick={() => navigate(`/invoices/${i.id}`)}>
+                    <td>{i.invoiceNumber || i.id}</td>
+                    <td>{i.client}</td>
+                    <td>{rupees(i.total)}</td>
+                    <td>
+                      <span className={`status ${i.status === 'Overdue' ? 'rejected' : 'pending'}`}>{i.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+
+      {/* --- Reports ---------------------------------------------------- */}
+      {reportLinks.length > 0 && (
+        <Panel title="Reports">
+          {reportLinks.map((r) => (
+            <Row key={r.to} label={`${r.icon ? `${r.icon} ` : ''}${r.label}`} value="Open" to={r.to} />
+          ))}
+        </Panel>
+      )}
+
+      {nothing && (
+        <Panel title="Your workspace">
+          <div className="empty-mini">
+            No product is enabled for your login yet. An administrator grants HRMS, ATS or Accounts
+            access in Administration → Users.
+          </div>
+        </Panel>
+      )}
     </>
   );
 }
 
-// --- dashboardAccountant (prototype line 2503) -----------------------------
-function AccountantDashboard({ user }) {
-  const [stats, setStats] = useState(null);
-  const [acc, setAcc] = useState(null);
-  useEffect(() => {
-    api.get('/dashboard').then((r) => setStats(r.data)).catch(() => setStats({}));
-    api.get('/dashboard/accounts').then((r) => setAcc(r.data)).catch(() => setAcc({}));
-  }, []);
-  if (!stats || !acc) return <div className="small-muted">Loading dashboard…</div>;
-
-  return (
-    <>
-      <PageHead name={user?.name} role="Accountant" />
-      <div className="statbar">
-        <Stat n={stats.hiringOutcomes} l="Client joinings recorded" />
-        <Stat n={acc.invoices} l="Invoices" />
-        <Stat n={acc.pending} l="Pending payments" />
-        <Stat n={acc.overdue} l="Overdue" />
-        <Stat n={acc.unreconciled} l="Unreconciled transactions" />
-      </div>
-      <div className="card section">
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Invoices needing attention</h3>
-        <div className="tbl-wrap">
-          <table>
-            <thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Status</th></tr></thead>
-            <tbody>
-              {(acc.needsAttention || []).map((i) => (
-                <tr key={i.id}>
-                  <td><Link to={`/invoices/${i.id}`}>{i.invoiceNumber || i.id}</Link></td>
-                  <td>{i.client}</td>
-                  <td>{rupees(i.total)}</td>
-                  <td><span className={`status ${i.status === 'Overdue' ? 'rejected' : 'pending'}`}>{i.status}</span></td>
-                </tr>
-              ))}
-              {(acc.needsAttention || []).length === 0 && (
-                <tr><td colSpan="4" className="small-muted" style={{ padding: 14 }}>Nothing pending.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div className="card">
-        <h3 style={{ fontSize: 13, marginBottom: 10 }}>Unreconciled bank transactions</h3>
-        {(acc.unreconciledTransactions || []).map((t) => (
-          <div className="kv" key={t.id}><span className="k">{t.date} · {t.description}</span><span>{rupees(t.amount)}</span></div>
-        ))}
-        {(acc.unreconciledTransactions || []).length === 0 && <div className="small-muted">All caught up.</div>}
-      </div>
-    </>
-  );
-}
-
-// --- dashboardClient (prototype line 2521) ---------------------------------
+// --- The client's own dashboard (§18: "only their client dashboard") -------
 function ClientDashboard({ user }) {
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [apps, setApps] = useState([]);
   useEffect(() => {
-    api.get('/dashboard').then((r) => setStats(r.data)).catch(() => setStats({}));
-    api.get('/applications').then((r) => setApps(r.data)).catch(() => setApps([]));
+    let alive = true;
+    Promise.all([
+      api.get('/dashboard').then((r) => r.data).catch(() => ({})),
+      api.get('/applications').then((r) => r.data).catch(() => []),
+    ]).then(([s, a]) => { if (alive) { setStats(s); setApps(a || []); } });
+    return () => { alive = false; };
   }, []);
   if (!stats) return <div className="small-muted">Loading dashboard…</div>;
 
@@ -381,94 +434,33 @@ function ClientDashboard({ user }) {
 
   return (
     <>
-      <PageHead name={user?.name} role="Client" />
-      <div className="statbar">
-        <Stat n={stats.openRequirements} l="Open requirements" />
-        <Stat n={stats.clientReview} l="Awaiting your review" />
-        <Stat n={stage('CLIENT_SHORTLISTED')} l="Shortlisted" />
-        <Stat n={stats.interviewsUpcoming} l="Interviews scheduled" />
-        <Stat n={stage('SELECTED') + stage('JOINED')} l="Selected" />
-      </div>
-      <div className="card">
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Candidates awaiting your review</h3>
-        <PipelineTable rows={awaiting.slice(0, 8)} empty="Nothing pending." />
-      </div>
-    </>
-  );
-}
-
-// --- dashboardEmployee (prototype line 2393) -------------------------------
-function EmployeeDashboard({ user }) {
-  const [attendance, setAttendance] = useState([]);
-  const [leave, setLeave] = useState([]);
-  const [tickets, setTickets] = useState([]);
-  const [courses, setCourses] = useState([]);
-  useEffect(() => {
-    api.get('/attendance').then((r) => setAttendance(r.data)).catch(() => setAttendance([]));
-    api.get('/leave').then((r) => setLeave(r.data)).catch(() => setLeave([]));
-    api.get('/helpdesk').then((r) => setTickets(r.data)).catch(() => setTickets([]));
-    api.get('/lms/assignments').then((r) => setCourses(r.data)).catch(() => setCourses([]));
-  }, []);
-
-  const today = new Date().toISOString().slice(0, 10);
-  const todayRec = attendance.find((a) => a.date === today);
-
-  return (
-    <>
-      <PageHead name={user?.name} role="Employee" />
-      <div className="statbar">
-        <Stat n={todayRec ? todayRec.status : 'Not marked'} l="Today's attendance" />
-        <Stat n={leave.filter((l) => l.status === 'Pending').length} l="Leave pending" />
-        <Stat n={tickets.filter((t) => t.status !== 'Resolved').length} l="Open service tickets" />
-        <Stat n={courses.filter((c) => !c.completed).length} l="Courses to complete" />
-      </div>
-      <div className="two-col">
-        <div>
-          <div className="card section">
-            <h3 style={{ fontSize: 14, marginBottom: 10 }}>My recent attendance</h3>
-            <div className="tbl-wrap">
-              <table>
-                <thead><tr><th>Date</th><th>Status</th></tr></thead>
-                <tbody>
-                  {attendance.slice(0, 5).map((a) => (
-                    <tr key={a.id}>
-                      <td>{a.date}</td>
-                      <td>
-                        <span className={`status ${a.status === 'Present' ? 'active' : a.status === 'Leave' ? 'hold' : 'review'}`}>
-                          {a.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {attendance.length === 0 && (
-                    <tr><td colSpan="2" className="small-muted" style={{ padding: 14 }}>No records yet.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="card">
-            <h3 style={{ fontSize: 14, marginBottom: 10 }}>My leave</h3>
-            {leave.map((l) => (
-              <div className="kv" key={l.id}>
-                <span className="k">{l.leaveType || l.type} · {l.fromDate}–{l.toDate}</span>
-                <span className={`status ${l.status === 'Approved' ? 'active' : l.status === 'Rejected' ? 'rejected' : 'pending'}`}>
-                  {l.status}
-                </span>
-              </div>
-            ))}
-            {leave.length === 0 && <div className="small-muted">No leave on record.</div>}
-          </div>
+      <PageHead user={user} />
+      <Panel title="My company" right="Your requirements only">
+        <Row label="Open requirements" value={stats.openRequirements} to="/requirements" />
+        <Row label="Awaiting your review" value={stats.clientReview} to="/candidates" />
+        <Row label="Shortlisted" value={stage('CLIENT_SHORTLISTED')} to="/candidates" />
+        <Row label="Interviews scheduled" value={stats.interviewsUpcoming} to="/ats/calendar" />
+        <Row label="Selected" value={stage('SELECTED') + stage('JOINED')} to="/candidates" />
+      </Panel>
+      <Panel title="Candidates awaiting your review" right={String(awaiting.length)}>
+        <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
+          <table>
+            <thead><tr><th>Candidate</th><th>Requirement</th><th>Stage</th></tr></thead>
+            <tbody>
+              {awaiting.slice(0, 8).map((a) => (
+                <tr key={a.id} className="row-link" onClick={() => navigate(`/candidates/${a.candidateId}`)}>
+                  <td>{a.candidate?.name}</td>
+                  <td>{a.requirement?.title}</td>
+                  <td><span className={`status ${STAGE_BADGE[a.stage] || 'new'}`}>{stageLabel(a.stage)}</span></td>
+                </tr>
+              ))}
+              {awaiting.length === 0 && (
+                <tr><td colSpan="3" className="small-muted" style={{ padding: 16 }}>Nothing pending.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
-        <div className="card section">
-          <h3 style={{ fontSize: 13, marginBottom: 10 }}>My services</h3>
-          <Link className="link-btn" to="/attendance" style={{ display: 'block', marginBottom: 8 }}>Attendance &amp; Time →</Link>
-          <Link className="link-btn" to="/leave" style={{ display: 'block', marginBottom: 8 }}>Leave →</Link>
-          <Link className="link-btn" to="/payroll" style={{ display: 'block', marginBottom: 8 }}>Payroll / Payslips →</Link>
-          <Link className="link-btn" to="/employee-services" style={{ display: 'block', marginBottom: 8 }}>Employee Services →</Link>
-          <Link className="link-btn" to="/employee-services" style={{ display: 'block' }}>My Learning (LMS) →</Link>
-        </div>
-      </div>
+      </Panel>
     </>
   );
 }
