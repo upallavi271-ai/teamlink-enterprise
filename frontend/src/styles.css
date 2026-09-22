@@ -544,3 +544,7 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .ai-sug:disabled{opacity:.55;cursor:not-allowed}
 .ai-sug:disabled:hover{border-color:var(--line);background:var(--paper)}
 .ai-foot .link-btn{font-size:11.5px}
+/* An answer can contain an id, a URL or a long unbroken token; it wraps rather
+   than making the panel scroll sideways, which matters most on a phone. */
+.ai-turn{overflow-wrap:anywhere}
+.ai-foot-restart{display:block;margin-top:7px;text-align:right;width:100%}

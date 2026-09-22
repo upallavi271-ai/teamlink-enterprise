@@ -534,9 +534,8 @@ export default function AiAssistant() {
               <div className="ai-foot small-muted">
                 {turns.length > 0 && (
                   <button
-                    className="link-btn"
+                    className="link-btn ai-foot-restart"
                     type="button"
-                    style={{ float: 'right' }}
                     onClick={() => setThreads((t) => ({ ...t, assistant: [] }))}
                   >
                     Start again
@@ -628,9 +627,8 @@ export default function AiAssistant() {
               <div className="ai-foot small-muted">
                 {turns.length > 0 && (
                   <button
-                    className="link-btn"
+                    className="link-btn ai-foot-restart"
                     type="button"
-                    style={{ float: 'right' }}
                     onClick={() => setThreads((t) => ({ ...t, agent: [] }))}
                   >
                     Start again
