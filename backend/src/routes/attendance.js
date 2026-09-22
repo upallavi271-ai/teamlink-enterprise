@@ -7,6 +7,7 @@ const {
   CHECKIN_METHODS, DIRECTIONS, toMinutes, isLate, sortedPunches, firstIn, lastOut,
   calendarDays, businessDays, monthLabel, monthStats, employeeMatchesFilters,
 } = require('../utils/attendanceMath');
+const chain = require('../utils/chainRoute');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -82,6 +83,18 @@ router.post('/', async (req, res) => {
 });
 
 // ---- Regularization requests (correcting a missed/incorrect punch after the fact) ----
+//
+// §9 — A REGULARIZATION CLIMBS THE SAME LADDER AS A LEAVE. Correcting your
+// own attendance record is exactly the kind of request that needs somebody
+// above you to agree, and it used to be one click by anyone holding
+// 'approve' on Attendance & Time. Now:
+//
+//   Employee → TL → STL → Assistant Manager → Manager → HR → Super Admin
+//
+// and a TL's own correction starts at their STL, because nobody approves
+// their own request. The ladder, who sits on each rung and which rungs gate
+// are all utils/approvalWorkflow.js — see WORKFLOWS.regularization.
+const WF_REG = 'regularization';
 
 router.get('/regularizations', async (req, res) => {
   const where = { ...employeeRecordWhere(req.user) };
@@ -90,7 +103,9 @@ router.get('/regularizations', async (req, res) => {
   if (employeeId) where.employeeId = employeeId;
   if (req.query.status) where.status = req.query.status;
   const regularizations = await prisma.attendanceRegularization.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } });
-  res.json(regularizations);
+  // Each row carries its own chain summary, so the list can say WHO IT IS
+  // WAITING ON instead of a bare "Pending".
+  res.json(await chain.decorate(WF_REG, regularizations));
 });
 
 router.post('/regularizations', async (req, res) => {
@@ -100,7 +115,11 @@ router.post('/regularizations', async (req, res) => {
   if (!date) return res.status(400).json({ error: 'date is required' });
   const regularization = await prisma.attendanceRegularization.create({ data: { employeeId: own.id, date, requestedCheckIn, requestedCheckOut, reason } });
   await logAudit({ userId: req.user.id, action: 'Attendance regularization requested', entity: 'AttendanceRegularization', entityId: regularization.id });
-  res.status(201).json(regularization);
+  // The chain goes down with the request. If the ladder has no rung above
+  // whoever raised it, raise() comes back not pending and the request simply
+  // waits for a decision the way it always did.
+  const started = await chain.raise(WF_REG, { recordId: regularization.id, employee: own });
+  res.status(201).json({ ...regularization, workflow: started.summary });
 });
 
 router.patch('/regularizations/:id/decision', requirePerm(null, 'hrms', 'Attendance & Time', 'approve'), async (req, res) => {
@@ -110,7 +129,33 @@ router.patch('/regularizations/:id/decision', requirePerm(null, 'hrms', 'Attenda
     where: { id: req.params.id }, include: { employee: true },
   });
   if (!existing) return res.status(404).json({ error: 'Request not found' });
-  if (!employeeInScope(req.user, existing.employee)) return res.status(403).json(OUT_OF_SCOPE);
+  // Scope, OR being named on this request's own chain — an approver two
+  // rungs up whose departments do not cover the applicant is still this
+  // request's approver.
+  if (!await chain.mayTouch(WF_REG, existing.id, req.user, existing.employee)) {
+    return res.status(403).json(chain.OUT_OF_SCOPE);
+  }
+  if (existing.status !== 'Pending') return res.status(409).json({ error: `This request was already ${existing.status.toLowerCase()}.` });
+
+  // A request raised before the chain shipped gets one now, so it climbs the
+  // ladder rather than being decided in a single click.
+  await chain.ensure(WF_REG, { recordId: existing.id, employee: existing.employee, open: true });
+  const step = await chain.decide(WF_REG, existing.id, req.user, { decision: status, note: req.body.reason || req.body.rejectReason });
+  if (step.error) return res.status(step.error.status).json(step.error.body);
+
+  // STILL CLIMBING — nothing is written to the attendance record and the
+  // request stays Pending. Only the LAST rung applies the correction.
+  if (step.chained && !step.result.complete) {
+    await logAudit({
+      userId: req.user.id,
+      action: `Regularization ${status.toLowerCase()} at ${step.result.level}`,
+      entity: 'AttendanceRegularization',
+      entityId: existing.id,
+      fromValue: step.result.level,
+      toValue: step.result.nextLevel || step.result.outcome,
+    });
+    return res.json({ ...existing, status: 'Pending', workflow: step.view });
+  }
   const regularization = await prisma.attendanceRegularization.update({ where: { id: req.params.id }, data: { status, decidedAt: new Date() } });
   if (status === 'Approved') {
     await prisma.attendance.upsert({

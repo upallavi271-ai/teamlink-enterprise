@@ -559,6 +559,19 @@ const APPROVAL_CHAIN_FEATURES = [
 // does `export`, which is a read.
 const HRMS_VIEW_ONLY_ROLES = ['TL'];
 const HRMS_STRIPPED_ACTIONS = ['create', 'edit', 'delete', 'configure', 'assign'];
+
+// …EXCEPT WHAT §13 AND §14 EXPLICITLY ASK A TL TO RAISE.
+//
+// §13 is "TL Recommendation → STL → …" and §14 is "TL creates course draft
+// → STL → …". Both START with a TL authoring something, so stripping
+// `create` off Performance & Development would have deleted the first step
+// of two workflows the same spec requires — the view-only pass and the
+// chain were pulling in opposite directions and the chain is the point.
+//
+// Nothing is handed over by this: what a TL creates here is a REQUEST. It
+// is Pending until the ladder above them approves it, so the TL still
+// decides nothing on their own — see WORKFLOWS.reward / .course.
+const TL_AUTHORED = { 'Performance & Development': ['create'] };
 const WRITE_ACTIONS = ['create', 'edit', 'delete', 'approve', 'configure'];
 
 function emptyActions(value = false) {
@@ -614,7 +627,12 @@ function defaultAccessForRole(role, moduleId) {
 
   // §11 — the TL pass. HRMS only, and `approve` / `view` / `export` survive.
   if (moduleId === 'hrms' && HRMS_VIEW_ONLY_ROLES.includes(role)) {
-    names.forEach((f) => HRMS_STRIPPED_ACTIONS.forEach((a) => { features[f][a] = false; }));
+    names.forEach((f) => {
+      const keep = TL_AUTHORED[f] || [];
+      HRMS_STRIPPED_ACTIONS.forEach((a) => {
+        if (!keep.includes(a)) features[f][a] = false;
+      });
+    });
   }
 
   const anyGranted = names.some((f) => ROLE_FEATURE_ACTIONS.some((a) => features[f][a]));

@@ -29,31 +29,31 @@ datasource db {
 // prototype. Never derive a label from a code.
 
 model User {
-  id             String   @id @default(cuid())
-  name           String
-  email          String   @unique
-  passwordHash   String
+  id            String  @id @default(cuid())
+  name          String
+  email         String  @unique
+  passwordHash  String
   // ONE EMPLOYEE = ONE USER = ONE LOGIN. `role` is the login's primary role
   // code (SUPER_ADMIN … EMPLOYEE, CLIENT, CANDIDATE). It is not read directly
   // by route guards any more: every guard goes through the permission engine
   // in backend/src/utils/permissions.js, which resolves role -> RoleAccess
   // matrix -> action, then applies data scope.
-  role           String
-  atsDepartment  String?
-  clientId       String?
-  client         Client?  @relation(fields: [clientId], references: [id])
+  role          String
+  atsDepartment String?
+  clientId      String?
+  client        Client? @relation(fields: [clientId], references: [id])
 
   // --- Identity & access (auth_rbac) -------------------------------------
   // External candidate logins point at a Candidate row instead of an Employee.
   // Plain scalar (no Prisma relation) so the migration stays ADD COLUMN only.
-  candidateId    String?
+  candidateId String?
 
   // Product access. Independent booleans — not every employee has every
   // product. Null/absent is treated as "derive from designation" only at seed
   // time; at runtime these are authoritative.
-  hrmsAccess     Boolean  @default(false)
-  atsAccess      Boolean  @default(false)
-  accountsAccess Boolean  @default(false)
+  hrmsAccess     Boolean @default(false)
+  atsAccess      Boolean @default(false)
+  accountsAccess Boolean @default(false)
 
   // ---------------------------------------------------------------------
   // THREE INDEPENDENT PRODUCT ROLES. One login, three products, three roles.
@@ -72,9 +72,9 @@ model User {
   // DesignationRole mapping table, or overridden per-user here. Never a
   // department-qualified string like "Medical TL" — just "TL"; the department
   // supplies the scope, never the role name.
-  hrmsRole       String?
-  atsRole        String?
-  accountsRole   String?
+  hrmsRole            String?
+  atsRole             String?
+  accountsRole        String?
   // Data scope. Comma-separated; empty/null means "the employee's own
   // department / team". STLs carry several departments here.
   atsScopeDepartments String?
@@ -91,16 +91,16 @@ model User {
   setPasswordUsedAt    DateTime?
 
   // Login administration — the prototype's Users screen (usersView, line 9893).
-  username       String?
-  status         String   @default("Active") // Active | Inactive | Suspended
-  branch         String?
-  team           String?
-  lastLoginAt    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  username    String?
+  status      String    @default("Active") // Active | Inactive | Suspended
+  branch      String?
+  team        String?
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  requirementsAsRecruiter Requirement[] @relation("RecruiterRequirements")
-  requirementsAsBde       Requirement[] @relation("BdeRequirements")
+  requirementsAsRecruiter Requirement[]  @relation("RecruiterRequirements")
+  requirementsAsBde       Requirement[]  @relation("BdeRequirements")
   auditLogs               AuditLog[]
   employee                Employee?
   notifications           Notification[]
@@ -114,29 +114,29 @@ model Client {
   createdAt DateTime @default(now())
 
   // Company / classification — the prototype's Add Client "Basic Info" tab.
-  legalName        String?
-  website          String?
-  ownerDepartment  String?
-  yearEstablished  String?
-  landline         String?
-  status           String?  @default("Active") // Active | Inactive | Suspended
-  activeDate       String?
-  clientType       String? // Direct | Vendor | Partner
-  priority         String?  @default("High") // High | Medium | Low
+  legalName       String?
+  website         String?
+  ownerDepartment String?
+  yearEstablished String?
+  landline        String?
+  status          String? @default("Active") // Active | Inactive | Suspended
+  activeDate      String?
+  clientType      String? // Direct | Vendor | Partner
+  priority        String? @default("High") // High | Medium | Low
 
   // Primary / secondary contact.
-  contactName          String?
-  contactDesignation   String?
-  contactPhone         String?
-  contactEmail         String?
-  contactWhatsApp      String?
-  secondaryContactName      String?
+  contactName                 String?
+  contactDesignation          String?
+  contactPhone                String?
+  contactEmail                String?
+  contactWhatsApp             String?
+  secondaryContactName        String?
   secondaryContactDesignation String?
-  secondaryContactPhone     String?
-  secondaryContactEmail     String?
-  commPrimary          String? // Email | WhatsApp | Phone
-  commSecondary        String?
-  commChannels         String? // comma-separated: Email,WhatsApp,SMS
+  secondaryContactPhone       String?
+  secondaryContactEmail       String?
+  commPrimary                 String? // Email | WhatsApp | Phone
+  commSecondary               String?
+  commChannels                String? // comma-separated: Email,WhatsApp,SMS
 
   // Address.
   houseNumber String?
@@ -149,19 +149,19 @@ model Client {
 
   // Legal & finance — the prototype's "Legal & Finance" tab. These drive both
   // the agreement document and the invoice raised when a candidate joins.
-  gst              String?
-  pan              String?
-  tan              String?
-  businessType     String? @default("Private Limited")
-  tdsPercent       Float?  @default(10)
-  gstPercent       Float?  @default(18)
-  paymentTerms     String? @default("Invoice 6 days after joining; payment due within 6 days of invoice")
-  guaranteePeriod  String? @default("30 Days")
-  invoiceTrigger   String? @default("Candidate Joining")
-  paymentDue       String? @default("6 days after invoice")
-  commercialNotes  String?
-  accountManager   String?
-  bdeOwner         String?
+  gst             String?
+  pan             String?
+  tan             String?
+  businessType    String? @default("Private Limited")
+  tdsPercent      Float?  @default(10)
+  gstPercent      Float?  @default(18)
+  paymentTerms    String? @default("Invoice 6 days after joining; payment due within 6 days of invoice")
+  guaranteePeriod String? @default("30 Days")
+  invoiceTrigger  String? @default("Candidate Joining")
+  paymentDue      String? @default("6 days after invoice")
+  commercialNotes String?
+  accountManager  String?
+  bdeOwner        String?
 
   // Risk monitoring tab.
   riskFlag  String? @default("None") // None | Watch | High Risk
@@ -171,27 +171,27 @@ model Client {
   // record, sent for signature, confirmed either by the client's own login or
   // through the tokenised public signing link (see routes/public.js), and then
   // activated — which is what unblocks requirements for this client.
-  agreementId        String?   @unique // human-readable reference, e.g. AGR0001
-  agreementStatus    String    @default("DRAFT") // DRAFT | SENT | CONFIRMED | ACTIVE | CANCELLED | EXPIRED
-  agreementRequired  String?   @default("Yes")
-  agreementTemplate  String?   @default("Standard Recruitment / Staffing")
-  agreementStart     String?
-  agreementEnd       String?
-  agreementActivatedAt DateTime?
-  agreementDocument  String? // generated agreement text
-  agreementFeePercent Float?   @default(8.33) // placement fee, % of annual CTC
-  esignToken         String?   @unique // opaque token in the client-facing signing link
-  agreementSentAt    DateTime?
-  agreementViewedAt  DateTime?
-  agreementSignedAt  DateTime?
-  agreementSignedBy  String? // full name typed at e-sign time
+  agreementId            String?   @unique // human-readable reference, e.g. AGR0001
+  agreementStatus        String    @default("DRAFT") // DRAFT | SENT | CONFIRMED | ACTIVE | CANCELLED | EXPIRED
+  agreementRequired      String?   @default("Yes")
+  agreementTemplate      String?   @default("Standard Recruitment / Staffing")
+  agreementStart         String?
+  agreementEnd           String?
+  agreementActivatedAt   DateTime?
+  agreementDocument      String? // generated agreement text
+  agreementFeePercent    Float?    @default(8.33) // placement fee, % of annual CTC
+  esignToken             String?   @unique // opaque token in the client-facing signing link
+  agreementSentAt        DateTime?
+  agreementViewedAt      DateTime?
+  agreementSignedAt      DateTime?
+  agreementSignedBy      String? // full name typed at e-sign time
   agreementSignedByTitle String? // signatory designation
 
   // --- clireq: client profile depth -------------------------------------
   // The Client Detail screen's Overview tab. A client carries a human-readable
   // code, a billing contact and a recruitment contact in addition to the
   // primary/secondary commercial contacts above.
-  clientCode                    String?  @unique
+  clientCode                    String? @unique
   billingContactName            String?
   billingContactDesignation     String?
   billingContactEmail           String?
@@ -218,54 +218,54 @@ model Client {
 }
 
 model Requirement {
-  id            String             @id @default(cuid())
-  title         String
-  description   String?
-  clientId      String
-  client        Client             @relation(fields: [clientId], references: [id])
-  department    String?
-  priority      String             @default("Medium")
-  status        String             @default("OPEN") // DRAFT | OPEN | CLOSED
-  skills        String? // comma-separated MANDATORY skills, drives candidate matching + JD
-  experience    String? // e.g. "5-8" years, shown on the generated job description
-  openings      Int                @default(1)
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  clientId    String
+  client      Client  @relation(fields: [clientId], references: [id])
+  department  String?
+  priority    String  @default("Medium")
+  status      String  @default("OPEN") // DRAFT | OPEN | CLOSED
+  skills      String? // comma-separated MANDATORY skills, drives candidate matching + JD
+  experience  String? // e.g. "5-8" years, shown on the generated job description
+  openings    Int     @default(1)
 
   // Prototype Create Requirement form (openAddRequirementModal / collectRequirementForm).
-  internal            Boolean @default(false) // Internal Requirement vs Client Requirement
-  hiringType          String? // Client Placement | TeamLink Internal Hire — the stored form of `internal`
-  closingDate         String?
-  jobDescription      String?
-  responsibilities    String?
-  qualifications      String?
-  education           String? @default("Any Degree")
-  goodToHaveSkills    String? // comma-separated
-  employmentType      String? @default("Full Time")
-  workMode            String? @default("Work From Office")
-  location            String?
-  preferredLocation   String? @default("Any")
-  relevantExperience  String?
-  joiningTimeline     String? @default("Within 15 Days")
-  noticePeriodMax     String? @default("30 Days")
-  jobPreference       String? @default("Permanent")
-  salaryType          String? @default("Annual CTC")
-  currency            String? @default("INR")
-  salary              String? // rendered band, e.g. "₹14L - ₹20L"
-  tl                  String?
-  stl                 String?
-  postingSources      String? // comma-separated selected posting sources
+  internal           Boolean @default(false) // Internal Requirement vs Client Requirement
+  hiringType         String? // Client Placement | TeamLink Internal Hire — the stored form of `internal`
+  closingDate        String?
+  jobDescription     String?
+  responsibilities   String?
+  qualifications     String?
+  education          String? @default("Any Degree")
+  goodToHaveSkills   String? // comma-separated
+  employmentType     String? @default("Full Time")
+  workMode           String? @default("Work From Office")
+  location           String?
+  preferredLocation  String? @default("Any")
+  relevantExperience String?
+  joiningTimeline    String? @default("Within 15 Days")
+  noticePeriodMax    String? @default("30 Days")
+  jobPreference      String? @default("Permanent")
+  salaryType         String? @default("Annual CTC")
+  currency           String? @default("INR")
+  salary             String? // rendered band, e.g. "₹14L - ₹20L"
+  tl                 String?
+  stl                String?
+  postingSources     String? // comma-separated selected posting sources
   // --- clireq: requirement identity, assignment and portal sync ---------
   // reqCode is the human-facing Requirement ID (REQ-0004). tlId / stlId /
   // recruiterIds are plain scalars, NOT Prisma relations, so the migration
   // stays ADD COLUMN only - the same pattern User.candidateId uses. They are
   // what utils/scope.js filters on: a recruiter sees the requirements they are
   // assigned, a TL the ones they lead, a BDE the ones they own.
-  reqCode          String?  @unique
-  tlId             String?
-  stlId            String?
-  recruiterIds     String? // comma-separated additional recruiter user ids
-  targetDate       String?
-  accountManager   String?
-  portalSyncStatus String?  @default("Not Synced") // Not Synced | Pending | Synced | Failed
+  reqCode            String? @unique
+  tlId               String?
+  stlId              String?
+  recruiterIds       String? // comma-separated additional recruiter user ids
+  targetDate         String?
+  accountManager     String?
+  portalSyncStatus   String? @default("Not Synced") // Not Synced | Pending | Synced | Failed
 
   // --- portal_: the Job Portal workspace inside Jobs / Requirements -------
   // PUBLISHED is a decision someone makes and is recorded with who and when;
@@ -276,29 +276,29 @@ model Requirement {
   // last changed. Plain scalars, so the migration stays ADD COLUMN only.
   portalPublished     Boolean   @default(false)
   portalPublishedAt   DateTime?
-  portalPublishedBy   String?   // user id of whoever published it
+  portalPublishedBy   String? // user id of whoever published it
   portalUnpublishedAt DateTime?
 
-  recruiterId   String?
-  recruiter     User?              @relation("RecruiterRequirements", fields: [recruiterId], references: [id])
-  bdeId         String?
-  bde           User?              @relation("BdeRequirements", fields: [bdeId], references: [id])
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  recruiterId String?
+  recruiter   User?    @relation("RecruiterRequirements", fields: [recruiterId], references: [id])
+  bdeId       String?
+  bde         User?    @relation("BdeRequirements", fields: [bdeId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   applications Application[]
   invoices     Invoice[]
 }
 
 model Candidate {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?
-  phone     String?
-  source    String?  @default("TeamLink Website")
-  skills    String? // comma-separated MANDATORY skills, scored against Requirement.skills
+  id              String   @id @default(cuid())
+  name            String
+  email           String?
+  phone           String?
+  source          String?  @default("TeamLink Website")
+  skills          String? // comma-separated MANDATORY skills, scored against Requirement.skills
   experienceYears Float?
-  createdAt DateTime @default(now())
+  createdAt       DateTime @default(now())
 
   // Prototype Add Candidate form (openAddCandidateModal / acCollectCandidate).
   // These are the signals the prototype's computeMatch() actually scores on —
@@ -340,42 +340,42 @@ model Candidate {
 }
 
 model Application {
-  id            String            @id @default(cuid())
-  candidateId   String
-  candidate     Candidate         @relation(fields: [candidateId], references: [id])
-  requirementId String
-  requirement   Requirement       @relation(fields: [requirementId], references: [id])
-  stage         String            @default("NEW")
-  interviewStatus   String?
-  interviewAt       DateTime?
+  id              String      @id @default(cuid())
+  candidateId     String
+  candidate       Candidate   @relation(fields: [candidateId], references: [id])
+  requirementId   String
+  requirement     Requirement @relation(fields: [requirementId], references: [id])
+  stage           String      @default("NEW")
+  interviewStatus String?
+  interviewAt     DateTime?
 
   // Recruitment / client interview detail — the prototype's `application.interview`
   // object (recruitmentInterviewTab, line 9330). Kept on Application rather than in
   // a parallel model so interviewStatus/interviewAt stay the single source of truth.
-  interviewCode        String?  // INT-#### shown in the calendar's first column
-  interviewRound       Int      @default(1)
-  interviewType        String?  // Client Interview | Internal Panel
-  interviewer          String?
-  interviewMode        String?  // Online | In Person | Telephonic
-  interviewLocation    String?
-  interviewMeetingLink String?
-  interviewScore       Int?     // recruitment/client score — never mixed with aiInterviewScore
-  interviewResult      String?  // Recommended | Hold | Not Selected
-  interviewFeedback    String?
-  interviewCreatedBy   String?
-  interviewCancelReason String?
-  interviewRescheduleCount Int  @default(0)
-  interviewStartedAt   DateTime?
-  interviewCompletedAt DateTime?
-  interviewEvents      InterviewEvent[]
+  interviewCode            String? // INT-#### shown in the calendar's first column
+  interviewRound           Int                     @default(1)
+  interviewType            String? // Client Interview | Internal Panel
+  interviewer              String?
+  interviewMode            String? // Online | In Person | Telephonic
+  interviewLocation        String?
+  interviewMeetingLink     String?
+  interviewScore           Int? // recruitment/client score — never mixed with aiInterviewScore
+  interviewResult          String? // Recommended | Hold | Not Selected
+  interviewFeedback        String?
+  interviewCreatedBy       String?
+  interviewCancelReason    String?
+  interviewRescheduleCount Int                     @default(0)
+  interviewStartedAt       DateTime?
+  interviewCompletedAt     DateTime?
+  interviewEvents          InterviewEvent[]
   // cand_: virtual back-reference only — no column is added to Application.
-  stageEvents          ApplicationStageEvent[]
+  stageEvents              ApplicationStageEvent[]
   // followup_: virtual back-reference only — no column is added to Application.
-  followUps            ApplicationFollowUp[]
+  followUps                ApplicationFollowUp[]
 
   // AI interview detail (the calendar's second tab).
-  aiInterviewDeadline  String?
-  aiInterviewFeedback  String?
+  aiInterviewDeadline String?
+  aiInterviewFeedback String?
 
   // Per-application detail the prototype's pipeline columns read from.
   matchScore        Int?
@@ -383,7 +383,7 @@ model Application {
   source            String?
   firstSource       String?
   sourceCampaign    String?
-  applicationMethod String?  @default("Manual") // Manual | Auto-Apply
+  applicationMethod String?   @default("Manual") // Manual | Auto-Apply
   // --- portal_: Job Portal intake ----------------------------------------
   // An application whose `source` is PORTAL_APPLICATION_SOURCE arrived from a
   // job portal form rather than from a recruiter keying it in. It is already a
@@ -393,8 +393,8 @@ model Application {
   // record, so an un-imported portal application can always be told apart from
   // one a recruiter has already picked up.
   portalImportedAt  DateTime?
-  portalImportedBy  String?  // user id of whoever imported it
-  aiInterviewStatus String?  @default("Required")
+  portalImportedBy  String? // user id of whoever imported it
+  aiInterviewStatus String?   @default("Required")
   aiInterviewScore  Int?
   // Client joining -> Accounts hand-off (prototype confirmClientJoining).
   offeredCtc        Float?
@@ -409,19 +409,19 @@ model Application {
   //                          -> HRMS Employee Creation
   // Only a client placement ever raises an invoice; only an internal hire ever
   // becomes an HRMS employee. See backend/src/utils/joining.js.
-  hiringType        String?   // Client Placement | TeamLink Internal Hire
-  offerStatus       String?   // Not Issued | Offer Released | Offer Accepted | Offer Declined
-  offerDate         String?
-  offerNotes        String?
-  offerAcceptedAt   DateTime?
-  documentsStatus   String?   // Pending | Submitted | Verified
-  joiningStatus     String?   // Not Scheduled | Joining Scheduled | Joined | Dropped
-  joinedAt          DateTime?
-  billingStatus     String?   // Not Applicable | Billing Pending | Invoiced
-  hrmsEmployeeId    String?   // Employee row created for a TeamLink internal hire
+  hiringType         String? // Client Placement | TeamLink Internal Hire
+  offerStatus        String? // Not Issued | Offer Released | Offer Accepted | Offer Declined
+  offerDate          String?
+  offerNotes         String?
+  offerAcceptedAt    DateTime?
+  documentsStatus    String? // Pending | Submitted | Verified
+  joiningStatus      String? // Not Scheduled | Joining Scheduled | Joined | Dropped
+  joinedAt           DateTime?
+  billingStatus      String? // Not Applicable | Billing Pending | Invoiced
+  hrmsEmployeeId     String? // Employee row created for a TeamLink internal hire
   interviewFeedbacks InterviewFeedback[]
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   @@unique([candidateId, requirementId])
 }
@@ -433,11 +433,11 @@ model InterviewEvent {
   id            String      @id @default(cuid())
   applicationId String
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  status        String      // the status this event moved the interview to
-  reason        String?     // cancellation / reschedule / no-show reason
-  fromSlot      String?     // previous date+time, on a reschedule
-  toSlot        String?     // new date+time, on a reschedule
-  by            String?     // who did it
+  status        String // the status this event moved the interview to
+  reason        String? // cancellation / reschedule / no-show reason
+  fromSlot      String? // previous date+time, on a reschedule
+  toSlot        String? // new date+time, on a reschedule
+  by            String? // who did it
   createdAt     DateTime    @default(now())
 }
 
@@ -446,45 +446,45 @@ model InterviewEvent {
 // neither is ever mixed with the AI interview score, which lives in
 // Application.aiInterviewScore.
 model InterviewFeedback {
-  id            String      @id @default(cuid())
-  applicationId String
-  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  kind          String      // Internal | Client
-  technical     Int?        // Technical Skills, 1-5
-  communication Int?        // Communication, 1-5
-  experience    Int?        // Experience, 1-5
-  roleFit       Int?        // Role Fit, 1-5
-  overall       String      // Overall Feedback
-  recommendation String     // Selected | Rejected | Hold
-  submittedById String?
-  submittedBy   String?
-  clientId      String?     // set on client feedback, so a client only ever reads its own
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id             String      @id @default(cuid())
+  applicationId  String
+  application    Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  kind           String // Internal | Client
+  technical      Int? // Technical Skills, 1-5
+  communication  Int? // Communication, 1-5
+  experience     Int? // Experience, 1-5
+  roleFit        Int? // Role Fit, 1-5
+  overall        String // Overall Feedback
+  recommendation String // Selected | Rejected | Hold
+  submittedById  String?
+  submittedBy    String?
+  clientId       String? // set on client feedback, so a client only ever reads its own
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   @@unique([applicationId, kind])
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id])
-  action    String
-  entity    String
-  entityId  String?
-  fromValue String?
-  toValue   String?
+  id             String    @id @default(cuid())
+  userId         String?
+  user           User?     @relation(fields: [userId], references: [id])
+  action         String
+  entity         String
+  entityId       String?
+  fromValue      String?
+  toValue        String?
   // empmgmt: the field-level approval trail —
   //   Employee · Field · Old Value · New Value · Changed By · Changed At ·
   //   Reason · Approval Status (+ who approved it and when).
   field          String?
   fieldLabel     String?
   reason         String?
-  approvalStatus String?   // Pending | Approved | Rejected | null (not a review)
+  approvalStatus String? // Pending | Approved | Rejected | null (not a review)
   approvedByName String?
   approvedAt     DateTime?
-  actorName      String?   // snapshotted so a later rename cannot rewrite history
-  createdAt DateTime @default(now())
+  actorName      String? // snapshotted so a later rename cannot rewrite history
+  createdAt      DateTime  @default(now())
 }
 
 // =============================================================================
@@ -514,57 +514,57 @@ model Team {
 }
 
 model Employee {
-  id                String   @id @default(cuid())
-  userId            String?  @unique
-  user              User?    @relation(fields: [userId], references: [id])
-  employeeCode      String   @unique
-  name              String
-  email             String?
-  phone             String?
-  department        String?
-  team              String?
+  id                       String     @id @default(cuid())
+  userId                   String?    @unique
+  user                     User?      @relation(fields: [userId], references: [id])
+  employeeCode             String     @unique
+  name                     String
+  email                    String?
+  phone                    String?
+  department               String?
+  team                     String?
   // The prototype's Employee Management table has STL and TL columns. In the
   // prototype no create path ever writes them (a bug); here the Add Employee
   // form and the Assign Roles modal actually persist them.
-  stl               String?
-  tl                String?
-  designation       String?
-  location          String?
-  dateOfJoining     DateTime?
-  employmentStatus  String   @default("Active") // Active | On Probation | Notice Period | Exit Process | Relieved | Exited
-  employeeType      String?  @default("Full-time") // Full-time | Contract | Intern
-  dateOfBirth       DateTime?
-  gender            String?
-  emergencyContactName  String?
-  emergencyContactPhone String?
+  stl                      String?
+  tl                       String?
+  designation              String?
+  location                 String?
+  dateOfJoining            DateTime?
+  employmentStatus         String     @default("Active") // Active | On Probation | Notice Period | Exit Process | Relieved | Exited
+  employeeType             String?    @default("Full-time") // Full-time | Contract | Intern
+  dateOfBirth              DateTime?
+  gender                   String?
+  emergencyContactName     String?
+  emergencyContactPhone    String?
   emergencyContactRelation String?
-  address           String?
-  addressType       String?  // Current | Permanent
-  addressLine1      String?
-  addressLine2      String?
-  city              String?
-  district          String?
-  state             String?
-  country           String?
-  postalCode        String?
-  bloodGroup        String?
-  branch            String?  // office location: Bengaluru | Chennai | Hyderabad, etc.
-  shift             String?  @default("General (9:00 AM – 6:00 PM)")
-  employmentExperience String? @default("Fresher") // Fresher | Experienced
-  educationDetails  String?
-  skills            String?
-  bankName          String?
-  bankAccountNumber String?
-  ifscCode          String?
-  panNumber         String?
-  aadhaarNumber     String?
-  uanNumber         String?
-  pfNumber          String?
-  esiNumber         String?
-  onboardingTasks   String?  // JSON array of {task, completed}
-  offboardingStatus String?  // null | Serving Notice | Cleared
-  offboardingTasks  String?  // JSON array of {task, completed}
-  pendingChanges    String?  // JSON array of {field, from, to} awaiting HR approval
+  address                  String?
+  addressType              String? // Current | Permanent
+  addressLine1             String?
+  addressLine2             String?
+  city                     String?
+  district                 String?
+  state                    String?
+  country                  String?
+  postalCode               String?
+  bloodGroup               String?
+  branch                   String? // office location: Bengaluru | Chennai | Hyderabad, etc.
+  shift                    String?    @default("General (9:00 AM – 6:00 PM)")
+  employmentExperience     String?    @default("Fresher") // Fresher | Experienced
+  educationDetails         String?
+  skills                   String?
+  bankName                 String?
+  bankAccountNumber        String?
+  ifscCode                 String?
+  panNumber                String?
+  aadhaarNumber            String?
+  uanNumber                String?
+  pfNumber                 String?
+  esiNumber                String?
+  onboardingTasks          String? // JSON array of {task, completed}
+  offboardingStatus        String? // null | Serving Notice | Cleared
+  offboardingTasks         String? // JSON array of {task, completed}
+  pendingChanges           String? // JSON array of {field, from, to} awaiting HR approval
   // THE PROFILE STATUS VOCABULARY (empmgmt). Six unambiguous values:
   //   Profile Incomplete | Pending Review | Approved | Locked |
   //   Change Requested   | Edit Access Granted
@@ -574,55 +574,55 @@ model Employee {
   // authoritative facts (pendingChanges / isLocked / reviewDecision /
   // unlockExpiresAt) and every transition writes it back here, so the stored
   // value and the computed one cannot drift.
-  profileStage      String   @default("Profile Incomplete")
-  isLocked          Boolean  @default(false) // once HR approves the filled-in profile, the employee can no longer self-edit
-  unlockRequestReason String? // reason selected when requesting edit access on a locked profile
-  unlockRequestStatus String? // null | Pending | Approved | Rejected
-  unlockRequestCount  Int     @default(0) // lifetime count, capped (see UNLOCK_REQUEST_LIMIT)
+  profileStage             String     @default("Profile Incomplete")
+  isLocked                 Boolean    @default(false) // once HR approves the filled-in profile, the employee can no longer self-edit
+  unlockRequestReason      String? // reason selected when requesting edit access on a locked profile
+  unlockRequestStatus      String? // null | Pending | Approved | Rejected
+  unlockRequestCount       Int        @default(0) // lifetime count, capped (see UNLOCK_REQUEST_LIMIT)
   // --- emplife: closing the review loop ----------------------------------
   // What HR decided about the LAST submitted set of pendingChanges, so the
   // employee is told the outcome instead of watching the banner disappear.
-  reviewDecision      String?   // null | Approved | Rejected
-  reviewNote          String?   // HR's reason — required on a rejection
-  reviewedAt          DateTime?
-  reviewedByName      String?
+  reviewDecision           String? // null | Approved | Rejected
+  reviewNote               String? // HR's reason — required on a rejection
+  reviewedAt               DateTime?
+  reviewedByName           String?
   // What HR decided about the last unlock request, and how long the granted
   // edit window lasts. After unlockExpiresAt the profile re-locks itself on
   // the next self-service write (routes/employees.js enforceEditWindow).
-  unlockDecisionNote  String?
-  unlockDecidedAt     DateTime?
-  unlockExpiresAt     DateTime?
+  unlockDecisionNote       String?
+  unlockDecidedAt          DateTime?
+  unlockExpiresAt          DateTime?
   // empmgmt: an edit-access grant is a RECORD, not just an expiry. Who
   // unlocked this profile, when, why, and which section they opened.
-  unlockedById        String?
-  unlockedByName      String?
-  unlockedAt          DateTime?
-  unlockGrantReason   String?
-  unlockGrantSection  String?   // "All fields" or a named section
+  unlockedById             String?
+  unlockedByName           String?
+  unlockedAt               DateTime?
+  unlockGrantReason        String?
+  unlockGrantSection       String? // "All fields" or a named section
   // Honest record of the sign-in email: whether it was really transmitted.
-  credentialsSentAt     DateTime?
-  credentialsSentStatus String?  // Sent | Not sent — no provider | Failed: <provider reason>
-  reportingManagerId String?
-  reportingManager    Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id])
-  directReports       Employee[] @relation("ManagerReports")
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  credentialsSentAt        DateTime?
+  credentialsSentStatus    String? // Sent | Not sent — no provider | Failed: <provider reason>
+  reportingManagerId       String?
+  reportingManager         Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id])
+  directReports            Employee[] @relation("ManagerReports")
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
 
-  attendance             Attendance[]
-  punches                AttendancePunch[]
+  attendance                Attendance[]
+  punches                   AttendancePunch[]
   attendanceRegularizations AttendanceRegularization[]
-  leaveRequests          LeaveRequest[]
-  payslips               Payslip[]
-  records                EmployeeRecord[]
-  performanceReviews     PerformanceReview[]
-  courseAssignments      CourseAssignment[]
-  projectAssignments     ProjectAssignment[]
-  surveyResponses        SurveyResponse[]
-  acknowledgments        Acknowledgment[]
-  salaryStructure        SalaryStructure?
-  fnfRequests            FnfRequest[]
-  leaveBalances          LeaveBalance[]
-  assetsHeld             Asset[]
+  leaveRequests             LeaveRequest[]
+  payslips                  Payslip[]
+  records                   EmployeeRecord[]
+  performanceReviews        PerformanceReview[]
+  courseAssignments         CourseAssignment[]
+  projectAssignments        ProjectAssignment[]
+  surveyResponses           SurveyResponse[]
+  acknowledgments           Acknowledgment[]
+  salaryStructure           SalaryStructure?
+  fnfRequests               FnfRequest[]
+  leaveBalances             LeaveBalance[]
+  assetsHeld                Asset[]
 }
 
 // Generic table backing the smaller, similarly-shaped HRMS self-service areas
@@ -630,50 +630,50 @@ model Employee {
 // Resignation, Recognition, Disciplinary, Shift Roster, Timesheet, Assets,
 // Expense Claims, Helpdesk, Access Requests, Weekly Ideas.
 model EmployeeRecord {
-  id         String   @id @default(cuid())
-  type       String   // KT | TARGET | RESIGNATION | RECOGNITION | DISCIPLINARY | SHIFT | TIMESHEET | ASSET | EXPENSE | HELPDESK | ACCESS_REQUEST | WEEKLY_IDEA
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  title      String
-  detail     String?
-  status     String   @default("Open")
-  date       String?  // due date / shift date / timesheet date / expense date, as relevant
-  amount     Float?   // expense claim amount
-  hours      Float?   // timesheet hours
-  category   String?  // helpdesk category / expense category / asset type, as relevant
-  priority   String?  // helpdesk priority: Low | Medium | High | Urgent
-  progressPct Int?    // 0-100, for targets/goals
-  location   String?  // expense claim location / travel destination
+  id               String   @id @default(cuid())
+  type             String // KT | TARGET | RESIGNATION | RECOGNITION | DISCIPLINARY | SHIFT | TIMESHEET | ASSET | EXPENSE | HELPDESK | ACCESS_REQUEST | WEEKLY_IDEA
+  employeeId       String
+  employee         Employee @relation(fields: [employeeId], references: [id])
+  title            String
+  detail           String?
+  status           String   @default("Open")
+  date             String? // due date / shift date / timesheet date / expense date, as relevant
+  amount           Float? // expense claim amount
+  hours            Float? // timesheet hours
+  category         String? // helpdesk category / expense category / asset type, as relevant
+  priority         String? // helpdesk priority: Low | Medium | High | Urgent
+  progressPct      Int? // 0-100, for targets/goals
+  location         String? // expense claim location / travel destination
   // Helpdesk-specific columns (see backend/src/routes/helpdesk.js). Nullable with
   // defaults so every other record type is unaffected.
-  assignedTo String?  // Employee.id of the agent the ticket is assigned to
-  resolution String?  // resolution note, required when moving to Resolved/Closed
-  resolvedAt String?  // YYYY-MM-DD the ticket was resolved/closed
-  escalated  Boolean  @default(false)
-  csat       Int?     // 1-5 satisfaction rating, set after resolution
-  notes      String?  // JSON array of {author, text, internal}
+  assignedTo       String? // Employee.id of the agent the ticket is assigned to
+  resolution       String? // resolution note, required when moving to Resolved/Closed
+  resolvedAt       String? // YYYY-MM-DD the ticket was resolved/closed
+  escalated        Boolean  @default(false)
+  csat             Int? // 1-5 satisfaction rating, set after resolution
+  notes            String? // JSON array of {author, text, internal}
   // Columns the prototype's Performance & Development screens need. All
   // nullable, so every other record type is unaffected.
-  achieved   Float?   // TARGET: achieved vs `amount` (the target)
-  unit       String?  // TARGET: the unit both figures are counted in (e.g. "hires")
-  fromName   String?  // KT: who ran the session · RECOGNITION: who gave the award
-  toName     String?  // KT: who received the handover
-  raisedBy   String?  // DISCIPLINARY: who logged the case
-  points     Int?     // RECOGNITION: award points, which drive the leaderboard
-  aiNote     String?  // WEEKLY_IDEA: the AI review note recorded with the decision
+  achieved         Float? // TARGET: achieved vs `amount` (the target)
+  unit             String? // TARGET: the unit both figures are counted in (e.g. "hires")
+  fromName         String? // KT: who ran the session · RECOGNITION: who gave the award
+  toName           String? // KT: who received the handover
+  raisedBy         String? // DISCIPLINARY: who logged the case
+  points           Int? // RECOGNITION: award points, which drive the leaderboard
+  aiNote           String? // WEEKLY_IDEA: the AI review note recorded with the decision
   // --- Knowledge Transfer -> AI Weekly Idea Contribution (type: WEEKLY_IDEA) ---
   // All nullable / defaulted, so every other record type is unaffected.
-  weekStart        String?  // YYYY-MM-DD, the MONDAY of the week this idea counts toward
+  weekStart        String? // YYYY-MM-DD, the MONDAY of the week this idea counts toward
   // How this idea was screened and scored. 'model' = the Anthropic model
   // configured in Administration -> Integrations. 'fallback' = the
   // deterministic text-similarity screen that runs when no key is configured
   // (or the call failed) — it produces NO scores, ever. The two are recorded
   // separately so a fallback result can never be mistaken for a model score.
-  aiMethod         String?  // 'model' | 'fallback'
-  aiModel          String?  // the model id, when aiMethod = 'model'
+  aiMethod         String? // 'model' | 'fallback'
+  aiModel          String? // the model id, when aiMethod = 'model'
   aiDuplicate      Boolean  @default(false)
-  aiDuplicateOf    String?  // EmployeeRecord.id of the idea this one duplicates
-  aiSimilarity     Int?     // 0-100 similarity against the matched idea
+  aiDuplicateOf    String? // EmployeeRecord.id of the idea this one duplicates
+  aiSimilarity     Int? // 0-100 similarity against the matched idea
   // The five named criteria. NULL means "not scored" and must render as such —
   // never as a zero.
   scoreOriginality Int?
@@ -681,17 +681,17 @@ model EmployeeRecord {
   scoreImpact      Int?
   scoreClarity     Int?
   scoreFeasibility Int?
-  scoreTotal       Int?     // sum of the five, 5-50
+  scoreTotal       Int? // sum of the five, 5-50
   // Bill / receipt attached to the record (today: EXPENSE claims only — see
   // backend/src/utils/attachments.js). `billFile` is the name THIS SERVER
   // generated inside the upload directory; `billName` is only ever displayed,
   // never used to build a path. The bytes live outside the repository.
-  billFile   String?  // 32 hex chars + a whitelisted extension
-  billName   String?  // sanitised original filename, for display only
-  billMime   String?  // image/png | image/jpeg | image/webp | application/pdf
-  billSize   Int?     // bytes
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  billFile         String? // 32 hex chars + a whitelisted extension
+  billName         String? // sanitised original filename, for display only
+  billMime         String? // image/png | image/jpeg | image/webp | application/pdf
+  billSize         Int? // bytes
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 // Named shift patterns (e.g. Morning 09:00–18:00) that employees are rostered
@@ -710,8 +710,8 @@ model Attendance {
   id         String   @id @default(cuid())
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id])
-  date       String   // YYYY-MM-DD
-  status     String   // Present | Absent | Late | Half Day | Leave
+  date       String // YYYY-MM-DD
+  status     String // Present | Absent | Late | Half Day | Leave
   checkIn    String?
   checkOut   String?
   createdAt  DateTime @default(now())
@@ -727,8 +727,8 @@ model AttendancePunch {
   id         String   @id @default(cuid())
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id])
-  date       String   // YYYY-MM-DD
-  time       String   // HH:MM, 24-hour
+  date       String // YYYY-MM-DD
+  time       String // HH:MM, 24-hour
   direction  String   @default("In") // In | Out
   method     String   @default("Web Check-in") // Web Check-in | Mobile App | Biometric (Fingerprint)
   location   String?
@@ -739,35 +739,35 @@ model AttendancePunch {
 
 // A request to correct a punch after the fact (missing/incorrect check-in or check-out).
 model AttendanceRegularization {
-  id               String   @id @default(cuid())
-  employeeId       String
-  employee         Employee @relation(fields: [employeeId], references: [id])
-  date             String
-  requestedCheckIn String?
+  id                String    @id @default(cuid())
+  employeeId        String
+  employee          Employee  @relation(fields: [employeeId], references: [id])
+  date              String
+  requestedCheckIn  String?
   requestedCheckOut String?
-  reason           String?
-  status           String   @default("Pending") // Pending | Approved | Rejected
-  createdAt        DateTime @default(now())
-  decidedAt        DateTime?
+  reason            String?
+  status            String    @default("Pending") // Pending | Approved | Rejected
+  createdAt         DateTime  @default(now())
+  decidedAt         DateTime?
 }
 
 model LeaveRequest {
-  id         String   @id @default(cuid())
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  type       String   // Sick | Casual | Earned | Unpaid
-  fromDate   String
-  toDate     String
-  days       Float?   @default(1) // calendar days applied for — drives the balance decrement
-  reason     String?
-  status     String   @default("Pending") // Pending | Approved | Rejected | Cancelled
+  id             String    @id @default(cuid())
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+  type           String // Sick | Casual | Earned | Unpaid
+  fromDate       String
+  toDate         String
+  days           Float?    @default(1) // calendar days applied for — drives the balance decrement
+  reason         String?
+  status         String    @default("Pending") // Pending | Approved | Rejected | Cancelled
   // Captured at decision time: approvals of >= HrConfig.leaveReasonThresholdDays must
   // pick one of the configured LeaveReason labels; rejections must give free text.
   approvalReason String?
   rejectReason   String?
   decidedBy      String?
-  createdAt  DateTime @default(now())
-  decidedAt  DateTime?
+  createdAt      DateTime  @default(now())
+  decidedAt      DateTime?
 }
 
 // Per-employee, per-leave-type entitlement ledger. `total` is the entitlement for
@@ -777,7 +777,7 @@ model LeaveBalance {
   id         String   @id @default(cuid())
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id])
-  type       String   // LeaveType.name
+  type       String // LeaveType.name
   total      Float    @default(0)
   taken      Float    @default(0)
   updatedAt  DateTime @updatedAt
@@ -802,32 +802,32 @@ model LeaveBalance {
 // today's org structure would rewrite history every time somebody changes
 // teams, so the resolved approver and the ladder position are stored.
 model ApprovalStep {
-  id                String    @id @default(cuid())
-  workflow          String // 'leave' | ...
-  recordId          String // LeaveRequest.id, ...
-  level             String // EMPLOYEE | TL | STL | MANAGER | ASSISTANT_MANAGER | ADMIN | SUPER_ADMIN
-  seq               Int // 1..7 — position on the ladder
+  id                 String    @id @default(cuid())
+  workflow           String // 'leave' | ...
+  recordId           String // LeaveRequest.id, ...
+  level              String // EMPLOYEE | TL | STL | MANAGER | ASSISTANT_MANAGER | ADMIN | SUPER_ADMIN
+  seq                Int // 1..7 — position on the ladder
   // 'required' gates the request here; 'visibility' only shows it to them.
   // 'applicant' is the employee's own Applied row at the top.
-  mode              String    @default("visibility")
-  slaHours          Int? // copied from the level config, so a policy change does not re-date a live request
+  mode               String    @default("visibility")
+  slaHours           Int? // copied from the level config, so a policy change does not re-date a live request
   // The resolved approver. Null where nobody holds the level — that step is
   // SKIPPED with a reason rather than dead-ending the chain.
-  approverUserId    String?
-  approverName      String?
+  approverUserId     String?
+  approverName       String?
   approverDepartment String?
   // Applied | Pending | Approved | Rejected | Waiting | Visibility | Skipped
-  status            String    @default("Waiting")
+  status             String    @default("Waiting")
   // When this step became the CURRENT owner. `pendingSince`, the elapsed
   // hours and `overdue` are COMPUTED ON READ from this plus slaHours — there
   // is no scheduler in this app and nothing ages these rows in the background.
-  activatedAt       DateTime?
-  dueAt             DateTime?
-  actedAt           DateTime?
-  actedByUserId     String?
-  actedByName       String?
-  note              String?
-  createdAt         DateTime  @default(now())
+  activatedAt        DateTime?
+  dueAt              DateTime?
+  actedAt            DateTime?
+  actedByUserId      String?
+  actedByName        String?
+  note               String?
+  createdAt          DateTime  @default(now())
 
   @@index([workflow, recordId])
   @@index([workflow, approverUserId])
@@ -876,30 +876,30 @@ model Holiday {
 }
 
 model Payslip {
-  id         String   @id @default(cuid())
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  month      String   // YYYY-MM
-  basic      Float
-  hra        Float
-  allowances Float
-  deductions Float
-  netPay     Float
+  id               String   @id @default(cuid())
+  employeeId       String
+  employee         Employee @relation(fields: [employeeId], references: [id])
+  month            String // YYYY-MM
+  basic            Float
+  hra              Float
+  allowances       Float
+  deductions       Float
+  netPay           Float
   // Detailed breakup, mirroring the reference app's payslip components.
-  bonus            Float? @default(0)
-  specialAllowance Float? @default(0)
-  employerPf       Float? @default(0)
-  employeePf       Float? @default(0)
-  professionalTax  Float? @default(0)
-  gratuity         Float? @default(0)
-  lopDays          Float? @default(0) // loss-of-pay days deducted this cycle
-  gross            Float? @default(0) // basic + hra + bonus + special allowance
+  bonus            Float?   @default(0)
+  specialAllowance Float?   @default(0)
+  employerPf       Float?   @default(0)
+  employeePf       Float?   @default(0)
+  professionalTax  Float?   @default(0)
+  gratuity         Float?   @default(0)
+  lopDays          Float?   @default(0) // loss-of-pay days deducted this cycle
+  gross            Float?   @default(0) // basic + hra + bonus + special allowance
   // Excess late arrivals beyond HrConfig.freeLateArrivalsPerMonth cost half a day's
   // pay each: lateCut = halfDayCut * round(net / 60). Deducted from netPay.
-  lateCut          Float? @default(0)
-  lateDays         Float? @default(0)
-  payMode          String? @default("Package") // Package | Stipend
-  generatedAt DateTime @default(now())
+  lateCut          Float?   @default(0)
+  lateDays         Float?   @default(0)
+  payMode          String?  @default("Package") // Package | Stipend
+  generatedAt      DateTime @default(now())
 
   @@unique([employeeId, month])
 }
@@ -908,18 +908,18 @@ model Payslip {
 // "Paid" by PATCH /api/payroll/runs/:id/paid, giving the Payroll history and the
 // month-over-month comparison on the Reports tab something to read.
 model PayrollRun {
-  id              String   @id @default(cuid())
-  month           String   @unique // YYYY-MM
-  period          String   // "September 2026"
-  department      String?  // null = every department
-  status          String   @default("Processing") // Processing | Paid
-  employees       Int      @default(0)
-  totalGross      Float    @default(0)
-  totalDeductions Float    @default(0)
-  totalLateCuts   Float    @default(0)
-  totalNet        Float    @default(0)
+  id              String    @id @default(cuid())
+  month           String    @unique // YYYY-MM
+  period          String // "September 2026"
+  department      String? // null = every department
+  status          String    @default("Processing") // Processing | Paid
+  employees       Int       @default(0)
+  totalGross      Float     @default(0)
+  totalDeductions Float     @default(0)
+  totalLateCuts   Float     @default(0)
+  totalNet        Float     @default(0)
   processedBy     String?
-  processedAt     DateTime @default(now())
+  processedAt     DateTime  @default(now())
   paidAt          DateTime?
 }
 
@@ -946,13 +946,13 @@ model SalaryStructure {
 
 // Full & Final settlement request, raised when an employee's offboarding completes.
 model FnfRequest {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   employeeId       String
-  employee         Employee @relation(fields: [employeeId], references: [id])
+  employee         Employee  @relation(fields: [employeeId], references: [id])
   lastWorkingDate  String
-  status           String   @default("Pending") // Pending | Processed
+  status           String    @default("Pending") // Pending | Processed
   settlementAmount Float?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
   processedAt      DateTime?
 }
 
@@ -961,69 +961,69 @@ model FnfRequest {
 // =============================================================================
 
 model Invoice {
-  id              String    @id @default(cuid())
-  clientId        String
-  client          Client    @relation(fields: [clientId], references: [id])
-  candidateId     String?
-  candidate       Candidate? @relation(fields: [candidateId], references: [id])
-  requirementId   String?
-  requirement     Requirement? @relation(fields: [requirementId], references: [id])
-  amount          Float
-  gst             Float     @default(0)
-  tds             Float     @default(0)
-  status          String    @default("Pending") // Pending | Partially Paid | Paid | Overdue | Cancelled
-  invoiceDate     String
-  dueDate         String?
-  paymentTerms    String?   @default("Invoice 6 days after joining; payment due within 6 days of invoice")
+  id            String       @id @default(cuid())
+  clientId      String
+  client        Client       @relation(fields: [clientId], references: [id])
+  candidateId   String?
+  candidate     Candidate?   @relation(fields: [candidateId], references: [id])
+  requirementId String?
+  requirement   Requirement? @relation(fields: [requirementId], references: [id])
+  amount        Float
+  gst           Float        @default(0)
+  tds           Float        @default(0)
+  status        String       @default("Pending") // Pending | Partially Paid | Paid | Overdue | Cancelled
+  invoiceDate   String
+  dueDate       String?
+  paymentTerms  String?      @default("Invoice 6 days after joining; payment due within 6 days of invoice")
   // Commercial trail for an invoice raised from ATS on candidate joining.
-  feePercent      Float?
-  offeredCtc      Float?
-  joiningDate     String?
-  createdAt       DateTime  @default(now())
+  feePercent    Float?
+  offeredCtc    Float?
+  joiningDate   String?
+  createdAt     DateTime     @default(now())
 
   // Accounts depth — human-facing number, money actually received, and the
   // bank line that finally closed the invoice off.
-  invoiceNumber   String?   @unique
-  receivedAmount  Float     @default(0)
-  paidDate        String?
-  bankTxnId       String?
-  notes           String?
+  invoiceNumber  String? @unique
+  receivedAmount Float   @default(0)
+  paidDate       String?
+  bankTxnId      String?
+  notes          String?
 
   // Invoice register depth — the prototype's "Sent" and "TDS certificate"
   // columns, and the GST / TDS rate actually applied to this one invoice
   // (a client's standing rate can be overridden per deal).
   sentVia         String?
   sentDate        String?
-  tdsCertReceived Boolean   @default(false)
+  tdsCertReceived Boolean @default(false)
   tdsCertRef      String?
   tdsCertDate     String?
   gstPercent      Float?
   tdsPercent      Float?
 
-  payments        InvoicePayment[]
+  payments InvoicePayment[]
 }
 
 // A receipt against an invoice. An invoice can be settled by several of these,
 // which is what makes "Partially Paid" a real state rather than a label.
 model InvoicePayment {
-  id            String   @id @default(cuid())
-  invoiceId     String
-  invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  date          String
-  amount        Float
-  method        String   @default("Bank Transfer")
-  reference     String?
-  notes         String?
-  bankTxnId     String?
-  recordedBy    String?
-  createdAt     DateTime @default(now())
+  id         String   @id @default(cuid())
+  invoiceId  String
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  date       String
+  amount     Float
+  method     String   @default("Bank Transfer")
+  reference  String?
+  notes      String?
+  bankTxnId  String?
+  recordedBy String?
+  createdAt  DateTime @default(now())
 }
 
 model BankTransaction {
   id               String   @id @default(cuid())
   date             String
   description      String
-  type             String   // Credit | Debit
+  type             String // Credit | Debit
   amount           Float
   matched          Boolean  @default(false)
   matchedInvoiceId String?
@@ -1031,27 +1031,27 @@ model BankTransaction {
 
   // Reconciliation state machine:
   // Unmatched -> Matched -> Reconciled, with Ignored as a parked side state.
-  reconStatus      String   @default("Unmatched")
-  reference        String?
-  balance          Float?
-  matchedBy        String?
-  matchedDate      String?
-  clientName       String?
-  importBatch      String?
-  ignoredReason    String?
+  reconStatus   String  @default("Unmatched")
+  reference     String?
+  balance       Float?
+  matchedBy     String?
+  matchedDate   String?
+  clientName    String?
+  importBatch   String?
+  ignoredReason String?
 
   // Bank & Reconciliation depth, from the accounting application.
   // A statement line belongs to one bank account; "excluded" keeps a line on
   // file but out of the uncategorised count; the category fields are what the
   // categorisation panel filed a debit (or a non-invoice credit) as.
-  bankAccountId    String?
-  excluded         Boolean  @default(false)
-  category         String?
-  categoryKind     String?  // expense | hand | transfer | other
-  vendor           String?
-  counterparty     String?
-  excess           Float?   // part of a credit that was more than the client owed
-  importFile       String?
+  bankAccountId String?
+  excluded      Boolean @default(false)
+  category      String?
+  categoryKind  String? // expense | hand | transfer | other
+  vendor        String?
+  counterparty  String?
+  excess        Float? // part of a credit that was more than the client owed
+  importFile    String?
 }
 
 // A bank account or credit card. Each one keeps its own statement, its own
@@ -1119,21 +1119,21 @@ model OfficeExpense {
 
   // Office & Business depth — a dated, vendor-attributed bill with its own GST,
   // which is what the month summary, the P&L and the GST position are built on.
-  vendor        String?
-  expenseDate   String?
-  gstAmount     Float    @default(0)
-  paidStatus    String   @default("Paid") // Paid | Unpaid
-  recurring     Boolean  @default(true)
-  notes         String?
+  vendor      String?
+  expenseDate String?
+  gstAmount   Float   @default(0)
+  paidStatus  String  @default("Paid") // Paid | Unpaid
+  recurring   Boolean @default(true)
+  notes       String?
 
   // Office & Business depth — TDS the office deducted from the vendor, the
   // amortisation window behind "Amortised" in the month summary, and the
   // vendor GSTIN without which the input credit cannot be claimed.
-  tdsAmount     Float    @default(0)
-  frequency     String?  @default("Monthly")
+  tdsAmount     Float   @default(0)
+  frequency     String? @default("Monthly")
   monthsCovered Int?
   vendorGstin   String?
-  paymentMode   String?  @default("Bank Transfer")
+  paymentMode   String? @default("Bank Transfer")
   description   String?
   // The vendor's own invoice number — what a GST return is reconciled against.
   billNumber    String?
@@ -1142,31 +1142,31 @@ model OfficeExpense {
   // A bill can be an expense or an owner's hand loan (a loan is not a cost, so
   // it stays out of profit and GST); a pending bill carries its own due date,
   // which is where the calendar shows it and what makes it overdue.
-  entryKind     String?  @default("expense") // expense | hand
-  dueDate       String?
-  remarks       String?
-  approvedBy    String?
+  entryKind    String? @default("expense") // expense | hand
+  dueDate      String?
+  remarks      String?
+  approvedBy   String?
   // The rate actually applied to THIS bill. GST and TDS money is stored as an
   // amount, but the rate is what the GST vendor table reports, so it is kept
   // rather than inferred — never assumed to be 18%.
-  gstRatePct    Float?
-  tdsRatePct    Float?
+  gstRatePct   Float?
+  tdsRatePct   Float?
   // Type of supply and the place it was supplied from — CGST+SGST within the
   // state, IGST across states.
-  supplyType    String?  // Goods | Service
-  gstTreatment  String?
-  sourceState   String?
+  supplyType   String? // Goods | Service
+  gstTreatment String?
+  sourceState  String?
   // Proof of payment. The file itself is NOT stored here — see the route file:
   // this is the metadata a real object store would key off.
-  proofName     String?
-  proofMime     String?
-  proofSize     Int?
-  proofAt       String?
-  proofBy       String?
+  proofName    String?
+  proofMime    String?
+  proofSize    Int?
+  proofAt      String?
+  proofBy      String?
   // The imported bank statement line this payment came off. That line is the
   // proof of payment on its own; only input GST still needs the vendor's own
   // tax invoice.
-  bankTxnId     String?
+  bankTxnId    String?
 }
 
 // =============================================================================
@@ -1177,25 +1177,37 @@ model PerformanceReview {
   id             String   @id @default(cuid())
   employeeId     String
   employee       Employee @relation(fields: [employeeId], references: [id])
-  period         String   // e.g. "2026-H1"
-  score          Int      // 0-100
-  band           String   // High | Medium | Low
-  recommendation String   // Recommended | Not Recommended
+  period         String // e.g. "2026-H1"
+  score          Int // 0-100
+  band           String // High | Medium | Low
+  recommendation String // Recommended | Not Recommended
   notes          String?
+  // §13 — A RECOMMENDATION IS NOT AN AWARD. `recommendation` above is the
+  // TL's opinion; this is whether the chain has agreed with it. Approved by
+  // default so every review that already exists reads exactly as it did.
+  approvalStatus String   @default("Approved") // Approved | Pending | Rejected
+  // Who recommended — the applicant on the chain, and the one person who may
+  // not approve it. Null on rows raised before the chain shipped.
+  raisedById     String?
   createdAt      DateTime @default(now())
 }
 
 model Course {
-  id       String   @id @default(cuid())
-  title    String
-  category String?  // Onboarding | ATS | Compliance | Soft Skills
-  duration String?
+  id             String   @id @default(cuid())
+  title          String
+  category       String? // Onboarding | ATS | Compliance | Soft Skills
+  duration       String?
   // LMS screen columns. `mandatory` drives the Mandatory tag on a course row;
   // `passMark` is the percentage a learner must score to certify. Both are
   // plain ADD COLUMNs (migration 20260921170000_lms_course_and_expense_bill).
-  mandatory Boolean @default(false)
-  passMark  Int     @default(70)
-  createdAt DateTime @default(now())
+  mandatory      Boolean  @default(false)
+  passMark       Int      @default(70)
+  // §14 — A COURSE IS A DRAFT UNTIL THE CHAIN APPROVES PUBLICATION. A TL may
+  // propose training; putting it in front of the company is not theirs alone.
+  // Approved by default so every existing course stays published.
+  approvalStatus String   @default("Approved") // Approved | Pending | Rejected
+  raisedById     String?
+  createdAt      DateTime @default(now())
 
   assignments CourseAssignment[]
   materials   CourseMaterial[]
@@ -1203,24 +1215,24 @@ model Course {
 }
 
 model CourseAssignment {
-  id         String   @id @default(cuid())
-  courseId   String
-  course     Course   @relation(fields: [courseId], references: [id])
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  completed  Boolean  @default(false)
+  id             String    @id @default(cuid())
+  courseId       String
+  course         Course    @relation(fields: [courseId], references: [id])
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+  completed      Boolean   @default(false)
   // When the learner finished — what the Certifications screen dates a
   // certificate by. Null for an enrollment still in progress.
-  completedAt DateTime?
+  completedAt    DateTime?
   // Per-enrolment progress. "Video watch time: Not started" on the Enrolled
   // Employees panel reads watchedSeconds; the score columns hold the last
   // assessment attempt. Plain ADD COLUMNs — migration
   // 20260922160000_lms_materials_assessment.
-  watchedSeconds Int     @default(0)
+  watchedSeconds Int       @default(0)
   score          Int?
   scoredAt       DateTime?
-  attempts       Int     @default(0)
-  assignedAt DateTime @default(now())
+  attempts       Int       @default(0)
+  assignedAt     DateTime  @default(now())
 
   @@unique([courseId, employeeId])
 }
@@ -1255,7 +1267,7 @@ model AssessmentQuestion {
   courseId     String
   course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   question     String
-  options      String   // JSON array of option strings
+  options      String // JSON array of option strings
   correctIndex Int
   position     Int      @default(0)
   createdAt    DateTime @default(now())
@@ -1285,52 +1297,52 @@ model ProjectAssignment {
 }
 
 model Survey {
-  id        String   @id @default(cuid())
-  title     String
-  status    String   @default("Active") // Active | Closed
-  questions String   // JSON-encoded array of question strings
+  id          String   @id @default(cuid())
+  title       String
+  status      String   @default("Active") // Active | Closed
+  questions   String // JSON-encoded array of question strings
   // Which departments this survey was published to. NULL / empty = every
   // department, which is what every survey created before this column meant.
   // Comma-separated names, the same shape User.atsScopeDepartments uses.
   departments String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   responses SurveyResponse[]
 }
 
 model SurveyResponse {
-  id         String   @id @default(cuid())
-  surveyId   String
-  survey     Survey   @relation(fields: [surveyId], references: [id])
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  answers    String   // JSON-encoded array of answer strings
+  id          String   @id @default(cuid())
+  surveyId    String
+  survey      Survey   @relation(fields: [surveyId], references: [id])
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id])
+  answers     String // JSON-encoded array of answer strings
   submittedAt DateTime @default(now())
 
   @@unique([surveyId, employeeId])
 }
 
 model PolicyDocument {
-  id          String   @id @default(cuid())
-  title       String
-  category    String?  // Policy | Compliance
-  mandatory   Boolean  @default(false)
-  published   Boolean  @default(true)
-  target      String?  @default("All Employees")
-  uploadedBy  String?
+  id           String   @id @default(cuid())
+  title        String
+  category     String? // Policy | Compliance
+  mandatory    Boolean  @default(false)
+  published    Boolean  @default(true)
+  target       String?  @default("All Employees")
+  uploadedBy   String?
   uploadedDate String
-  createdAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   acknowledgments Acknowledgment[]
 }
 
 model Acknowledgment {
-  id           String         @id @default(cuid())
-  documentId   String
-  document     PolicyDocument @relation(fields: [documentId], references: [id])
-  employeeId   String
-  employee     Employee       @relation(fields: [employeeId], references: [id])
-  acknowledgedAt DateTime     @default(now())
+  id             String         @id @default(cuid())
+  documentId     String
+  document       PolicyDocument @relation(fields: [documentId], references: [id])
+  employeeId     String
+  employee       Employee       @relation(fields: [employeeId], references: [id])
+  acknowledgedAt DateTime       @default(now())
 
   @@unique([documentId, employeeId])
 }
@@ -1339,7 +1351,7 @@ model Announcement {
   id        String   @id @default(cuid())
   title     String
   body      String
-  category  String?  // Holiday | Policy | General | Event
+  category  String? // Holiday | Policy | General | Event
   pinned    Boolean  @default(false)
   target    String?  @default("All Employees")
   postedBy  String?
@@ -1348,49 +1360,49 @@ model Announcement {
 }
 
 model HrConfig {
-  id                            String @id @default(cuid())
-  freeLateArrivalsPerMonth      Int    @default(2)
-  freeEarlyLogoutsPerMonth      Int    @default(1)
-  earliestExcusableEarlyLogout  String @default("17:00")
+  id                           String  @id @default(cuid())
+  freeLateArrivalsPerMonth     Int     @default(2)
+  freeEarlyLogoutsPerMonth     Int     @default(1)
+  earliestExcusableEarlyLogout String  @default("17:00")
   // Attendance policy
-  graceTimeMinutes              Int    @default(15)
+  graceTimeMinutes             Int     @default(15)
   // Clock time (HH:MM, 24h) after which a check-in punch counts as late. This is
   // what the punch log and the monthly report actually compare against;
   // graceTimeMinutes above stays for the older minutes-after-shift-start reading.
-  graceTime                     String @default("09:30")
-  halfDayHours                  Float  @default(4)
-  fullDayHours                  Float  @default(8)
+  graceTime                    String  @default("09:30")
+  halfDayHours                 Float   @default(4)
+  fullDayHours                 Float   @default(8)
   // Calendar days of notice an employee serves after resigning.
-  noticePeriodDays              Int    @default(45)
+  noticePeriodDays             Int     @default(45)
   // Payroll policy — how attendance turns into pay
-  unmarkedDaysUnpaid            Boolean @default(true)
-  weekendsPaid                  Boolean @default(true)
-  paidLeaveDaysPerMonth         Int    @default(1)
+  unmarkedDaysUnpaid           Boolean @default(true)
+  weekendsPaid                 Boolean @default(true)
+  paidLeaveDaysPerMonth        Int     @default(1)
   // CTC split settings — how every employee's CTC is broken into components.
   // Special Allowance always absorbs whatever's left over so the pieces
   // reconcile exactly back to CTC.
-  basicPctOfCtc                 Float  @default(50)
-  hraPctOfBasic                 Float  @default(40)
-  bonusPctOfBasic               Float  @default(8.33)
-  employeePfPctOfBasic          Float  @default(12)
-  employerPfPctOfBasic          Float  @default(12)
-  employeePfMonthlyCap          Float  @default(1800)
-  employerPfMonthlyCap          Float  @default(1800)
-  gratuityPctOfBasic            Float  @default(4.81)
-  professionalTaxFlat           Float  @default(200)
+  basicPctOfCtc                Float   @default(50)
+  hraPctOfBasic                Float   @default(40)
+  bonusPctOfBasic              Float   @default(8.33)
+  employeePfPctOfBasic         Float   @default(12)
+  employerPfPctOfBasic         Float   @default(12)
+  employeePfMonthlyCap         Float   @default(1800)
+  employerPfMonthlyCap         Float   @default(1800)
+  gratuityPctOfBasic           Float   @default(4.81)
+  professionalTaxFlat          Float   @default(200)
   // Leave policy — concurrent leave caps
-  concurrentLeaveCapPct         Int    @default(30)
-  concurrentLeaveCapFlat        Int    @default(2)
-  leaveReasonThresholdDays      Int    @default(4)
+  concurrentLeaveCapPct        Int     @default(30)
+  concurrentLeaveCapFlat       Int     @default(2)
+  leaveReasonThresholdDays     Int     @default(4)
   // Payroll policy — the rest of the prototype's "How attendance affects pay"
   // switches. Its "minimum hours for a full/half day" read the fullDayHours /
   // halfDayHours above, which are the same numbers.
-  payByHours                    Boolean @default(false)
-  halfDayBySession              Boolean @default(false)
-  sessionSplit                  String  @default("13:00")
+  payByHours                   Boolean @default(false)
+  halfDayBySession             Boolean @default(false)
+  sessionSplit                 String  @default("13:00")
   // Approval escalation order (comma-separated roles) — a leave, attendance
   // regularization or issue request climbs this chain top to bottom.
-  escalationOrder               String  @default("Recruiter,TL,Manager,Admin,Super Admin")
+  escalationOrder              String  @default("Recruiter,TL,Manager,Admin,Super Admin")
 }
 
 // =============================================================================
@@ -1398,11 +1410,11 @@ model HrConfig {
 // =============================================================================
 
 model Company {
-  id      String @id @default(cuid())
-  name    String
-  email   String?
-  phone   String?
-  address String?
+  id       String  @id @default(cuid())
+  name     String
+  email    String?
+  phone    String?
+  address  String?
   // Company Setup (prototype companySetupView, line 9693) also carries the
   // headquarters line and the list of employment policies.
   hq       String?
@@ -1439,9 +1451,9 @@ model Notification {
   createdAt DateTime @default(now())
   // The prototype's Notifications screen is a central event log across
   // Email / WhatsApp / SMS / In-App (notificationsView, line 10575).
-  channel   String?  // Email | WhatsApp | SMS | In-App
-  recipient String?  // who the event was addressed to
-  status    String?  // Sent (Demo) | Delivered | Failed | Read
+  channel   String? // Email | WhatsApp | SMS | In-App
+  recipient String? // who the event was addressed to
+  status    String? // Sent (Demo) | Delivered | Failed | Read
 }
 
 // Role Catalog "Edit Access" — one row per (role, module). `moduleEnabled` is
@@ -1462,7 +1474,7 @@ model RoleAccess {
   product       String   @default("*") // * | hrms | ats | accounts
   moduleId      String
   moduleEnabled Boolean  @default(false)
-  features      String?  // JSON: { featureName: { view, create, edit, delete, approve, export, assign } }
+  features      String? // JSON: { featureName: { view, create, edit, delete, approve, export, assign } }
   updatedAt     DateTime @updatedAt
 
   @@unique([role, product, moduleId])
@@ -1501,7 +1513,7 @@ model OrgRole {
   description String
   system      Boolean  @default(false) // system roles cannot be paused
   paused      Boolean  @default(false)
-  approveDays Int?     // can approve leave up to N days; longer requests escalate
+  approveDays Int? // can approve leave up to N days; longer requests escalate
   position    Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1514,7 +1526,7 @@ model Integration {
   enabled        Boolean   @default(false)
   connected      Boolean   @default(false)
   state          String    @default("Not Connected") // Not Connected | Connected | Expired | Reconnect Required
-  values         String?   // JSON of the channel's credential fields
+  values         String? // JSON of the channel's credential fields
   connectedAt    DateTime?
   lastSync       DateTime?
   lastTest       DateTime?
@@ -1532,7 +1544,7 @@ model IntegrationEvent {
   id            String      @id @default(cuid())
   integrationId String
   integration   Integration @relation(fields: [integrationId], references: [id])
-  action        String      // Connected | Disconnected | Test Connection | Sync Now
+  action        String // Connected | Disconnected | Test Connection | Sync Now
   by            String?
   result        String
   synced        Int         @default(0)
@@ -1545,8 +1557,8 @@ model IntegrationEvent {
 // Reason). Written by the public Job Portal routes as records come across.
 model SyncLog {
   id        String   @id @default(cuid())
-  entity    String   // Candidates | Applications | Requirements | Job Status
-  status    String   // Success | Failed
+  entity    String // Candidates | Applications | Requirements | Job Status
+  status    String // Success | Failed
   reason    String?
   recordRef String?
   createdAt DateTime @default(now())
@@ -1562,21 +1574,21 @@ model SyncLog {
 // Administration -> Users edits these rows.
 // ---------------------------------------------------------------------------
 model DesignationRole {
-  id          String   @id @default(cuid())
-  designation String   @unique
+  id           String   @id @default(cuid())
+  designation  String   @unique
   // A designation derives ALL THREE product roles, not just the ATS one.
   // "Accountant" is HRMS self-service + Accounts=ACCOUNTANT + ATS none;
   // "Recruiter" is HRMS self-service + ATS=RECRUITER + Accounts NONE.
   hrmsRole     String? // EMPLOYEE | TL | STL | MANAGER | … | NONE
   accountsRole String? // ACCOUNTANT | MANAGER | ADMIN | … | NONE
-  atsRole     String?  // RECRUITER | TL | STL | BDE | MANAGER | ASSISTANT_MANAGER | ADMIN | null
-  hrms        Boolean  @default(true)
-  ats         Boolean  @default(false)
-  accounts    Boolean  @default(false)
-  landing     String?  // ats | hrms | accounts — preferred workspace
-  position    Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  atsRole      String? // RECRUITER | TL | STL | BDE | MANAGER | ASSISTANT_MANAGER | ADMIN | null
+  hrms         Boolean  @default(true)
+  ats          Boolean  @default(false)
+  accounts     Boolean  @default(false)
+  landing      String? // ats | hrms | accounts — preferred workspace
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // =============================================================================
@@ -1598,13 +1610,13 @@ model ApplicationStageEvent {
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   candidateId   String
   candidate     Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  fromStage     String?     // null on the first event (application created)
+  fromStage     String? // null on the first event (application created)
   toStage       String
-  action        String      // human phrase: "Moved to Client Review", "Rejected", …
+  action        String // human phrase: "Moved to Client Review", "Rejected", …
   comment       String?
   actorUserId   String?
   actorName     String?
-  actorRole     String?     // the actor's ATS working role at the time
+  actorRole     String? // the actor's ATS working role at the time
   createdAt     DateTime    @default(now())
 
   // --- followup_: the full Rejected / Hold record -------------------------
@@ -1625,9 +1637,9 @@ model ApplicationStageEvent {
   requirementTitle String?
   clientId         String?
   clientName       String?
-  actorSide        String?  // Internal | Client
-  reasonCategory   String?  // Skills Mismatch | Salary Expectation | …
-  reasonDetail     String?  // the detailed, free-text reason
+  actorSide        String? // Internal | Client
+  reasonCategory   String? // Skills Mismatch | Salary Expectation | …
+  reasonDetail     String? // the detailed, free-text reason
 
   @@index([candidateId])
   @@index([applicationId])
@@ -1663,31 +1675,31 @@ model ApplicationFollowUp {
   candidateId   String
   requirementId String?
 
-  ownerUserId   String?
-  ownerName     String?
-  ownerRole     String?   // Recruiter | BDE | TL | STL | …
-  tlUserId      String?
-  tlName        String?
-  bdeUserId     String?
-  bdeName       String?
+  ownerUserId String?
+  ownerName   String?
+  ownerRole   String? // Recruiter | BDE | TL | STL | …
+  tlUserId    String?
+  tlName      String?
+  bdeUserId   String?
+  bdeName     String?
 
-  lastContactedAt DateTime? // when contact actually happened
-  contactMode     String?   // Call | Email | WhatsApp | SMS | In Person
-  nextAction      String?   // what is owed next
-  dueDate         String?   // YYYY-MM-DD — what Upcoming/Due Today/Overdue is measured against
-  nextFollowUpAt  String?   // YYYY-MM-DD — when the next touch is planned
-  notes           String?
+  lastContactedAt  DateTime? // when contact actually happened
+  contactMode      String? // Call | Email | WhatsApp | SMS | In Person
+  nextAction       String? // what is owed next
+  dueDate          String? // YYYY-MM-DD — what Upcoming/Due Today/Overdue is measured against
+  nextFollowUpAt   String? // YYYY-MM-DD — when the next touch is planned
+  notes            String?
   // §8 "What happened?" and §4 the call result — a RECORDED CHOICE, not a
   // sentence somebody may or may not have typed.
-  outcome         String?
+  outcome          String?
   // §9 "What should happen next?" — the chosen next step, beside nextAction.
-  nextStep        String?
+  nextStep         String?
   // A 3:00 PM callback needs the clock as well as the day.
-  dueTime         String?   // HH:MM
-  nextFollowUpTime String?  // HH:MM
+  dueTime          String? // HH:MM
+  nextFollowUpTime String? // HH:MM
   // §18-§20 — raised by the SYSTEM at a stage change rather than by a person.
-  autoCreated     Boolean  @default(false)
-  purpose         String?   // Interview confirmation | Client decision | …
+  autoCreated      Boolean   @default(false)
+  purpose          String? // Interview confirmation | Client decision | …
 
   completedAt   DateTime?
   completedById String?
@@ -1697,13 +1709,13 @@ model ApplicationFollowUp {
   // Owner -> TL -> STL -> Admin -> Super Admin (§11-§13); `escalationLevel` is
   // the rung it has reached, so a dashboard can group by it without
   // re-deriving the answer from four timestamps.
-  stlUserId        String?
-  stlName          String?
+  stlUserId             String?
+  stlName               String?
   escalatedTlAt         DateTime?
   escalatedStlAt        DateTime?
   escalatedAdminAt      DateTime?
   escalatedSuperAdminAt DateTime?
-  escalationLevel       Int      @default(0)
+  escalationLevel       Int       @default(0)
 
   createdById   String?
   createdByName String?
@@ -1724,38 +1736,38 @@ model ApplicationFollowUp {
 // integration would fill providerRef / sentAt / status from the provider's
 // callback; see backend/src/utils/candidateComms.js.
 model CandidateMessage {
-  id            String      @id @default(cuid())
-  candidateId   String
-  candidate     Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  applicationId String?
-  channel       String      // Email | SMS | WhatsApp
-  template      String      // template key, e.g. INTERVIEW_SCHEDULED
-  templateLabel String?
-  trigger       String      // what caused it, e.g. "Stage change: Interview"
-  recipient     String      // the candidate's email / phone, as addressed
-  subject       String?
-  body          String?
-  status        String      @default("NOT_SENT_NO_PROVIDER")
-  statusDetail  String?
+  id               String    @id @default(cuid())
+  candidateId      String
+  candidate        Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  applicationId    String?
+  channel          String // Email | SMS | WhatsApp
+  template         String // template key, e.g. INTERVIEW_SCHEDULED
+  templateLabel    String?
+  trigger          String // what caused it, e.g. "Stage change: Interview"
+  recipient        String // the candidate's email / phone, as addressed
+  subject          String?
+  body             String?
+  status           String    @default("NOT_SENT_NO_PROVIDER")
+  statusDetail     String?
   // Sender identity comes from the acting EMPLOYEE's record (Employee.email),
   // captured when the employee was added — never a hardcoded from-address.
   senderUserId     String?
   senderEmployeeId String?
   senderName       String?
   senderEmail      String?
-  senderSourceNote String?   // which record the address came from
-  stageFrom     String?
-  stageTo       String?
-  providerRef   String?      // the provider's message id, once it accepted the message
-  sentAt        DateTime?    // when the provider accepted it — never set otherwise
+  senderSourceNote String? // which record the address came from
+  stageFrom        String?
+  stageTo          String?
+  providerRef      String? // the provider's message id, once it accepted the message
+  sentAt           DateTime? // when the provider accepted it — never set otherwise
   // --- delivery bookkeeping (integr_message_delivery) ----------------------
   // Written by utils/mailWorker.js only. A row with attempts > 0 has really
   // been handed to a provider at least once.
-  attempts      Int          @default(0)
-  lastAttemptAt DateTime?
-  nextAttemptAt DateTime?    // set on a transient failure — the backoff
-  lastError     String?      // the provider's own words on the last failure
-  createdAt     DateTime     @default(now())
+  attempts         Int       @default(0)
+  lastAttemptAt    DateTime?
+  nextAttemptAt    DateTime? // set on a transient failure — the backoff
+  lastError        String? // the provider's own words on the last failure
+  createdAt        DateTime  @default(now())
 
   @@index([candidateId])
 }
@@ -1778,18 +1790,18 @@ model CandidateNote {
 
 // Resume / ID / Certificates / Offer / Joining documents.
 model CandidateDocument {
-  id             String    @id @default(cuid())
-  candidateId    String
-  candidate      Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  docType        String    // Resume | ID | Certificate | Offer | Joining
-  name           String
-  note           String?
+  id               String    @id @default(cuid())
+  candidateId      String
+  candidate        Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  docType          String // Resume | ID | Certificate | Offer | Joining
+  name             String
+  note             String?
   // Internal documents (e.g. anything carrying fee or salary detail) are held
   // back from client logins.
-  internalOnly   Boolean   @default(false)
+  internalOnly     Boolean   @default(false)
   uploadedByUserId String?
   uploadedByName   String?
-  createdAt      DateTime  @default(now())
+  createdAt        DateTime  @default(now())
 
   @@index([candidateId])
 }
@@ -1808,19 +1820,19 @@ model CandidateDocument {
 
 // One row per task on the Timesheet screen's My Tasks list.
 model Task {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
   department     String?
   description    String?
   subTaskName    String?
-  status         String   @default("Not Started")
+  status         String    @default("Not Started")
   // Stored as YYYY-MM-DD, the value an <input type="date"> carries. The screen
   // renders them dd-mm-yyyy; the wire format never depends on a locale.
   startDate      String?
   endDate        String?
   // "Dependent Task — No / Yes". `dependsOnId` names the task it waits on when
   // the answer is Yes; the flag alone would say nothing.
-  dependent      Boolean  @default(false)
+  dependent      Boolean   @default(false)
   dependsOnId    String?
   // Who the work is FOR and who handed it over. Both are User.id — one
   // employee = one user = one login, so there is no second identity to pick.
@@ -1838,15 +1850,15 @@ model Task {
   // The review leg: 'Not Submitted' -> 'Pending Review' -> 'Approved' or
   // 'Changes Requested'. A task completed before this column existed keeps the
   // default, because it never went through a review.
-  reviewState    String   @default("Not Submitted")
+  reviewState    String    @default("Not Submitted")
   reviewedById   String?
   reviewedByName String?
   reviewedAt     DateTime?
   reviewNote     String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  comments       TaskComment[]
+  comments TaskComment[]
 
   @@index([assigneeId])
   @@index([assignedById])

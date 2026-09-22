@@ -618,10 +618,22 @@ async function act(workflowId, recordId, user, { decision, note }) {
 }
 
 // ---------------------------------------------------------------------------
-// THE REGISTRY. One entry per workflow. Leave is the only one wired today;
-// the other four in §16 are the same four lines plus two calls in their
-// router (start() on create, act() on decide).
+// THE REGISTRY. One entry per workflow. All five are wired: leave,
+// regularization, resignation, reward and course. Adding a sixth is this
+// entry plus two calls in its router — start() on create, act() on decide.
 // ---------------------------------------------------------------------------
+// EVERY WORKFLOW CLIMBS THE SAME LADDER. The spec gives one hierarchy for all
+// of HRMS, so the default policy is written once rather than copied per
+// workflow — a change to the chain is a change in one place.
+const CHAIN_DEFAULTS = {
+  TL: { mode: MODE_REQUIRED, slaHours: 24 },
+  STL: { mode: MODE_REQUIRED, slaHours: 48 },
+  ASSISTANT_MANAGER: { mode: MODE_REQUIRED, slaHours: 48 },
+  MANAGER: { mode: MODE_REQUIRED, slaHours: 48 },
+  HR: { mode: MODE_REQUIRED, slaHours: 48 },
+  SUPER_ADMIN: { mode: MODE_REQUIRED, slaHours: 72 },
+};
+
 const WORKFLOWS = {
   leave: {
     id: 'leave',
@@ -633,20 +645,57 @@ const WORKFLOWS = {
     // administrator step in out of turn. Both are read from the engine.
     actAction: 'approve',
     overrideAction: 'configure',
-    // The policy a fresh install starts with: a leave gates at the TL and the
-    // STL, and everybody above simply watches. Editable per level on the
-    // Leave screen — that is the whole point of the required/visibility split.
-    defaults: {
-      // EVERY LEVEL GATES. The spec is explicit that no approval level may be
-      // skipped, so none of these is visibility-only any more — a request
-      // reaches the next rung only once the current one has approved it.
-      TL: { mode: MODE_REQUIRED, slaHours: 24 },
-      STL: { mode: MODE_REQUIRED, slaHours: 48 },
-      ASSISTANT_MANAGER: { mode: MODE_REQUIRED, slaHours: 48 },
-      MANAGER: { mode: MODE_REQUIRED, slaHours: 48 },
-      HR: { mode: MODE_REQUIRED, slaHours: 48 },
-      SUPER_ADMIN: { mode: MODE_REQUIRED, slaHours: 72 },
-    },
+    // The policy a fresh install starts with — see CHAIN_DEFAULTS above.
+    // Editable per level on the Leave screen, which is the whole point of
+    // the required/visibility split.
+    defaults: CHAIN_DEFAULTS,
+  },
+  // §9 — an attendance correction is a request like any other.
+  regularization: {
+    id: 'regularization',
+    label: 'Attendance Regularization',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Attendance & Time',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
+  },
+  // §16 — a resignation climbs the same ladder, ending at the Super Admin.
+  resignation: {
+    id: 'resignation',
+    label: 'Resignation',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Employee Services',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
+  },
+  // §13 — a TL RECOMMENDATION is not an award. It becomes one only after the
+  // chain has approved it, which is what keeps "Recommended" and "Approved"
+  // different words.
+  reward: {
+    id: 'reward',
+    label: 'Performance / Reward',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Performance & Development',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
+  },
+  // §14 — a course is a DRAFT until the chain approves it. A TL cannot put a
+  // course in front of the company on their own say-so.
+  course: {
+    id: 'course',
+    label: 'LMS Course Publication',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Performance & Development',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
   },
 };
 

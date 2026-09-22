@@ -22,6 +22,7 @@ const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const attachments = require('../utils/attachments');
 const { employeeWhere, scopeOf, matches } = require('../utils/scope');
+const chain = require('../utils/chainRoute');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -32,6 +33,20 @@ const VIEW = requirePerm(null, 'hrms', 'Performance & Development', 'view');
 // Self-enrollment is self-service, so it rides on the same VIEW grant; the
 // two MANAGE actions below are the engine's create/edit on the same feature.
 const MANAGE = requirePerm(null, 'hrms', 'Performance & Development', 'create');
+
+// §14 — A COURSE IS A DRAFT UNTIL THE CHAIN APPROVES PUBLICATION.
+//
+//   TL drafts → STL → Assistant Manager → Manager → HR → Super Admin
+//
+// A TL may propose training; putting it in front of the whole company is not
+// theirs alone to decide. The chain travels up the DRAFTER's own reporting
+// line, because the course is their request, not any one employee's.
+//
+// PUBLISHED is what the learner-facing halves read. A course that is still
+// climbing is invisible in My Learning and in Company Learning; it shows on
+// the manage list, where the people deciding on it can see it.
+const WF_COURSE = 'course';
+const PUBLISHED = { approvalStatus: 'Approved' };
 
 function pct(done, total) {
   return total > 0 ? Math.round((done / total) * 100) : 0;
@@ -61,7 +76,7 @@ async function ownEmployee(req) {
 // --- A. My Learning --------------------------------------------------------
 router.get('/my', VIEW, async (req, res) => {
   const [courses, me] = await Promise.all([
-    prisma.course.findMany({ orderBy: [{ mandatory: 'desc' }, { title: 'asc' }] }),
+    prisma.course.findMany({ where: PUBLISHED, orderBy: [{ mandatory: 'desc' }, { title: 'asc' }] }),
     ownEmployee(req),
   ]);
   const mine = me
@@ -149,7 +164,7 @@ router.get('/company', VIEW, async (req, res) => {
   });
   const ids = employees.map((e) => e.id);
   const [courses, assignments] = await Promise.all([
-    prisma.course.findMany({ orderBy: [{ mandatory: 'desc' }, { title: 'asc' }] }),
+    prisma.course.findMany({ where: PUBLISHED, orderBy: [{ mandatory: 'desc' }, { title: 'asc' }] }),
     ids.length
       ? prisma.courseAssignment.findMany({
         where: { employeeId: { in: ids } },
@@ -210,7 +225,9 @@ router.get('/company', VIEW, async (req, res) => {
 
 router.get('/courses', async (req, res) => {
   const courses = await prisma.course.findMany({ include: { assignments: true }, orderBy: { createdAt: 'desc' } });
-  res.json(courses);
+  // The MANAGE list shows drafts as well as published courses, each with its
+  // chain summary, so whoever is deciding can see what is waiting on them.
+  res.json(await chain.decorate(WF_COURSE, courses));
 });
 
 router.post('/courses', MANAGE, async (req, res) => {
@@ -223,8 +240,50 @@ router.post('/courses', MANAGE, async (req, res) => {
       passMark: passMark != null ? Math.max(0, Math.min(100, Number(passMark))) : 70,
     },
   });
+
+  // The drafter's own employee row names their rung, so a TL's course starts
+  // at their STL. Somebody with no employee record behind their login has no
+  // ladder to climb and their course publishes directly, as it always did.
+  const drafter = await ownEmployee(req);
+  const started = drafter
+    ? await chain.raise(WF_COURSE, { recordId: course.id, employee: drafter, applicantUserId: req.user.id })
+    : { pending: false, summary: null };
+  if (started.pending) {
+    await prisma.course.update({ where: { id: course.id }, data: { approvalStatus: 'Pending' } });
+    course.approvalStatus = 'Pending';
+  }
   await logAudit({ userId: req.user.id, action: 'Course created', entity: 'Course', entityId: course.id });
-  res.status(201).json(course);
+  res.status(201).json({ ...course, workflow: started.summary });
+});
+
+// One rung deciding on a course. Approving at the top publishes it; a
+// rejection anywhere leaves it a draft that no learner ever saw.
+router.patch('/courses/:id/decision', requirePerm(null, 'hrms', 'Performance & Development', 'approve'), async (req, res) => {
+  const { status, reason } = req.body; // Approved | Rejected
+  if (!['Approved', 'Rejected'].includes(status)) return res.status(400).json({ error: 'status must be Approved or Rejected' });
+  const course = await prisma.course.findUnique({ where: { id: req.params.id } });
+  if (!course) return res.status(404).json({ error: 'Course not found' });
+  if (course.approvalStatus !== 'Pending') return res.status(409).json({ error: `This course was already ${course.approvalStatus.toLowerCase()}.` });
+
+  const step = await chain.decide(WF_COURSE, course.id, req.user, { decision: status, note: reason });
+  if (step.error) return res.status(step.error.status).json(step.error.body);
+  if (step.chained) {
+    await logAudit({
+      userId: req.user.id,
+      action: `Course ${status.toLowerCase()} at ${step.result.level}`,
+      entity: 'Course',
+      entityId: course.id,
+      fromValue: step.result.level,
+      toValue: step.result.nextLevel || step.result.outcome,
+    });
+    // STILL CLIMBING — it stays a draft and no learner can see it yet.
+    if (!step.result.complete) return res.json({ ...course, workflow: step.view });
+  }
+  const updated = await prisma.course.update({
+    where: { id: course.id },
+    data: { approvalStatus: status === 'Rejected' ? 'Rejected' : 'Approved' },
+  });
+  res.json({ ...updated, workflow: step.view || null });
 });
 
 router.get('/assignments', async (req, res) => {

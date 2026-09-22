@@ -3,14 +3,28 @@ const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
+const chain = require('../utils/chainRoute');
 
 const router = express.Router();
 router.use(requireAuth);
 
 
 // Notice Period is where a resignation starts; Relieved and Withdrawn are terminal.
+// §16 — ACCEPTING A RESIGNATION CLIMBS THE LADDER.
+//
+//   Employee → TL → STL → Assistant Manager → Manager → HR → Super Admin
+//
+// Only ACCEPTANCE is a chain decision. Relieved is the administrative act
+// that follows one — the F&F, the clearance — and Withdrawn is the employee
+// taking their own resignation back, which needs nobody's approval. Both
+// keep the single-step path they have always had.
+const WF_RES = 'resignation';
+
 const STATUSES = ['Notice Period', 'Accepted', 'Relieved', 'Withdrawn'];
 const TERMINAL = ['Relieved', 'Withdrawn'];
+// What /:id/status will ACCEPT as input. Rejected is a decision a rung can
+// take on the way up — it is not a state a resignation can rest in.
+const DECISIONS = [...STATUSES, 'Rejected'];
 
 // The same checklist drives the offboarding tracker on each employee's record.
 const EXIT_CHECKLIST = [
@@ -73,7 +87,8 @@ router.get('/', async (req, res) => {
     prisma.employeeRecord.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } }),
     noticePeriodDays(),
   ]);
-  res.json(records.map((r) => present(r, days)));
+  // Each row carries its chain summary, so the list says WHO IT IS WAITING ON.
+  res.json(await chain.decorate(WF_RES, records.map((r) => present(r, days))));
 });
 
 // Summary for the Resignation screen: how many are serving notice, how many have
@@ -116,15 +131,60 @@ router.post('/', async (req, res) => {
   });
   await prisma.employee.update({ where: { id: employeeId }, data: { employmentStatus: 'Notice Period', offboardingStatus: 'Serving Notice' } });
   await logAudit({ userId: req.user.id, action: 'Resignation recorded', entity: 'EmployeeRecord', entityId: record.id, fromValue: employee.employmentStatus, toValue: 'Notice Period' });
-  res.status(201).json(present(record, days));
+  // The chain goes down with the resignation. The employee is on notice
+  // either way — that is not what is being approved; acceptance is.
+  const started = await chain.raise(WF_RES, { recordId: record.id, employee });
+  res.status(201).json({ ...present(record, days), workflow: started.summary });
 });
 
 router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res) => {
   const { status } = req.body;
-  if (!STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${STATUSES.join(', ')}` });
+  if (!DECISIONS.includes(status)) return res.status(400).json({ error: `status must be one of: ${DECISIONS.join(', ')}` });
   const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.type !== 'RESIGNATION') return res.status(404).json({ error: 'Resignation not found' });
   if (TERMINAL.includes(existing.status)) return res.status(409).json({ error: `A ${existing.status.toLowerCase()} resignation can no longer be changed.` });
+
+  // ACCEPTANCE IS THE CHAIN DECISION. Relieved and Withdrawn fall straight
+  // through to the path below, untouched.
+  if (status === 'Accepted' || status === 'Rejected') {
+    const employee = await prisma.employee.findUnique({ where: { id: existing.employeeId } });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    if (!await chain.mayTouch(WF_RES, existing.id, req.user, employee)) {
+      return res.status(403).json(chain.OUT_OF_SCOPE);
+    }
+    await chain.ensure(WF_RES, { recordId: existing.id, employee, open: true });
+    // THE ENGINE SPEAKS Approved / Rejected. "Accepted" is the word this
+    // screen uses for the same act — agreeing to let somebody go — so it is
+    // translated here rather than teaching the shared engine a
+    // resignation-shaped vocabulary.
+    const step = await chain.decide(WF_RES, existing.id, req.user, {
+      decision: status === 'Accepted' ? 'Approved' : 'Rejected',
+      note: req.body.reason || req.body.rejectReason,
+    });
+    if (step.error) return res.status(step.error.status).json(step.error.body);
+    if (step.chained) {
+      await logAudit({
+        userId: req.user.id,
+        action: `Resignation ${status.toLowerCase()} at ${step.result.level}`,
+        entity: 'EmployeeRecord',
+        entityId: existing.id,
+        fromValue: step.result.level,
+        toValue: step.result.nextLevel || step.result.outcome,
+      });
+      // STILL CLIMBING, or REFUSED somewhere on the way up. Either way the
+      // resignation is not Accepted: it stays on notice, which is exactly
+      // where an employee who has resigned should be while it is decided.
+      if (!step.result.complete || step.result.outcome === 'Rejected') {
+        const d2 = await noticePeriodDays();
+        return res.json({ ...present(existing, d2), workflow: step.view });
+      }
+    }
+    // The ladder is finished and it said yes — fall through and accept.
+    if (status === 'Rejected') {
+      const d2 = await noticePeriodDays();
+      return res.json({ ...present(existing, d2), workflow: step.view || null });
+    }
+  }
 
   const record = await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { status } });
   await prisma.employee.update({
