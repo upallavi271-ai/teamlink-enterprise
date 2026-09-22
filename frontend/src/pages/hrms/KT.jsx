@@ -20,7 +20,7 @@ import TabsPage from '../../components/TabsPage.jsx';
 import {
   Panel, PanelHead, EmptyMini, QaRow, Modal, ScopeNote, Status,
 } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, canDecideServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
 
 const SUBTITLE = 'Every employee submits 3 unique HRMS-improvement ideas per week. '
@@ -309,7 +309,12 @@ function AllIdeas({ ideas }) {
 // --- The screen -------------------------------------------------------------
 export default function KT() {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // isHR here DRAWS WRITE CONTROLS, so it asks the write permission and not
+  // only the read one. A Manager and an Assistant Manager are view-only (§3,
+  // §4) and still hold Employee Management/view, so isHR() alone would have
+  // gone on offering them every button on this screen. Both halves, because
+  // the screen is an administration screen AND these are writes.
+  const isHR = hasHrmsAdmin(user) && canDecideServices(user);
   const [compliance, setCompliance] = useState(null);
   const [board, setBoard] = useState(null);
   const [ideas, setIdeas] = useState([]);

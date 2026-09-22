@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv, to12h } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow, Status } from '../components/proto.jsx';
-import { isAdmin, isHR as hasHrmsAdmin } from '../permissions';
+import { isAdmin, isHR as hasHrmsAdmin, canEditAttendance, canDecideAttendance } from '../permissions';
 import Combo from '../components/Combo.jsx';
 
 const METHODS = ['Web Check-in', 'Mobile App', 'Biometric (Fingerprint)'];
@@ -49,7 +49,7 @@ function StatusPill({ status }) {
 
 // ---- Tab 1: Dashboard -------------------------------------------------------
 
-function DashboardTab({ isHR, goTab }) {
+function DashboardTab({ isHR, canMark, goTab }) {
   const [date, setDate] = useState(today());
   const [data, setData] = useState(null);
   const [showMarking, setShowMarking] = useState(true);
@@ -136,9 +136,9 @@ function DashboardTab({ isHR, goTab }) {
                     <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
                     <td className="cell-muted">{r.location || '—'}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {['Present', 'Absent', 'Half Day'].map((s) => (
+                      {canMark ? ['Present', 'Absent', 'Half Day'].map((s) => (
                         <button key={s} className="btn btn-sm" style={{ marginLeft: 4 }} onClick={() => mark(r.employeeId, s)}>{s}</button>
-                      ))}
+                      )) : <span className="cell-muted">—</span>}
                     </td>
                   </tr>
                 ))}
@@ -518,7 +518,7 @@ function MethodsTab({ canEdit }) {
 // The prototype calls regularizationModalHtml(), which it never defines, so its
 // own "+ Request Regularization" button is dead; this is the working version.
 
-function RegularizationTab({ isHR }) {
+function RegularizationTab({ isHR, canDecide }) {
   const [requests, setRequests] = useState([]);
   const [form, setForm] = useState({ date: today(), requestedCheckIn: '', requestedCheckOut: '', reason: '' });
 
@@ -568,7 +568,7 @@ function RegularizationTab({ isHR }) {
                   <td className="cell-muted">{r.requestedCheckOut || '—'}</td>
                   <td className="cell-muted">{r.reason || '—'}</td>
                   <td><Status>{r.status}</Status></td>
-                  {isHR && <td>{r.status === 'Pending' && (<><button className="btn btn-sm btn-primary" onClick={() => decide(r.id, 'Approved')}>Approve</button>{' '}<button className="btn btn-sm btn-danger" onClick={() => decide(r.id, 'Rejected')}>Reject</button></>)}</td>}
+                  {isHR && <td>{canDecide && r.status === 'Pending' && (<><button className="btn btn-sm btn-primary" onClick={() => decide(r.id, 'Approved')}>Approve</button>{' '}<button className="btn btn-sm btn-danger" onClick={() => decide(r.id, 'Rejected')}>Reject</button></>)}</td>}
                 </tr>
               ))}
               {requests.length === 0 && <tr><td colSpan={isHR ? 7 : 5} className="small-muted" style={{ padding: 16 }}>No regularization requests yet.</td></tr>}
@@ -582,7 +582,17 @@ function RegularizationTab({ isHR }) {
 
 export default function Attendance() {
   const { user } = useAuth();
+  // THREE ANSWERS, NOT ONE.
+  //   isHR          READ — may this login see everybody's attendance? It picks
+  //                 the administration tabs over the self-service one, and a
+  //                 view-only Manager (§3) keeps every one of them.
+  //   canMark       WRITE — may this login mark somebody Present / Absent?
+  //   canDecide     APPROVE — may it decide a regularization request?
+  // The last two are the actions routes/attendance.js actually requires; a
+  // Manager holds neither now, so those buttons are simply not drawn.
   const isHR = hasHrmsAdmin(user);
+  const canMark = canEditAttendance(user);
+  const canDecide = canDecideAttendance(user);
   const canEditPolicy = isAdmin(user);
   const [tab, setTab] = useState('dashboard');
 
@@ -593,14 +603,14 @@ export default function Attendance() {
       value={tab}
       onChange={setTab}
       tabs={[
-        { key: 'dashboard', label: 'Dashboard', element: <DashboardTab isHR={isHR} goTab={setTab} /> },
+        { key: 'dashboard', label: 'Dashboard', element: <DashboardTab isHR={isHR} canMark={canMark} goTab={setTab} /> },
         ...(isHR ? [
           { key: 'biometric', label: 'Biometric Attendance List', element: <BiometricTab /> },
           { key: 'punchlog', label: 'Punch Log (Detailed)', element: <PunchLogTab /> },
           { key: 'reports', label: 'Reports (Monthly)', element: <ReportsTab /> },
         ] : []),
         { key: 'methods', label: 'Check-in Methods', element: <MethodsTab canEdit={canEditPolicy} /> },
-        { key: 'regularization', label: 'Regularization', element: <RegularizationTab isHR={isHR} /> },
+        { key: 'regularization', label: 'Regularization', element: <RegularizationTab isHR={isHR} canDecide={canDecide} /> },
       ]}
     />
   );

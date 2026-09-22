@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../api';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 
 const money = (n) => `₹${Math.round(Number(n || 0)).toLocaleString('en-IN')}`;
@@ -105,6 +107,13 @@ function printRows(title, rows) {
 }
 
 export default function Office() {
+  // The same matrix answer the API enforces on every write in backend/src/routes/office.js
+  // (accounts · accounts · Office & Expenses · edit). A view-only login — Manager,
+  // Assistant Manager — never sees the write controls at all: they are removed from the
+  // tree rather than disabled, so nothing is offered that the engine would refuse.
+  const { user } = useAuth();
+  const canManage = can(user, 'accounts', 'accounts', 'Office & Expenses', 'edit');
+
   const [tab, setTab] = useState('bills');
   const [period, setPeriod] = useState(`FY:${CURRENT_FY}`);
   const [error, setError] = useState('');
@@ -151,7 +160,7 @@ export default function Office() {
 
       {error && <div className="card section error-text" style={{ marginBottom: 12 }}>{error}</div>}
 
-      {tab === 'bills' && <Bills period={period} onError={setError} onProofs={openProofs} onTab={setTab} />}
+      {tab === 'bills' && <Bills period={period} onError={setError} onProofs={openProofs} onTab={setTab} canManage={canManage} />}
       {tab === 'calendar' && <Calendar />}
       {tab === 'proofs' && (
         <Proofs
@@ -159,6 +168,7 @@ export default function Office() {
           preset={proofPre}
           onError={setError}
           onClearScope={() => { setProofScope(null); setProofPre('all'); }}
+          canManage={canManage}
         />
       )}
       {tab === 'gst' && <Gst period={period} />}
@@ -172,7 +182,7 @@ export default function Office() {
 // Bills & expenses
 // ---------------------------------------------------------------------------
 function Bills({
-  period, onError, onProofs, onTab,
+  period, onError, onProofs, onTab, canManage,
 }) {
   const [data, setData] = useState(null);
   const [f, setF] = useState(BLANK_FILTERS);
@@ -283,11 +293,13 @@ function Bills({
       </td>
       <td>{PROOF_LABEL[r.proofKind]}</td>
       <td>
-        <div className="qa-row">
-          <button className="btn btn-sm" onClick={() => edit(r)}>✎ Edit</button>
-          {r.pending && <button className="btn btn-sm" onClick={() => run(() => api.patch(`/office-expenses/${r.id}`, { paidStatus: 'Paid' }))}>Mark paid</button>}
-          <button className="btn btn-sm" onClick={() => run(() => api.delete(`/office-expenses/${r.id}`))}>Remove</button>
-        </div>
+        {canManage ? (
+          <div className="qa-row">
+            <button className="btn btn-sm" onClick={() => edit(r)}>✎ Edit</button>
+            {r.pending && <button className="btn btn-sm" onClick={() => run(() => api.patch(`/office-expenses/${r.id}`, { paidStatus: 'Paid' }))}>Mark paid</button>}
+            <button className="btn btn-sm" onClick={() => run(() => api.delete(`/office-expenses/${r.id}`))}>Remove</button>
+          </div>
+        ) : <span className="cell-muted">—</span>}
       </td>
     </tr>
   );
@@ -319,6 +331,7 @@ function Bills({
         setF={setF}
         o={o}
         totals={t}
+        canManage={canManage}
         onNew={() => { setEditing(null); setForm(BLANK); setShowForm(true); }}
       />
 
@@ -501,7 +514,7 @@ function Bills({
         </div>
       </div>
 
-      {showForm && (
+      {canManage && showForm && (
         <ExpenseForm
           form={form}
           setForm={setForm}
@@ -532,7 +545,7 @@ function Chip({ label, v, title }) {
 // carry: category, vendor, search, GST on the bill, status and payment mode,
 // with every money figure beside them.
 function BillFilters({
-  f, setF, o, totals, onNew,
+  f, setF, o, totals, onNew, canManage,
 }) {
   const restCats = o.categories.filter((c) => !o.fitCategories.includes(c));
   const restVendors = o.vendors.filter((v) => !o.fitVendors.includes(v));
@@ -596,7 +609,7 @@ function BillFilters({
           </span>
         )}
         {on && <button className="btn btn-sm" onClick={() => setF(BLANK_FILTERS)}>Reset all</button>}
-        {onNew && <button className="btn btn-primary btn-sm" onClick={onNew}>＋ New expense</button>}
+        {canManage && onNew && <button className="btn btn-primary btn-sm" onClick={onNew}>＋ New expense</button>}
       </div>
     </>
   );
@@ -845,7 +858,7 @@ function Calendar() {
 // 📎 Proofs & bill files
 // ---------------------------------------------------------------------------
 function Proofs({
-  scope, preset, onError, onClearScope,
+  scope, preset, onError, onClearScope, canManage,
 }) {
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState(preset || 'all');
@@ -958,7 +971,9 @@ function Proofs({
                         <td className="num">{money(r.net)}</td>
                         <td>{PROOF_LABEL[r.proofKind]}</td>
                         <td>
-                          <button className="btn btn-sm btn-danger" onClick={() => run(() => api.delete(`/office-expenses/${r.id}`))}>Remove this one</button>
+                          {canManage
+                            ? <button className="btn btn-sm btn-danger" onClick={() => run(() => api.delete(`/office-expenses/${r.id}`))}>Remove this one</button>
+                            : <span className="cell-muted">—</span>}
                         </td>
                       </tr>
                     ))}
@@ -1088,12 +1103,14 @@ function Proofs({
                     {r.proofKind === 'file' && r.proofName && <div className="small-muted">{String(r.proofName).slice(0, 40)}</div>}
                   </td>
                   <td>
-                    <div className="qa-row">
-                      <button className="btn btn-sm" onClick={() => attach(r)}>{r.proofKind === 'file' ? 'Replace' : '📎 Attach'}</button>
-                      {r.proofKind === 'file' && (
-                        <button className="btn btn-sm btn-danger" onClick={() => run(() => api.delete(`/office-expenses/${r.id}/proof`))}>Remove</button>
-                      )}
-                    </div>
+                    {canManage ? (
+                      <div className="qa-row">
+                        <button className="btn btn-sm" onClick={() => attach(r)}>{r.proofKind === 'file' ? 'Replace' : '📎 Attach'}</button>
+                        {r.proofKind === 'file' && (
+                          <button className="btn btn-sm btn-danger" onClick={() => run(() => api.delete(`/office-expenses/${r.id}/proof`))}>Remove</button>
+                        )}
+                      </div>
+                    ) : <span className="cell-muted">—</span>}
                   </td>
                 </tr>
               ))}

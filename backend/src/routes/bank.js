@@ -13,6 +13,24 @@ router.use(requireAuth);
 router.use(requireProduct('accounts'));
 router.use(requirePerm('accounts', 'accounts', 'Bank & Reconciliation', 'view'));
 
+// VIEW != WRITE, AND THE API IS WHAT REFUSES.  (§20)
+//
+// The guard above is `view`, and `view` is exactly what a view-only Manager
+// (§3) holds on Accounts. Every write in this router — import a statement,
+// categorise, reconcile, post to a client, DELETE a bank account, delete an
+// import batch, remove a transaction rule — was behind that one `view` guard
+// and nothing else, so a hand-written POST or DELETE from a login that may
+// only read the ledger would have succeeded.
+//
+// One guard, applied to every mutating method, rather than forty guards that
+// can be forgotten on the forty-first route. A read stays a read.
+const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+const requireBankWrite = requirePerm('accounts', 'accounts', 'Bank & Reconciliation', 'edit');
+router.use((req, res, next) => {
+  if (!WRITE_METHODS.includes(req.method)) return next();
+  return requireBankWrite(req, res, next);
+});
+
 // ---------------------------------------------------------------------------
 // The reconciliation state machine
 //

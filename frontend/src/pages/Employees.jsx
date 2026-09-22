@@ -390,13 +390,13 @@ export default function Employees() {
           </div></div>
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Three formats, one scoped query behind them. */}
-          {caps.export !== false && <>
+          {caps.export && <>
             <button className="btn" onClick={() => exportAs('csv')} disabled={!!exporting}>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</button>
             <button className="btn" onClick={() => exportAs('xlsx')} disabled={!!exporting}>{exporting === 'xlsx' ? 'Exporting…' : 'Export Excel'}</button>
             <button className="btn" onClick={() => exportAs('pdf')} disabled={!!exporting}>{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}</button>
           </>}
-          {caps.create !== false && <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>}
-          {caps.create !== false && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
+          {caps.create && <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>}
+          {caps.create && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
         </div>
       </div>
 
@@ -790,7 +790,7 @@ export default function Employees() {
                   )}
                   {/* GRANT EDIT ACCESS — temporarily reopens THIS employee's
                       own locked profile. Never widens what they can see. */}
-                  {caps.approve !== false && hrById[e.id]?.isLocked && (
+                  {caps.approve && hrById[e.id]?.isLocked && (
                     <><button className="btn btn-sm" title="Temporarily unlock this employee's own profile so they can correct it"
                       onClick={() => { setGrantFor(e); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }}>
                       Grant Edit Access

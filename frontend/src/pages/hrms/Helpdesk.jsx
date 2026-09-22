@@ -5,7 +5,7 @@ import {
   Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, canEditServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
 
 const TICKET_STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'];
@@ -88,7 +88,15 @@ function NewTicketModal({ meta, employees, isHR, onClose, onSaved }) {
 
 export default function Helpdesk({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // TWO HALVES, DELIBERATELY.
+  //   hrView  — READ: may this login see other people's records here? It is
+  //             what decides which rows and which columns are shown, and a
+  //             view-only Manager (§3) keeps every one of them.
+  //   isHR    — WRITE: may this login act on them? A Manager and an Assistant
+  //             Manager hold Employee Management/view and so pass the read
+  //             half; they must not be drawn a button the API refuses.
+  const hrView = hasHrmsAdmin(user);
+  const isHR = hrView && canEditServices(user);
   const [meta, setMeta] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -98,13 +106,15 @@ export default function Helpdesk({ view, onOpen, onBack }) {
 
   function load() {
     api.get('/helpdesk').then((res) => setTickets(res.data));
-    if (isHR) {
+    // hrView, not isHR: loading the directory and the analytics is a READ, and
+    // a view-only Manager (§3) keeps both.
+    if (hrView) {
       api.get('/employees').then((res) => setEmployees(res.data)).catch(() => setEmployees([]));
       api.get('/helpdesk/analytics').then((res) => setAnalytics(res.data)).catch(() => setAnalytics(null));
     }
   }
   useEffect(() => { api.get('/helpdesk/meta').then((res) => setMeta(res.data)); }, []);
-  useEffect(load, [isHR]);
+  useEffect(load, [hrView, isHR]);
 
   async function setStatus(ticket, status) {
     if (ticket.status === status) return;

@@ -152,7 +152,12 @@ const DEFAULT_MODULES = {
   MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'accounts', 'reports'],
   ASSISTANT_MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   STL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
-  TL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms'],
+  // `reports` is in both of these because DEFAULT_RULES below already grants a
+  // TL and a BDE the ATS and Job Portal reports (view, and export for a TL) —
+  // the module list was the only thing withholding them, which made the grant
+  // unreachable and, until routes/reports.js was guarded, made the endpoint
+  // answer anyway. Listing it here is what those two rules always meant.
+  TL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // HR (§6) — HRMS AND NOTHING ELSE.
   //
   // Dashboard, HRMS, HRMS Reports, Notifications and Profile. There is no
@@ -172,7 +177,7 @@ const DEFAULT_MODULES = {
   // A recruiter reads the client directory (their requirements name a client)
   // but cannot create or edit one — see DEFAULT_RULES.
   RECRUITER: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'recruiterbde', 'hrms'],
-  BDE: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms'],
+  BDE: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // A client reaches the `clients` module only to read and e-sign their OWN
   // company record — utils/scope.js pins it to their clientId.
   CLIENT: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'accounts'],

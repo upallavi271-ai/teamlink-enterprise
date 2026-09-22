@@ -116,7 +116,11 @@ export default function InterviewCalendar() {
             never mixed with client interview feedback.
           </div>
         </div>
-        <Link className="btn btn-primary" to="/candidates">Schedule Interview</Link>
+        {/* The page's primary action. It only navigates, but it advertises a
+            write this login may not make, so a view-only role (§3) is not
+            shown it — the whole point of §3 is that the button is absent, not
+            greyed out. `canAct` is the same matrix answer the API enforces. */}
+        {canAct && <Link className="btn btn-primary" to="/candidates">Schedule Interview</Link>}
       </div>
 
       <div className="tabbar">

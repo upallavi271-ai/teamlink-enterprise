@@ -2,12 +2,17 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import SimpleRecordPage from '../../components/SimpleRecordPage.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, canManageShifts } from '../../permissions';
 
 
 function ShiftPatterns() {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // isHR here DRAWS WRITE CONTROLS, so it asks the write permission and not
+  // only the read one. A Manager and an Assistant Manager are view-only (§3,
+  // §4) and still hold Employee Management/view, so isHR() alone would have
+  // gone on offering them every button on this screen. Both halves, because
+  // the screen is an administration screen AND these are writes.
+  const isHR = hasHrmsAdmin(user) && canManageShifts(user);
   const [patterns, setPatterns] = useState([]);
   const [form, setForm] = useState({ name: '', startTime: '', endTime: '' });
 

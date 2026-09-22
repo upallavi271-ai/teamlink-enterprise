@@ -63,7 +63,39 @@ export function canAny(user, moduleId, feature, actions) {
 
 // "HR" — someone who administers other people's HRMS records, rather than only
 // their own. Was HR_ROLES.includes(user.role).
+//
+// THIS IS THE READ HALF, AND ONLY THE READ HALF. It answers "may this login
+// see other people's HRMS records", which is what decides whether a screen
+// shows the administration view or the self-service one.
 export const isHR = (user) => can(user, 'hrms', 'hrms', 'Employee Management', 'view');
+
+// --- WRITING IN HRMS -------------------------------------------------------
+// isHR() was also being used to draw Add / Assign / Approve / Delete buttons
+// across every HRMS screen, which is the VIEW != EDIT mistake in miniature: a
+// Manager and an Assistant Manager are view-only now (§3, §4) and they still
+// hold `Employee Management / view`, so they passed isHR() and were offered
+// every write control on screens whose API calls the engine refuses.
+//
+// These are the write halves, one per HRMS feature, each naming the SAME
+// (module, feature, action) the matching route guard names — so a button is
+// drawn exactly when the API would accept the call behind it. They are not a
+// second permission system: every one is a can() call on the matrix the server
+// sent.
+export const canEditEmployees = (user) => can(user, 'hrms', 'hrms', 'Employee Management', 'edit');
+// Employee Services covers announcements, assets, documents, helpdesk,
+// surveys, resignations, shift-roster records and expense claims — see the
+// requirePerm() calls in backend/src/routes/{announcements,assetInventory,
+// documents,helpdesk,surveys,resignations,employeeRecords}.js.
+export const canManageServices = (user) => can(user, 'hrms', 'hrms', 'Employee Services', 'create');
+export const canEditServices = (user) => can(user, 'hrms', 'hrms', 'Employee Services', 'edit');
+export const canDecideServices = (user) => can(user, 'hrms', 'hrms', 'Employee Services', 'approve');
+// Performance & Development covers reviews, projects, targets, recognition,
+// disciplinary records, KT and the LMS catalogue.
+export const canManageDevelopment = (user) => can(user, 'hrms', 'hrms', 'Performance & Development', 'create');
+export const canEditDevelopment = (user) => can(user, 'hrms', 'hrms', 'Performance & Development', 'edit');
+export const canEditAttendance = (user) => can(user, 'hrms', 'hrms', 'Attendance & Time', 'edit');
+export const canDecideAttendance = (user) => can(user, 'hrms', 'hrms', 'Attendance & Time', 'approve');
+export const canManageShifts = (user) => can(user, 'hrms', 'hrms', 'Attendance & Time', 'create');
 
 // Company-wide administration. Was ['SUPER_ADMIN','ADMIN'].includes(role).
 export const isAdmin = (user) => canModule(user, 'administration')
@@ -183,7 +215,13 @@ export function workRoleLabel(user, workspace) {
     : ws === 'accounts' ? productRole(user, 'accounts')
       : ws === 'ats' ? productRole(user, 'ats')
         : null;
-  const role = prettyRole(forWorkspace || user.atsRole || user.role);
+  const code = forWorkspace || user.atsRole || user.role;
+  const role = prettyRole(code);
   const scope = (user.atsScopeDepartments || user.department || '').split(',')[0];
-  return scope && !['Super Admin', 'Admin'].includes(role) ? `${role} · ${scope}` : role;
+  // A role that is COMPANY-WIDE prints no department. Super Admin and Admin
+  // always were; HR (§6) is too — "all employees are visible to HR" — and its
+  // chip read "HR · HR", naming the department the person happens to SIT in as
+  // though it were the slice of the company they can reach.
+  const companyWide = ['Super Admin', 'Admin'].includes(role) || code === 'HR';
+  return scope && !companyWide ? `${role} · ${scope}` : role;
 }

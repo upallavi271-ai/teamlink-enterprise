@@ -12,6 +12,20 @@ router.use(requireAuth);
 router.use(requireProduct('accounts'));
 router.use(requirePerm('accounts', 'accounts', 'Office & Expenses', 'view'));
 
+// VIEW != WRITE, AND THE API IS WHAT REFUSES.  (§20)
+//
+// As in routes/bank.js: the guard above is `view`, which is exactly what a
+// view-only Manager (§3) holds on Accounts, and every write below it — record
+// an expense, mark one paid, attach or remove a proof, DELETE an expense —
+// sat behind that single `view` guard. One guard on every mutating method; a
+// read stays a read.
+const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+const requireOfficeWrite = requirePerm('accounts', 'accounts', 'Office & Expenses', 'edit');
+router.use((req, res, next) => {
+  if (!WRITE_METHODS.includes(req.method)) return next();
+  return requireOfficeWrite(req, res, next);
+});
+
 // ---------------------------------------------------------------------------
 // OFFICE EXPENDITURE
 // The accounting application's own vocabulary, kept literally:

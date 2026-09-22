@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
-import { isHR as hasHrmsAdmin } from '../permissions';
+import { isHR as hasHrmsAdmin, canDecideServices } from '../permissions';
 import Combo from './Combo.jsx';
 
 
@@ -37,7 +37,15 @@ export default function SimpleRecordPage({
   attachmentLabel = 'Bill / Receipt',
 }) {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // TWO HALVES, DELIBERATELY.
+  //   hrView  — READ: may this login see other people's records here? It is
+  //             what decides which rows and which columns are shown, and a
+  //             view-only Manager (§3) keeps every one of them.
+  //   isHR    — WRITE: may this login act on them? A Manager and an Assistant
+  //             Manager hold Employee Management/view and so pass the read
+  //             half; they must not be drawn a button the API refuses.
+  const hrView = hasHrmsAdmin(user);
+  const isHR = hrView && canDecideServices(user);
   const [records, setRecords] = useState([]);
   const [employees, setEmployees] = useState([]);
   const emptyForm = { employeeId: '', title: '', detail: '', date: '', amount: '', hours: '', category: '', priority: 'Medium', location: '', progressPct: 0 };
@@ -205,7 +213,7 @@ export default function SimpleRecordPage({
         <table>
           <thead>
             <tr>
-              {isHR && <th>Employee</th>}
+              {hrView && <th>Employee</th>}
               <th>{titleLabel}</th>
               <th>{detailLabel}</th>
               {showCategory && <th>{categoryLabel}</th>}
@@ -223,7 +231,7 @@ export default function SimpleRecordPage({
           <tbody>
             {records.map((r) => (
               <tr key={r.id}>
-                {isHR && <td>{r.employee?.name}</td>}
+                {hrView && <td>{r.employee?.name}</td>}
                 <td>{r.title}</td>
                 <td>{r.detail || '—'}</td>
                 {showCategory && <td>{r.category || '—'}</td>}

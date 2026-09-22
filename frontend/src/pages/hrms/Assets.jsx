@@ -5,7 +5,7 @@ import {
   Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable,
 } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 
 
 // The prototype's ten Asset feature tiles, in its order (AS_FEATURES, line 4421).
@@ -24,7 +24,12 @@ export const AS_FEATURES = [
 
 export default function Assets({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // isHR here DRAWS WRITE CONTROLS, so it asks the write permission and not
+  // only the read one. A Manager and an Assistant Manager are view-only (§3,
+  // §4) and still hold Employee Management/view, so isHR() alone would have
+  // gone on offering them every button on this screen. Both halves, because
+  // the screen is an administration screen AND these are writes.
+  const isHR = hasHrmsAdmin(user) && canManageServices(user);
   const [assets, setAssets] = useState([]);
   const [requests, setRequests] = useState([]);
   const [employees, setEmployees] = useState([]);
