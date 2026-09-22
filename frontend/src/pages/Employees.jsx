@@ -1200,8 +1200,13 @@ function AddEmployeeModal({
           <label>Role / Designation</label>
           <Combo value={form.designation} onChange={(e) => set({ designation: e.target.value })}>
             <option value="">Select role</option>
+            {/* THE WHOLE IDENTITY, not half of it — "Recruiter — Employee +
+                Recruiter", so it is plain that ONE login covers both HRMS and
+                ATS and that no second account is made. */}
             {(options.designations || []).map((d) => (
-              <option key={d.designation} value={d.designation}>{d.designation}</option>
+              <option key={d.designation} value={d.designation}>
+                {d.label || d.designation}{d.productsLabel ? ` · ${d.productsLabel}` : ''}
+              </option>
             ))}
           </Combo>
         </div>

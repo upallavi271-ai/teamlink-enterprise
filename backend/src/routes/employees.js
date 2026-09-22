@@ -11,6 +11,7 @@ const {
   scopeLabel: scopeLabelOf,
   clientWhere,
 } = require('../utils/scope');
+const { atsRoleLabel } = require('../utils/atsVocab');
 const { logAudit, logFieldChanges, resolveFieldApprovals } = require('../utils/audit');
 const { sendCredentials, unguessablePasswordHash } = require('../utils/employeeInvite');
 // The designation -> role / product-access mapping. DATA in the
@@ -547,17 +548,58 @@ router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view
 // Super Admin and Admin keep the full list, because seeding an organisation
 // from scratch has to be possible. Everybody else gets the HRMS-only base
 // identities.
+// THE PICKER NAMES THE WHOLE IDENTITY: "Employee + Recruiter".
+//
+// A designation grants a role in each product at once, and the picker used to
+// print only its own name — "Recruiter" — which reads as though it replaced
+// being an employee. It does not. A recruiter is an EMPLOYEE in HRMS who also
+// works ATS, on ONE login, and the label now says exactly that so nobody
+// imagines a second account is involved.
+//
+// Built from the roles the designation actually derives, so the label cannot
+// drift from what creating it will do.
+function designationLabel(row) {
+  const derived = productRolesForDesignation(row);
+  const NONE = 'NONE';
+  const roles = [];
+  const seen = new Set();
+  [derived.hrmsRole, derived.atsRole, derived.accountsRole].forEach((r) => {
+    if (!r || r === NONE || seen.has(r)) return;
+    seen.add(r);
+    roles.push(atsRoleLabel(r));
+  });
+  const access = roles.join(' + ');
+  const products = [row.hrms && 'HRMS', row.ats && 'ATS', row.accounts && 'Accounts'].filter(Boolean);
+  return {
+    // THE JOB TITLE STAYS. Three different designations derive plain
+    // EMPLOYEE, so a label of just "Employee" appeared three times and the
+    // picker could not be read. The access is appended only when it says
+    // something the title does not — "Recruiter" becomes "Recruiter —
+    // Employee + Recruiter", while "Employee" is left alone.
+    label: access && access !== row.designation ? `${row.designation} — ${access}` : row.designation,
+    accessLabel: access,
+    productsLabel: products.join(' + '),
+  };
+}
+
+// WHICH DESIGNATIONS ADD EMPLOYEE MAY OFFER.
+//
+// Creating somebody as "Employee + Recruiter" is ordinary onboarding — that
+// is the combined identity this product is built around, and HR does it every
+// week. Creating a SUPER ADMIN is not: it hands over the whole company, and
+// it used to be available from the joining form to anybody who could add a
+// person.
+//
+// So the line is drawn at PRIVILEGE, not at products: the working identities
+// are open, the ones that govern other people are Super Admin / Admin only.
+const PRIVILEGED_DESIGNATION_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'];
 function addEmployeeDesignations(req, rows) {
   const s = scopeOf(req.user);
   if (s.global || ['SUPER_ADMIN', 'ADMIN'].includes(s.role)) return rows;
-  // A BASE IDENTITY carries no role in any product: no ATS, no Accounts, and
-  // an HRMS role that is plain EMPLOYEE. That deliberately excludes HR as well
-  // as Recruiter and Manager — the HR desk sees every employee in the company,
-  // so making one is a role decision and belongs on Users with the rest.
   return rows.filter((r) => {
-    if (r.ats || r.accounts) return false;
     const derived = productRolesForDesignation(r);
-    return derived.hrmsRole === 'EMPLOYEE';
+    return ![derived.hrmsRole, derived.atsRole, derived.accountsRole]
+      .some((role) => PRIVILEGED_DESIGNATION_ROLES.includes(role));
   });
 }
 
@@ -620,6 +662,8 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     // Straight off the DesignationRole table — this is the Role / Designation
     // picker, and each row says what that designation will actually grant.
     designations: addEmployeeDesignations(req, rows).map((r) => ({
+      // "Employee + Recruiter" — the whole identity, not half of it.
+      ...designationLabel(r),
       designation: r.designation,
       atsRole: r.atsRole || null,
       // What this designation grants in each product — the picker says it
