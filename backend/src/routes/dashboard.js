@@ -28,7 +28,16 @@ const externalLogin = (user) => EXTERNAL_ROLES.includes(user?.role) || EXTERNAL_
 
 // The Accountant's own view: receivables, what needs chasing and what is still
 // sitting unreconciled on the bank statement.
-router.get('/accounts', async (req, res) => {
+//
+// GUARDED, because it was not. /invoices refuses a recruiter, an employee and
+// a candidate — and this route served the same money (every invoice, every
+// bank line, every office expense) to all three with a 200. Same two guards
+// routes/invoices.js uses, so one answer cannot contradict the other.
+router.get(
+  '/accounts',
+  requireProduct('accounts'),
+  requirePerm('accounts', 'accounts', 'Accounts Dashboard', 'view'),
+  async (req, res) => {
   const [invoices, transactions, expenses] = await Promise.all([
     prisma.invoice.findMany({ include: { client: true, candidate: true, requirement: { include: { recruiter: true } } } }),
     prisma.bankTransaction.findMany({ orderBy: { date: 'desc' } }),
