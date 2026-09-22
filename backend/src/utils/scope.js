@@ -309,32 +309,57 @@ function rolesAbove(role) {
 // HR roles see their scope's employees; everyone else sees only themselves.
 // An employee record is an HRMS record, so the HRMS role scopes it: an HRMS
 // Employee sees only themselves even when their ATS role is a TL.
+// The seniority half, applied to whatever set a role's scope selects. Kept
+// separate so a TL's team filter and an STL's department filter cannot drift
+// apart in how they treat the people above the viewer.
+function withSeniority(s, base) {
+  const above = rolesAbove(s.hrmsRole);
+  return {
+    ...base,
+    // Their own record always survives — nobody outranks themselves — and an
+    // employee with NO login stays visible, because there is no senior role on
+    // a record that has no account.
+    OR: [
+      { id: s.employeeId || '__none__' },
+      { userId: null },
+      {
+        user: {
+          is: {
+            NOT: { OR: [{ hrmsRole: { in: above } }, { role: { in: above } }] },
+          },
+        },
+      },
+    ],
+  };
+}
+
 function employeeWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
   // HR (§6) — every employee, not a department's worth.
   if (hrmsGlobal(user)) return {};
-  if (['STL', 'TL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
-    const above = rolesAbove(s.hrmsRole);
-    return {
-      department: { in: s.departments },
-      // Their own record always survives this, because nobody outranks
-      // themselves. An employee with NO login stays visible too — there is no
-      // senior role on a record that has no account.
-      OR: [
-        { id: s.employeeId || '__none__' },
-        { userId: null },
-        {
-          user: {
-            is: {
-              // Both halves matter: hrmsRole is the HRMS ladder, and `role` is
-              // where ADMIN / SUPER_ADMIN live regardless of product.
-              NOT: { OR: [{ hrmsRole: { in: above } }, { role: { in: above } }] },
-            },
-          },
-        },
-      ],
-    };
+  // A TL IS SCOPED TO THEIR TEAM, NOT THEIR DEPARTMENT.
+  //
+  // "TL ki valla data & valla team data" — a team lead leads ONE team. The
+  // department belongs to the STL above them, so a department filter handed a
+  // TL a PEER TL's people as well as their own. It is invisible in the demo
+  // data (one team per department today) and would surface the moment a
+  // second team existed, which is exactly the kind of leak that appears in
+  // production and not in testing.
+  //
+  // A TL with no team configured falls back to their department rather than to
+  // nothing: an unassigned lead who can see nobody cannot do their job, and
+  // the seniority filter below still keeps them from seeing upward.
+  if (s.hrmsRole === 'TL') {
+    const teams = s.teams && s.teams.length ? s.teams : null;
+    const where = teams
+      ? { team: { in: teams } }
+      : (s.departments.length ? { department: { in: s.departments } } : null);
+    if (where) return withSeniority(s, where);
+  }
+
+  if (['STL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
+    return withSeniority(s, { department: { in: s.departments } });
   }
   return { id: s.employeeId || '__none__' };
 }
