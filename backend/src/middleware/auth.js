@@ -8,7 +8,11 @@ const { can, requirePerm, requireProduct, DENIED } = require('../utils/permissio
 async function capsFor(identity) {
   const [hrmsManage, payrollManage, atsAct, atsOversight, accountsManage] = await Promise.all([
     can(identity, 'hrms', 'hrms', 'Employee Management', 'view'),
-    can(identity, 'hrms', 'hrms', 'Payroll & Compensation', 'view'),
+    // EDIT, NOT VIEW. This cap widens the payslip scope to a whole
+    // department, so it has to mean "operates payroll" — an employee who may
+    // read THEIR OWN payslip now holds the view, and reading it as `view`
+    // would have handed every employee their department's salaries.
+    can(identity, 'hrms', 'hrms', 'Payroll & Compensation', 'edit'),
     can(identity, 'ats', 'candidates', 'Pipeline Stages', 'edit'),
     can(identity, 'ats', 'recruiterbde', 'Team View', 'view'),
     can(identity, 'accounts', 'accounts', 'Invoices', 'edit'),

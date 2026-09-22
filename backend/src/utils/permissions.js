@@ -208,9 +208,13 @@ const DEFAULT_MODULES = {
   // company record — utils/scope.js pins it to their clientId.
   CLIENT: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'accounts'],
   // An accountant is an employee: Accounts per the catalog, HRMS self-service.
-  // ACCOUNTANT — ACCOUNTS ONLY, as the product table says. `hrms` is gone
-  // from this list deliberately.
-  ACCOUNTANT: ['dashboard', 'accounts', 'reports'],
+  // ACCOUNTANT — Accounts is the job, and HRMS SELF-SERVICE comes with being
+  // an employee. Taking `hrms` off this list made the screens unreachable
+  // even though every rule still allowed them: SET.STAFF already grants the
+  // four self-service features and SET.ACCOUNTS already grants payroll, so
+  // the endpoints answered 200 while the sidebar had no way in. An
+  // accountant applies for their own leave like anybody else.
+  ACCOUNTANT: ['dashboard', 'accounts', 'reports', 'hrms'],
   // EMPLOYEE — HRMS + ATS + Job Portal per the product table. With no ATS
   // ROLE they reach the modules and see nothing in them, because
   // utils/scope.js gives an ATS-roleless login no requirements, no
@@ -387,7 +391,7 @@ const DEFAULT_RULES = [
   // an EMPLOYEE both resolve to their own row, so this grants the SCREEN and
   // not a wider set of rows. VIEW only: no create, edit, approve or configure
   // rule names EMPLOYEE anywhere.
-  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE'] },
+  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE', 'ACCOUNTANT'] },
   { module: 'hrms', features: ['HRMS Dashboard'], actions: ['view', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Attendance & Time'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },

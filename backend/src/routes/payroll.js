@@ -76,7 +76,17 @@ router.get('/', async (req, res) => {
 
 // ---- Salary structures ----
 
-router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
+// THE PAYROLL OPERATOR'S SCREENS ARE GUARDED BY `edit`, NOT `view`.
+//
+// Salary structures, the run preview, past runs, F&F and the payroll reports
+// are the operator's register — they are not an employee looking at their
+// own payslip. Both used to sit behind the same `view`, which was harmless
+// only while nobody but the Accounts desk held it. An employee holds it now,
+// so the two are separated: SET.ACCOUNTS has edit, EMPLOYEE does not.
+//
+// GET '/' above is the employee's own payslip history and stays open — it is
+// scoped by employeeRecordWhere() to their own rows.
+router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const cfg = await getPolicy();
   // Salary is the most department-sensitive record in HRMS, so the structure
   // list is held to the caller's departments like everything else.
@@ -93,7 +103,7 @@ router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'vi
 });
 
 // Reference CTC breakup for the "Standard Package" example shown on the Payroll dashboard.
-router.get('/reference-structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
+router.get('/reference-structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const cfg = await getPolicy();
   res.json(salaryBreakup(Number(req.query.ctc) || 300000, cfg));
 });
@@ -168,7 +178,7 @@ router.put('/policy', requirePerm(null, 'hrms', 'Payroll & Compensation', 'confi
 
 // ---- Full & Final settlement requests ----
 
-router.get('/fnf', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
+router.get('/fnf', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const requests = await prisma.fnfRequest.findMany({ include: { employee: true }, orderBy: { createdAt: 'desc' } });
   res.json(requests);
 });
@@ -266,7 +276,7 @@ async function calculatePayroll({ month, department, defaultCTC }) {
 }
 
 // Preview a cycle without writing anything — the Calculate step on Process Payroll.
-router.get('/preview', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
+router.get('/preview', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const month = req.query.month;
   if (!month) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
   const existing = await prisma.payrollRun.findUnique({ where: { month } });
@@ -320,7 +330,7 @@ router.post('/run', requirePerm(null, 'hrms', 'Payroll & Compensation', 'create'
 
 // ---- Payroll runs ----
 
-router.get('/runs', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
+router.get('/runs', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' } });
   res.json(runs);
 });
@@ -336,7 +346,7 @@ router.patch('/runs/:id/paid', requirePerm(null, 'hrms', 'Payroll & Compensation
 
 // ---- Reports: month-over-month comparison, payout by period, payout by department ----
 
-router.get('/reports', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
+router.get('/reports', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' } });
   const cfg = await getPolicy();
   const employees = await prisma.employee.findMany({ where: { employmentStatus: { not: 'Relieved' } }, include: { salaryStructure: true } });

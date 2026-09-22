@@ -55,7 +55,7 @@ const FALLBACK_DESIGNATION_MAP = [
   { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'Employee', hrmsRole: 'EMPLOYEE', atsRole: null, hrms: true, ats: true, accounts: false, landing: 'hrms' },
-  { designation: 'Accountant', hrmsRole: 'NONE', atsRole: null, hrms: false, ats: false, accounts: true, landing: 'accounts' },
+  { designation: 'Accountant', hrmsRole: 'ACCOUNTANT', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts' },
 ];
 
 const NO_ROLE = 'NONE';

@@ -107,7 +107,7 @@ async function main() {
     { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats' , position: 5 },
     { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats' , position: 6 },
     { designation: 'Employee', hrmsRole: 'EMPLOYEE', atsRole: null, hrms: true, ats: true, accounts: false, landing: 'hrms' , position: 7 },
-    { designation: 'Accountant', hrmsRole: 'NONE', atsRole: null, hrms: false, ats: false, accounts: true, landing: 'accounts' , position: 8 },
+    { designation: 'Accountant', hrmsRole: 'ACCOUNTANT', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts' , position: 8 },
   ];
   // DERIVATION STAYS IN THE TABLE, and the table carries ALL THREE product
   // roles now. The rows above name only the ATS role because that is the one
