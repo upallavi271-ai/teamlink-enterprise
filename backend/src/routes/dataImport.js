@@ -208,8 +208,16 @@ async function buildIndex() {
     prisma.department.findMany({ select: { id: true, name: true } }),
   ]);
   const norm = (s) => String(s || '').trim().toLowerCase();
+  // A CLIENT IS MATCHED IGNORING PUNCTUATION AND CASE, because a sheet
+  // filled in by several people spells one company several ways —
+  // "Shifa Hospital, Tamil Nadu" and "Shifa Hospital,Tamil Nadu" differ by
+  // one space. Without this, the second spelling creates a second client
+  // and splits that client's requirements between two records. Only
+  // punctuation and case are ignored, so names differing in WORDS — two
+  // real branches of one hospital group — stay separate.
+  const ckey = (s) => String(s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
   const ix = {
-    client: new Map(clients.map((r) => [norm(r.name), r.id])),
+    client: new Map(clients.map((r) => [ckey(r.name), r.id])),
     requirement: new Map(requirements.filter((r) => r.reqCode).map((r) => [norm(r.reqCode), r.id])),
     candidate: new Map(),
     employee: new Map(employees.map((r) => [norm(r.name), r])),
@@ -218,6 +226,7 @@ async function buildIndex() {
     userByEmail: new Map(users.map((r) => [norm(r.email), r.id])),
     department: new Map(departments.map((r) => [norm(r.name), r.id])),
     norm,
+    ckey,
   };
   candidates.forEach((r) => {
     if (r.email) ix.candidate.set(norm(r.email), r.id);
@@ -268,8 +277,15 @@ const HANDLERS = {
   async specialisation({ data, ix, dry }) {
     const deptId = ix.department.get(ix.norm(data.department));
     if (!deptId) throw new Error(`department "${data.department}" is not on the Departments sheet or in the system`);
-    if (dry) return 'created';
-    const existing = await prisma.specialisation.findFirst({ where: { departmentId: deptId, name: data.name } });
+    // A dry run used to answer "created" unconditionally, so re-checking a
+    // file already imported claimed it would add 214 specialisations that
+    // were already there. The report is only useful if it says what the
+    // import will really do, so the existence check runs in both modes —
+    // it is a read, and a dry run is allowed to read.
+    const existing = deptId.startsWith('dry:')
+      ? null
+      : await prisma.specialisation.findFirst({ where: { departmentId: deptId, name: data.name } });
+    if (dry) return existing ? 'updated' : 'created';
     if (existing) return 'updated';
     await prisma.specialisation.create({ data: { departmentId: deptId, name: data.name } });
     return 'created';
@@ -368,7 +384,10 @@ const HANDLERS = {
   },
 
   async client({ data, ix, dry }) {
-    const key = ix.norm(data.name);
+    // ckey, NOT norm. The index is built with ckey (punctuation and case
+    // ignored), so looking up with norm never matched and every client on the
+    // sheet was reported as new — including the 124 that already existed.
+    const key = ix.ckey(data.name);
     const id = ix.client.get(key);
     if (dry) {
       if (!id) ix.client.set(key, `dry:${key}`);
@@ -384,7 +403,7 @@ const HANDLERS = {
   },
 
   async requirement({ data, ix, dry }) {
-    const clientId = ix.client.get(ix.norm(data._client));
+    const clientId = ix.client.get(ix.ckey(data._client));
     if (!clientId) throw new Error(`client "${data._client}" is not on the Clients sheet or in the system`);
 
     const fields = {};
@@ -516,7 +535,7 @@ const HANDLERS = {
   },
 
   async invoice({ data, ix, dry }) {
-    const clientId = ix.client.get(ix.norm(data._client));
+    const clientId = ix.client.get(ix.ckey(data._client));
     if (!clientId) throw new Error(`client "${data._client}" is not on the Clients sheet or in the system`);
 
     const fields = {};

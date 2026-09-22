@@ -136,10 +136,38 @@ const stats = { sources: [], notes: [], exploded: 0, noteSpecialisations: 0, bad
 
 const norm = (s) => clean(s).toLowerCase();
 
+// A COMPANY KEY THAT IGNORES PUNCTUATION AND CASE.
+//
+// The same client is typed several ways across these tabs — "Shifa
+// Hospital, Tamil Nadu" and "Shifa Hospital,Tamil Nadu" differ by ONE
+// SPACE, and "NILE LI-CYCLE PRIVATE LIMITED", "Nile Li -Cycle Private
+// Limited" and "Nile Li Cycle Private Limited" are one company written
+// three times. Keying on the lowercased string alone made four extra
+// client records, each holding a slice of that client's requirements.
+//
+// Stripping every non-alphanumeric character collapses exactly those and
+// nothing else: "Lalitha Hospitals,Gajularamaram" and "Lalitha Hospital,
+// Chevalla" differ in WORDS, so two real branches stay two records.
+const companyKey = (s) => clean(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Which spelling to keep when they disagree: the one that is not shouting.
+// ALL CAPS is how a name gets pasted out of a portal; mixed case is how a
+// person writes it, and it is what should appear on screen.
+function betterName(a, b) {
+  const shouty = (s) => s === s.toUpperCase();
+  if (shouty(a) !== shouty(b)) return shouty(a) ? b : a;
+  return a.length >= b.length ? a : b;
+}
+
 function addClient(name, department, industry) {
-  const key = norm(name);
+  const key = companyKey(name);
   if (!key) return null;
-  if (!clients.has(key)) clients.set(key, { name: clean(name), industry, department });
+  const existing = clients.get(key);
+  if (existing) {
+    existing.name = betterName(existing.name, clean(name));
+    return existing.name;
+  }
+  clients.set(key, { name: clean(name), industry, department });
   return clients.get(key).name;
 }
 
