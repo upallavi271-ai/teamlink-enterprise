@@ -376,6 +376,18 @@ const DEFAULT_RULES = [
   // biometric/punch-log/regularization decisions, leave decisions, holidays,
   // announcements, documents, assets, helpdesk, lms, performance, projects,
   // resignations, shift patterns, surveys, employee-record status decisions.
+  // AN EMPLOYEE'S OWN HRMS. Their dashboard and their payslip were the two
+  // entries missing from the Employee sidebar — an employee could log their
+  // attendance and apply for leave but could not see their own summary or
+  // their own salary, which is the part of HRMS an employee cares about most.
+  //
+  // SAFE BECAUSE BOTH ARE ALREADY SELF-SCOPED. routes/hrmsDashboard.js reads
+  // utils/scope.js employeeWhere() and routes/payroll.js payrollEmployeeWhere()
+  // falls through to the same helper for anybody without payrollManage — for
+  // an EMPLOYEE both resolve to their own row, so this grants the SCREEN and
+  // not a wider set of rows. VIEW only: no create, edit, approve or configure
+  // rule names EMPLOYEE anywhere.
+  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE'] },
   { module: 'hrms', features: ['HRMS Dashboard'], actions: ['view', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Attendance & Time'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
