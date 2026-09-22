@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import api from '../api';
 import Modal, { SectionHead } from './Modal.jsx';
 import Combo from './Combo.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import {
-  DEPTS, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
+  DEPTS, deptOptions, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
   JOINING_TIMELINES, NOTICE_PERIODS_MAX, JOB_PREFERENCES, SALARY_TYPES, CURRENCIES,
   POSTING_SOURCES, requirementStatusLabel,
   agreementStatusLabel, agreementIsActive,
@@ -156,8 +157,16 @@ export default function RequirementForm({
   onClose,
   onSaved,
 }) {
+  // RAISING a requirement is scoped too: a Medical TL picks Medical, not the
+  // whole company. Same server-computed list the filters use.
+  const { user } = useAuth();
+  const departments = deptOptions(user);
   const editing = mode === 'edit';
-  const [form, setForm] = useState(() => (editing ? formFromRequirement(requirement) : { ...EMPTY }));
+  const [form, setForm] = useState(() => (editing
+    ? formFromRequirement(requirement)
+    // EMPTY.department is DEPTS[0] ('IT'), which a Medical TL may not raise
+    // for — start them on the first department they actually hold.
+    : { ...EMPTY, department: departments[0] || EMPTY.department }));
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -352,7 +361,7 @@ export default function RequirementForm({
             <label className="field">
               <span>Department *</span>
               <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
-                {DEPTS.map((d) => <option key={d}>{d}</option>)}
+                {departments.map((d) => <option key={d}>{d}</option>)}
               </Combo>
             </label>
             <label className="field">
