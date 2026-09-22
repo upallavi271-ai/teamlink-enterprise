@@ -791,6 +791,15 @@ export default function Employees() {
                           Unlock
                         </button>
                       )}
+                      {/* TRANSFER stays HERE. Moving somebody between
+                          departments or teams is employee-master work, not
+                          login administration, so it did not go to Users with
+                          the roles, scope and password controls. */}
+                      {caps.assign && (
+                        <button className="btn btn-sm" onClick={() => { setTransferTarget(e); setTransferForm({ department: e.department || '', team: '', reason: '' }); }}>
+                          Transfer
+                        </button>
+                      )}
                       {caps.configure && (
                         <button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-pause`), `${e.name} updated.`)}>
                           {e.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}

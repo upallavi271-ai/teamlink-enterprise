@@ -80,6 +80,10 @@ export default function Users() {
   const [showForm, setShowForm] = useState(false);
   const [filters, setFilters] = useState({ q: '', role: '', status: '', department: '' });
   const [resetFor, setResetFor] = useState(null);
+  // What POST /employees/:id/send-credentials hands back: the one-time
+  // sign-in link. Shown once, never stored — the same contract Employee
+  // Management had before this moved here.
+  const [credentials, setCredentials] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   // Branch / team / scope are read-only text in the table (as in the prototype);
   // this modal is where main's inline editing of them moved to.
@@ -135,6 +139,20 @@ export default function Users() {
       [PRODUCT_ACCESS_KEY[product]]: !!role,
     }),
     `${u.name} — ${product.toUpperCase()} role: ${role ? atsRoleLabel(role) : 'No Access'} (their other products are unchanged).`);
+  }
+
+  // Re-issues the single-use sign-in link and emails it from the acting
+  // administrator's own address.
+  async function sendSignIn(u) {
+    setError(''); setNotice(''); setCredentials(null);
+    if (!u.employeeRecordId) { setError(`${u.name} has no employee record, so there is nothing to send sign-in details for.`); return; }
+    try {
+      const res = await api.post(`/employees/${u.employeeRecordId}/send-credentials`);
+      setCredentials({ ...res.data.credentials, name: u.name });
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not issue sign-in details.');
+    }
   }
 
   async function saveEditing() {
@@ -216,6 +234,25 @@ export default function Users() {
 
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="card section" style={{ marginBottom: 14 }}>{notice}</div>}
+      {/* The one-time sign-in link, shown once. Moved here with the button. */}
+      {credentials && (
+        <div className="card section" style={{ borderColor: credentials.sent ? undefined : 'var(--warn)' }}>
+          <h3 style={{ fontSize: 13 }}>Sign-in details for {credentials.name}</h3>
+          <div className={credentials.sent ? 'notice' : 'error-text'}>{credentials.status}</div>
+          {!credentials.sent && credentials.link && (
+            <div className="small-muted" style={{ marginTop: 8, wordBreak: 'break-all' }}>
+              <b>Nothing was emailed.</b> Connect an SMTP provider in Administration → Integrations, or pass this
+              single-use link on yourself. It is shown once and expires{' '}
+              {credentials.expiresAt ? new Date(credentials.expiresAt).toLocaleString('en-GB') : 'shortly'}:
+              <div style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}>{credentials.link}</div>
+            </div>
+          )}
+          <div className="small-muted" style={{ marginTop: 8 }}>
+            No password is ever emailed — the employee chooses their own through the link.
+          </div>
+          <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setCredentials(null)}>Dismiss</button>
+        </div>
+      )}
 
       {showForm && (
         <form className="card section" onSubmit={createUser}>
@@ -354,10 +391,20 @@ export default function Users() {
                       link to it, never a second copy. */}
                   {u.employeeRecordId && (
                     <div>
-                      <Link className="link-btn" to="/employees"
-                        title="Edit which departments, teams and clients this login may reach — on Employee Management">
-                        Edit scope →
-                      </Link>
+                      <button
+                        type="button"
+                        className="link-btn"
+                        title="Edit which departments, teams and clients this login may reach"
+                        onClick={() => setEditing({
+                          id: u.id, name: u.name, role: u.role, branch: u.branch || '', team: u.team || '',
+                          atsDepartment: u.atsDepartment || '',
+                          atsScopeDepartments: u.atsScopeDepartments || '',
+                          atsScopeTeams: u.atsScopeTeams || '',
+                          atsScopeClients: u.atsScopeClients || '',
+                        })}
+                      >
+                        Edit scope
+                      </button>
                     </div>
                   )}
                 </td>
@@ -396,6 +443,11 @@ export default function Users() {
                   </button>{' '}
                   <button className="btn btn-sm btn-ghost" onClick={() => { setResetFor(u); setResetPassword(''); }}>
                     Reset password
+                  </button>
+                  {' '}
+                  <button className="btn btn-sm" onClick={() => sendSignIn(u)}
+                    title="Email this person a fresh single-use sign-in link">
+                    Send Sign-in
                   </button>
                 </td>
               </tr>
