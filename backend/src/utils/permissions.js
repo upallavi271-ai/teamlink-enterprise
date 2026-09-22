@@ -216,7 +216,7 @@ const DEFAULT_MODULES = {
   // utils/scope.js gives an ATS-roleless login no requirements, no
   // candidates and no clients. Being made a Recruiter on Users is what
   // fills them, on the SAME login.
-  EMPLOYEE: ['dashboard', 'hrms', 'requirements', 'clients', 'candidates', 'interviews', 'reports'],
+  EMPLOYEE: ['dashboard', 'hrms', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'reports'],
   // A candidate reaches their own profile, applications and interviews. Scope
   // (utils/scope.js) pins every one of those to their own candidate row.
   CANDIDATE: ['dashboard', 'candidates', 'interviews'],
@@ -441,7 +441,25 @@ const DEFAULT_RULES = [
   { module: 'recruiterbde', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
 
   // --- An employee's ATS: the Job Portal, and nothing else ---------------
-  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
+  // THE ATS MODULES ARE VISIBLE TO AN EMPLOYEE (product table: HRMS + ATS +
+  // Job Portal). An Employee was reaching the ATS group and finding only the
+  // dashboard in it, because every sidebar entry below it asks for the view
+  // on its own LIST feature and none of them named EMPLOYEE.
+  //
+  // The five LIST features are named one by one rather than granting `*`: a
+  // module should open, not hand over Commercial Terms, Rejection & Hold or
+  // Resume & Scores along with it.
+  //
+  // WHAT THEY SEE INSIDE IS STILL THEIR ATS ROLE'S BUSINESS. utils/scope.js
+  // gives a login with no ATS working role no requirements, no clients and no
+  // candidates, so a plain Employee opens these and finds them empty — and
+  // the same screens fill the moment that person is made a Recruiter on
+  // Administration -> Users, on the SAME login.
+  { module: 'requirements', features: ['Requirement List', 'Job Portal Workspace'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
+  { module: 'clients', features: ['Client List'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
+  { module: 'candidates', features: ['Candidate List'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
+  { module: 'recruiterbde', features: ['Team View'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
+  { module: 'interviews', features: ['Calendar View'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
 
   // --- Accounts ----------------------------------------------------------
   // requireRole(...ACCOUNTS_ROLES) — invoices, bank (router-level), office

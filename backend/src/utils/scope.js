@@ -1,20 +1,20 @@
 // ---------------------------------------------------------------------------
 // Data scope — step 6/7 of the permission engine.
-//
+  //
 // Visibility is never role alone. It is
 //   user + product + PRODUCT ROLE + department + team + client + ownership
 //   + permission.
-//
+  //
 // And the role is the one for the product being asked about: requirements,
 // clients, candidates and the pipeline are scoped by the ATS role, employees
 // by the HRMS role, invoices by the Accounts role. An HRMS Employee who is an
 // ATS Recruiter is scoped as a Recruiter in ATS and as an employee in HRMS.
-//
+  //
 // Everything here runs ON THE SERVER and produces Prisma `where` fragments that
 // list endpoints must spread in. A hidden button is not access control; the
 // frontend hides UI from the same model, but these functions are what actually
 // refuses a request.
-//
+  //
 // This replaces the old DEPT_SCOPED_ROLES / isDeptScopedRole helper and the
 // ad-hoc `user.role === 'CLIENT'` filters that were scattered across routes.
 // ---------------------------------------------------------------------------
@@ -79,9 +79,9 @@ function scopeOf(user) {
 
 // --- Requirements ----------------------------------------------------------
 // THE ASSIGNMENT CHAIN IS THE SCOPE.
-//
+  //
 //   Requirement -> Assigned TL -> Assigned Recruiter(s) -> BDE -> Client
-//
+  //
 // Recruiter: the requirements they are assigned — primary `recruiterId` or a
 //   member of the comma-separated `recruiterIds` co-recruiter list.
 // TL: the requirements they lead (`tlId`) plus their department's, which is
@@ -90,7 +90,7 @@ function scopeOf(user) {
 // BDE: their clients and the requirements they own (`bdeId`).
 // Client: their own company, and never TeamLink's internal openings.
 // Candidate: none — they reach requirements through their own applications.
-//
+  //
 // `recruiterIds` is matched with `contains` on a delimited string. The ids are
 // cuids, so a substring collision is not a practical concern, but the value is
 // stored comma-delimited WITH surrounding commas trimmed and `matches()` below
@@ -161,7 +161,7 @@ function isAssignedTo(user, requirement) {
 // visibility had its own rule it could drift away from requirement
 // visibility, and a Medical recruiter would end up seeing IT postings in one
 // screen and not the other.
-//
+  //
 // A CLIENT's client-portal view is requirementWhere()'s client branch (own
 // company, never TeamLink's internal openings) with the publish flag REPORTED
 // per row rather than used as a filter: the client wants to know which of
@@ -183,6 +183,15 @@ function clientWhere(user) {
   // in utils/permissions.js names HR, so this widens what HR sees and
   // nothing they can do.
   if (s.atsRole === 'HR') return {};
+  // AN ATS LOGIN WITH NO ATS WORKING ROLE SEES NO ATS RECORDS.
+  //
+  // The ATS modules are visible to an Employee (product table), and every
+  // other helper already sent a roleless login to nothing — but this one fell
+  // through to the department branch, so a plain employee's Clients screen
+  // showed their department's client while Requirements and Candidates showed
+  // zero. One rule: the modules open, and they fill the moment that person is
+  // made a Recruiter or a BDE on Administration -> Users.
+  if (s.atsRole === 'EMPLOYEE' || s.atsRole === 'ACCOUNTANT') return { id: '__none__' };
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
   if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
   // A BDE is scoped to the clients assigned to them; where none are assigned
@@ -237,7 +246,7 @@ function applicationWhere(user) {
 
 // --- Candidates ------------------------------------------------------------
 // "A Client only sees candidates SHARED with that client."
-//
+  //
 // Reaching the client's requirement is not enough: a candidate sitting at
 // Recruiter Review on a client's role has not been put in front of that client
 // yet, and the client must not see them. These are the stages from the moment
@@ -301,15 +310,15 @@ function invoiceWhere(user) {
 // An employee record is an HRMS record, so the HRMS role scopes it: an HRMS
 // Employee sees only themselves even when their ATS role is a TL.
 // SCOPE LOOKS SIDEWAYS AND DOWN, NEVER UP.
-//
+  //
 // A department filter alone handed a Medical TL their own STL and both
 // Medical Managers — "medical TL ga login ithey, STL, Manager, vellu andharu
 // endhuku kanipisthunnaru". A lead is responsible for their team, not for the
 // people they report to, so an employee is in scope when their LEVEL is at or
 // below the viewer's on the same ladder the leave chain climbs:
-//
+  //
 //   Employee -> TL -> STL -> Manager -> Asst Manager -> Admin -> Super Admin
-//
+  //
 // Recruiters, BDEs and Accountants sit at employee level: they are individual
 // contributors, whatever product they work in.
 const SENIORITY = {
@@ -392,7 +401,7 @@ function employeeWhere(user) {
 // "hrms ayina, ats ayina, accounts ayina, ey department vallaki ahh department
 // dhey visible avvali" — whichever product, a person sees their own
 // department's data and nobody else's.
-//
+  //
 // Four helpers, and every department-aware list in the app spreads one of
 // them. This is NOT a second scoping mechanism: each one is expressed in terms
 // of scopeOf() / employeeWhere() above, so widening a role's scope in one
@@ -411,7 +420,7 @@ function departmentsOf(user) {
 
 // Is this login company-wide IN HRMS? Super Admin / Admin are, everywhere; HR
 // is, here only.
-//
+  //
 // It is a function of the HRMS ROLE alone, and it is kept out of
 // scopeOf().global on purpose: a person who is HR in HRMS and a Recruiter in
 // ATS must still be a Recruiter's scope in ATS. requirementWhere(),
@@ -439,11 +448,11 @@ function departmentWhere(user, field = 'department') {
 // Attendance, LeaveRequest, Payslip, EmployeeRecord, PerformanceReview,
 // HelpdeskTicket and the rest of HRMS. It is employeeWhere() lifted through
 // the relation, so the three tiers stay in ONE place:
-//
+  //
 //   global (Super Admin / Admin / unconfigured Manager) -> every employee
 //   HRMS lead with departments (STL/TL/Manager/AsstMgr) -> their departments
 //   everyone else                                       -> themselves only
-//
+  //
 // An HRMS-only Employee therefore keeps exactly the self-service rows they had
 // before, and a Medical TL stops seeing an IT employee's attendance.
 function employeeRecordWhere(user, relation = 'employee') {
@@ -464,7 +473,7 @@ function employeeInScope(user, employee) {
 // recruiting desk they were scoped to, so narrowing them to it would mean an
 // accountant could only invoice the Accounts department and only pay three
 // people — which is not department isolation, it is a broken ledger.
-//
+  //
 // So an Accountant stays company-wide for Accounts and Payroll. Department
 // isolation still reaches these products: it is invoiceWhere() below that
 // decides, by the CLIENT's owning department and the REQUIREMENT's department,
