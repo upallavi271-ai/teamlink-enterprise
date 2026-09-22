@@ -585,7 +585,11 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
               <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Status>{r.status}</Status>
                 {r.workflow && <button className="btn btn-sm" onClick={() => setChainFor(r.id)}>Chain</button>}
-                {isHR && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => decide(r, 'Cancelled')}>Confirm Cancel</button>}
+                {/* Confirming a cancellation is a DECISION, so it needs the
+                    approve permission — isHR is a view permission a Manager
+                    keeps, which is why this button was showing to a role the
+                    API then refused with a 403. */}
+                {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => decide(r, 'Cancelled')}>Confirm Cancel</button>}
                 {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
               </span>
             </AssignRow>
@@ -770,6 +774,10 @@ export default function Leave() {
   // Holidays and therefore loses the buttons — and gets them back the moment
   // the catalog grants it, with no code change here.
   const canApprove = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'approve');
+  // Same rule for the holidays desk: the API guards POST /leave/holidays with
+  // the CREATE action, so the tab asks the engine that same question. isAdmin()
+  // was too narrow — HR holds HRMS edit rights and the API already lets HR in.
+  const canManageHolidays = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'create');
   const [applyOpen, setApplyOpen] = useState(false);
   const [types, setTypes] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -794,7 +802,9 @@ export default function Leave() {
         tabs={[
           { key: 'dashboard', label: 'Dashboard', element: <DashboardTab user={user} isHR={isHR} canEditPolicy={canEditPolicy} canApprove={canApprove} reloadKey={reloadKey} onReload={() => setReloadKey((k) => k + 1)} /> },
           { key: 'reports', label: 'Reports', element: <ReportsTab reloadKey={reloadKey} /> },
-          { key: 'holidays', label: 'Holidays', element: <HolidaysTab canManage={isHR} /> },
+          // Managing holidays is a WRITE, so it follows the create permission
+          // and not a role name — HR manages holidays, a view-only Manager does not.
+          { key: 'holidays', label: 'Holidays', element: <HolidaysTab canManage={canManageHolidays} /> },
         ]}
       />
       {applyOpen && (

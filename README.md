@@ -128,7 +128,7 @@ the **department** supplies the data scope. There is no compound role such as
 | `edu1@teamlink.com` | Educational / Recruiter | Recruiter | the Education requirements assigned to them |
 | `bde1@teamlink.com` | BDE / BDE | BDE | assigned clients — Vertex, Nalanda, Orbit |
 | `accounts@teamlink.com` | Accounts / Accountant | Accountant | Accounts + HRMS self-service |
-| `employee@teamlink.com` | HR / Employee | Employee | HRMS self-service only |
+| `employee@teamlink.com` | Medical / Employee | Employee | HRMS self-service only |
 | `client@teamlink.com` | Client A — Orbit Software | Client | own company only |
 | `clientb@teamlink.com` | Client B — Medivant Healthcare | Client | own company only |
 | `candidate@teamlink.com` | Candidate — Sharath Kamath | Candidate | own profile only |

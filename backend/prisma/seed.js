@@ -1098,9 +1098,18 @@ async function main() {
     email: 'accounts@teamlink.com', name: 'Suresh Pattnaik', department: 'Accounts',
     team: 'Accounts', designation: 'Accountant',
   });
+  // A plain employee needs a REAL PLACE IN THE REPORTING STRUCTURE, or the
+  // leave chain has nobody to resolve: department HR had no TL and no STL, so
+  // every request from her jumped straight to Admin. Medical / Medical Team-A
+  // is a desk that actually HAS both, so the chain resolves the whole way:
+  //   Employee -> TL (Medical Team-A) -> STL -> Manager -> Asst Manager SKIPPED,
+  //   because the seeded Asst Manager is scoped to IT + Manufacturing only
+  //   -> Admin -> Super Admin
+  // which is also the clearest demonstration of a level being SKIPPED with a
+  // reason rather than filled with the wrong person.
   const cEmployee = await staffLogin({
-    email: 'employee@teamlink.com', name: 'Kavya Reddy', department: 'HR',
-    designation: 'Employee',
+    email: 'employee@teamlink.com', name: 'Kavya Reddy', department: 'Medical',
+    team: 'Medical Team-A', designation: 'Employee',
   });
 
   // --- The HR desk (§6) ------------------------------------------------------
@@ -1397,7 +1406,7 @@ async function main() {
   console.log('  edu1@teamlink.com                     Educational / Recruiter   -> RECRUITER, assigned Education reqs');
   console.log('  bde1@teamlink.com                     BDE / BDE                 -> BDE, assigned clients (Vertex, Nalanda, Orbit)');
   console.log('  accounts@teamlink.com                 Accounts / Accountant     -> ACCOUNTANT, Accounts + HRMS self-service');
-  console.log('  employee@teamlink.com                 HR / Employee             -> EMPLOYEE, HRMS self-service only');
+  console.log('  employee@teamlink.com                 Medical / Employee        -> EMPLOYEE, HRMS self-service only');
   console.log('  hr@teamlink.com                       HR / HR                   -> HR, HRMS only, EVERY employee, no ATS/Accounts');
   console.log('  client@teamlink.com                   Client A (Orbit)          -> own company only');
   console.log('  clientb@teamlink.com                  Client B (Medivant)       -> own company only');
