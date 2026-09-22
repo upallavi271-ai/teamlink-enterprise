@@ -7,6 +7,7 @@ import {
 } from '../../components/proto.jsx';
 import { can } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
+import CourseManage from './CourseManage.jsx';
 
 // ---------------------------------------------------------------------------
 // Learning (LMS) — two stacked sections.
@@ -77,6 +78,11 @@ export default function Lms() {
   const [tab, setTab] = useState('dashboard');
   const [screen, setScreen] = useState(null);      // a Key Feature screen
   const [courseId, setCourseId] = useState(null);  // a single course screen
+  // Whoever may CREATE on Performance & Development runs the course: the
+  // materials, the question bank and who is enrolled. Same permission the
+  // write endpoints are guarded by, asked once here.
+  const canManageCourse = can(user, 'hrms', 'hrms', 'Performance & Development', 'create');
+  const [managing, setManaging] = useState(null);
   const [modal, setModal] = useState(null);        // 'enroll' | 'material'
 
   const load = useCallback(() => {
@@ -128,6 +134,11 @@ export default function Lms() {
     : scope.global
       ? 'Your scope is organization-wide.'
       : `Your scope: ${[...(scope.departments || []), ...(scope.teams || [])].join(', ') || 'your own record'} · ${scope.employeeCount} employee(s).`;
+
+  // ---- Course management: materials, assessment, enrolled employees -------
+  if (managing) {
+    return <CourseManage courseId={managing} onBack={() => { setManaging(null); load(); }} />;
+  }
 
   // ---- A single course's own screen ---------------------------------------
   const openCourse = myCourses.find((c) => c.id === courseId);
@@ -216,8 +227,13 @@ export default function Lms() {
               key={c.id}
               row={c}
               action={(
-                <button className={`btn btn-sm${c.enrolled ? '' : ' btn-primary'}`} onClick={() => setCourseId(c.id)}>
-                  {c.enrolled ? 'View Course' : 'View & Enroll'}
+                <button className={`btn btn-sm${c.enrolled ? '' : ' btn-primary'}`}
+                  onClick={() => (canManageCourse ? setManaging(c.id) : setCourseId(c.id))}
+                >
+                  {/* A course OWNER opens the management screen — materials,
+                      the question bank and who is enrolled. A learner opens
+                      their own progress view, which is what this always was. */}
+                  {canManageCourse ? 'View & Manage' : (c.enrolled ? 'View Course' : 'View & Enroll')}
                 </button>
               )}
             />

@@ -1198,6 +1198,8 @@ model Course {
   createdAt DateTime @default(now())
 
   assignments CourseAssignment[]
+  materials   CourseMaterial[]
+  questions   AssessmentQuestion[]
 }
 
 model CourseAssignment {
@@ -1210,9 +1212,55 @@ model CourseAssignment {
   // When the learner finished — what the Certifications screen dates a
   // certificate by. Null for an enrollment still in progress.
   completedAt DateTime?
+  // Per-enrolment progress. "Video watch time: Not started" on the Enrolled
+  // Employees panel reads watchedSeconds; the score columns hold the last
+  // assessment attempt. Plain ADD COLUMNs — migration
+  // 20260922160000_lms_materials_assessment.
+  watchedSeconds Int     @default(0)
+  score          Int?
+  scoredAt       DateTime?
+  attempts       Int     @default(0)
   assignedAt DateTime @default(now())
 
   @@unique([courseId, employeeId])
+}
+
+// A file or link attached to a course. `storedPath` is where an upload landed;
+// `url` is used instead when the material is a link, so both kinds sit in one
+// list on the Course Materials panel.
+model CourseMaterial {
+  id         String   @id @default(cuid())
+  courseId   String
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title      String
+  fileName   String?
+  storedPath String?
+  mimeType   String?
+  sizeBytes  Int?
+  url        String?
+  uploadedBy String?
+  createdAt  DateTime @default(now())
+
+  @@index([courseId])
+}
+
+// One multiple-choice question in a course's question bank.
+//
+// correctIndex IS THE ANSWER AND IT NEVER LEAVES THE SERVER on a learner
+// request — the assessment endpoint strips it for whoever is taking the test
+// and returns it only to someone who may manage the course. Questions are
+// shuffled per attempt for the same reason.
+model AssessmentQuestion {
+  id           String   @id @default(cuid())
+  courseId     String
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  question     String
+  options      String   // JSON array of option strings
+  correctIndex Int
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([courseId])
 }
 
 model Project {
