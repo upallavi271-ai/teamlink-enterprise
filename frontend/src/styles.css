@@ -362,7 +362,16 @@ tr.kidrow td:first-child{padding-left:26px;color:var(--ink-soft)}
 .brand-lockup{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
 /* The supplied artwork, at its natural 136x33 — never stretched and never
    upscaled, which is what kept the old mark looking blurry. */
-.brand-mark{display:block;max-width:100%;height:auto;flex:none}
+/* The supplied file is a 136x33 BITMAP, so on a 125%/150% Windows display or
+   any HiDPI screen the browser has to invent pixels and the mark goes soft.
+   Two things keep it as sharp as the artwork allows: it is never drawn wider
+   than its natural size (Logo.jsx clamps), and optimize-contrast asks for a
+   nearest-neighbour-ish upscale instead of a smooth one, which on flat-colour
+   type reads crisp rather than mushy. A genuinely crisp mark at any size
+   needs a HIGHER-RESOLUTION SOURCE — an SVG, or a PNG about 550px wide. Drop
+   one in beside this file, swap the import in Logo.jsx, and raise NATURAL_W. */
+.brand-mark{display:block;max-width:100%;height:auto;flex:none;
+  image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges}
 /* The artwork is navy type on white, so on the dark sidebar it sits on a
    white plate. Inverting or filtering it would change the brand colours. */
 .brand-plate{display:inline-block;background:#fff;border-radius:7px;padding:6px 9px;line-height:0}
@@ -578,3 +587,25 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
    than making the panel scroll sideways, which matters most on a phone. */
 .ai-turn{overflow-wrap:anywhere}
 .ai-foot-restart{display:block;margin-top:7px;text-align:right;width:100%}
+
+/* The line under the AI ask box when no language model is connected. The box
+   itself is always rendered now — hiding it left the panel with preset
+   buttons and no way to type, which is what was reported. */
+.ai-ask-note{padding:6px 12px 10px;font-size:11px;line-height:1.5;
+  border-top:1px dashed var(--line);background:var(--paper-raised)}
+
+/* --- Employee Management row cells ---------------------------------------
+   The Actions cell used to be a run of loose buttons separated by {' '},
+   which wrapped into a ragged block four lines deep and pushed every row to
+   a different height. A flex row wraps predictably and keeps the buttons on
+   a shared baseline, so the column lines up down the table. */
+.row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.row-actions .btn{margin:0}
+.col-actions{white-space:normal;min-width:260px}
+
+/* Completion reads as a number AND a bar — the number alone made it hard to
+   compare rows at a glance. */
+.pct-cell{display:flex;align-items:center;gap:8px}
+.pct-bar{flex:1;min-width:46px;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.pct-bar > i{display:block;height:100%;border-radius:999px;background:var(--teal);transition:width .2s ease}
+.pct-num{font-size:12px;color:var(--ink-soft);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}

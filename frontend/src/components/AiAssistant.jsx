@@ -516,19 +516,23 @@ export default function AiAssistant() {
                 )}
               </div>
 
-              {ai && ai.configured && (
-                <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); send('assistant', drafts.assistant); }}>
-                  <input
-                    value={drafts.assistant}
-                    onChange={(e) => setDrafts((d) => ({ ...d, assistant: e.target.value }))}
-                    placeholder="Ask about your requirements, candidates or queue"
-                    disabled={busy}
-                    maxLength={2000}
-                  />
-                  <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !drafts.assistant.trim()}>
-                    {busy ? '…' : 'Ask'}
-                  </button>
-                </form>
+              <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); send('assistant', drafts.assistant); }}>
+                <input
+                  value={drafts.assistant}
+                  onChange={(e) => setDrafts((d) => ({ ...d, assistant: e.target.value }))}
+                  placeholder="Ask about your requirements, candidates or queue"
+                  disabled={busy}
+                  maxLength={2000}
+                />
+                <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !drafts.assistant.trim()}>
+                  {busy ? '…' : 'Ask'}
+                </button>
+              </form>
+              {ai && !ai.configured && (
+                <div className="ai-ask-note small-muted">
+                  You can type here now — the answer will explain that no language model is connected yet.
+                  Administration → Integrations is where the key goes.
+                </div>
               )}
 
               <div className="ai-foot small-muted">
@@ -609,19 +613,23 @@ export default function AiAssistant() {
                 )}
               </div>
 
-              {ai && ai.configured && (
-                <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); send('agent', drafts.agent); }}>
-                  <input
-                    value={drafts.agent}
-                    onChange={(e) => setDrafts((d) => ({ ...d, agent: e.target.value }))}
-                    placeholder="Tell the agent what to do"
-                    disabled={busy}
-                    maxLength={2000}
-                  />
-                  <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !drafts.agent.trim()}>
-                    {busy ? '…' : 'Run'}
-                  </button>
-                </form>
+              <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); send('agent', drafts.agent); }}>
+                <input
+                  value={drafts.agent}
+                  onChange={(e) => setDrafts((d) => ({ ...d, agent: e.target.value }))}
+                  placeholder="Tell the agent what to do"
+                  disabled={busy}
+                  maxLength={2000}
+                />
+                <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !drafts.agent.trim()}>
+                  {busy ? '…' : 'Run'}
+                </button>
+              </form>
+              {ai && !ai.configured && (
+                <div className="ai-ask-note small-muted">
+                  You can type here now — the answer will explain that no language model is connected yet.
+                  Administration → Integrations is where the key goes.
+                </div>
               )}
 
               <div className="ai-foot small-muted">

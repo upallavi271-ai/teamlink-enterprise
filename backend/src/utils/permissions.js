@@ -117,6 +117,15 @@ const SET = {
   // that is HRMS-ONLY: it holds no ATS or Accounts role at all, and it is the
   // one member that is NOT department-scoped (utils/scope.js hrmsGlobal).
   HR: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR'],
+  // THE HR DESK. SET.HR above is "everyone who administers other people's
+  // HRMS records" and it deliberately includes a Manager, an Assistant
+  // Manager, an STL and a TL — all of whom read employee records. This
+  // narrower set is the people whose JOB is the employee master: creating the
+  // record, issuing the credentials and deciding the profile submissions.
+  // Manager and Assistant Manager are NOT in it (§3/§4 make them view-only)
+  // and neither are STL/TL, who look after their own team but do not run
+  // onboarding.
+  HR_DESK: ['SUPER_ADMIN', 'ADMIN', 'HR'],
   // routes/invoices.js + bank.js + office.js ACCOUNTS_ROLES, payroll.js PAYROLL_ROLES
   ACCOUNTS: ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'],
   // routes/candidates.js RECRUITING_ROLES
@@ -371,6 +380,14 @@ const DEFAULT_RULES = [
   // self-service-only login across attendance, leave and employee services.
   { module: 'hrms', features: ['Employee Management'], actions: ['view', 'edit'], roles: SET.HR },
   { module: 'hrms', features: ['Employee Management'], actions: ['create', 'export', 'delete', 'approve', 'assign', 'configure'], roles: SET.ADMIN },
+  // THE HR DESK RUNS ONBOARDING AND REVIEW. "HR mail nunchi credentials send
+  // chestham... submit for review chestharu, HR avi anni review chesi submit
+  // chesthey lock avvali" — that whole loop is HR's, so HR needs to CREATE
+  // the record, EXPORT the register and APPROVE (which is also what Reject
+  // and Unlock are checked against). DELETE, ASSIGN and CONFIGURE stay with
+  // SET.ADMIN above: removing a person, handing out roles and scope, and
+  // changing the lock policy are administration, not HR desk work.
+  { module: 'hrms', features: ['Employee Management'], actions: ['create', 'export', 'approve'], roles: SET.HR_DESK },
   // requireRole(...PAYROLL_ROLES) — payroll structures, runs, F&F, reports.
   { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'create', 'edit', 'approve', 'export'], roles: SET.ACCOUNTS },
   // requireRole('SUPER_ADMIN','ADMIN') — attendance policy, payroll policy &

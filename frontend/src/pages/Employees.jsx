@@ -111,6 +111,10 @@ export default function Employees() {
   const [credentials, setCredentials] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
   const [transferForm, setTransferForm] = useState({ department: '', team: '', reason: '' });
+  // The inline Reject dialog. Rejecting needs a REASON — the API refuses
+  // without one, because the employee has to be told what to correct.
+  const [rejectFor, setRejectFor] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -140,6 +144,20 @@ export default function Employees() {
       setError(err.response?.data?.error || 'That change could not be saved.');
       return false;
     }
+  }
+
+  // APPROVE / REJECT, inline on the row. Same two endpoints the record page
+  // uses — this is a second way in, not a second implementation.
+  async function approveProfile(e) {
+    await run(() => api.patch(`/employees/${e.id}/changes/approve`),
+      `${e.name}'s profile approved. It is locked again, and Unlock is on the row if they need to correct something.`);
+  }
+
+  async function submitReject(ev) {
+    ev.preventDefault();
+    const ok = await run(() => api.patch(`/employees/${rejectFor.id}/changes/reject`, { reason: rejectReason.trim() }),
+      `Sent back to ${rejectFor.name} with your note.`);
+    if (ok) { setRejectFor(null); setRejectReason(''); }
   }
 
   const filtered = useMemo(() => rows.filter((e) => {
@@ -694,131 +712,104 @@ export default function Employees() {
       <div className="tbl-wrap">
         <table>
           <thead>
+            {/* THE EIGHT COLUMNS THIS SCREEN IS SPECIFIED TO CARRY. It used to
+                show twenty-three, which is why nothing on it lined up and the
+                Actions cell wrapped onto four lines. NOTHING WAS DROPPED: the
+                other master fields — department, email, mobile, reporting line,
+                location, joining date, product access, last login — are all on
+                the record behind the name and in the View drawer, and login
+                administration (roles, scope, password, sign-in link) moved to
+                Administration -> Users, which is the screen that owns logins. */}
             <tr>
-              {/* The ten the screen is specified to carry, in order, then the
-                  master columns the prototype's table also shows. */}
-              <th>Employee ID</th><th>Name</th><th>Department</th><th>Designation</th><th>Role</th>
-              <th>Email</th><th>Status</th><th>Profile Status</th><th>Scope</th>
-              <th>Mobile</th><th>Team</th><th>Reporting Manager</th><th>STL</th><th>TL</th>
-              <th>Location</th><th>Joining Date</th>
-              <th>HRMS</th><th>ATS</th><th>Accounts</th><th>Login Status</th><th>Last Login</th><th>Completion</th>
-              <th>Actions</th>
+              <th style={{ width: 110 }}>Emp ID</th>
+              <th>Name</th>
+              <th>Designation</th>
+              <th style={{ width: 120 }}>Status</th>
+              <th style={{ width: 150 }}>Profile Status</th>
+              <th>Team</th>
+              <th style={{ width: 130 }}>Completion</th>
+              <th className="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((e) => (
-              <tr key={e.id}>
-                <td><b>{e.employeeCode}</b></td>
-                <td className="row-link"><Link to={`/employees/${e.id}`}>{e.name}</Link></td>
-                <td className="cell-muted">{e.department || '—'}</td>
-                <td className="cell-muted">{e.designation || '—'}</td>
-                {/* ROLE — derived from the designation when the record was
-                    created, never a compound "Medical Recruiter". */}
-                <td className="cell-muted">{e.role ? atsRoleLabel(e.role) : '—'}</td>
-                <td className="cell-muted">{e.email || '—'}</td>
-                <td><span className={`status ${(e.employmentStatus || 'Active') === 'Active' ? 'active' : 'pending'}`}>{e.employmentStatus || 'Active'}</span></td>
-                <td>
-                  <span className={`status ${STATUS_BADGE[hrById[e.id]?.profileStatus] || ''}`}>
-                    {hrById[e.id] ? statusLabel(hrById[e.id].profileStatus) : '—'}
-                  </span>
-                </td>
-                {/* SCOPE — and Edit Scope, which lives here now. */}
-                <td className="cell-muted">
-                  {e.scope || '—'}
-                  {e.userId && caps.assign && (
-                    <div>
-                      <button
-                        className="link-btn"
-                        title="Which departments, teams and clients this login may reach — not their own profile lock"
-                        onClick={() => setScopeFor({
-                          id: e.id,
-                          name: e.name,
-                          role: e.role,
-                          atsScopeDepartments: e.atsScopeDepartments || '',
-                          atsScopeTeams: e.atsScopeTeams || '',
-                          atsScopeClients: e.atsScopeClients || '',
-                        })}
-                      >
-                        Edit scope
-                      </button>
+            {filtered.map((e) => {
+              const h = hrById[e.id];
+              // WAITING ON A DECISION. The employee filled their profile in and
+              // pressed Submit for Review, so Approve and Reject appear HERE the
+              // moment that happens, rather than only behind a link to another
+              // page.
+              const awaitingReview = !!(h && h.pendingChanges);
+              // ALREADY APPROVED AND LOCKED — so Unlock is the next thing HR
+              // reaches for. It reopens the employee's own profile for a bounded
+              // window; it is deliberately not offered while a submission is
+              // still waiting, because the decision comes first.
+              const canUnlock = !!(h && h.isLocked && !awaitingReview);
+              const pct = h ? h.profileCompletionPct : null;
+              return (
+                <tr key={e.id}>
+                  <td><b>{e.employeeCode}</b></td>
+                  <td className="row-link"><Link to={`/employees/${e.id}`}>{e.name}</Link></td>
+                  <td className="cell-muted">{e.designation || '—'}</td>
+                  <td>
+                    <span className={`status ${(e.employmentStatus || 'Active') === 'Active' ? 'active' : 'pending'}`}>
+                      {e.employmentStatus || 'Active'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`status ${STATUS_BADGE[h?.profileStatus] || ''}`}>
+                      {h ? statusLabel(h.profileStatus) : '—'}
+                    </span>
+                  </td>
+                  <td className="cell-muted">{e.team || '—'}</td>
+                  <td>
+                    {pct == null ? <span className="cell-muted">—</span> : (
+                      <span className="pct-cell">
+                        <span className="pct-bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></span>
+                        <span className="pct-num">{pct}%</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="col-actions">
+                    <div className="row-actions">
+                      <button className="btn btn-sm" onClick={() => openDetail(e.id)}>View</button>
+                      {caps.edit && <Link className="btn btn-sm" to={`/employees/${e.id}`}>Edit</Link>}
+                      {/* THESE TWO APPEAR BY THEMSELVES the moment the employee
+                          submits their profile for review. */}
+                      {caps.approve && awaitingReview && (
+                        <>
+                          <button className="btn btn-sm btn-primary" onClick={() => approveProfile(e)}>Approve</button>
+                          <button className="btn btn-sm btn-ghost" onClick={() => { setRejectFor(e); setRejectReason(''); }}>Reject</button>
+                        </>
+                      )}
+                      {/* AND THIS ONE APPEARS ONCE THE PROFILE IS APPROVED. */}
+                      {caps.approve && canUnlock && (
+                        <button
+                          className="btn btn-sm"
+                          title="Reopen this employee's own profile for a bounded window so they can correct it"
+                          onClick={() => { setGrantFor(e); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }}
+                        >
+                          Unlock
+                        </button>
+                      )}
+                      {caps.configure && (
+                        <button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-pause`), `${e.name} updated.`)}>
+                          {e.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}
+                        </button>
+                      )}
+                      {caps.delete && (
+                        <button className="btn btn-sm btn-ghost" onClick={() => {
+                          // eslint-disable-next-line no-alert
+                          if (!confirm(`Permanently delete ${e.name}? This removes their attendance, leave, payslip and other records too. This can't be undone.`)) return;
+                          run(() => api.delete(`/employees/${e.id}`), `${e.name} deleted.`);
+                        }}>Delete</button>
+                      )}
                     </div>
-                  )}
-                </td>
-                <td className="cell-muted">{e.phone || '—'}</td>
-                <td className="cell-muted">{e.team || '—'}</td>
-                <td className="cell-muted">{e.reportingManager || '—'}</td>
-                <td className="cell-muted">{e.stl || '—'}</td>
-                <td className="cell-muted">{e.tl || '—'}</td>
-                <td className="cell-muted">{e.location || '—'}</td>
-                <td className="cell-muted">{e.joiningDate || '—'}</td>
-                <td className="cell-muted">{productAccess(e, 'hrms')}</td>
-                <td className="cell-muted">{productAccess(e, 'ats')}</td>
-                <td className="cell-muted">{productAccess(e, 'accounts')}</td>
-                <td><span className={`status ${e.loginStatus === 'Active' ? 'active' : 'rejected'}`}>{e.loginStatus}</span></td>
-                <td className="cell-muted">{e.lastLogin || '—'}</td>
-                <td className="cell-muted">{hrById[e.id] ? `${hrById[e.id].profileCompletionPct}%` : '—'}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <button className="btn btn-sm" onClick={() => openDetail(e.id)}>View</button>{' '}
-                  {caps.edit && (
-                    <><button className="btn btn-sm" onClick={() => (e.userId
-                      ? setRoleTarget({ ...e, role: e.role, atsDepartment: e.atsDepartment || '', stl: e.stl || '', tl: e.tl || '' })
-                      : setError('Create a login for this employee first.'))}>Assign Roles</button>{' '}</>
-                  )}
-                  {caps.edit && (e.userId ? (
-                    <>
-                      <button className="btn btn-sm" onClick={() => run(() => api.post(`/employees/management/${e.id}/toggle-login`), `${e.name} login ${e.loginStatus === 'Active' ? 'deactivated' : 'activated'}.`)}>
-                        {e.loginStatus === 'Active' ? 'Deactivate' : 'Activate'}
-                      </button>{' '}
-                      <button className="btn btn-sm btn-ghost" onClick={() => { setResetFor(e); setResetPassword(''); }}>Reset Password</button>{' '}
-                      {/* Re-issues the single-use sign-in link and emails it
-                          from the acting HR user's own address. */}
-                      <button className="btn btn-sm" onClick={async () => {
-                        setError(''); setNotice(''); setCredentials(null);
-                        try {
-                          const res = await api.post(`/employees/${e.id}/send-credentials`);
-                          setCredentials({ ...res.data.credentials, name: e.name });
-                          load();
-                        } catch (err) { setError(err.response?.data?.error || 'Could not issue sign-in details.'); }
-                      }}>Send Sign-in</button>{' '}
-                    </>
-                  ) : (
-                    <><button className="btn btn-sm btn-primary" onClick={() => run(() => api.post(`/employees/management/${e.id}/create-login`), `Login created for ${e.name}.`)}>Create Login</button>{' '}</>
-                  ))}
-                  {/* REVIEW — only offered when something is actually waiting. */}
-                  {hrById[e.id]?.pendingChanges && (
-                    <><Link className="btn btn-sm btn-primary" to={`/employees/${e.id}`}>Review</Link>{' '}</>
-                  )}
-                  {/* GRANT EDIT ACCESS — temporarily reopens THIS employee's
-                      own locked profile. Never widens what they can see. */}
-                  {caps.approve && hrById[e.id]?.isLocked && (
-                    <><button className="btn btn-sm" title="Temporarily unlock this employee's own profile so they can correct it"
-                      onClick={() => { setGrantFor(e); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }}>
-                      Grant Edit Access
-                    </button>{' '}</>
-                  )}
-                  {caps.assign && (
-                    <><button className="btn btn-sm" onClick={() => { setTransferTarget(e); setTransferForm({ department: e.department || '', team: '', reason: '' }); }}>Transfer</button>{' '}</>
-                  )}
-                  {caps.configure && hrById[e.id]?.isLocked === false && (
-                    <><button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-lock`), `${e.name} profile locked.`)}>Lock</button>{' '}</>
-                  )}
-                  {caps.configure && (
-                    <><button className="btn btn-sm" onClick={() => run(() => api.patch(`/employees/${e.id}/toggle-pause`), `${e.name} updated.`)}>
-                      {e.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}
-                    </button>{' '}</>
-                  )}
-                  {caps.delete && (
-                    <button className="btn btn-sm btn-ghost" onClick={() => {
-                      // eslint-disable-next-line no-alert
-                      if (!confirm(`Permanently delete ${e.name}? This removes their attendance, leave, payslip and other records too. This can't be undone.`)) return;
-                      run(() => api.delete(`/employees/${e.id}`), `${e.name} deleted.`);
-                    }}>Delete</button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
             {filtered.length === 0 && (
-              <tr><td colSpan="23" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
+              <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
             )}
           </tbody>
         </table>
@@ -836,6 +827,37 @@ export default function Employees() {
           they can correct it; it expires, it is spent when they submit, and it never lets them see anybody else.
         </span>
       </div>
+
+      {/* REJECT — the API refuses without a reason, because "sent back" is
+          useless to the employee unless they are told what to correct. The
+          reason lands on their record and in the audit trail. */}
+      {rejectFor && (
+        <Modal
+          title={`Send back for correction — ${rejectFor.name}`}
+          onClose={() => { setRejectFor(null); setRejectReason(''); }}
+          foot={<>
+            <button className="btn" onClick={() => { setRejectFor(null); setRejectReason(''); }}>Cancel</button>
+            <button className="btn btn-primary" disabled={!rejectReason.trim()} onClick={submitReject}>Send back</button>
+          </>}
+        >
+          <form onSubmit={submitReject}>
+            <div className="small-muted" style={{ marginBottom: 10 }}>
+              {rejectFor.name}&apos;s profile goes back to them to correct and submit again. Their status becomes
+              <b> Change Requested</b>, and the note below is what they see.
+            </div>
+            <div className="field">
+              <label>What needs correcting? *</label>
+              <textarea
+                rows="3"
+                autoFocus
+                value={rejectReason}
+                placeholder="e.g. The PAN number does not match the document uploaded."
+                onChange={(ev) => setRejectReason(ev.target.value)}
+              />
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {grantFor && (
         <Modal
