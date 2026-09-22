@@ -1677,15 +1677,33 @@ model ApplicationFollowUp {
   dueDate         String?   // YYYY-MM-DD — what Upcoming/Due Today/Overdue is measured against
   nextFollowUpAt  String?   // YYYY-MM-DD — when the next touch is planned
   notes           String?
+  // §8 "What happened?" and §4 the call result — a RECORDED CHOICE, not a
+  // sentence somebody may or may not have typed.
+  outcome         String?
+  // §9 "What should happen next?" — the chosen next step, beside nextAction.
+  nextStep        String?
+  // A 3:00 PM callback needs the clock as well as the day.
+  dueTime         String?   // HH:MM
+  nextFollowUpTime String?  // HH:MM
+  // §18-§20 — raised by the SYSTEM at a stage change rather than by a person.
+  autoCreated     Boolean  @default(false)
+  purpose         String?   // Interview confirmation | Client decision | …
 
   completedAt   DateTime?
   completedById String?
   completedNote String?
 
-  // Escalation, recorded so an alert fires ONCE. Recruiter -> TL -> Super
-  // Admin: see utils/followups.js escalateOverdue().
-  escalatedTlAt    DateTime?
-  escalatedAdminAt DateTime?
+  // Escalation, recorded so an alert fires ONCE per rung. The ladder is
+  // Owner -> TL -> STL -> Admin -> Super Admin (§11-§13); `escalationLevel` is
+  // the rung it has reached, so a dashboard can group by it without
+  // re-deriving the answer from four timestamps.
+  stlUserId        String?
+  stlName          String?
+  escalatedTlAt         DateTime?
+  escalatedStlAt        DateTime?
+  escalatedAdminAt      DateTime?
+  escalatedSuperAdminAt DateTime?
+  escalationLevel       Int      @default(0)
 
   createdById   String?
   createdByName String?

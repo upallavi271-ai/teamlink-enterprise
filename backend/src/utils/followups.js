@@ -26,10 +26,45 @@ const { STAGE_OWNER_ACTION, stageLabel } = require('./atsVocab');
 const FOLLOWUP_STATUSES = ['Upcoming', 'Due Today', 'Overdue', 'Completed'];
 const CONTACT_MODES = ['Call', 'Email', 'WhatsApp', 'SMS', 'In Person', 'Video Call'];
 
+// §4 — how the call itself went. Asked only for a Call.
+const CALL_RESULTS = ['Answered', 'Not Answered', 'Busy', 'Switched Off', 'Wrong Number'];
+
+// §8 — "What happened?" A RECORDED CHOICE rather than a sentence somebody may
+// or may not have typed, so the next person can read the history at a glance.
+// The list is filtered by CONTEXT on the way out: a client follow-up is not
+// offered "Joining Confirmed".
+const FOLLOWUP_OUTCOMES = [
+  'Answered', 'Interested', 'Not Interested', 'Requested Later', 'No Response',
+  'Call Back', 'Interview Confirmed', 'Joining Confirmed', 'Client Decision Received',
+];
+
+// §9 — "What should happen next?" This is the half that stops a follow-up
+// ending in "we called them... and now what".
+const FOLLOWUP_NEXT_STEPS = [
+  'No further action', 'Follow up later', 'Schedule interview', 'Share with client',
+  'Wait for client response', 'Confirm joining',
+];
+
+// Every next step EXCEPT the two terminal ones needs a date — that is what
+// makes the chain continue instead of stopping silently.
+const NEXT_STEPS_NEEDING_DATE = FOLLOWUP_NEXT_STEPS.filter(
+  (s) => s !== 'No further action',
+);
+
+// §17 — the message templates, so nobody retypes the same thing.
+const FOLLOWUP_TEMPLATES = {
+  candidate: [
+    'Interview Reminder', 'Interview Confirmation', 'Interview Reschedule',
+    'Document Request', 'Joining Confirmation', 'Offer Follow-up',
+  ],
+  client: [
+    'Candidate Shared', 'Candidate Decision Reminder', 'Interview Feedback Reminder',
+    'Joining Confirmation', 'Requirement Follow-up',
+  ],
+};
+
 // Escalation thresholds, in days past the due date. Recruiter -> TL -> Super
 // Admin, exactly as the user drew it.
-const ESCALATE_TL_AFTER_DAYS = 1;
-const ESCALATE_ADMIN_AFTER_DAYS = 3;
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -155,37 +190,61 @@ async function currentFollowUpsByApplication(applicationIds) {
   out.forEach((row, key) => decorated.set(key, decorate(row, today)));
   return decorated;
 }
+// ---------------------------------------------------------------------------
+// THE ESCALATION LADDER (§11-§13).
+//
+//   Owner -> TL -> STL -> Admin -> Super Admin
+//
+// It used to be two rungs, TL then Super Admin, so a missed follow-up went
+// straight from a team lead to the top of the company with nobody in between.
+//
+// TWO RULES THE SPEC IS EXPLICIT ABOUT:
+//
+//   1. NOT EVERYONE IS TOLD AT ONCE. Each rung fires only after its own
+//      threshold, and only once — the timestamp on the row is what makes it
+//      once. Otherwise the alerts are noise and get ignored, which is the
+//      failure this feature exists to prevent.
+//   2. THE OWNER STAYS RESPONSIBLE. Escalating tells somebody else; it never
+//      moves the work. `ownerUserId` is untouched at every rung.
+//
+// The thresholds are in DAYS OVERDUE and deliberately spread, so the ladder is
+// a week long rather than an afternoon.
+const ESCALATION_LADDER = [
+  { level: 1, key: 'escalatedTlAt', afterDays: 1, audience: 'tl', label: 'TL' },
+  { level: 2, key: 'escalatedStlAt', afterDays: 3, audience: 'stl', label: 'STL' },
+  { level: 3, key: 'escalatedAdminAt', afterDays: 5, audience: 'admin', label: 'Admin' },
+  { level: 4, key: 'escalatedSuperAdminAt', afterDays: 7, audience: 'superadmin', label: 'Super Admin' },
+];
 
-// ---------------------------------------------------------------------------
-// ESCALATION — Recruiter -> TL alert -> Super Admin alert.
-//
-// WHEN IT FIRES: THERE IS NO SCHEDULER IN THIS APPLICATION. This function is
-// called ON READ — whenever the follow-up list or the ATS dashboard is
-// loaded — and additionally by POST /api/followups/run-escalation, which is
-// the endpoint a real cron would hit. Nothing here runs on a timer.
-//
-// Consequence, stated plainly rather than hidden: a follow-up that goes
-// overdue while nobody opens the app is not alerted until somebody does. The
-// alert is not lost — escalatedTlAt / escalatedAdminAt are null until it is
-// sent, so the first read after the fact still sends it exactly once — but it
-// is late by however long the app went unopened. Wiring the run-escalation
-// endpoint to a cron (or node-cron in src/index.js) is the whole of the fix,
-// and it is deliberately NOT done here: this app starts one process and has no
-// job runner, and adding a timer that only runs while a dev server happens to
-// be up would be a worse lie than saying so.
-//
-// Idempotent: each stamp is written once, so re-reading a list does not
-// re-alert. Never throws — an alert must not break a list.
-// ---------------------------------------------------------------------------
+// Who each rung notifies. The named person on the row for TL and STL; the
+// company-level logins for the last two, resolved once per run rather than per
+// row.
+async function audienceFor(rung, followUp, cache) {
+  if (rung.audience === 'tl') return [followUp.tlUserId].filter(Boolean);
+  if (rung.audience === 'stl') return [followUp.stlUserId].filter(Boolean);
+  const role = rung.audience === 'admin' ? 'ADMIN' : 'SUPER_ADMIN';
+  if (!cache[role]) {
+    // eslint-disable-next-line no-param-reassign
+    cache[role] = (await prisma.user.findMany({
+      where: { role, status: 'Active' },
+      select: { id: true },
+    })).map((u) => u.id);
+  }
+  return cache[role];
+}
+
 async function escalateOverdue({ limit = 300 } = {}) {
-  const summary = { checked: 0, tlAlerts: 0, adminAlerts: 0 };
+  const summary = {
+    checked: 0, tlAlerts: 0, stlAlerts: 0, adminAlerts: 0, superAdminAlerts: 0, skipped: 0,
+  };
   try {
     const today = todayStr();
     const open = await prisma.applicationFollowUp.findMany({
       where: {
         completedAt: null,
         dueDate: { not: null, lt: today },
-        OR: [{ escalatedTlAt: null }, { escalatedAdminAt: null }],
+        // Anything that has not yet reached the top of the ladder.
+        escalatedSuperAdminAt: null,
       },
       take: limit,
       orderBy: { dueDate: 'asc' },
@@ -193,52 +252,48 @@ async function escalateOverdue({ limit = 300 } = {}) {
     summary.checked = open.length;
     if (!open.length) return summary;
 
-    // Resolved once, not per row.
-    let admins = [];
-    const needAdmin = open.some((f) => !f.escalatedAdminAt
-      && daysOverdue(f, today) >= ESCALATE_ADMIN_AFTER_DAYS);
-    if (needAdmin) {
-      admins = await prisma.user.findMany({
-        where: { role: 'SUPER_ADMIN', status: 'Active' },
-        select: { id: true },
-      });
-    }
+    const cache = {};
+    const counters = {
+      tl: 'tlAlerts', stl: 'stlAlerts', admin: 'adminAlerts', superadmin: 'superAdminAlerts',
+    };
 
     for (const f of open) {
       const late = daysOverdue(f, today);
-      const what = `${f.nextAction || 'Follow-up'} — due ${f.dueDate}, ${late} day(s) overdue.`;
+      const what = `${f.nextAction || 'Follow-up'} — due ${f.dueDate}${f.dueTime ? ` ${f.dueTime}` : ''}, ${late} day(s) overdue.`;
       const who = f.ownerName || 'the owner';
 
-      if (!f.escalatedTlAt && late >= ESCALATE_TL_AFTER_DAYS) {
-        const audience = [f.tlUserId].filter(Boolean);
-        if (audience.length) {
-          // eslint-disable-next-line no-await-in-loop
-          await notifyUsers(audience, {
-            title: `Overdue follow-up escalated to you — ${who}`,
-            message: what,
-          });
-          summary.tlAlerts += 1;
-        }
-        // The stamp is written even where no TL is named, so the row moves on
-        // to the Super Admin rung instead of retrying a recipient that does
-        // not exist on every single read.
-        // eslint-disable-next-line no-await-in-loop
-        await prisma.applicationFollowUp.update({
-          where: { id: f.id }, data: { escalatedTlAt: new Date() },
-        });
-      }
+      for (const rung of ESCALATION_LADDER) {
+        if (f[rung.key]) continue;              // this rung already fired
+        if (late < rung.afterDays) break;       // and no later rung is due either
 
-      if (!f.escalatedAdminAt && late >= ESCALATE_ADMIN_AFTER_DAYS && admins.length) {
         // eslint-disable-next-line no-await-in-loop
-        await notifyUsers(admins.map((a) => a.id), {
-          title: `Follow-up still overdue after ${late} days — ${who}`,
-          message: `${what} Escalated past ${f.tlName || 'the TL'}.`,
+        const audience = await audienceFor(rung, f, cache);
+        if (!audience.length) {
+          // NOBODY HOLDS THIS RUNG — say so on the row and carry on up rather
+          // than stalling the ladder at a level that has no one in it.
+          summary.skipped += 1;
+          // eslint-disable-next-line no-await-in-loop
+          await prisma.applicationFollowUp.update({
+            where: { id: f.id }, data: { [rung.key]: new Date() },
+          });
+          continue;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        await notifyUsers(audience, {
+          title: `Overdue follow-up escalated to you — ${who}`,
+          message: rung.level === 1
+            ? what
+            : `${what} Already escalated past ${ESCALATION_LADDER[rung.level - 2].label}. ${who} is still the owner.`,
         });
         // eslint-disable-next-line no-await-in-loop
         await prisma.applicationFollowUp.update({
-          where: { id: f.id }, data: { escalatedAdminAt: new Date() },
+          where: { id: f.id },
+          // THE OWNER IS NOT CHANGED. Escalating tells somebody else; it does
+          // not hand the work over.
+          data: { [rung.key]: new Date(), escalationLevel: rung.level },
         });
-        summary.adminAlerts += 1;
+        summary[counters[rung.audience]] += 1;
       }
     }
   } catch (err) {
@@ -252,8 +307,12 @@ async function escalateOverdue({ limit = 300 } = {}) {
 module.exports = {
   FOLLOWUP_STATUSES,
   CONTACT_MODES,
-  ESCALATE_TL_AFTER_DAYS,
-  ESCALATE_ADMIN_AFTER_DAYS,
+  CALL_RESULTS,
+  FOLLOWUP_OUTCOMES,
+  FOLLOWUP_NEXT_STEPS,
+  NEXT_STEPS_NEEDING_DATE,
+  FOLLOWUP_TEMPLATES,
+  ESCALATION_LADDER,
   todayStr,
   followUpStatus,
   daysOverdue,

@@ -25,6 +25,8 @@ const { stageLabel } = require('../utils/atsVocab');
 const {
   FOLLOWUP_STATUSES, CONTACT_MODES, decorate, chainSnapshot, resolveNames,
   defaultNextAction, defaultDueDate, escalateOverdue, todayStr, followUpStatus,
+  CALL_RESULTS, FOLLOWUP_OUTCOMES, FOLLOWUP_NEXT_STEPS, NEXT_STEPS_NEEDING_DATE,
+  FOLLOWUP_TEMPLATES, ESCALATION_LADDER,
 } = require('../utils/followups');
 
 const router = express.Router();
@@ -296,6 +298,16 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'edit'), async
 
 // Mark the open follow-up done without opening another — "this thread is
 // finished", as distinct from "I called, here is the next one".
+// COMPLETING A FOLLOW-UP IS TWO ANSWERS, NOT A NOTE (§8, §9).
+//
+// This used to take one free-text `note`, so "what happened" and "what next"
+// were whatever the owner chose to type — or did not. Both are recorded
+// choices now, and a next step that implies another touch REFUSES to save
+// without a date. That refusal is the whole point: it is what stops a
+// follow-up ending in "we called them, and now nobody knows what happens".
+//
+// A SECOND FOLLOW-UP IS RAISED AUTOMATICALLY when a date is given, so the
+// chain continues without anybody remembering to start it.
 router.post('/:id/complete', requirePerm('ats', 'candidates', 'Applications', 'edit'), async (req, res, next) => {
   try {
     const row = await prisma.applicationFollowUp.findUnique({ where: { id: req.params.id } });
@@ -307,25 +319,87 @@ router.post('/:id/complete', requirePerm('ats', 'candidates', 'Applications', 'e
     }
     if (row.completedAt) return res.status(400).json({ error: 'This follow-up is already completed.' });
 
+    const outcome = req.body.outcome ? String(req.body.outcome).trim() : '';
+    const nextStep = req.body.nextStep ? String(req.body.nextStep).trim() : '';
+    const nextDate = req.body.nextFollowUpAt ? String(req.body.nextFollowUpAt).trim() : '';
+    const nextTime = req.body.nextFollowUpTime ? String(req.body.nextFollowUpTime).trim() : '';
+
+    if (!outcome) {
+      return res.status(400).json({ error: 'Record what happened before closing this follow-up.' });
+    }
+    if (!FOLLOWUP_OUTCOMES.includes(outcome)) {
+      return res.status(400).json({ error: `Unknown outcome. Choose one of: ${FOLLOWUP_OUTCOMES.join(', ')}.` });
+    }
+    if (!nextStep) {
+      return res.status(400).json({ error: 'Choose what should happen next.' });
+    }
+    if (!FOLLOWUP_NEXT_STEPS.includes(nextStep)) {
+      return res.status(400).json({ error: `Unknown next step. Choose one of: ${FOLLOWUP_NEXT_STEPS.join(', ')}.` });
+    }
+    if (NEXT_STEPS_NEEDING_DATE.includes(nextStep) && !nextDate) {
+      return res.status(400).json({
+        error: `"${nextStep}" needs a date — otherwise nobody knows when it is owed.`,
+      });
+    }
+
     const updated = await prisma.applicationFollowUp.update({
       where: { id: row.id },
       data: {
         completedAt: new Date(),
         completedById: req.user.id,
         completedNote: req.body.note || null,
+        outcome,
+        nextStep,
+        contactMode: req.body.contactMode || row.contactMode,
+        nextFollowUpAt: nextDate || null,
+        nextFollowUpTime: nextTime || null,
         lastContactedAt: row.lastContactedAt || new Date(),
       },
     });
+
+    // THE CHAIN CONTINUES BY ITSELF. Where a date was given, the next
+    // follow-up exists the moment this one closes — the owner does not have to
+    // remember to raise it, which is exactly how chains break.
+    let nextFollowUp = null;
+    if (nextDate) {
+      nextFollowUp = await prisma.applicationFollowUp.create({
+        data: {
+          applicationId: row.applicationId,
+          candidateId: row.candidateId,
+          requirementId: row.requirementId,
+          ownerUserId: row.ownerUserId,
+          ownerName: row.ownerName,
+          ownerRole: row.ownerRole,
+          tlUserId: row.tlUserId,
+          tlName: row.tlName,
+          stlUserId: row.stlUserId,
+          stlName: row.stlName,
+          bdeUserId: row.bdeUserId,
+          bdeName: row.bdeName,
+          nextAction: nextStep,
+          purpose: nextStep,
+          dueDate: nextDate,
+          dueTime: nextTime || null,
+          autoCreated: true,
+          createdById: req.user.id,
+          createdByName: req.user.name || null,
+        },
+      });
+    }
+
     await logAudit({
       userId: req.user.id,
       action: 'Follow-up completed',
       entity: 'Application',
       entityId: application.id,
       fromValue: `${row.nextAction || '—'} (due ${row.dueDate || '—'})`,
-      toValue: 'Completed',
+      toValue: `${outcome} → ${nextStep}${nextDate ? ` on ${nextDate}${nextTime ? ` ${nextTime}` : ''}` : ''}`,
       actorName: req.user.name,
     });
-    return res.json(shape(updated, application));
+    return res.json({
+      ...shape(updated, application),
+      nextFollowUp: nextFollowUp ? shape(nextFollowUp, application) : null,
+    });
   } catch (err) {
     return next(err);
   }
@@ -343,6 +417,15 @@ router.post('/run-escalation', requirePerm('ats', 'candidates', 'Applications', 
   }
 });
 
-router.get('/statuses', (req, res) => res.json({ statuses: FOLLOWUP_STATUSES, contactModes: CONTACT_MODES }));
+router.get('/statuses', (req, res) => res.json({
+  statuses: FOLLOWUP_STATUSES,
+  contactModes: CONTACT_MODES,
+  callResults: CALL_RESULTS,
+  outcomes: FOLLOWUP_OUTCOMES,
+  nextSteps: FOLLOWUP_NEXT_STEPS,
+  nextStepsNeedingDate: NEXT_STEPS_NEEDING_DATE,
+  templates: FOLLOWUP_TEMPLATES,
+  escalationLadder: ESCALATION_LADDER.map((r) => ({ level: r.level, label: r.label, afterDays: r.afterDays })),
+}));
 
 module.exports = router;
