@@ -57,7 +57,7 @@ router.param('id', async (req, res, next, id) => {
 // they hold global scope.
 // ---------------------------------------------------------------------------
 async function requirementPermissions(user, record) {
-  const [view, edit, approve, assign, share, exportable, pipeline, matching] = await Promise.all([
+  const [view, edit, approve, assign, share, exportable, pipeline, matching, pipelineEdit] = await Promise.all([
     can(user, 'ats', 'requirements', 'Requirement Detail', 'view'),
     can(user, 'ats', 'requirements', 'Requirement Detail', 'edit'),
     can(user, 'ats', 'requirements', 'Requirement Detail', 'approve'),
@@ -66,6 +66,12 @@ async function requirementPermissions(user, record) {
     can(user, 'ats', 'requirements', 'Requirement List', 'export'),
     can(user, 'ats', 'requirements', 'Requirement Pipeline', 'view'),
     can(user, 'ats', 'requirements', 'Matching Candidates', 'view'),
+    // SEEING THE PIPELINE IS NOT ADDING TO IT. `pipeline` above is a VIEW
+    // permission and the screen was drawing "Add to Pipeline" and the
+    // "Move to…" control from it, so a view-only login (a Manager, §3) was
+    // shown buttons whose POST the API refuses. This is the write half, and
+    // it is the same permission routes/applications.js enforces.
+    can(user, 'ats', 'candidates', 'Applications', 'create'),
   ]);
   const s = scopeOf(user);
   const owned = s.global || !record || isAssignedTo(user, record);
@@ -77,6 +83,7 @@ async function requirementPermissions(user, record) {
     share: share && owned,
     export: exportable,
     pipeline,
+    pipelineEdit,
     matching,
     // Why edit is off, so the screen can say so rather than just hiding a button.
     readOnlyReason: edit && !owned ? 'You can view this requirement, but it is not assigned to you.' : null,

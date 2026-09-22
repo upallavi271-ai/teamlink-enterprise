@@ -5,6 +5,7 @@ const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const {
   scopeOf,
+  hrmsGlobal,
   scopeDepartments: scopeDepartmentsOf,
   departmentWhere: departmentWhereOf,
   scopeLabel: scopeLabelOf,
@@ -79,8 +80,13 @@ const departmentWhere = (req) => departmentWhereOf(req.user);
 const scopeLabel = (req) => scopeLabelOf(req.user);
 
 async function assertInScope(req, employee) {
+  // hrmsGlobal() is scopeOf().global (Super Admin / Admin, an unconfigured
+  // Manager) PLUS the HR desk: "all employees are visible to HR" (§6), so HR
+  // is not held to a department the way a Manager, an STL or a TL is. It is
+  // the same helper utils/scope.js employeeWhere() uses for the list, so the
+  // record check and the list query cannot disagree.
+  if (hrmsGlobal(req.user)) return true;
   const s = scopeOf(req.user);
-  if (s.global) return true;
   if (!s.departments.length) return false;
   return s.departments.includes(employee.department);
 }
@@ -1071,9 +1077,25 @@ router.post('/:id/send-credentials', requirePerm(null, 'hrms', 'Employee Managem
 // Editing, pausing, locking/unlocking and transferring an employee are HR/Super
 // Admin actions — Manager/Assistant Manager/STL/TL get read-only visibility into
 // their own department (see the GET routes above), not the ability to change records.
-router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'configure'), async (req, res) => {
+// EDITING AN EMPLOYEE'S MASTER RECORD IS `edit`, NOT `configure`.
+//
+// The matrix has said so since Employee Management was split (see
+// utils/permissions.js): `view` and `edit` are the HR grants, while `create` /
+// `export` / `delete` / `approve` / `assign` / `configure` are Administration's.
+// This route asked for `configure`, which made the whole screen read-only for
+// every HR role — and the HR desk (§6) whose job IS the employee master could
+// not change a phone number.
+//
+// It also loaded the record "for scope" and never checked it. It does now:
+// assertInScope() holds a TL or an STL to their own department, and lets HR
+// and the admins through, so widening WHO may edit does not widen WHAT they
+// may edit.
+router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
   const existingForScope = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existingForScope) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, existingForScope))) {
+    return res.status(403).json({ error: 'This record is outside your department scope' });
+  }
   const editableFields = [
     'name', 'email', 'phone', 'department', 'team', 'designation', 'location', 'employmentStatus', 'employeeType',
     'emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation', 'address', 'addressType',

@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../api';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../permissions';
 import Modal from '../components/Modal';
 import Combo from '../components/Combo.jsx';
 
@@ -35,6 +37,13 @@ const BANK_GROUPS = [['month', 'Month'], ['imp', 'Statement file'], ['none', 'Ev
 const gapColor = (g) => (g == null ? undefined : (Math.abs(g) < 1 ? 'var(--teal)' : 'var(--red)'));
 
 export default function Bank() {
+  // The same matrix answer the API enforces on every write in backend/src/routes/bank.js
+  // (accounts · accounts · Bank & Reconciliation · edit). A view-only login — Manager,
+  // Assistant Manager — never sees the write controls at all: they are removed from the
+  // tree rather than disabled, so nothing is offered that the engine would refuse.
+  const { user } = useAuth();
+  const canManage = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'edit');
+
   // overview → every account, side by side
   // account  → one account: all lines, recognised, excluded
   // recon    → the reconciliation table
@@ -148,7 +157,7 @@ export default function Bank() {
   const shared = {
     account, accounts, accountId, setAccountId, transactions, byId, summary, position, invoices,
     openInvoices, clientNames, groups, marks, markById, imports, rules, cashInHand,
-    act, call, busy, picked, setPicked, setDialog, setView, load,
+    act, call, busy, picked, setPicked, setDialog, setView, load, canManage,
   };
 
   return (
@@ -176,7 +185,7 @@ export default function Bank() {
         />
       )}
 
-      {dialog && (
+      {canManage && dialog && (
         <Dialogs
           dialog={dialog} setDialog={setDialog} {...shared}
         />
@@ -189,7 +198,7 @@ export default function Bank() {
 // 1 · Banking Overview — every account, side by side
 // ===========================================================================
 
-function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call }) {
+function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call, canManage }) {
   const totalUn = accounts.reduce((s, a) => s + a.stat.unmatched, 0);
   const totalBank = accounts.reduce((s, a) => s + (a.stat.inBank != null ? a.stat.inBank : a.stat.inBooks), 0);
   const totalBooks = accounts.reduce((s, a) => s + a.stat.inBooks, 0);
@@ -215,9 +224,9 @@ function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call
         <h2 style={{ fontSize: 19 }}>Banking Overview</h2>
         <div className="qa-row">
           <button className="btn btn-sm" onClick={() => setView('recon')}>🧾 Reconciliation</button>
-          <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>
-          <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add bank or credit card</button>
-          <button className="btn btn-sm" onClick={() => setDialog({ kind: 'rules' })}>⚙ Manage transaction rules</button>
+          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
+          {canManage && <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add bank or credit card</button>}
+          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'rules' })}>⚙ Manage transaction rules</button>}
         </div>
       </div>
 
@@ -286,7 +295,7 @@ function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call
                       )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      {canFix && (
+                      {canManage && canFix && (
                         <button
                           className="btn btn-sm"
                           title="Work the opening balance back from the first line the statement carries"
@@ -298,7 +307,7 @@ function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call
                       {' '}
                       <button className="btn btn-sm" onClick={() => open(b.id)}>Open</button>
                       {' '}
-                      <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account: b })}>⚙</button>
+                      {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account: b })}>⚙</button>}
                     </td>
                   </tr>
                 );
@@ -347,7 +356,7 @@ function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call
 
 function AccountView({
   account, accountId, transactions, setView, setDialog, act, call, busy,
-  tab, setTab, pill, setPill, per, setPer, page, setPage, position,
+  tab, setTab, pill, setPill, per, setPer, page, setPage, position, canManage,
 }) {
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
   const s = account.stat;
@@ -375,11 +384,11 @@ function AccountView({
           </div>
         </div>
         <div className="qa-row">
-          <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>
-          <button className="btn btn-sm" onClick={() => call('post', '/bank/quick-categorise', { bankAccountId: accountId }, (d) => `${d.filed} recognised debit(s) filed.`)}>⚡ Quick categorize</button>
-          <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Add transaction</button>
+          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
+          {canManage && <button className="btn btn-sm" onClick={() => call('post', '/bank/quick-categorise', { bankAccountId: accountId }, (d) => `${d.filed} recognised debit(s) filed.`)}>⚡ Quick categorize</button>}
+          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Add transaction</button>}
           <button className="btn btn-sm" onClick={() => setView('recon')}>🧾 Reconciliation</button>
-          <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙</button>
+          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙</button>}
         </div>
       </div>
 
@@ -430,14 +439,18 @@ function AccountView({
                   {t.reference && <span className="small-muted"> (Ref# {t.reference})</span>}
                 </td>
                 <td className="num" style={{ color: 'var(--teal)' }}>
-                  {t.type === 'Credit' ? <button type="button" className="link-btn" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'match' })}>{money2(t.amount)}</button> : '—'}
+                  {t.type !== 'Credit' ? '—' : (canManage
+                    ? <button type="button" className="link-btn" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'match' })}>{money2(t.amount)}</button>
+                    : money2(t.amount))}
                 </td>
                 <td className="num" style={{ color: 'var(--red)' }}>
-                  {t.type === 'Debit' ? <button type="button" className="link-btn" onClick={() => setDialog({ kind: 'catz', txn: t, tab: t.read?.kind === 'expense' ? 'cat' : 'match' })}>{money2(t.amount)}</button> : '—'}
+                  {t.type !== 'Debit' ? '—' : (canManage
+                    ? <button type="button" className="link-btn" onClick={() => setDialog({ kind: 'catz', txn: t, tab: t.read?.kind === 'expense' ? 'cat' : 'match' })}>{money2(t.amount)}</button>
+                    : money2(t.amount))}
                 </td>
                 <td><Thinks txn={t} /></td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  {(t.state === 'Reconciled' || t.category) ? (
+                  {!canManage ? <span className="cell-muted">—</span> : (t.state === 'Reconciled' || t.category) ? (
                     <>
                       {t.category && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'cat' })}>✎ Edit</button>}{' '}
                       <button
@@ -485,7 +498,7 @@ function AccountView({
         {' '}<b>Exclude</b> leaves a line on file but out of the count, for a transfer you never want to categorise.
       </div>
 
-      <DuplicatesCard position={position} accountId={accountId} call={call} />
+      <DuplicatesCard position={position} accountId={accountId} call={call} canManage={canManage} />
       <HowMatchCard position={position} />
     </div>
   );
@@ -529,7 +542,7 @@ function Thinks({ txn }) {
 function Recon({
   account, accounts, accountId, setAccountId, transactions, byId, summary, position, openInvoices,
   clientNames, groups, marks, markById, imports, setView, setDialog, act, call, busy, picked, setPicked,
-  state, setState, group, setGroup, openKeys, setOpenKeys, clientFilter, setClientFilter,
+  state, setState, group, setGroup, openKeys, setOpenKeys, clientFilter, setClientFilter, canManage,
 }) {
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
 
@@ -581,6 +594,7 @@ function Recon({
             act={act}
             busy={busy}
             setDialog={setDialog}
+            canManage={canManage}
           />
         </td>
       </tr>
@@ -623,7 +637,9 @@ function Recon({
       </td>
       <td />
       <td>
-        <button className="btn btn-sm" onClick={() => call('delete', `/bank/marks/${n.id}`, undefined, () => 'Removed.')}>Delete</button>
+        {canManage
+          ? <button className="btn btn-sm" onClick={() => call('delete', `/bank/marks/${n.id}`, undefined, () => 'Removed.')}>Delete</button>
+          : <span className="cell-muted">—</span>}
       </td>
     </tr>
   );
@@ -716,11 +732,11 @@ function Recon({
           </button>
         )}
         <span style={{ flex: 1 }} />
-        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>
-        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Entry by hand</button>
-        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'mark' })}>✎ Note a balance</button>
-        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙ Account details</button>
-        <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add account</button>
+        {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
+        {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Entry by hand</button>}
+        {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'mark' })}>✎ Note a balance</button>}
+        {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙ Account details</button>}
+        {canManage && <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add account</button>}
       </div>
 
       <div className="statbar">
@@ -736,9 +752,11 @@ function Recon({
             <b>The statement itself says the opening balance should be {money2(position.implied)}.</b>
             {' '}The account carries {money2(account.openBal)}, which is why every month below is off by {money2(Math.abs(position.openingGap))}.
             {' '}
-            <button className="btn btn-sm" onClick={() => call('post', `/bank/accounts/${account.id}/fix-opening`, {}, (d) => `Opening balance set to ${money2(d.implied)}.`)}>
-              Set it to {money(position.implied)}
-            </button>
+            {canManage && (
+              <button className="btn btn-sm" onClick={() => call('post', `/bank/accounts/${account.id}/fix-opening`, {}, (d) => `Opening balance set to ${money2(d.implied)}.`)}>
+                Set it to {money(position.implied)}
+              </button>
+            )}
           </span>
         </div>
       )}
@@ -774,12 +792,12 @@ function Recon({
             {' '}· grouped by {(BANK_GROUPS.find((x) => x[0] === group) || [])[1]}
           </span>
           <span style={{ flex: 1 }} />
-          {named.length > 0 && (
+          {canManage && named.length > 0 && (
             <button className="btn btn-sm" onClick={() => call('post', '/bank/post-all-named', { bankAccountId: accountId }, (d) => `${d.posted} credit(s) posted · ${money(d.value)} matched by client name.`)}>
               ⚡ Post all {named.length} matched credit(s)
             </button>
           )}
-          {recognisedDebits > 0 && (
+          {canManage && recognisedDebits > 0 && (
             <button
               className="btn btn-sm"
               title="Every debit the app already recognises becomes an office bill"
@@ -826,9 +844,9 @@ function Recon({
         </div>
       </div>
 
-      <BalanceLogCard marks={marks} account={account} call={call} />
-      <ImportsCard imports={imports} transactions={transactions} call={call} />
-      <DuplicatesCard position={position} accountId={accountId} call={call} />
+      <BalanceLogCard marks={marks} account={account} call={call} canManage={canManage} />
+      <ImportsCard imports={imports} transactions={transactions} call={call} canManage={canManage} />
+      <DuplicatesCard position={position} accountId={accountId} call={call} canManage={canManage} />
       <HowMatchCard position={position} />
     </div>
   );
@@ -870,8 +888,12 @@ function Against({ txn }) {
 }
 
 // The buttons a line actually offers depend on where it sits in the state machine.
-function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog }) {
+function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog, canManage }) {
   const waiting = (verb) => busy === `${txn.id}:${verb}`;
+
+  // Every button below writes, so a view-only login gets the column's placeholder
+  // rather than a row of controls the API would refuse.
+  if (!canManage) return <span className="cell-muted">—</span>;
 
   if (txn.state === 'Ignored') {
     return <button className="btn btn-sm" disabled={waiting('unignore')} onClick={() => act(txn.id, 'unignore')}>Restore</button>;
@@ -994,7 +1016,7 @@ function ClientPanel({ name, invoices, transactions, onClear }) {
 }
 
 // Cleared and balance — month by month, plus notes typed by hand.
-function BalanceLogCard({ marks, account, call }) {
+function BalanceLogCard({ marks, account, call, canManage }) {
   if (!marks) return null;
   const months = marks.months || [];
   const latest = months[0] || null;
@@ -1074,10 +1096,14 @@ function BalanceLogCard({ marks, account, call }) {
                     <td className="num">{m.gap == null ? '—' : <b style={{ color: gapColor(m.gap) }}>{signedMoney(m.gap)}</b>}</td>
                     <td className="small-muted">{m.note}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      {m.balance != null && /opening/i.test(m.kind) && (
-                        <button className="btn btn-sm" onClick={() => call('post', `/bank/marks/${m.id}/use-opening`, {}, (d) => `Opening balance set to ${money2(d.openBal)}.`)}>Set opening</button>
-                      )}{' '}
-                      <button className="btn btn-sm" onClick={() => call('delete', `/bank/marks/${m.id}`, undefined, () => 'Removed.')}>Delete</button>
+                      {!canManage ? <span className="cell-muted">—</span> : (
+                        <>
+                          {m.balance != null && /opening/i.test(m.kind) && (
+                            <button className="btn btn-sm" onClick={() => call('post', `/bank/marks/${m.id}/use-opening`, {}, (d) => `Opening balance set to ${money2(d.openBal)}.`)}>Set opening</button>
+                          )}{' '}
+                          <button className="btn btn-sm" onClick={() => call('delete', `/bank/marks/${m.id}`, undefined, () => 'Removed.')}>Delete</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1092,7 +1118,7 @@ function BalanceLogCard({ marks, account, call }) {
   );
 }
 
-function ImportsCard({ imports, transactions, call }) {
+function ImportsCard({ imports, transactions, call, canManage }) {
   if (!transactions.length) return null;
   return (
     <div className="card section">
@@ -1119,7 +1145,11 @@ function ImportsCard({ imports, transactions, call }) {
                     {i.open ? <span className="status priority-high">{i.open} to match</span> : <span className="status priority-low">all matched</span>}
                     {i.posted ? <div className="small-muted">{i.posted} posted</div> : null}
                   </td>
-                  <td><button className="btn btn-sm" onClick={() => call('delete', `/bank/imports/${i.id}`, undefined, (d) => `${d.deleted} line(s) removed.`)}>Remove</button></td>
+                  <td>
+                    {canManage
+                      ? <button className="btn btn-sm" onClick={() => call('delete', `/bank/imports/${i.id}`, undefined, (d) => `${d.deleted} line(s) removed.`)}>Remove</button>
+                      : <span className="cell-muted">—</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1135,7 +1165,7 @@ function ImportsCard({ imports, transactions, call }) {
   );
 }
 
-function DuplicatesCard({ position, accountId, call }) {
+function DuplicatesCard({ position, accountId, call, canManage }) {
   const groups = position?.duplicates || [];
   if (!groups.length) return null;
   const extra = groups.reduce((s, g) => s + (g.copies - 1), 0);
@@ -1147,9 +1177,11 @@ function DuplicatesCard({ position, accountId, call }) {
         <span className="small-muted">Same day, same amount, same reference — the second copy is counted twice in the books</span>
         <span style={{ flex: 1 }} />
         <span className="status priority-high">{signedMoney(value)} of double counting</span>
-        <button className="btn btn-primary btn-sm" onClick={() => call('post', '/bank/duplicates/remove', { bankAccountId: accountId }, (d) => `${d.removed} duplicate line(s) removed.`)}>
-          Remove the {extra} extra copy(ies)
-        </button>
+        {canManage && (
+          <button className="btn btn-primary btn-sm" onClick={() => call('post', '/bank/duplicates/remove', { bankAccountId: accountId }, (d) => `${d.removed} duplicate line(s) removed.`)}>
+            Remove the {extra} extra copy(ies)
+          </button>
+        )}
       </div>
       <div className="tbl-wrap">
         <table>

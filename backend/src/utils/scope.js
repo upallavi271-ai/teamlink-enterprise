@@ -21,6 +21,13 @@
 
 // Roles that see everything, always.
 const GLOBAL_SCOPE_ROLES = ['SUPER_ADMIN', 'ADMIN'];
+// HRMS roles that are COMPANY-WIDE BY FUNCTION, in HRMS and only in HRMS.
+// "All employees are visible to HR" (§6): the HR desk keeps the whole
+// company's records, so department isolation is not the rule for it the way
+// it is for a Manager, an STL or a TL. This is the HRMS twin of
+// accountsGlobal() below, and it is deliberately NOT part of scopeOf().global
+// — see hrmsGlobal().
+const HRMS_GLOBAL_ROLES = ['HR'];
 // Manager and Assistant Manager are cross-department by DEFAULT, but their
 // scope is CONFIGURED: give one an explicit department list on
 // Administration -> Users and they are held to it, like any other role.
@@ -186,7 +193,9 @@ function clientWhere(user) {
   // clients, not the Educational desk's. `ownerDepartment` is the client's own
   // desk; the second arm keeps any client they already hold a requirement for,
   // so a cross-desk assignment never blanks a row they legitimately work on.
-  const departments = scopeDepartments(user);
+  // departmentsOf(), NOT scopeDepartments(): HR's company-wide HRMS reach is
+  // an HRMS fact and must never widen the ATS client directory.
+  const departments = departmentsOf(user);
   if (departments === undefined) return {};
   return {
     OR: [
@@ -246,7 +255,8 @@ function invoiceWhere(user) {
   // against, or of the REQUIREMENT it bills for. Both arms are needed: an
   // ad-hoc invoice has no requirement, and a requirement can be raised for a
   // client owned by another desk.
-  const departments = scopeDepartments(user);
+  // departmentsOf(), NOT scopeDepartments() — see clientWhere() above.
+  const departments = departmentsOf(user);
   const byDepartment = departments === undefined ? {} : {
     OR: [
       { client: { ownerDepartment: { in: departments } } },
@@ -269,6 +279,8 @@ function invoiceWhere(user) {
 function employeeWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
+  // HR (§6) — every employee, not a department's worth.
+  if (hrmsGlobal(user)) return {};
   if (['STL', 'TL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
     return { department: { in: s.departments } };
   }
@@ -290,10 +302,29 @@ function employeeWhere(user) {
 // configured department list). A scoped login with no department at all gets a
 // sentinel rather than [], so a `{ in: [] }` can never silently match nothing
 // in one place and everything in another.
-function scopeDepartments(user) {
+function departmentsOf(user) {
   const s = scopeOf(user);
   if (s.global) return undefined;
   return s.departments.length ? s.departments : ['__no_department_assigned__'];
+}
+
+// Is this login company-wide IN HRMS? Super Admin / Admin are, everywhere; HR
+// is, here only.
+//
+// It is a function of the HRMS ROLE alone, and it is kept out of
+// scopeOf().global on purpose: a person who is HR in HRMS and a Recruiter in
+// ATS must still be a Recruiter's scope in ATS. requirementWhere(),
+// clientWhere(), applicationWhere(), candidateWhere() and invoiceWhere() never
+// consult it, and the two that need a department list — clientWhere() and
+// invoiceWhere() — call departmentsOf() rather than scopeDepartments().
+function hrmsGlobal(user) {
+  const s = scopeOf(user);
+  return s.global || HRMS_GLOBAL_ROLES.includes(s.hrmsRole);
+}
+
+function scopeDepartments(user) {
+  if (hrmsGlobal(user)) return undefined;
+  return departmentsOf(user);
 }
 
 // The Prisma `where` fragment for a model that carries its own `department`
@@ -398,6 +429,9 @@ const OUT_OF_SCOPE = { error: 'This record is outside your access scope' };
 module.exports = {
   GLOBAL_SCOPE_ROLES,
   CONFIGURABLE_GLOBAL_ROLES,
+  HRMS_GLOBAL_ROLES,
+  hrmsGlobal,
+  departmentsOf,
   scopeOf,
   requirementWhere,
   portalRequirementWhere,

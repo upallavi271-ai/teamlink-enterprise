@@ -4,7 +4,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, QaRow } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, can } from '../../permissions';
 import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
 import Combo from '../../components/Combo.jsx';
 
@@ -227,6 +227,11 @@ function MyDashboard() {
 export default function HrmsDashboard() {
   const { user } = useAuth();
   const isHR = hasHrmsAdmin(user);
+  // A Quick Action is a shortcut to a screen, so it is offered only where the
+  // screen itself is. Payroll is the Accounts desk's (see utils/permissions.js)
+  // and is not in the HR desk's nav (§6), so "Process Payroll" must not be the
+  // one link that puts it back.
+  const canSeePayroll = can(user, 'hrms', 'hrms', 'Payroll & Compensation', 'view');
 
   return (
     <div>
@@ -244,7 +249,7 @@ export default function HrmsDashboard() {
         <QaRow>
           <Link className="btn btn-sm" to="/attendance">Attendance</Link>
           <Link className="btn btn-sm" to="/leave">Leave Requests</Link>
-          <Link className="btn btn-sm" to="/payroll">Process Payroll</Link>
+          {canSeePayroll && <Link className="btn btn-sm" to="/payroll">Process Payroll</Link>}
           <Link className="btn btn-sm" to="/performance">Performance</Link>
           <Link className="btn btn-sm" to="/employee-services">Employee Services</Link>
           {isHR && <Link className="btn btn-sm" to="/employees">Employee Management</Link>}

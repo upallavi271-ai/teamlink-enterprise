@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
-import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin } from '../permissions';
+import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin, canEditEmployees } from '../permissions';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
 
@@ -19,7 +19,11 @@ export default function EmployeeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // isHR draws WRITE controls here — granting edit access, ticking an
+  // onboarding task, starting offboarding — so it asks Employee Management
+  // EDIT and not only VIEW. A Manager and an Assistant Manager are view-only
+  // (§3, §4) and hold the view; they must not be handed the buttons.
+  const isHR = hasHrmsAdmin(user) && canEditEmployees(user);
   const isAdmin = hasAdminAccess(user);
   const [employee, setEmployee] = useState(null);
   const [editing, setEditing] = useState(false);

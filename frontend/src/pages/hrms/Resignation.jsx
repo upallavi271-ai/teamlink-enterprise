@@ -2,12 +2,17 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PanelPad, StatRow, AssignRow, EmptyMini, TwoCol, QaRow, NumHead } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, canDecideServices } from '../../permissions';
 
 
 export default function Resignation() {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // isHR here DRAWS WRITE CONTROLS, so it asks the write permission and not
+  // only the read one. A Manager and an Assistant Manager are view-only (§3,
+  // §4) and still hold Employee Management/view, so isHR() alone would have
+  // gone on offering them every button on this screen. Both halves, because
+  // the screen is an administration screen AND these are writes.
+  const isHR = hasHrmsAdmin(user) && canDecideServices(user);
   const [records, setRecords] = useState([]);
   const [summary, setSummary] = useState(null);
   const [employees, setEmployees] = useState([]);

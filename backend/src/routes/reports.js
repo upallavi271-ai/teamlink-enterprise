@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
 } = require('../utils/accounts');
@@ -9,7 +9,17 @@ const { requirementIsLive } = require('../utils/atsVocab');
 const router = express.Router();
 router.use(requireAuth);
 
-router.get('/ats', async (req, res) => {
+// A REPORT IS DATA, SO IT IS GUARDED LIKE DATA.  (§20)
+//
+// These three endpoints sat behind requireAuth and nothing else, which meant
+// any signed-in login — an HRMS-only employee, the HR desk (§6), a client —
+// could read the whole client pipeline and the whole ledger by typing the URL,
+// however carefully the sidebar hid the screen. The `reports` matrix already
+// said who may read each one (utils/permissions.js: the ATS and Job Portal
+// reports to the ATS roles, the Accounts reports to the accounts roles); it
+// was simply never asked. It is asked now, through the same
+// (module, feature, action) guard every other route uses.
+router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
   const clients = await prisma.client.findMany({ include: { requirements: { include: { applications: true } } } });
   const rows = clients.map((c) => {
     const apps = c.requirements.flatMap((r) => r.applications);
@@ -28,7 +38,7 @@ router.get('/ats', async (req, res) => {
 // The prototype's Job Portal Reports: four synced-from-the-integration counts
 // above the source table. "Synced" means the record reached us through the
 // connected Job Portal rather than being keyed in here.
-router.get('/job-portal', async (req, res) => {
+router.get('/job-portal', requirePerm(null, 'reports', 'Job Portal Reports', 'view'), async (req, res) => {
   const [candidates, applications] = await Promise.all([
     prisma.candidate.findMany({ select: { id: true, source: true } }),
     prisma.application.findMany({ select: { candidateId: true } }),
@@ -44,7 +54,7 @@ router.get('/job-portal', async (req, res) => {
   });
 });
 
-router.get('/accounts', async (req, res) => {
+router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view'), async (req, res) => {
   const [invoices, expenses, transactions] = await Promise.all([
     prisma.invoice.findMany({ include: { client: true } }),
     prisma.officeExpense.findMany(),

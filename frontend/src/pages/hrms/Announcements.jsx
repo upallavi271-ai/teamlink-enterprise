@@ -5,7 +5,7 @@ import {
   PanelPad, AssignRow, EmptyMini, TwoCol, QaRow,
   NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
 } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin } from '../../permissions';
+import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
 
 const CATEGORIES = ['General', 'Policy', 'Event', 'Holiday'];
@@ -67,7 +67,12 @@ function NewAnnouncementModal({ departments, onClose, onSaved }) {
 
 export default function Announcements({ view, onOpen, onBack }) {
   const { user } = useAuth();
-  const isHR = hasHrmsAdmin(user);
+  // isHR here DRAWS WRITE CONTROLS, so it asks the write permission and not
+  // only the read one. A Manager and an Assistant Manager are view-only (§3,
+  // §4) and still hold Employee Management/view, so isHR() alone would have
+  // gone on offering them every button on this screen. Both halves, because
+  // the screen is an administration screen AND these are writes.
+  const isHR = hasHrmsAdmin(user) && canManageServices(user);
   const [announcements, setAnnouncements] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);

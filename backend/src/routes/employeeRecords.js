@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requirePerm } = require('../middleware/auth');
+const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const { employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const attachments = require('../utils/attachments');
@@ -43,7 +43,13 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
   });
 
   router.post('/', async (req, res) => {
-    if (createRoles && !req.user.caps.hrmsManage) {
+    // RAISING A RECORD FOR SOMEONE ELSE IS A WRITE, so it asks a write
+    // permission. It used to ask caps.hrmsManage, which is Employee
+    // Management/VIEW — so a view-only Manager (§3) could still set another
+    // person's target, log a disciplinary case or hand out an asset. It asks
+    // hrms/Employee Services/create now, which is the same action the
+    // announcements, surveys and asset-inventory routes require.
+    if (createRoles && !await can(req.user, 'hrms', 'hrms', 'Employee Services', 'create')) {
       return res.status(403).json({ error: "This isn't included in your role's permissions" });
     }
     const {

@@ -7,7 +7,7 @@ import Combo from '../components/Combo.jsx';
 // WORKFLOW ACTIONS ARE NOT VIEW/EDIT. The stages this login OWNS come from
 // the permission engine (/auth/me workflow.allowedStages) — seeing the
 // pipeline never implied being allowed to move a candidate through it.
-import { canMoveToStage } from '../permissions';
+import { canMoveToStage, workflowStages } from '../permissions';
 import RequirementForm from '../components/RequirementForm.jsx';
 
 import {
@@ -199,6 +199,9 @@ export default function RequirementDetail() {
 
   const r = requirement;
   const p = r.permissions || {};
+  // The stages this login OWNS. Empty for a view-only role (§3), so the
+  // "Move to…" control is not drawn at all rather than drawn with one option.
+  const movableStages = workflowStages(user);
   const clientName = r.internal ? 'TeamLink Internal' : r.client?.name || '—';
   const agreementActive = r.agreementActive;
   const sources = list(r.postingSources);
@@ -438,8 +441,14 @@ export default function RequirementDetail() {
                             : <span className="status active">None</span>}
                         </td>
                         <td><span className="link-btn">{c.match.overall}%</span></td>
+                        {/* p.pipelineEdit, not p.pipeline: reading the match
+                            list is a view, adding a candidate to the pipeline
+                            is a write. A view-only login (§3) reads the list
+                            and is not offered a button the API would refuse. */}
                         <td>
-                          <button className="btn btn-sm btn-primary" onClick={(e) => linkCandidate(e, c.id)}>Add to Pipeline</button>
+                          {p.pipelineEdit
+                            ? <button className="btn btn-sm btn-primary" onClick={(e) => linkCandidate(e, c.id)}>Add to Pipeline</button>
+                            : <span className="cell-muted">—</span>}
                         </td>
                       </tr>
                     ))}
@@ -469,7 +478,7 @@ export default function RequirementDetail() {
                         {/* requestStage() routes Reject/Hold through the reason
                             dialog; the filter keeps the list to the stages this
                             login actually owns. */}
-                        {p.pipeline ? (
+                        {p.pipelineEdit && movableStages.length ? (
                           <Combo value={a.stage} onChange={(e) => requestStage(a, e.target.value)}>
                             {ALL_STAGE_CODES.filter((s) => s === a.stage || canMoveToStage(user, s))
                               .map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
@@ -486,7 +495,7 @@ export default function RequirementDetail() {
             </div>
           </div>
 
-          {p.pipeline && (
+          {p.pipelineEdit && (
             <div className="card section">
               <h3 style={{ fontSize: 14, marginBottom: 10 }}>Link a candidate</h3>
               <form onSubmit={linkCandidate} className="filter-row" style={{ marginBottom: 0 }}>
