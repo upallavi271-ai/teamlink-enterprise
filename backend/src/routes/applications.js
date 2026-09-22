@@ -9,6 +9,7 @@ const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
 const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
 const { applicationWhere, scopeOf, CLIENT_SHARED_STAGES } = require('../utils/scope');
+const { raiseAutoFollowUp } = require('../utils/followups');
 const { groupLabelOfStage } = require('../utils/pipelineView');
 const { recordStageCommunications } = require('../utils/candidateComms');
 // Hiring Type, the invoice-on-joining path and the internal-hire path all live
@@ -58,7 +59,10 @@ router.get('/', async (req, res) => {
   if (req.query.stage && !where.stage) where.stage = req.query.stage;
   const applications = await prisma.application.findMany({
     where,
-    include: { candidate: true, requirement: { include: { client: true } } },
+    // recruiter and bde come along because utils/followups.js ownerOf() names
+    // the follow-up owner from them — without them every automatic follow-up
+    // was raised ownerless.
+    include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
     orderBy: { updatedAt: 'desc' },
   });
   res.json(applications);
@@ -141,7 +145,7 @@ async function applyStageMove(user, applicationId, body = {}) {
 
   const existing = await prisma.application.findUnique({
     where: { id: applicationId },
-    include: { candidate: true, requirement: { include: { client: true } } },
+    include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
   });
   if (!existing) return { status: 404, body: { error: 'Application not found' } };
 
@@ -175,6 +179,19 @@ async function applyStageMove(user, applicationId, body = {}) {
   // invoice 6 days after joining, payment due 6 days after that.
   if (stage === 'JOINED') {
     await onApplicationJoined({ application, existing, userId: user.id });
+  }
+
+  // §18-§20 — THE CHASE IS RAISED BY THE MOVE, not by somebody remembering.
+  // Sharing with a client owes a decision chase, scheduling an interview owes
+  // a confirmation, and so on. Never fatal: a follow-up that could not be
+  // written must not lose a stage move that already happened.
+  try {
+    await raiseAutoFollowUp({
+      application, requirement: existing.requirement, user, stage,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[followups] could not raise the automatic follow-up:', err.message);
   }
 
   // --- Pipeline History ----------------------------------------------------

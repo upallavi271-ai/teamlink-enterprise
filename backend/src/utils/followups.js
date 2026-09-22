@@ -136,6 +136,11 @@ function chainSnapshot(application, requirement, names = null) {
     tlName: (names && r.tlId && names.get(r.tlId)) || r.tlName || r.tl || null,
     bdeUserId: r.bdeId || null,
     bdeName: (r.bde && r.bde.name) || null,
+    // Rung 2 of the escalation ladder needs a name on the row, the same way
+    // the TL does. stlId is a plain scalar on Requirement, so the name comes
+    // from the `names` map resolved alongside the TL's.
+    stlUserId: r.stlId || null,
+    stlName: (names && r.stlId && names.get(r.stlId)) || r.stlName || r.stl || null,
   };
 }
 
@@ -145,7 +150,7 @@ function chainSnapshot(application, requirement, names = null) {
 // list; `names` is a Map(userId -> name).
 async function resolveNames(requirements) {
   const ids = new Set();
-  (requirements || []).forEach((r) => { if (r && r.tlId) ids.add(r.tlId); });
+  (requirements || []).forEach((r) => { if (r && r.tlId) ids.add(r.tlId); if (r && r.stlId) ids.add(r.stlId); });
   if (!ids.size) return new Map();
   const users = await prisma.user.findMany({
     where: { id: { in: [...ids] } }, select: { id: true, name: true },
@@ -304,6 +309,82 @@ async function escalateOverdue({ limit = 300 } = {}) {
   return summary;
 }
 
+
+// ---------------------------------------------------------------------------
+// FOLLOW-UPS THE SYSTEM RAISES BY ITSELF (§18-§20).
+//
+// "No need for BDE/recruiter to manually create everything." A chain breaks
+// where somebody has to REMEMBER to start the next link, so the moves that
+// always owe a chase now raise one as they happen:
+//
+//   Shared with Client   -> chase the client for a decision       (BDE)
+//   Client Shortlisted   -> confirm the interview with them       (BDE)
+//   Interview Scheduled  -> confirm the candidate is coming       (Recruiter)
+//   Interview Completed  -> chase the client for feedback         (BDE)
+//   Selected             -> confirm the joining date              (BDE)
+//   Offer Accepted       -> confirm joining, before the date      (Recruiter)
+//
+// WHO OWNS IT is the stage's own owner, read from the SAME
+// utils/atsVocab.js table that draws the Owner column — so the follow-up and
+// the pipeline row can never name two different people. WHEN it is due comes
+// from that table's SLA, except for joining, which is pinned to the day before
+// the joining date because that is when the question is actually useful.
+//
+// It is idempotent: an open follow-up of the same purpose on the same
+// application is left alone rather than duplicated, so re-entering a stage
+// does not stack up chases.
+// ---------------------------------------------------------------------------
+const AUTO_FOLLOWUPS = {
+  SHARED_WITH_CLIENT: { purpose: 'Client decision', action: 'Chase the client for a decision' },
+  CLIENT_SHORTLISTED: { purpose: 'Interview confirmation', action: 'Confirm the interview with the client' },
+  INTERVIEW_SCHEDULED: { purpose: 'Interview confirmation', action: 'Confirm the candidate is attending' },
+  INTERVIEW_COMPLETED: { purpose: 'Interview feedback', action: 'Chase the client for feedback' },
+  SELECTED: { purpose: 'Joining confirmation', action: 'Agree and confirm the joining date' },
+  OFFER_ACCEPTED: { purpose: 'Joining confirmation', action: 'Confirm joining', dayBeforeJoining: true },
+};
+
+async function raiseAutoFollowUp({ application, requirement, user, stage }) {
+  const rule = AUTO_FOLLOWUPS[stage];
+  if (!rule) return null;
+
+  // Already chasing this? Leave it. Re-entering a stage must not stack up
+  // duplicate chases on the same person.
+  const open = await prisma.applicationFollowUp.findFirst({
+    where: { applicationId: application.id, purpose: rule.purpose, completedAt: null },
+  });
+  if (open) return null;
+
+  const names = await resolveNames([requirement]);
+  const snap = chainSnapshot({ ...application, stage }, requirement, names);
+
+  // The due date is the stage's own SLA, except for joining, which is pinned
+  // to the day BEFORE the joining date — that is when "are you actually
+  // turning up" is a useful question.
+  let dueDate = defaultDueDate({ ...application, stage });
+  if (rule.dayBeforeJoining && application.joiningDate) {
+    const d = new Date(application.joiningDate);
+    if (!Number.isNaN(d.getTime())) {
+      d.setDate(d.getDate() - 1);
+      dueDate = d.toISOString().slice(0, 10);
+    }
+  }
+
+  return prisma.applicationFollowUp.create({
+    data: {
+      applicationId: application.id,
+      candidateId: application.candidateId,
+      requirementId: application.requirementId,
+      ...snap,
+      nextAction: rule.action,
+      purpose: rule.purpose,
+      dueDate,
+      autoCreated: true,
+      createdById: user ? user.id : null,
+      createdByName: 'System',
+    },
+  });
+}
+
 module.exports = {
   FOLLOWUP_STATUSES,
   CONTACT_MODES,
@@ -312,6 +393,8 @@ module.exports = {
   FOLLOWUP_NEXT_STEPS,
   NEXT_STEPS_NEEDING_DATE,
   FOLLOWUP_TEMPLATES,
+  AUTO_FOLLOWUPS,
+  raiseAutoFollowUp,
   ESCALATION_LADDER,
   todayStr,
   followUpStatus,

@@ -14,11 +14,13 @@ const {
   CANDIDATE_VIEWS, groupIdOfStage, groupLabelOfStage, stageDetail,
   stageIndex, matchesView, groupsWithDetail,
 } = require('../utils/pipelineView');
-const { TEMPLATES, commsNote } = require('../utils/candidateComms');
+const {
+  TEMPLATES, commsNote, senderIdentity, NOT_SENT, NOT_SENT_DETAIL,
+} = require('../utils/candidateComms');
 // followup_: the follow-up record is an APPLICATION's, never a candidate's.
 // Nothing here writes one; the list and the detail page only READ the current
 // one so the Follow-up column and the Applications tab can show it.
-const { currentFollowUpsByApplication } = require('../utils/followups');
+const { currentFollowUpsByApplication, CALL_RESULTS } = require('../utils/followups');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -670,6 +672,104 @@ router.get('/:id/communications', async (req, res) => {
     templates: Object.values(TEMPLATES).map((t) => ({ key: t.key, label: t.label, channels: t.channels })),
   });
   return undefined;
+});
+
+
+// --- Contact the candidate (§3-§7, §16) ------------------------------------
+// One endpoint behind the Contact panel's four methods. A Call is RECORDED —
+// the dialling happens on a phone, and what matters here is the result. Email,
+// SMS and WhatsApp write the same CandidateMessage row the automatic stage
+// messages do, so the Communications tab shows one history whether a message
+// was triggered by a move or typed by a person.
+//
+// HONEST ABOUT DELIVERY, as the rest of this file already is: no SMS or
+// WhatsApp provider is wired in, so those rows are written
+// NOT_SENT_NO_PROVIDER and the panel says "Demo / Simulated" rather than
+// claiming a send. Email is the one channel that really goes out, and only
+// when SMTP is configured.
+router.post('/:id/contact', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res) => {
+  const loaded = await loadInScope(req, res);
+  if (!loaded) return undefined;
+  if (viewerKind(req.user) === 'client') {
+    return res.status(403).json({ error: 'Contacting a candidate is not available to this login' });
+  }
+  const { candidate } = loaded;
+
+  const method = String((req.body && req.body.method) || '').trim();
+  const METHODS = ['Call', 'WhatsApp', 'SMS', 'Email'];
+  if (!METHODS.includes(method)) {
+    return res.status(400).json({ error: `Choose how you contacted them: ${METHODS.join(', ')}.` });
+  }
+  const purpose = String((req.body && req.body.purpose) || '').trim();
+  if (!purpose) return res.status(400).json({ error: 'Say why you are contacting them.' });
+
+  // A CALL leaves a record of the RESULT, not a message.
+  if (method === 'Call') {
+    const callResult = String((req.body && req.body.callResult) || '').trim();
+    if (!CALL_RESULTS.includes(callResult)) {
+      return res.status(400).json({ error: `Record how the call went: ${CALL_RESULTS.join(', ')}.` });
+    }
+    const row = await prisma.candidateMessage.create({
+      data: {
+        candidateId: candidate.id,
+        applicationId: (req.body && req.body.applicationId) || null,
+        channel: 'Call',
+        template: 'MANUAL', // a person typed this, not a stage template
+        templateLabel: purpose,
+        trigger: 'Manual',
+        recipient: candidate.phone || null,
+        body: `${callResult}${req.body.notes ? ` — ${String(req.body.notes).slice(0, 1000)}` : ''}`,
+        // A call is not "sent"; it happened. Recording it IS the outcome.
+        status: 'LOGGED',
+        statusDetail: `Call — ${callResult}`,
+        ...(await senderIdentity(req.user)),
+      },
+    });
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name,
+      action: `Called candidate — ${callResult}`,
+      entity: 'Candidate', entityId: candidate.id, toValue: purpose,
+    });
+    return res.status(201).json({ row, delivery: 'logged' });
+  }
+
+  // EMAIL / SMS / WHATSAPP — a message, written to the same history.
+  const body = String((req.body && req.body.body) || '').trim();
+  if (!body) return res.status(400).json({ error: 'Write the message before sending.' });
+  const recipient = method === 'Email' ? candidate.email : candidate.phone;
+  if (!recipient) {
+    return res.status(400).json({
+      error: `No ${method === 'Email' ? 'email address' : 'phone number'} on this candidate's record.`,
+    });
+  }
+  // Email is the ONE channel that really goes out, and only when SMTP is
+  // configured. Everything else is recorded, not transmitted.
+  // eslint-disable-next-line global-require
+  const emailCfg = await require('../utils/mailer').emailConfig().catch(() => ({ configured: false }));
+  const live = method === 'Email' && emailCfg.configured === true;
+  const row = await prisma.candidateMessage.create({
+    data: {
+      candidateId: candidate.id,
+      applicationId: (req.body && req.body.applicationId) || null,
+      channel: method,
+      template: 'MANUAL', // a person typed this, not a stage template
+      templateLabel: purpose,
+      trigger: 'Manual',
+      recipient,
+      subject: method === 'Email' ? (String(req.body.subject || purpose).slice(0, 200)) : null,
+      body: body.slice(0, 4000),
+      status: live ? 'QUEUED' : NOT_SENT,
+      statusDetail: live ? 'Queued for sending.' : NOT_SENT_DETAIL,
+      ...(await senderIdentity(req.user)),
+    },
+  });
+  if (live) require('../utils/mailWorker').kick();
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: `${method} to candidate`,
+    entity: 'Candidate', entityId: candidate.id, toValue: purpose,
+  });
+  return res.status(201).json({ row, delivery: live ? 'queued' : 'simulated' });
 });
 
 // --- Notes tab -------------------------------------------------------------
