@@ -86,43 +86,28 @@ async function main() {
   // There is no "Medical TL" role anywhere — only department=Medical plus
   // designation=TL, which the engine resolves to atsRole=TL, scope=Medical.
   // -------------------------------------------------------------------------
+  // THE EIGHT EMPLOYEE ROLES.
+  //
+  // RECRUITER IS NOT ONE OF THEM. A recruiter is an EMPLOYEE who also holds
+  // the ATS product role Recruiter — one person, one employee record, one
+  // login, with the ATS role added on Administration -> Users. Listing
+  // "Recruiter" here would have made it an employee role and invited a second
+  // record for the same person, which is the exact thing this model exists to
+  // prevent. BDE is absent for the same reason.
+  //
+  // The product columns are the permitted PRODUCTS. What a person can do
+  // inside one is still decided by their role for THAT product, so an Employee
+  // with no ATS role reaches ATS and finds their own nothing until somebody
+  // makes them a Recruiter.
   const DESIGNATION_ROLES = [
-    { designation: 'Super Admin', atsRole: 'SUPER_ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats', position: 0 },
-    { designation: 'Admin', atsRole: 'ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats', position: 1 },
-    { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: true, landing: 'ats', position: 2 },
-    { designation: 'Assistant Manager', atsRole: 'ASSISTANT_MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 3 },
-    { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 4 },
-    { designation: 'Senior Team Lead', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 5 },
-    { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 6 },
-    { designation: 'Team Lead', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 7 },
-  // EMPLOYEE IS THE BASE IDENTITY, AND ATS ADDS TO IT.
-  //
-  // Recruiting and business development are ATS work. In HRMS these people are
-  // EMPLOYEES — they apply for their own leave, log their own attendance and
-  // see their own record, exactly like anybody else. Naming hrmsRole here is
-  // what stops the derivation falling back to the ATS role and inventing an
-  // HRMS role called "RECRUITER", which HRMS has no rule for and which reads
-  // as though recruiting were an HRMS job.
-  //
-  // TL / STL / Manager / Assistant Manager are NOT in this list on purpose:
-  // those are real HRMS roles — they approve leave and see their team's HRMS
-  // records — so they legitimately hold the same role in both products. The
-  // Accountant keeps ACCOUNTANT because payroll is a genuine HRMS feature they
-  // own. Same rule the HR row below already uses.
-  //
-  // ONE EMPLOYEE = ONE USER = ONE LOGIN either way: this changes which ROLE
-  // the single login carries per product, never how many logins exist.
-    { designation: 'Recruiter', hrmsRole: 'EMPLOYEE', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 8 },
-    { designation: 'Senior Recruiter', hrmsRole: 'EMPLOYEE', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 9 },
-    { designation: 'BDE', hrmsRole: 'EMPLOYEE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats', position: 10 },
-    { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts', position: 11 },
-    // THE HR DESK (§6) — HRMS ONLY, every employee visible, no ATS and no
-    // Accounts. It names its HRMS role explicitly because there is no ATS role
-    // to derive one from; without it the designation would imply EMPLOYEE.
-    { designation: 'HR', hrmsRole: 'HR', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 12 },
-    { designation: 'HR Executive', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 13 },
-    { designation: 'Junior Developer', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 14 },
-    { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms', position: 15 },
+    { designation: 'Super Admin', atsRole: 'SUPER_ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats' , position: 1 },
+    { designation: 'HR', hrmsRole: 'HR', atsRole: 'HR', hrms: true, ats: true, accounts: false, landing: 'hrms' , position: 2 },
+    { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: true, landing: 'ats' , position: 3 },
+    { designation: 'Assistant Manager', atsRole: 'ASSISTANT_MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats' , position: 4 },
+    { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats' , position: 5 },
+    { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats' , position: 6 },
+    { designation: 'Employee', hrmsRole: 'EMPLOYEE', atsRole: null, hrms: true, ats: true, accounts: false, landing: 'hrms' , position: 7 },
+    { designation: 'Accountant', hrmsRole: 'NONE', atsRole: null, hrms: false, ats: false, accounts: true, landing: 'accounts' , position: 8 },
   ];
   // DERIVATION STAYS IN THE TABLE, and the table carries ALL THREE product
   // roles now. The rows above name only the ATS role because that is the one

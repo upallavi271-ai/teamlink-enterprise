@@ -99,6 +99,12 @@ function scopeOf(user) {
 function requirementWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
+  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
+  // Without this an HR login resolved to the default branch and saw nothing,
+  // so the modules opened empty. READ ONLY — no create / edit / approve rule
+  // in utils/permissions.js names HR, so this widens what HR sees and
+  // nothing they can do.
+  if (s.atsRole === 'HR') return {};
   switch (s.atsRole) {
     case 'CLIENT':
       // Own company only — and never TeamLink's own internal openings, which
@@ -171,6 +177,12 @@ function portalRequirementWhere(user, { publishedOnly = false } = {}) {
 function clientWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
+  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
+  // Without this an HR login resolved to the default branch and saw nothing,
+  // so the modules opened empty. READ ONLY — no create / edit / approve rule
+  // in utils/permissions.js names HR, so this widens what HR sees and
+  // nothing they can do.
+  if (s.atsRole === 'HR') return {};
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
   if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
   // A BDE is scoped to the clients assigned to them; where none are assigned
@@ -211,6 +223,12 @@ function clientWhere(user) {
 function applicationWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
+  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
+  // Without this an HR login resolved to the default branch and saw nothing,
+  // so the modules opened empty. READ ONLY — no create / edit / approve rule
+  // in utils/permissions.js names HR, so this widens what HR sees and
+  // nothing they can do.
+  if (s.atsRole === 'HR') return {};
   if (s.atsRole === 'CANDIDATE') {
     return { candidateId: s.candidateId || '__none__' };
   }
@@ -239,6 +257,12 @@ const CLIENT_SHARED_STAGES = [
 function candidateWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
+  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
+  // Without this an HR login resolved to the default branch and saw nothing,
+  // so the modules opened empty. READ ONLY — no create / edit / approve rule
+  // in utils/permissions.js names HR, so this widens what HR sees and
+  // nothing they can do.
+  if (s.atsRole === 'HR') return {};
   if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
   return { applications: { some: applicationWhere(user) } };
 }

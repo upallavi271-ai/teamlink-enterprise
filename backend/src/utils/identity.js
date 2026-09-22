@@ -34,45 +34,28 @@ const prisma = require('../db');
 // implicit here and filled in by normaliseMapping() below with the same rule
 // the migration backfilled the table with, so the fallback and the table can
 // never disagree.
+// THE EIGHT EMPLOYEE ROLES.
+//
+// RECRUITER IS NOT ONE OF THEM. A recruiter is an EMPLOYEE who also holds
+// the ATS product role Recruiter — one person, one employee record, one
+// login, with the ATS role added on Administration -> Users. Listing
+// "Recruiter" here would have made it an employee role and invited a second
+// record for the same person, which is the exact thing this model exists to
+// prevent. BDE is absent for the same reason.
+//
+// The product columns are the permitted PRODUCTS. What a person can do
+// inside one is still decided by their role for THAT product, so an Employee
+// with no ATS role reaches ATS and finds their own nothing until somebody
+// makes them a Recruiter.
 const FALLBACK_DESIGNATION_MAP = [
   { designation: 'Super Admin', atsRole: 'SUPER_ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats' },
-  { designation: 'Admin', atsRole: 'ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats' },
+  { designation: 'HR', hrmsRole: 'HR', atsRole: 'HR', hrms: true, ats: true, accounts: false, landing: 'hrms' },
   { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: true, landing: 'ats' },
   { designation: 'Assistant Manager', atsRole: 'ASSISTANT_MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  { designation: 'Senior Team Lead', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  { designation: 'Team Lead', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  // EMPLOYEE IS THE BASE IDENTITY, AND ATS ADDS TO IT.
-  //
-  // Recruiting and business development are ATS work. In HRMS these people are
-  // EMPLOYEES — they apply for their own leave, log their own attendance and
-  // see their own record, exactly like anybody else. Naming hrmsRole here is
-  // what stops the derivation falling back to the ATS role and inventing an
-  // HRMS role called "RECRUITER", which HRMS has no rule for and which reads
-  // as though recruiting were an HRMS job.
-  //
-  // TL / STL / Manager / Assistant Manager are NOT in this list on purpose:
-  // those are real HRMS roles — they approve leave and see their team's HRMS
-  // records — so they legitimately hold the same role in both products. The
-  // Accountant keeps ACCOUNTANT because payroll is a genuine HRMS feature they
-  // own. Same rule the HR row below already uses.
-  //
-  // ONE EMPLOYEE = ONE USER = ONE LOGIN either way: this changes which ROLE
-  // the single login carries per product, never how many logins exist.
-  { designation: 'Recruiter', hrmsRole: 'EMPLOYEE', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  { designation: 'Senior Recruiter', hrmsRole: 'EMPLOYEE', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  { designation: 'BDE', hrmsRole: 'EMPLOYEE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  { designation: 'Business Development Executive', hrmsRole: 'EMPLOYEE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats' },
-  { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts' },
-  // THE HR DESK (§6). An HRMS-ONLY designation that names its HRMS role
-  // explicitly — without `hrmsRole` it would fall to the implied EMPLOYEE and
-  // the HR desk would see only its own record. No ATS and no Accounts: a
-  // person who is both HR and a recruiter gets the ATS role on their USER row,
-  // never from this designation.
-  { designation: 'HR', hrmsRole: 'HR', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms' },
-  { designation: 'HR Executive', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms' },
-  { designation: 'Employee', atsRole: null, hrms: true, ats: false, accounts: false, landing: 'hrms' },
+  { designation: 'Employee', hrmsRole: 'EMPLOYEE', atsRole: null, hrms: true, ats: true, accounts: false, landing: 'hrms' },
+  { designation: 'Accountant', hrmsRole: 'NONE', atsRole: null, hrms: false, ats: false, accounts: true, landing: 'accounts' },
 ];
 
 const NO_ROLE = 'NONE';

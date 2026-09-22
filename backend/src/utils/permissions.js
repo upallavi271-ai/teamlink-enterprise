@@ -126,6 +126,16 @@ const SET = {
   // and neither are STL/TL, who look after their own team but do not run
   // onboarding.
   HR_DESK: ['SUPER_ADMIN', 'ADMIN', 'HR'],
+  // HR READS ATS, it does not work it. The product table gives HR
+  // "HRMS + ATS + Job Portal"; what that means in practice is oversight —
+  // seeing which openings are live and who is in the pipeline — not raising
+  // requirements or moving candidates. The write rules keep their own sets.
+  HR_ATS_VIEW: ['HR'],
+  // AN EMPLOYEE'S ATS IS THE JOB PORTAL. That is the one thing an employee
+  // who is not a recruiter actually has business with: browsing openings and
+  // referring people. Give them the pipeline as well and they would see the
+  // company's candidates, which no product table asks for.
+  EMPLOYEE_PORTAL: ['EMPLOYEE'],
   // routes/invoices.js + bank.js + office.js ACCOUNTS_ROLES, payroll.js PAYROLL_ROLES
   ACCOUNTS: ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'],
   // routes/candidates.js RECRUITING_ROLES
@@ -142,7 +152,11 @@ const SET = {
   // Employee, a Client and a Candidate are all absent, by construction — none
   // of them holds an ATS working role, so none of them can be given the
   // workspace by accident.
-  PORTAL_VIEW: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE'],
+  // Job Portal reach follows the PRODUCT TABLE: everybody permitted ATS is
+  // permitted the portal inside it. HR and EMPLOYEE are here now because
+  // the table says HRMS + ATS + Job Portal for both. ACCOUNTANT is not:
+  // Accounts only.
+  PORTAL_VIEW: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR', 'RECRUITER', 'BDE', 'EMPLOYEE'],
   // Who may ACT in it — publish, sync, import. "Manager | View, no publishing
   // or editing unless explicitly granted" is the access matrix's wording, and
   // Assistant Manager and STL read the same way, so the three of them get view
@@ -182,7 +196,10 @@ const DEFAULT_MODULES = {
   // HR is a PRODUCT ROLE IN HRMS, never a special case outside the per-product
   // model: the same person may be HR in HRMS and a Recruiter in ATS, and the
   // engine resolves each module against its own product's role as usual.
-  HR: ['dashboard', 'hrms', 'reports'],
+  // HR — HRMS + ATS + Job Portal per the product table. What HR can DO in
+  // ATS is still the matrix's business; this only says the modules are
+  // reachable.
+  HR: ['dashboard', 'hrms', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'reports'],
   // A recruiter reads the client directory (their requirements name a client)
   // but cannot create or edit one — see DEFAULT_RULES.
   RECRUITER: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'recruiterbde', 'hrms'],
@@ -191,8 +208,15 @@ const DEFAULT_MODULES = {
   // company record — utils/scope.js pins it to their clientId.
   CLIENT: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'accounts'],
   // An accountant is an employee: Accounts per the catalog, HRMS self-service.
-  ACCOUNTANT: ['dashboard', 'accounts', 'reports', 'hrms'],
-  EMPLOYEE: ['dashboard', 'hrms'],
+  // ACCOUNTANT — ACCOUNTS ONLY, as the product table says. `hrms` is gone
+  // from this list deliberately.
+  ACCOUNTANT: ['dashboard', 'accounts', 'reports'],
+  // EMPLOYEE — HRMS + ATS + Job Portal per the product table. With no ATS
+  // ROLE they reach the modules and see nothing in them, because
+  // utils/scope.js gives an ATS-roleless login no requirements, no
+  // candidates and no clients. Being made a Recruiter on Users is what
+  // fills them, on the SAME login.
+  EMPLOYEE: ['dashboard', 'hrms', 'requirements', 'clients', 'candidates', 'interviews', 'reports'],
   // A candidate reaches their own profile, applications and interviews. Scope
   // (utils/scope.js) pins every one of those to their own candidate row.
   CANDIDATE: ['dashboard', 'candidates', 'interviews'],
@@ -225,7 +249,7 @@ const DEFAULT_RULES = [
     module: 'requirements',
     features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline'],
     actions: ['view'],
-    roles: [...SET.MATCHING, 'CLIENT'],
+    roles: [...SET.MATCHING, ...SET.HR_ATS_VIEW, 'CLIENT'],
   },
   // requireRole(...MATCHING_ROLES) on /:id/matching-candidates
   { module: 'requirements', features: ['Matching Candidates'], actions: ['view'], roles: SET.MATCHING },
@@ -395,6 +419,17 @@ const DEFAULT_RULES = [
   { module: 'hrms', features: ['Attendance & Time'], actions: ['configure'], roles: SET.ADMIN },
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['configure'], roles: SET.ADMIN },
   { module: 'hrms', features: ['Payroll & Compensation'], actions: ['configure'], roles: SET.ADMIN },
+
+  // --- HR oversight in ATS (product table: HRMS + ATS + Job Portal) ------
+  // VIEW ONLY, on purpose. Every create / edit / approve rule above keeps its
+  // own role set, so HR reads the recruitment picture and changes none of it.
+  { module: 'clients', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
+  { module: 'candidates', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
+  { module: 'interviews', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
+  { module: 'recruiterbde', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
+
+  // --- An employee's ATS: the Job Portal, and nothing else ---------------
+  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
 
   // --- Accounts ----------------------------------------------------------
   // requireRole(...ACCOUNTS_ROLES) — invoices, bank (router-level), office
