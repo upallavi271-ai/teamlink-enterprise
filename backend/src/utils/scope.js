@@ -276,13 +276,65 @@ function invoiceWhere(user) {
 // HR roles see their scope's employees; everyone else sees only themselves.
 // An employee record is an HRMS record, so the HRMS role scopes it: an HRMS
 // Employee sees only themselves even when their ATS role is a TL.
+// SCOPE LOOKS SIDEWAYS AND DOWN, NEVER UP.
+//
+// A department filter alone handed a Medical TL their own STL and both
+// Medical Managers — "medical TL ga login ithey, STL, Manager, vellu andharu
+// endhuku kanipisthunnaru". A lead is responsible for their team, not for the
+// people they report to, so an employee is in scope when their LEVEL is at or
+// below the viewer's on the same ladder the leave chain climbs:
+//
+//   Employee -> TL -> STL -> Manager -> Asst Manager -> Admin -> Super Admin
+//
+// Recruiters, BDEs and Accountants sit at employee level: they are individual
+// contributors, whatever product they work in.
+const SENIORITY = {
+  EMPLOYEE: 1, RECRUITER: 1, BDE: 1, ACCOUNTANT: 1, CANDIDATE: 1, CLIENT: 1,
+  TL: 2, STL: 3, MANAGER: 4, ASSISTANT_MANAGER: 5, ADMIN: 6, SUPER_ADMIN: 7,
+  // HR is not a rung on this ladder — it is company-wide in HRMS and is
+  // handled by hrmsGlobal() before any of this is reached.
+  HR: 6,
+};
+function rankOf(role) {
+  return SENIORITY[role] || 1;
+}
+
+// The roles this viewer may NOT see, i.e. everyone above them.
+function rolesAbove(role) {
+  const mine = rankOf(role);
+  return Object.keys(SENIORITY).filter((r) => SENIORITY[r] > mine);
+}
+
+// --- Employees -------------------------------------------------------------
+// HR roles see their scope's employees; everyone else sees only themselves.
+// An employee record is an HRMS record, so the HRMS role scopes it: an HRMS
+// Employee sees only themselves even when their ATS role is a TL.
 function employeeWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
   // HR (§6) — every employee, not a department's worth.
   if (hrmsGlobal(user)) return {};
   if (['STL', 'TL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
-    return { department: { in: s.departments } };
+    const above = rolesAbove(s.hrmsRole);
+    return {
+      department: { in: s.departments },
+      // Their own record always survives this, because nobody outranks
+      // themselves. An employee with NO login stays visible too — there is no
+      // senior role on a record that has no account.
+      OR: [
+        { id: s.employeeId || '__none__' },
+        { userId: null },
+        {
+          user: {
+            is: {
+              // Both halves matter: hrmsRole is the HRMS ladder, and `role` is
+              // where ADMIN / SUPER_ADMIN live regardless of product.
+              NOT: { OR: [{ hrmsRole: { in: above } }, { role: { in: above } }] },
+            },
+          },
+        },
+      ],
+    };
   }
   return { id: s.employeeId || '__none__' };
 }

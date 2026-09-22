@@ -7,7 +7,7 @@ const {
   scopeOf,
   hrmsGlobal,
   scopeDepartments: scopeDepartmentsOf,
-  departmentWhere: departmentWhereOf,
+  employeeWhere: employeeWhereOf,
   scopeLabel: scopeLabelOf,
   clientWhere,
 } = require('../utils/scope');
@@ -77,7 +77,13 @@ router.use(requireAuth);
 // They are kept here as thin req-taking wrappers so the dozens of call sites
 // below read unchanged — there is still exactly one rule.
 const scopeDepartments = (req) => scopeDepartmentsOf(req.user);
-const departmentWhere = (req) => departmentWhereOf(req.user);
+// EVERY CALLER OF THIS ONE QUERIES prisma.employee, so it must be the EMPLOYEE
+// rule and not the bare department filter. departmentWhereOf() is a plain
+// `department IN (...)` for any model that has a department column; it knows
+// nothing about who outranks whom, which is why a Medical TL's list carried
+// their own STL and both Medical Managers while employeeWhere() — the rule the
+// rest of HRMS uses — already excluded them.
+const departmentWhere = (req) => employeeWhereOf(req.user);
 const scopeLabel = (req) => scopeLabelOf(req.user);
 
 async function assertInScope(req, employee) {
