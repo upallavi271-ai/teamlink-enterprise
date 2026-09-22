@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { workRoleLabel } from '../../permissions';
+import DoThisNow from '../../components/DoThisNow.jsx';
 
 // ---------------------------------------------------------------------------
 // The ATS home.
@@ -89,6 +90,10 @@ export default function AtsDashboard() {
           </div>
         </div>
       </div>
+
+      {/* §27 — before everything else, and it draws nothing when there is
+          nothing late. */}
+      <DoThisNow />
 
       {/* 1. My Pending Actions ------------------------------------------- */}
       <div className="panel">

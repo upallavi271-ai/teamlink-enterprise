@@ -18,7 +18,9 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
-const { applicationWhere, isAssignedTo, scopeOf, OUT_OF_SCOPE } = require('../utils/scope');
+const {
+  applicationWhere, isAssignedTo, scopeOf, scopeLabel, OUT_OF_SCOPE,
+} = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { stageLabel } = require('../utils/atsVocab');
@@ -84,83 +86,210 @@ function shape(row, application) {
 // ---------------------------------------------------------------------------
 const CLOSED_STAGES = ['JOINED', 'HIRED', 'REJECTED'];
 
+// THE LIST, BUILT ONCE. Both the table and the dashboard read it, so a count
+// on a tile can never disagree with the rows behind it.
+async function buildList(req) {
+  await escalateOverdue();
+
+
+  const where = { ...applicationWhere(req.user) };
+  if (req.query.applicationId) where.id = req.query.applicationId;
+  if (req.query.candidateId) where.candidateId = req.query.candidateId;
+  const applications = await prisma.application.findMany({
+    where, include: APPLICATION_INCLUDE, orderBy: { updatedAt: 'desc' },
+  });
+  const active = req.query.includeClosed === '1'
+    ? applications
+    : applications.filter((a) => !CLOSED_STAGES.includes(a.stage));
+  const ids = active.map((a) => a.id);
+
+  const rows = ids.length
+    ? await prisma.applicationFollowUp.findMany({
+      where: { applicationId: { in: ids } }, orderBy: { createdAt: 'desc' },
+    })
+    : [];
+  const current = new Map();
+  rows.forEach((row) => {
+    const held = current.get(row.applicationId);
+    if (!held) current.set(row.applicationId, row);
+    else if (held.completedAt && !row.completedAt) current.set(row.applicationId, row);
+  });
+
+  const today = todayStr();
+  const s = scopeOf(req.user);
+  const names = await resolveNames(active.map((a) => a.requirement));
+  let out = active.map((a) => {
+    const row = current.get(a.id) || null;
+    const snap = chainSnapshot(a, a.requirement, names);
+    const r = a.requirement || {};
+    return {
+      applicationId: a.id,
+      candidateId: a.candidateId,
+      candidateName: a.candidate ? a.candidate.name : null,
+      requirementId: a.requirementId,
+      requirementTitle: r.title || null,
+      requirementCode: r.reqCode || null,
+      clientName: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
+      stage: a.stage,
+      stageLabel: stageLabel(a.stage),
+      // Owner / Owner Role / TL / BDE — from the row where one exists (the
+      // snapshot at the time it was recorded), otherwise resolved live from
+      // the assignment chain so an un-followed-up application still says who
+      // owes it.
+      owner: (row && row.ownerName) || snap.ownerName || '—',
+      ownerRole: (row && row.ownerRole) || snap.ownerRole || '—',
+      ownerUserId: (row && row.ownerUserId) || snap.ownerUserId || null,
+      tl: (row && row.tlName) || snap.tlName || '—',
+      bde: (row && row.bdeName) || snap.bdeName || '—',
+      lastContactedAt: row ? row.lastContactedAt : null,
+      contactMode: row ? row.contactMode : null,
+      nextAction: (row && row.nextAction) || defaultNextAction(a),
+      dueDate: row ? row.dueDate : null,
+      nextFollowUpAt: row ? row.nextFollowUpAt : null,
+      notes: row ? row.notes : null,
+      status: row ? followUpStatus(row, today) : 'Upcoming',
+      daysOverdue: row ? decorate(row, today).daysOverdue : 0,
+      escalatedTlAt: row ? row.escalatedTlAt : null,
+      escalatedAdminAt: row ? row.escalatedAdminAt : null,
+      // The rest of the row the dashboard and the outcome dialog read.
+      dueTime: row ? row.dueTime : null,
+      purpose: row ? row.purpose : null,
+      autoCreated: row ? row.autoCreated : false,
+      escalationLevel: row ? row.escalationLevel : 0,
+      outcome: row ? row.outcome : null,
+      nextStep: row ? row.nextStep : null,
+      followUpId: row ? row.id : null,
+      recorded: !!row,
+    };
+  });
+
+  if (req.query.mine === '1') out = out.filter((f) => f.ownerUserId === s.userId);
+  if (req.query.status) {
+    const wanted = String(req.query.status).split(',').map((x) => x.trim()).filter(Boolean);
+    out = out.filter((f) => wanted.includes(f.status));
+  }
+  const ORDER = { Overdue: 0, 'Due Today': 1, Upcoming: 2, Completed: 3 };
+  out.sort((a, b) => (ORDER[a.status] - ORDER[b.status])
+    || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
+  return out;
+}
+
 router.get('/', async (req, res, next) => {
   try {
-    await escalateOverdue();
+    return res.json(await buildList(req));
+  } catch (err) {
+    return next(err);
+  }
+});
 
-    const where = { ...applicationWhere(req.user) };
-    if (req.query.applicationId) where.id = req.query.applicationId;
-    if (req.query.candidateId) where.candidateId = req.query.candidateId;
-    const applications = await prisma.application.findMany({
-      where, include: APPLICATION_INCLUDE, orderBy: { updatedAt: 'desc' },
-    });
-    const active = req.query.includeClosed === '1'
-      ? applications
-      : applications.filter((a) => !CLOSED_STAGES.includes(a.stage));
-    const ids = active.map((a) => a.id);
 
-    const rows = ids.length
-      ? await prisma.applicationFollowUp.findMany({
-        where: { applicationId: { in: ids } }, orderBy: { createdAt: 'desc' },
-      })
-      : [];
-    const current = new Map();
-    rows.forEach((row) => {
-      const held = current.get(row.applicationId);
-      if (!held) current.set(row.applicationId, row);
-      else if (held.completedAt && !row.completedAt) current.set(row.applicationId, row);
-    });
 
-    const today = todayStr();
+// ---------------------------------------------------------------------------
+// THE FOLLOW-UP DASHBOARD (§21-§25).
+//
+// One endpoint, five shapes, chosen by the CALLER'S ROLE rather than by a
+// query parameter — a recruiter asking for the admin view would still only be
+// answered about their own scope, so letting the client pick would be a lie.
+//
+//   Recruiter / BDE   My Follow-ups              (§21)
+//   TL                + My Team, by owner        (§22)
+//   STL / Manager     + My Department, by owner  (§23)
+//   Admin             + company-wide health      (§24)
+//   Super Admin       + the escalation monitor   (§25)
+//
+// Every figure is counted over buildList(req), which is scoped by
+// utils/scope.js applicationWhere() — so a tile can never show a number the
+// rows behind it do not add up to, and nobody is counted outside their scope.
+// ---------------------------------------------------------------------------
+router.get('/dashboard', async (req, res, next) => {
+  try {
+    const all = await buildList(req);
     const s = scopeOf(req.user);
-    const names = await resolveNames(active.map((a) => a.requirement));
-    let out = active.map((a) => {
-      const row = current.get(a.id) || null;
-      const snap = chainSnapshot(a, a.requirement, names);
-      const r = a.requirement || {};
-      return {
-        applicationId: a.id,
-        candidateId: a.candidateId,
-        candidateName: a.candidate ? a.candidate.name : null,
-        requirementId: a.requirementId,
-        requirementTitle: r.title || null,
-        requirementCode: r.reqCode || null,
-        clientName: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
-        stage: a.stage,
-        stageLabel: stageLabel(a.stage),
-        // Owner / Owner Role / TL / BDE — from the row where one exists (the
-        // snapshot at the time it was recorded), otherwise resolved live from
-        // the assignment chain so an un-followed-up application still says who
-        // owes it.
-        owner: (row && row.ownerName) || snap.ownerName || '—',
-        ownerRole: (row && row.ownerRole) || snap.ownerRole || '—',
-        ownerUserId: (row && row.ownerUserId) || snap.ownerUserId || null,
-        tl: (row && row.tlName) || snap.tlName || '—',
-        bde: (row && row.bdeName) || snap.bdeName || '—',
-        lastContactedAt: row ? row.lastContactedAt : null,
-        contactMode: row ? row.contactMode : null,
-        nextAction: (row && row.nextAction) || defaultNextAction(a),
-        dueDate: row ? row.dueDate : null,
-        nextFollowUpAt: row ? row.nextFollowUpAt : null,
-        notes: row ? row.notes : null,
-        status: row ? followUpStatus(row, today) : 'Upcoming',
-        daysOverdue: row ? decorate(row, today).daysOverdue : 0,
-        escalatedTlAt: row ? row.escalatedTlAt : null,
-        escalatedAdminAt: row ? row.escalatedAdminAt : null,
-        followUpId: row ? row.id : null,
-        recorded: !!row,
-      };
+    const role = s.atsRole || s.role;
+
+    const tally = (rows) => ({
+      overdue: rows.filter((f) => f.status === 'Overdue').length,
+      dueToday: rows.filter((f) => f.status === 'Due Today').length,
+      upcoming: rows.filter((f) => f.status === 'Upcoming').length,
+      completed: rows.filter((f) => f.status === 'Completed').length,
     });
 
-    if (req.query.mine === '1') out = out.filter((f) => f.ownerUserId === s.userId);
-    if (req.query.status) {
-      const wanted = String(req.query.status).split(',').map((x) => x.trim()).filter(Boolean);
-      out = out.filter((f) => wanted.includes(f.status));
+    const mine = all.filter((f) => f.ownerUserId === s.userId);
+    const others = all.filter((f) => f.ownerUserId !== s.userId);
+
+    // Per-owner breakdown — "evaru follow-up cheyyaledu?" answered directly.
+    const byOwner = (rows) => {
+      const map = new Map();
+      rows.forEach((f) => {
+        const key = f.ownerUserId || f.owner || '—';
+        if (!map.has(key)) {
+          map.set(key, { ownerUserId: f.ownerUserId, owner: f.owner, ownerRole: f.ownerRole, overdue: 0, dueToday: 0, upcoming: 0 });
+        }
+        const e = map.get(key);
+        if (f.status === 'Overdue') e.overdue += 1;
+        else if (f.status === 'Due Today') e.dueToday += 1;
+        else if (f.status === 'Upcoming') e.upcoming += 1;
+      });
+      return [...map.values()].sort((x, y) => y.overdue - x.overdue || y.dueToday - x.dueToday);
+    };
+
+    const payload = {
+      scope: scopeLabel(req.user),
+      // §21 — every role gets this, and it is always FIRST.
+      mine: { ...tally(mine), rows: mine.slice(0, 50) },
+      // §26-§27 — the three things to do now, most overdue first. The whole
+      // point is that a user should not have to go looking.
+      doThisNow: [...mine]
+        .filter((f) => f.status === 'Overdue' || f.status === 'Due Today')
+        .slice(0, 5)
+        .map((f) => ({
+          applicationId: f.applicationId,
+          candidateId: f.candidateId,
+          what: f.candidateName,
+          why: f.nextAction,
+          status: f.status,
+          due: f.dueDate,
+          owner: f.owner,
+          followUpId: f.followUpId,
+        })),
+    };
+
+    // §22-§23 — a lead also sees the people under them.
+    if (['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(role) || s.global) {
+      payload.team = {
+        label: role === 'TL' ? 'My Team' : 'My Department',
+        ...tally(others),
+        owners: byOwner(others),
+      };
     }
-    const ORDER = { Overdue: 0, 'Due Today': 1, Upcoming: 2, Completed: 3 };
-    out.sort((a, b) => (ORDER[a.status] - ORDER[b.status])
-      || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
-    return res.json(out);
+
+    // §24 — the health panel. `unassigned` is the one that matters most: a
+    // follow-up nobody owns is the one that will certainly be missed.
+    if (s.global || ['ADMIN', 'SUPER_ADMIN'].includes(s.role)) {
+      payload.health = {
+        ...tally(all),
+        unassigned: all.filter((f) => !f.ownerUserId).length,
+        escalated: all.filter((f) => f.escalationLevel > 0).length,
+      };
+    }
+
+    // §25 — the escalation monitor, by rung. Only genuinely unresolved items
+    // are on it: a completed follow-up leaves the ladder whatever level it
+    // reached.
+    if (s.role === 'SUPER_ADMIN' || s.global) {
+      const live = all.filter((f) => f.status !== 'Completed');
+      payload.escalation = [
+        { level: 0, label: 'Owner', count: live.filter((f) => !f.escalationLevel).length },
+        ...ESCALATION_LADDER.map((r) => ({
+          level: r.level,
+          label: r.label,
+          afterDays: r.afterDays,
+          count: live.filter((f) => f.escalationLevel === r.level).length,
+        })),
+      ];
+    }
+
+    return res.json(payload);
   } catch (err) {
     return next(err);
   }

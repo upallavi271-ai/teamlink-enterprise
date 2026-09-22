@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
+import NextStepBlock from '../components/NextStepBlock.jsx';
 import {
   stageLabel, lifeStatusClass, aiStatusClass, protoDate, interviewStatusLabel,
   followUpStatusClass, CONTACT_MODES,
@@ -239,6 +240,30 @@ export default function CandidateDetail() {
             : <span className="small-muted">No application</span>}
         </div>
       </div>
+
+      {/* §28 / §41 — where this is, who owns it, what is owed and when, then
+          ONE button. Internal only: a client login has no follow-up chain to
+          act on and no business seeing who inside TeamLink owes what. */}
+      {internal && primary && !['REJECTED', 'HOLD'].includes(c.currentStage) && (
+        <NextStepBlock
+          stageLabel={primary.stageLabel || c.currentStageLabel}
+          owner={primary.followUp?.ownerName || primary.owner}
+          ownerRole={primary.followUp?.ownerRole}
+          nextAction={primary.followUp?.nextAction || primary.nextAction}
+          due={primary.followUp?.dueDate}
+          dueTime={primary.followUp?.dueTime}
+          status={primary.followUp?.status}
+          candidateId={c.id}
+          candidateName={c.name}
+          phone={c.phone}
+          email={c.email}
+          role={primary.requirement?.title}
+          client={primary.requirement?.internal ? 'TeamLink Internal' : primary.requirement?.client?.name}
+          applicationId={primary.id}
+          followUpId={primary.followUp?.id}
+          onDone={load}
+        />
+      )}
 
       {/* The visible pipeline, with this candidate's position on it. The
           detailed status inside the current stage is shown underneath. */}

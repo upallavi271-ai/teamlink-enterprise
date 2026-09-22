@@ -16,6 +16,7 @@ import CandidateDetail from './pages/CandidateDetail.jsx';
 import CandidateHome from './pages/CandidateHome.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
+import FollowUps from './pages/ats/FollowUps.jsx';
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
 import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
 import Offers from './pages/ats/Offers.jsx';
@@ -138,6 +139,10 @@ export default function App() {
             The route did not exist, so logging in as one hit a dead page. */}
         <Route path="my-applications" element={<CandidateHome />} />
         <Route path="ats/team" element={<Team />} />
+        {/* NOT a seventh sidebar module (§1) — Follow-ups is reached from the
+            ATS Dashboard and from Recruiter & BDE, which is where §31/§32 put
+            it. Routed so those links have somewhere to go. */}
+        <Route path="ats/followups" element={<FollowUps />} />
         <Route path="ats/calendar" element={<InterviewCalendar />} />
         {/* Interviews & Joining: Interview Calendar (above) - Interview Feedback
             - Offers - Joining - Internal Hiring */}
