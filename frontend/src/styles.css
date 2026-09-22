@@ -500,3 +500,33 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .combo-opt.create b{font-weight:600}
 .combo-dim{color:var(--ink-soft)}
 .combo-group{margin-left:auto;font-size:10.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.3px}
+
+/* --------------------------------------------------------------------------
+   Approval workflow (§15) — the chain a request climbs.
+     ✓ done   ● the step it is sitting on   ○ not reached
+   Built from the tokens already above: no new colours, no new type scale. The
+   current step is the one that reads differently, because "where does this sit
+   right now" is the whole question the panel answers.
+   -------------------------------------------------------------------------- */
+.wf-head{display:grid;gap:5px;font-size:13.5px;padding:2px 0 8px;border-bottom:1px solid var(--line-soft)}
+.wf-chain{border-top:1px solid var(--line-soft);margin-top:6px}
+.wf-step{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:start;
+  padding:10px 2px;border-bottom:1px solid var(--line-soft);font-size:13.5px}
+.wf-step:last-child{border-bottom:0}
+.wf-mark{font-size:13px;line-height:1.5;text-align:center;color:var(--line)}
+.wf-step.wf-done .wf-mark{color:var(--teal)}
+.wf-step.wf-current .wf-mark{color:var(--amber)}
+.wf-step.wf-rejected .wf-mark{color:var(--red)}
+.wf-step.wf-skipped{opacity:.6}
+.wf-step-current{background:var(--amber-tint);border-radius:8px;padding-left:8px;padding-right:8px}
+.wf-state{text-align:right;white-space:nowrap}
+.wf-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;margin-top:14px;
+  padding-top:12px;border-top:1px solid var(--line-soft)}
+.wf-facts > div{display:flex;flex-direction:column;gap:2px;font-size:13px;min-width:0}
+.wf-facts .cell-muted{font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+.wf-facts b{font-weight:600;overflow-wrap:anywhere}
+@media (max-width:700px){
+  .wf-facts{grid-template-columns:1fr}
+  .wf-step{grid-template-columns:20px 1fr}
+  .wf-state{grid-column:2;text-align:left}
+}
