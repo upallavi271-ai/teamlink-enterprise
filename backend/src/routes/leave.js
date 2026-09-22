@@ -3,9 +3,54 @@ const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const { employeeWhere, employeeRecordWhere, employeeInScope, scopeDepartments, OUT_OF_SCOPE } = require('../utils/scope');
+const workflow = require('../utils/approvalWorkflow');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// ---------------------------------------------------------------------------
+// THE APPROVAL CHAIN (§15). Leave is the FIRST workflow wired to the shared
+// engine in utils/approvalWorkflow.js, not a leave-shaped feature:
+//
+//   Employee → TL → STL → Manager → Asst Manager → Admin → Super Admin
+//
+// The chain is resolved from the real reporting data (Employee.tl / .stl /
+// .reportingManagerId, the department and team, and the configured scope
+// departments of the Manager / Assistant Manager logins). Each level is
+// configured as a REQUIRED approver or VISIBILITY-ONLY — see
+// /leave/approval-levels below.
+//
+// NOTHING BELOW REPLACES THE EXISTING BEHAVIOUR. A leave still ends up
+// Approved / Rejected / Cancelled on the LeaveRequest row, the balance is
+// still drawn down once, and a request with no chain (anything raised before
+// this shipped, until it is materialised) still decides in one step.
+// ---------------------------------------------------------------------------
+const WF = 'leave';
+
+// Lay the chain down for a request that predates it, so a pending leave
+// raised before this shipped still shows a workflow rather than a blank. Same
+// lazy pattern as ensureBalances() — no backfill migration, and it can never
+// take a request that is already decided back to Pending.
+async function ensureWorkflow(request) {
+  if (!request || request.status !== 'Pending') return null;
+  const existing = await prisma.approvalStep.findFirst({ where: { workflow: WF, recordId: request.id }, select: { id: true } });
+  if (existing) return null;
+  const employee = request.employee || await prisma.employee.findUnique({ where: { id: request.employeeId } });
+  if (!employee) return null;
+  return workflow.start({
+    workflow: WF,
+    recordId: request.id,
+    employee,
+    applicantUserId: employee.userId || null,
+    applicantName: employee.name,
+  });
+}
+
+// Never let a chain problem take an existing screen down — unhandled
+// rejections have exited this process before.
+async function safeEnsureWorkflow(request) {
+  try { await ensureWorkflow(request); } catch (err) { console.error('[leave] workflow materialise failed', err.message); }
+}
 
 
 // Inclusive calendar-day span of a leave request, used when the client doesn't
@@ -50,12 +95,102 @@ async function ensureBalances(employeeIds) {
 // DEPARTMENT-SCOPED. employeeRecordWhere() already resolves the three tiers —
 // global / this user's departments / themselves only — so the self-only branch
 // that used to live here is gone rather than duplicated.
-router.get('/', async (req, res) => {
-  const where = { ...employeeRecordWhere(req.user) };
-  if (req.query.employeeId) where.employeeId = req.query.employeeId;
-  if (req.query.status) where.status = req.query.status;
-  const leave = await prisma.leaveRequest.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } });
-  res.json(leave);
+//
+// VISIBILITY HAS TWO HALVES NOW. Department scope, unchanged — and CHAIN
+// MEMBERSHIP: "everyone above in the chain can see the request". A TL named
+// on a request's chain sees it even when the applicant sits in a department
+// they are not scoped to; a TL from another team is on neither half and the
+// request simply is not in their list. Being able to SEE it is still not
+// being able to ACT on it — that is the current owner only (see /decision).
+router.get('/', async (req, res, next) => {
+  try {
+    const scoped = employeeRecordWhere(req.user);
+    const onMyChain = await workflow.recordIdsForParticipant(WF, req.user.id);
+    const where = {};
+    if (Object.keys(scoped).length) {
+      where.OR = onMyChain.length ? [scoped, { id: { in: onMyChain } }] : [scoped];
+    }
+    if (req.query.employeeId) where.employeeId = req.query.employeeId;
+    if (req.query.status) where.status = req.query.status;
+    const leave = await prisma.leaveRequest.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } });
+    // Materialise the chain for any pending request raised before this
+    // shipped, then summarise. Both are best-effort: the list must render.
+    await Promise.all(leave.filter((l) => l.status === 'Pending').map(safeEnsureWorkflow));
+    let summaries = {};
+    try {
+      summaries = await workflow.summariesFor(WF, leave.map((l) => l.id));
+    } catch (err) {
+      console.error('[leave] workflow summaries failed', err.message);
+    }
+    res.json(leave.map((l) => ({ ...l, workflow: summaries[l.id] || null })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- The approval chain for ONE request -----------------------------------
+// Current Owner · Current Status · Next Approver · Previous Approvers ·
+// Pending Since · Due Date — plus every step with its state, which is what the
+// Approval Workflow panel draws.
+router.get('/:id/workflow', async (req, res, next) => {
+  try {
+    const request = await prisma.leaveRequest.findUnique({ where: { id: req.params.id }, include: { employee: true } });
+    if (!request) return res.status(404).json({ error: 'Leave request not found' });
+    if (!await workflow.canSee(WF, request.id, req.user, request.employee)) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    await safeEnsureWorkflow(request);
+    const steps = await workflow.loadSteps(WF, request.id);
+    const current = steps.find((s) => s.status === 'Pending');
+    const { mayAct, override } = await workflow.permissionFor(WF, req.user);
+    // The button is drawn only for the login that owns this step (or holds the
+    // override). The refusal itself comes from the API — see /decision.
+    const canAct = !!(current && mayAct && (current.approverUserId === req.user.id || override));
+    const view = await workflow.view(WF, request.id, req.user, { canAct });
+    return res.json({
+      leave: {
+        id: request.id,
+        employee: request.employee ? { id: request.employee.id, name: request.employee.name, code: request.employee.employeeCode, department: request.employee.department, team: request.employee.team } : null,
+        type: request.type,
+        fromDate: request.fromDate,
+        toDate: request.toDate,
+        days: request.days,
+        reason: request.reason,
+        status: request.status,
+        rejectReason: request.rejectReason,
+        approvalReason: request.approvalReason,
+      },
+      workflow: view,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---- REQUIRED vs VISIBILITY-ONLY, per level -------------------------------
+// "each level approval required aa / visibility-only aa separate ga define
+// cheyyali". Anyone who can read the leave screen reads the policy; only a
+// login the matrix grants `configure` on Leave & Holidays changes it.
+router.get('/approval-levels', async (req, res, next) => {
+  try {
+    res.json({ workflow: WF, levels: await workflow.levelConfigList(WF) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/approval-levels/:level', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res, next) => {
+  try {
+    const { mode, slaHours, active } = req.body;
+    const row = await workflow.setLevelConfig(WF, req.params.level, { mode, slaHours, active });
+    await logAudit({ userId: req.user.id, action: 'Leave approval level updated', entity: 'ApprovalLevelConfig', entityId: row.id, toValue: `${row.level}: ${row.mode}${row.slaHours ? ` / ${row.slaHours}h` : ''}` });
+    // A policy change applies to the NEXT request. Live requests keep the
+    // slaHours they were raised with, so nothing silently re-dates itself.
+    res.json({ workflow: WF, levels: await workflow.levelConfigList(WF) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
 });
 
 // Blocks a new application if too much of the employee's department would be on
@@ -77,7 +212,8 @@ async function wouldExceedConcurrentCap(employee, fromDate, toDate) {
   return null;
 }
 
-router.post('/', async (req, res) => {
+router.post('/', async (req, res, next) => {
+  try {
   const { type, fromDate, toDate, reason } = req.body;
   let employeeId = req.body.employeeId;
   let employee;
@@ -98,26 +234,109 @@ router.post('/', async (req, res) => {
   const days = req.body.days != null ? Number(req.body.days) : daySpan(fromDate, toDate);
   const leave = await prisma.leaveRequest.create({ data: { employeeId, type, fromDate, toDate, days, reason } });
   await logAudit({ userId: req.user.id, action: 'Leave requested', entity: 'LeaveRequest', entityId: leave.id });
-  res.status(201).json(leave);
+
+  // THE CHAIN IS LAID DOWN THE MOMENT THE REQUEST IS RAISED, so "where does
+  // this sit and who has acted" has an answer from second zero. A failure
+  // here must not lose the employee's application — the request exists, and
+  // the chain is materialised again on the next read (ensureWorkflow above).
+  let chain = null;
+  try {
+    if (!employee) employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    if (employee) {
+      await workflow.start({
+        workflow: WF,
+        recordId: leave.id,
+        employee,
+        applicantUserId: employee.userId || null,
+        applicantName: employee.name,
+      });
+      chain = workflow.summarize(await workflow.loadSteps(WF, leave.id));
+    }
+  } catch (err) {
+    console.error('[leave] could not start the approval chain', err.message);
+  }
+  return res.status(201).json({ ...leave, workflow: chain });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 // Approving a request of leaveReasonThresholdDays or more requires picking one of
 // the configured approval reasons; rejecting always requires free text. Approvals
 // draw the days down from the employee's balance for that leave type.
-router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'approve'), async (req, res) => {
+router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'approve'), async (req, res, next) => {
+  try {
   const { status, approvalReason, rejectReason } = req.body; // Approved | Rejected | Cancelled
   if (!['Approved', 'Rejected', 'Cancelled'].includes(status)) return res.status(400).json({ error: 'status must be Approved, Rejected or Cancelled' });
   const existing = await prisma.leaveRequest.findUnique({
     where: { id: req.params.id }, include: { employee: true },
   });
   if (!existing) return res.status(404).json({ error: 'Leave request not found' });
-  // A Medical TL does not decide an IT employee's leave.
-  if (!employeeInScope(req.user, existing.employee)) return res.status(403).json(OUT_OF_SCOPE);
+  // A Medical TL does not decide an IT employee's leave. Scope, or being
+  // named on this request's own approval chain — an approver two levels up
+  // whose department scope does not cover the applicant is still an approver.
+  if (!employeeInScope(req.user, existing.employee)
+    && !await workflow.isParticipant(WF, existing.id, req.user.id)) {
+    return res.status(403).json(OUT_OF_SCOPE);
+  }
 
   const cfg = await getConfig();
   const days = existing.days != null ? existing.days : daySpan(existing.fromDate, existing.toDate);
 
-  if (status === 'Approved') {
+  // ---- THE CHAIN -----------------------------------------------------------
+  // A request that is climbing the chain is decided ONE STEP AT A TIME.
+  // APPROVING OUT OF TURN IS REFUSED HERE, BY THE API. The STL cannot approve
+  // while the request sits with the TL, however the browser is persuaded to
+  // send the request: workflow.act() reads the pending step and answers 403.
+  //
+  // Cancellation is NOT a chain step — it is HR closing a request out — so it
+  // keeps the single-step path it always had.
+  await safeEnsureWorkflow(existing);
+  const steps = status === 'Cancelled' ? [] : await workflow.loadSteps(WF, existing.id);
+  const pendingStep = steps.find((s) => s.status === 'Pending');
+  let chainOutcome = null;
+  if (pendingStep) {
+    if (status === 'Rejected' && !String(rejectReason || '').trim()) {
+      return res.status(400).json({ error: 'A rejection reason is required.' });
+    }
+    // The approval-reason rule bites where it means something: on the step
+    // that actually GRANTS the leave. Asking a TL and then an STL each to pick
+    // the same reason off the same list would be noise, not a control.
+    const isFinalStep = !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED);
+    if (status === 'Approved' && isFinalStep) {
+      const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
+      if (days >= cfg.leaveReasonThresholdDays && reasons.length) {
+        if (!approvalReason) return res.status(400).json({ error: `Approvals of ${cfg.leaveReasonThresholdDays} days or more need an approval reason.`, reasons: reasons.map((r) => r.label) });
+        if (!reasons.some((r) => r.label === approvalReason)) return res.status(400).json({ error: 'approvalReason must be one of the configured leave approval reasons', reasons: reasons.map((r) => r.label) });
+      }
+    }
+    const result = await workflow.act(WF, existing.id, req.user, {
+      decision: status,
+      note: status === 'Rejected' ? String(rejectReason).trim() : (approvalReason || null),
+    });
+    if (result.error) return res.status(result.error.status).json(result.error.body);
+    chainOutcome = result;
+
+    await logAudit({
+      userId: req.user.id,
+      action: `Leave ${status.toLowerCase()} at ${result.level}`,
+      entity: 'LeaveRequest',
+      entityId: existing.id,
+      fromValue: result.level,
+      toValue: result.nextLevel || result.outcome,
+    });
+
+    // STILL CLIMBING — the LeaveRequest stays Pending and no balance moves.
+    if (!result.complete) {
+      const view = await workflow.view(WF, existing.id, req.user, { canAct: false });
+      return res.json({ ...existing, status: 'Pending', workflow: view });
+    }
+  }
+
+  // Either the chain just completed, or this request has no chain (a
+  // cancellation, or a record raised before the workflow shipped) and decides
+  // in one step exactly as it always did.
+  if (status === 'Approved' && !chainOutcome) {
     const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
     if (days >= cfg.leaveReasonThresholdDays && reasons.length) {
       if (!approvalReason) return res.status(400).json({ error: `Approvals of ${cfg.leaveReasonThresholdDays} days or more need an approval reason.`, reasons: reasons.map((r) => r.label) });
@@ -150,7 +369,12 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   }
 
   await logAudit({ userId: req.user.id, action: 'Leave ' + status.toLowerCase(), entity: 'LeaveRequest', entityId: leave.id, fromValue: existing.status, toValue: status });
-  res.json(leave);
+  let view = null;
+  try { view = await workflow.view(WF, leave.id, req.user, { canAct: false }); } catch { view = null; }
+  return res.json({ ...leave, workflow: view });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 // ---- Balances ----

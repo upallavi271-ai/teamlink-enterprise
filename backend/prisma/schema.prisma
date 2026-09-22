@@ -785,6 +785,71 @@ model LeaveBalance {
   @@unique([employeeId, type])
 }
 
+// ---------------------------------------------------------------------------
+// THE APPROVAL WORKFLOW (§15/§16) — hierarchy-based approval, shared.
+//
+//   Employee → TL → STL → Manager → Asst Manager → Admin → Super Admin
+//
+// Deliberately NOT a leave table. `workflow` names which approval this is
+// ('leave' today) and `recordId` is the id of the record climbing the chain,
+// so the employee-request, ATS, requirement and Accounts approvals of §16 are
+// the same two tables and the same engine (utils/approvalWorkflow.js) rather
+// than four more copies of the same idea.
+// ---------------------------------------------------------------------------
+
+// ONE ROW PER LEVEL PER RECORD, written when the request is raised. The chain
+// a request climbed is a FACT ABOUT THAT REQUEST: re-deriving it later from
+// today's org structure would rewrite history every time somebody changes
+// teams, so the resolved approver and the ladder position are stored.
+model ApprovalStep {
+  id                String    @id @default(cuid())
+  workflow          String // 'leave' | ...
+  recordId          String // LeaveRequest.id, ...
+  level             String // EMPLOYEE | TL | STL | MANAGER | ASSISTANT_MANAGER | ADMIN | SUPER_ADMIN
+  seq               Int // 1..7 — position on the ladder
+  // 'required' gates the request here; 'visibility' only shows it to them.
+  // 'applicant' is the employee's own Applied row at the top.
+  mode              String    @default("visibility")
+  slaHours          Int? // copied from the level config, so a policy change does not re-date a live request
+  // The resolved approver. Null where nobody holds the level — that step is
+  // SKIPPED with a reason rather than dead-ending the chain.
+  approverUserId    String?
+  approverName      String?
+  approverDepartment String?
+  // Applied | Pending | Approved | Rejected | Waiting | Visibility | Skipped
+  status            String    @default("Waiting")
+  // When this step became the CURRENT owner. `pendingSince`, the elapsed
+  // hours and `overdue` are COMPUTED ON READ from this plus slaHours — there
+  // is no scheduler in this app and nothing ages these rows in the background.
+  activatedAt       DateTime?
+  dueAt             DateTime?
+  actedAt           DateTime?
+  actedByUserId     String?
+  actedByName       String?
+  note              String?
+  createdAt         DateTime  @default(now())
+
+  @@index([workflow, recordId])
+  @@index([workflow, approverUserId])
+}
+
+// "each level approval required aa / visibility-only aa separate ga define
+// cheyyali" — the POLICY half. The chain above is the model; this decides
+// which of its steps actually gate. Rows are created lazily from the
+// workflow's defaults, so adopting a second workflow needs no backfill.
+model ApprovalLevelConfig {
+  id        String   @id @default(cuid())
+  workflow  String
+  level     String
+  seq       Int
+  mode      String   @default("visibility") // required | visibility
+  slaHours  Int? // hours until this step is overdue; null = no due date
+  active    Boolean  @default(true) // switch a level out of the chain entirely
+  updatedAt DateTime @updatedAt
+
+  @@unique([workflow, level])
+}
+
 // Configurable leave policy — types, caps, and the reasons offered when approving.
 model LeaveType {
   id      String  @id @default(cuid())
