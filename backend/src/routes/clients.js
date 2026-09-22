@@ -1,12 +1,15 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
-const { clientWhere, requirementWhere, scopeOf, OUT_OF_SCOPE } = require('../utils/scope');
+const {
+  clientWhere, requirementWhere, applicationWhere, scopeOf, OUT_OF_SCOPE,
+} = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { buildAgreementDocument, nextAgreementId, newEsignToken } = require('../utils/agreement');
 const {
   normalizeAgreementStatus, agreementIsSigned, agreementIsActive, requirementIsLive,
+  applicationIsOverdue, applicationDueDate,
 } = require('../utils/atsVocab');
 
 const router = express.Router();
@@ -72,6 +75,95 @@ function shapeClient(client, permissions) {
   return { ...client, agreementStatus: normalizeAgreementStatus(client.agreementStatus), permissions };
 }
 
+
+// ---------------------------------------------------------------------------
+// §12 — WHAT IS OWED ON THIS CLIENT, AND BY WHOM.
+//
+// The Clients table was administrative — code, industry, GST, agreement,
+// expiry — which tells you who they are and nothing about what to do. These
+// four fields make the screen operational: status, next action, owner, due.
+//
+// The answer is read off the client's OWN WORK in priority order, so the most
+// blocking thing wins: a missing agreement stops everything, then candidates
+// waiting on a decision, then feedback, then joining. A client with nothing
+// outstanding says so rather than inventing a task.
+//
+// Every count here comes from the applications this caller may already see —
+// the same applicationWhere() the pipeline uses — so this cannot become a way
+// to learn about work outside a scope.
+// ---------------------------------------------------------------------------
+async function clientWorkload(user, clients) {
+  const ids = clients.map((c) => c.id);
+  if (!ids.length) return new Map();
+
+  const [apps, openReqs] = await Promise.all([
+    prisma.application.findMany({
+      where: { ...applicationWhere(user), requirement: { is: { clientId: { in: ids } } } },
+      include: { requirement: { include: { bde: true, recruiter: true } } },
+    }),
+    prisma.requirement.findMany({
+      where: { ...requirementWhere(user), clientId: { in: ids } },
+      select: { id: true, clientId: true, status: true, recruiterId: true },
+    }),
+  ]);
+
+  const out = new Map();
+  clients.forEach((c) => {
+    const mine = apps.filter((a) => a.requirement && a.requirement.clientId === c.id);
+    const reqs = openReqs.filter((r) => r.clientId === c.id);
+    // Whoever the work actually sits with — the BDE on their requirements,
+    // falling back to the recruiter. A person, never a status (§5).
+    const owner = (mine.find((a) => a.requirement.bde) || {}).requirement?.bde?.name
+      || (mine.find((a) => a.requirement.recruiter) || {}).requirement?.recruiter?.name
+      || c.accountManager || null;
+
+    const awaitingDecision = mine.filter((a) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage));
+    const awaitingFeedback = mine.filter((a) => a.stage === 'INTERVIEW_COMPLETED');
+    const joining = mine.filter((a) => ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage));
+    const unstaffed = reqs.filter((r) => !r.recruiterId);
+    const overdue = mine.filter(applicationIsOverdue);
+
+    let nextAction = null;
+    let status = 'Active';
+    if (normalizeAgreementStatus(c.agreementStatus) !== 'ACTIVE') {
+      status = 'Agreement pending';
+      nextAction = 'Complete the agreement before sharing candidates';
+    } else if (awaitingDecision.length) {
+      status = 'Awaiting client decision';
+      nextAction = `Client decision pending — ${awaitingDecision.length} candidate(s)`;
+    } else if (awaitingFeedback.length) {
+      status = 'Awaiting interview feedback';
+      nextAction = `Interview feedback pending — ${awaitingFeedback.length}`;
+    } else if (joining.length) {
+      status = 'Joining in progress';
+      nextAction = `Confirm joining — ${joining.length} candidate(s)`;
+    } else if (unstaffed.length) {
+      status = 'Requirement unstaffed';
+      nextAction = `Assign a recruiter — ${unstaffed.length} requirement(s)`;
+    } else if (reqs.length) {
+      status = 'Sourcing';
+      nextAction = 'Source and share candidates';
+    } else {
+      status = 'No open work';
+    }
+
+    // The soonest SLA among the things that are actually waiting.
+    const dates = [...awaitingDecision, ...awaitingFeedback, ...joining]
+      .map((a) => applicationDueDate(a)).filter(Boolean).sort();
+
+    out.set(c.id, {
+      workStatus: status,
+      nextAction,
+      nextActionOwner: nextAction ? owner : null,
+      nextActionDue: dates[0] || null,
+      nextActionOverdue: overdue.length > 0,
+      openRequirements: reqs.length,
+      awaitingDecision: awaitingDecision.length,
+    });
+  });
+  return out;
+}
+
 router.get('/', async (req, res) => {
   // Scoped by utils/scope.js: a client sees their own company, a BDE and a
   // recruiter their assigned clients, a TL / Manager the directory.
@@ -79,7 +171,9 @@ router.get('/', async (req, res) => {
     prisma.client.findMany({ where: clientWhere(req.user), orderBy: { name: 'asc' } }),
     clientPermissions(req.user),
   ]);
-  res.json(clients.map((c) => shapeClient(c, permissions)));
+  // §12 — what is owed on each client, beside who they are.
+  const work = await clientWorkload(req.user, clients);
+  res.json(clients.map((c) => ({ ...shapeClient(c, permissions), ...(work.get(c.id) || {}) })));
 });
 
 // Live "Agreement Template Preview" pane in the Add Client modal (the

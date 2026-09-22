@@ -755,3 +755,8 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 
 /* §4 — a stage that genuinely owes a contact says so; the rest stay quiet. */
 .fu-needed{color:var(--amber)}
+
+/* §3 — what sits inside each pipeline stage, printed rather than hovered. */
+.stage-contents{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;
+  font-size:11px;line-height:1.6;color:var(--ink-soft)}
+.stage-contents-item b{color:var(--ink);font-weight:600}

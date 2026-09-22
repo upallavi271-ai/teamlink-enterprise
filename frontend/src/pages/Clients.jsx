@@ -517,7 +517,7 @@ export default function Clients() {
             <tr>
               <th>Client Code</th><th>Client</th><th>Industry</th><th>Business Type</th><th>Location</th>
               <th>GST</th><th>TDS</th><th>Account Manager</th><th>BDE</th>
-              <th>Agreement</th><th>Expiry</th><th>Open Requirements</th>
+              <th>Agreement</th><th>Expiry</th><th>Open Requirements</th>{/* §12 */}<th>Next Action</th>
             </tr>
           </thead>
           <tbody>
@@ -535,10 +535,21 @@ export default function Clients() {
                 <td><span className={`status ${agreementBadgeClass(c.agreementStatus)}`}>{agreementStatusLabel(c.agreementStatus)}</span></td>
                 <td className="cell-muted">{c.agreementEnd || '—'}</td>
                 <td>{openCount(c.id)}</td>
+                {/* §12 — what is owed on this client, and by whom. Without it
+                    the Clients screen is a directory rather than a worklist. */}
+                <td>
+                  {c.workStatus && <span className="status pending">{c.workStatus}</span>}
+                  {c.nextAction && <div style={{ fontSize: 12, marginTop: 3 }}>{c.nextAction}</div>}
+                  {(c.nextActionOwner || c.nextActionDue) && (
+                    <div className="small-muted" style={{ fontSize: 11 }}>
+                      {c.nextActionOwner || "—"}{c.nextActionDue ? ` · due ${c.nextActionDue}` : ""}
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
             {clients.length === 0 && (
-              <tr><td colSpan="12" className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
+              <tr><td colSpan="13" className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
             )}
           </tbody>
         </table>

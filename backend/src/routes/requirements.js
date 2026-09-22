@@ -106,6 +106,49 @@ function shapeForClient(r) {
 // Every one of them is applied to the SCOPED query on the server, so a filter
 // can only ever narrow what the user may already see.
 // ---------------------------------------------------------------------------
+// §13 / §14 — STATUS AND NEXT ACTION ARE DIFFERENT QUESTIONS.
+//
+// "Open" is what is happening now. It is NOT what to do about it, and using
+// the status as the next action is why a requirement list reads like a
+// database rather than a worklist. This answers the second question from the
+// requirement's own state, most blocking first: no agreement stops everything,
+// then nobody assigned, then no candidates, then whoever the pipeline is
+// sitting on.
+function requirementNextAction(r, counts) {
+  const agreementOk = !r.client || normalizeAgreementStatus(r.client.agreementStatus) === 'ACTIVE' || r.internal;
+  if (!agreementOk) {
+    return { nextAction: 'Complete the client agreement', owner: r.bde ? r.bde.name : (r.accountManager || null), ownerRole: 'BDE' };
+  }
+  if (!r.recruiterId) {
+    return { nextAction: 'Assign a recruiter', owner: r.tlName || r.stlName || null, ownerRole: 'TL' };
+  }
+  if (!counts.total) {
+    return { nextAction: 'Start sourcing candidates', owner: r.recruiter ? r.recruiter.name : null, ownerRole: 'Recruiter' };
+  }
+  if (counts.recruiterReview) {
+    return { nextAction: `Review ${counts.recruiterReview} candidate(s)`, owner: r.recruiter ? r.recruiter.name : null, ownerRole: 'Recruiter' };
+  }
+  if (counts.tlReview) {
+    return { nextAction: `TL review — ${counts.tlReview} candidate(s)`, owner: r.tlName || null, ownerRole: 'TL' };
+  }
+  if (counts.bde) {
+    return { nextAction: `Share ${counts.bde} candidate(s) with the client`, owner: r.bde ? r.bde.name : null, ownerRole: 'BDE' };
+  }
+  if (counts.client) {
+    return { nextAction: `Client decision pending — ${counts.client}`, owner: r.bde ? r.bde.name : null, ownerRole: 'BDE' };
+  }
+  if (counts.interview) {
+    return { nextAction: `Interview in progress — ${counts.interview}`, owner: r.bde ? r.bde.name : null, ownerRole: 'BDE' };
+  }
+  if (counts.joining) {
+    return { nextAction: `Confirm joining — ${counts.joining}`, owner: r.bde ? r.bde.name : null, ownerRole: 'BDE' };
+  }
+  if (r.remaining > 0) {
+    return { nextAction: `Source for ${r.remaining} remaining opening(s)`, owner: r.recruiter ? r.recruiter.name : null, ownerRole: 'Recruiter' };
+  }
+  return { nextAction: 'All openings filled', owner: null, ownerRole: null };
+}
+
 router.get('/', async (req, res) => {
   const q = req.query;
   const where = { AND: [requirementWhere(req.user)] };
@@ -159,6 +202,18 @@ router.get('/', async (req, res) => {
       remaining: Math.max(0, (r.openings || 1) - filled),
       live: requirementIsLive(r.status),
     };
+    // §13 / §14 — beside the status, never instead of it.
+    const stages = r.applications.map((a) => a.stage);
+    const has = (...list) => stages.filter((s) => list.includes(s)).length;
+    Object.assign(row, requirementNextAction(row, {
+      total: stages.length,
+      recruiterReview: has('NEW', 'RECRUITER_REVIEW', 'RECRUITER_APPROVED'),
+      tlReview: has('TL_REVIEW'),
+      bde: has('WITH_BDE', 'BDE_APPROVED'),
+      client: has('SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'),
+      interview: has('INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'),
+      joining: has('SELECTED', 'OFFER', 'OFFER_ACCEPTED'),
+    }));
     return forClient ? shapeForClient(row) : row;
   });
 

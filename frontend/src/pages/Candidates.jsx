@@ -499,10 +499,20 @@ export default function Candidates() {
                 </span>
               ))}
             </div>
-            <div className="small-muted" style={{ marginTop: 8 }}>
-              {activeGroup
-                ? `${STAGE_GROUPS.find((g) => g.id === activeGroup).label} contains: ${groupContents(STAGE_GROUPS.find((g) => g.id === activeGroup)).join(' · ')}`
-                : 'Ten visible stages. The detailed statuses sit inside them — hover a stage to see which, or pick one in the Stage filter. No stage code was removed; the pipeline and its transitions are unchanged.'}
+            {/* §3 — HOVER IS NOT ENOUGH. What sits inside each stage is
+                printed, not hidden behind a tooltip: a tooltip is invisible on
+                a touch screen and invisible to anybody who does not think to
+                hover. The selected stage's contents read out in full; with
+                nothing selected, every stage lists its own. */}
+            <div className="stage-contents">
+              {(activeGroup
+                ? STAGE_GROUPS.filter((g) => g.id === activeGroup)
+                : STAGE_GROUPS
+              ).map((g) => (
+                <span className="stage-contents-item" key={g.id}>
+                  <b>{g.label}:</b> {groupContents(g).join(' · ')}
+                </span>
+              ))}
             </div>
           </div>
 
@@ -595,8 +605,13 @@ export default function Candidates() {
                             <span className={`status ${groupBadgeClass(c.currentStage, c.stageGroup)}`}>
                               {c.stageGroupLabel}
                             </span>
+                            {/* §3 — Stage AND Status, both written out. The
+                                badge is the stage; this is where inside it the
+                                candidate actually sits. */}
                             {c.stageDetailLabel && c.stageDetailLabel !== c.stageGroupLabel && (
-                              <div className="small-muted" style={{ marginTop: 3 }}>{c.stageDetailLabel}</div>
+                              <div className="small-muted" style={{ marginTop: 3 }}>
+                                Status: {c.stageDetailLabel}
+                              </div>
                             )}
                           </>
                         )

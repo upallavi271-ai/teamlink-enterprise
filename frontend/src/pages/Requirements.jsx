@@ -196,7 +196,7 @@ export default function Requirements() {
               <tr>
                 <th>Requirement ID</th><th>Job Title</th><th>Client</th><th>Department</th><th>Location</th>
                 <th>Experience</th><th>Recruiter</th><th>TL</th><th>BDE</th>
-                <th>Priority</th><th>Openings</th><th>Target Date</th><th>Portal Sync</th><th>Status</th>
+                <th>Priority</th><th>Openings</th><th>Target Date</th><th>Portal Sync</th><th>Status</th>{/* §13/§14 */}<th>Next Action</th>
               </tr>
             </thead>
             <tbody>
@@ -219,6 +219,17 @@ export default function Requirements() {
                   <td className="cell-muted">{r.targetDate || r.closingDate || '—'}</td>
                   <td className="cell-muted">{r.portalSyncStatus || 'Not Synced'}</td>
                   <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
+                  {/* §13 / §14 — STATUS is what is happening; this is what to
+                      DO about it. Using the status as the action is what makes
+                      a list read like a database instead of a worklist. */}
+                  <td>
+                    {r.nextAction || <span className="small-muted">—</span>}
+                    {r.owner && (
+                      <div className="small-muted" style={{ fontSize: 11 }}>
+                        {r.owner}{r.ownerRole ? ` · ${r.ownerRole}` : ''}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -267,7 +278,7 @@ export default function Requirements() {
                   </tr>
                 ))}
                 {openRows.length === 0 && (
-                  <tr><td colSpan="16" className="small-muted" style={{ padding: 16 }}>No open requirements in your scope.</td></tr>
+                  <tr><td colSpan="17" className="small-muted" style={{ padding: 16 }}>No open requirements in your scope.</td></tr>
                 )}
               </tbody>
             </table>
