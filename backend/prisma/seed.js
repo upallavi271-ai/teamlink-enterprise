@@ -95,9 +95,26 @@ async function main() {
     { designation: 'Senior Team Lead', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 5 },
     { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 6 },
     { designation: 'Team Lead', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 7 },
-    { designation: 'Recruiter', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 8 },
-    { designation: 'Senior Recruiter', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 9 },
-    { designation: 'BDE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats', position: 10 },
+  // EMPLOYEE IS THE BASE IDENTITY, AND ATS ADDS TO IT.
+  //
+  // Recruiting and business development are ATS work. In HRMS these people are
+  // EMPLOYEES — they apply for their own leave, log their own attendance and
+  // see their own record, exactly like anybody else. Naming hrmsRole here is
+  // what stops the derivation falling back to the ATS role and inventing an
+  // HRMS role called "RECRUITER", which HRMS has no rule for and which reads
+  // as though recruiting were an HRMS job.
+  //
+  // TL / STL / Manager / Assistant Manager are NOT in this list on purpose:
+  // those are real HRMS roles — they approve leave and see their team's HRMS
+  // records — so they legitimately hold the same role in both products. The
+  // Accountant keeps ACCOUNTANT because payroll is a genuine HRMS feature they
+  // own. Same rule the HR row below already uses.
+  //
+  // ONE EMPLOYEE = ONE USER = ONE LOGIN either way: this changes which ROLE
+  // the single login carries per product, never how many logins exist.
+    { designation: 'Recruiter', hrmsRole: 'EMPLOYEE', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 8 },
+    { designation: 'Senior Recruiter', hrmsRole: 'EMPLOYEE', atsRole: 'RECRUITER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 9 },
+    { designation: 'BDE', hrmsRole: 'EMPLOYEE', atsRole: 'BDE', hrms: true, ats: true, accounts: false, landing: 'ats', position: 10 },
     { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts', position: 11 },
     // THE HR DESK (§6) — HRMS ONLY, every employee visible, no ATS and no
     // Accounts. It names its HRMS role explicitly because there is no ATS role
