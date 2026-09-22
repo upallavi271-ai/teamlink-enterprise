@@ -148,15 +148,31 @@ export default function Employees() {
 
   // APPROVE / REJECT, inline on the row. Same two endpoints the record page
   // uses — this is a second way in, not a second implementation.
+  // APPROVING THE REQUEST TO EDIT. This only records the decision — the window
+  // is opened separately by Unlock, which is the next button to appear on the
+  // row.
+  async function approveRequest(e) {
+    await run(() => api.patch(`/employees/${e.id}/unlock-request/approve`),
+      `${e.name}'s edit request approved. Click Unlock on their row to open the profile.`);
+  }
+
   async function approveProfile(e) {
     await run(() => api.patch(`/employees/${e.id}/changes/approve`),
       `${e.name}'s profile approved. It is locked again, and Unlock is on the row if they need to correct something.`);
   }
 
+  // One dialog, two decisions. `kind` says which was waiting when Reject was
+  // pressed; both endpoints refuse without a reason, for the same reason.
   async function submitReject(ev) {
     ev.preventDefault();
-    const ok = await run(() => api.patch(`/employees/${rejectFor.id}/changes/reject`, { reason: rejectReason.trim() }),
-      `Sent back to ${rejectFor.name} with your note.`);
+    const isRequest = rejectFor.kind === 'request';
+    const url = isRequest
+      ? `/employees/${rejectFor.id}/unlock-request/reject`
+      : `/employees/${rejectFor.id}/changes/reject`;
+    const ok = await run(() => api.patch(url, { reason: rejectReason.trim() }),
+      isRequest
+        ? `${rejectFor.name}'s edit request was declined, with your note.`
+        : `Sent back to ${rejectFor.name} with your note.`);
     if (ok) { setRejectFor(null); setRejectReason(''); }
   }
 
@@ -735,16 +751,26 @@ export default function Employees() {
           <tbody>
             {filtered.map((e) => {
               const h = hrById[e.id];
-              // WAITING ON A DECISION. The employee filled their profile in and
-              // pressed Submit for Review, so Approve and Reject appear HERE the
-              // moment that happens, rather than only behind a link to another
-              // page.
-              const awaitingReview = !!(h && h.pendingChanges);
-              // ALREADY APPROVED AND LOCKED — so Unlock is the next thing HR
-              // reaches for. It reopens the employee's own profile for a bounded
-              // window; it is deliberately not offered while a submission is
-              // still waiting, because the decision comes first.
-              const canUnlock = !!(h && h.isLocked && !awaitingReview);
+              // THE LIFECYCLE, IN THE ORDER IT ACTUALLY HAPPENS:
+              //
+              //   employee asks for edit access   -> Approve / Reject
+              //   HR approves the request         -> UNLOCK
+              //   HR unlocks                      -> they edit, window open
+              //   they submit                     -> Approve / Reject
+              //   HR approves                     -> LOCKED again, no edit
+              //
+              // Unlock is deliberately NOT offered on any locked profile. It
+              // appears only once a request has been approved, which is what
+              // "approve click chesthey appudu unlock ani button kanipinchali"
+              // means — otherwise HR could reopen a profile nobody asked to
+              // change.
+              const requestPending = h && h.unlockRequestStatus === 'Pending';
+              const submittedForReview = !!(h && h.pendingChanges);
+              // Either decision point puts Approve / Reject on the row.
+              const awaitingDecision = !!(requestPending || submittedForReview);
+              const requestApproved = h && h.unlockRequestStatus === 'Approved';
+              const windowOpen = !!(h && h.unlockExpiresAt && new Date(h.unlockExpiresAt) > new Date());
+              const canUnlock = !!(requestApproved && !windowOpen && !submittedForReview);
               const pct = h ? h.profileCompletionPct : null;
               return (
                 <tr key={e.id}>
@@ -774,15 +800,27 @@ export default function Employees() {
                     <div className="row-actions">
                       <button className="btn btn-sm" onClick={() => openDetail(e.id)}>View</button>
                       {caps.edit && <Link className="btn btn-sm" to={`/employees/${e.id}`}>Edit</Link>}
-                      {/* THESE TWO APPEAR BY THEMSELVES the moment the employee
-                          submits their profile for review. */}
-                      {caps.approve && awaitingReview && (
+                      {/* Approve / Reject, for whichever decision is waiting. */}
+                      {caps.approve && awaitingDecision && (
                         <>
-                          <button className="btn btn-sm btn-primary" onClick={() => approveProfile(e)}>Approve</button>
-                          <button className="btn btn-sm btn-ghost" onClick={() => { setRejectFor(e); setRejectReason(''); }}>Reject</button>
+                          <button
+                            className="btn btn-sm btn-primary"
+                            title={requestPending
+                              ? 'Approve their request to edit — Unlock appears next'
+                              : 'Approve the changes they submitted; the profile locks again'}
+                            onClick={() => (requestPending ? approveRequest(e) : approveProfile(e))}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => { setRejectFor({ ...e, kind: requestPending ? 'request' : 'changes' }); setRejectReason(''); }}
+                          >
+                            Reject
+                          </button>
                         </>
                       )}
-                      {/* AND THIS ONE APPEARS ONCE THE PROFILE IS APPROVED. */}
+                      {/* ONLY after an edit-access request has been approved. */}
                       {caps.approve && canUnlock && (
                         <button
                           className="btn btn-sm"
@@ -843,7 +881,7 @@ export default function Employees() {
           reason lands on their record and in the audit trail. */}
       {rejectFor && (
         <Modal
-          title={`Send back for correction — ${rejectFor.name}`}
+          title={`${rejectFor.kind === 'request' ? 'Decline edit request' : 'Send back for correction'} — ${rejectFor.name}`}
           onClose={() => { setRejectFor(null); setRejectReason(''); }}
           foot={<>
             <button className="btn" onClick={() => { setRejectFor(null); setRejectReason(''); }}>Cancel</button>
@@ -852,11 +890,12 @@ export default function Employees() {
         >
           <form onSubmit={submitReject}>
             <div className="small-muted" style={{ marginBottom: 10 }}>
-              {rejectFor.name}&apos;s profile goes back to them to correct and submit again. Their status becomes
-              <b> Change Requested</b>, and the note below is what they see.
+              {rejectFor.kind === 'request'
+                ? <>{rejectFor.name} asked for edit access. Declining leaves their profile locked, and the note below is what they see.</>
+                : <>{rejectFor.name}&apos;s profile goes back to them to correct and submit again. Their status becomes <b>Change Requested</b>, and the note below is what they see.</>}
             </div>
             <div className="field">
-              <label>What needs correcting? *</label>
+              <label>{rejectFor.kind === 'request' ? 'Why are you declining? *' : 'What needs correcting? *'}</label>
               <textarea
                 rows="3"
                 autoFocus
@@ -1098,6 +1137,7 @@ function AddEmployeeModal({
   form, setForm, options, employees, otp, setOtp, emailReady, sendOtp, verifyOtp, onClose, onSave,
 }) {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const [showPassword, setShowPassword] = useState(false);
   const chosen = (options.designations || []).find((d) => d.designation === form.designation);
   const access = chosen
     ? {
@@ -1112,77 +1152,68 @@ function AddEmployeeModal({
 
   return (
     <Modal
-      title="Add Employee"
-      note={`${options.nextEmployeeCode || ''} · the employee record and their login are created together`}
-      size="wide"
+      title="Add Employee — creates their employee record and login together"
       onClose={onClose}
       foot={<>
+        <button className="btn btn-primary" disabled={!canSave} onClick={onSave}>Create employee</button>
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={!canSave} onClick={onSave}>Create Employee &amp; Login</button>
       </>}
     >
-      <div className="section-label">Identity</div>
-      <div className="grid-3">
-        <div className="field"><label>Employee ID <i style={{ fontWeight: 400 }}>(optional — auto if blank)</i></label>
-          <input value={form.employeeId} onChange={(e) => set({ employeeId: e.target.value })}
-            placeholder={`e.g. ${options.nextEmployeeCode || 'EMP-0009'}`} /></div>
-        <div className="field"><label>Full name *</label>
-          <input type="text" placeholder="As it should appear on records" value={form.name} onChange={(e) => set({ name: e.target.value })} /></div>
-        <div className="field"><label>Date of birth</label>
-          <input type="date" value={form.dateOfBirth} onChange={(e) => set({ dateOfBirth: e.target.value })} /></div>
-        <div className="field"><label>Gender</label>
-          <Combo value={form.gender} onChange={(e) => set({ gender: e.target.value })}>
-            {options.genders.map((g) => <option key={g}>{g}</option>)}
-          </Combo></div>
-      </div>
+      {/* SIX FIELDS, AND NO MORE.
+          "oka emp create cheyyadaniki start just small fields ey enter cheyyali
+          HR" — HR opens the account, the credentials go out, and the employee
+          fills in the rest of their own profile and submits it for review.
+          Date of birth, gender, team, reporting line, mobile, location, joining
+          date, employment type and status are NOT gone: they are on the
+          employee record, which is where the employee now enters them. */}
+      <div className="grid-2">
+        <div className="field">
+          <label>Employee ID <i style={{ fontWeight: 400 }}>(optional — auto if blank)</i></label>
+          <input
+            value={form.employeeId}
+            onChange={(e) => set({ employeeId: e.target.value })}
+            placeholder={`e.g. ${options.nextEmployeeCode || 'EMP-0009'}`}
+          />
+        </div>
+        <div className="field">
+          <label>Full name</label>
+          <input
+            type="text"
+            value={form.name}
+            onChange={(e) => set({ name: e.target.value })}
+          />
+        </div>
 
-      <div className="section-label">Position — this is what the role and the scope are derived from</div>
-      <div className="grid-3">
-        {/* Department master. It becomes the login's data scope. */}
-        <div className="field"><label>Department *</label>
+        {/* Department master — it becomes the login's data scope. */}
+        <div className="field">
+          <label>Department</label>
           <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
             <option value="">Select department</option>
             {options.departments.map((d) => <option key={d}>{d}</option>)}
-          </Combo></div>
-        {/* DesignationRole master. It gives the ATS role, the product access
-            and the landing workspace — never typed free-hand. */}
-        <div className="field"><label>Role / Designation *</label>
+          </Combo>
+        </div>
+        {/* DesignationRole master — it gives the ATS role, the product access
+            and the landing workspace. Never typed free-hand, because the role
+            is DERIVED from it: department Medical + designation Recruiter is
+            what "Medical Recruiter" means, and no compound role is stored. */}
+        <div className="field">
+          <label>Role / Designation</label>
           <Combo value={form.designation} onChange={(e) => set({ designation: e.target.value })}>
-            <option value="">Select role / designation</option>
+            <option value="">Select role</option>
             {(options.designations || []).map((d) => (
-              <option key={d.designation} value={d.designation}>
-                {d.designation}{d.atsRole ? ` — ATS ${atsRoleLabel(d.atsRole)}` : ''}
-              </option>
+              <option key={d.designation} value={d.designation}>{d.designation}</option>
             ))}
-          </Combo></div>
-        <div className="field"><label>Team</label>
-          <input type="text" placeholder="e.g. Medical Team-A" value={form.team} onChange={(e) => set({ team: e.target.value })} /></div>
-        <div className="field"><label>Reporting manager</label>
-          <Combo value={form.reportingManagerId} onChange={(e) => set({ reportingManagerId: e.target.value })}>
-            <option value="">—</option>
-            {employees.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </Combo></div>
-        <div className="field"><label>STL</label>
-          <Combo value={form.stl} onChange={(e) => set({ stl: e.target.value })}>
-            <option value="">—</option>
-            {options.managerNames.map((n) => <option key={n}>{n}</option>)}
-          </Combo></div>
-        <div className="field"><label>TL</label>
-          <Combo value={form.tl} onChange={(e) => set({ tl: e.target.value })}>
-            <option value="">—</option>
-            {options.managerNames.map((n) => <option key={n}>{n}</option>)}
-          </Combo></div>
-      </div>
+          </Combo>
+        </div>
 
-      <div className="section-label">Contact</div>
-      <div className="grid-2">
         {/* THE EMAIL GATE. A code goes to the address before the account
             exists — and where there is no channel the button says exactly
             that instead of pretending one was sent. */}
-        <label className="field"><span>Official email *</span>
-          <div style={{ display: 'flex', gap: 6 }}>
+        <div className="field">
+          <label>Email</label>
+          <div className="field-with-btn">
             <input
-              type="email" style={{ flex: 1 }} placeholder="name@tmlink.in"
+              type="email"
               value={form.email}
               onChange={(e) => { set({ email: e.target.value }); setOtp({ sending: false, sent: false, code: '', verified: false, message: '', error: '' }); }}
             />
@@ -1194,7 +1225,7 @@ function AddEmployeeModal({
             >
               {emailReady
                 ? (otp.sending ? 'Sending…' : (otp.sent ? 'Resend OTP' : 'Send OTP'))
-                : 'No email channel — can’t send OTP'}
+                : 'No email channel'}
             </button>
           </div>
           {!emailReady && (
@@ -1206,56 +1237,49 @@ function AddEmployeeModal({
           {otp.message && <span className="small-muted">{otp.message}</span>}
           {otp.error && <span className="error-text">{otp.error}</span>}
           {otp.sent && !otp.verified && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <div className="field-with-btn" style={{ marginTop: 6 }}>
               <input
-                style={{ flex: 1 }} inputMode="numeric" maxLength="6" placeholder="6-digit code"
+                inputMode="numeric" maxLength="6" placeholder="6-digit code"
                 value={otp.code} onChange={(e) => setOtp({ ...otp, code: e.target.value })}
               />
               <button type="button" className="btn btn-sm" onClick={verifyOtp} disabled={!otp.code}>Verify</button>
             </div>
           )}
           {otp.verified && <span className="status approved" style={{ marginTop: 6 }}>Email verified</span>}
-        </label>
-        <div className="field"><label>Mobile</label>
-          <input type="text" placeholder="10 digits" value={form.phone} onChange={(e) => set({ phone: e.target.value })} /></div>
-        <div className="field"><label>Location</label>
-          <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
-            <option value="">—</option>
-            {options.locations.map((l) => <option key={l}>{l}</option>)}
-          </Combo></div>
+        </div>
+
+        <div className="field">
+          <label>Password <i style={{ fontWeight: 400 }}>(for their login)</i></label>
+          <div className="field-with-btn">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={form.password}
+              onChange={(e) => set({ password: e.target.value })}
+              placeholder="leave empty to email a set-password link"
+            />
+            <button type="button" className="btn btn-sm" onClick={() => setShowPassword((v) => !v)}>
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="section-label">Employment</div>
-      <div className="grid-3">
-        <div className="field"><label>Date of joining</label>
-          <input type="date" value={form.dateOfJoining} onChange={(e) => set({ dateOfJoining: e.target.value })} /></div>
-        <div className="field"><label>Employment type</label>
-          <Combo value={form.employeeType} onChange={(e) => set({ employeeType: e.target.value })}>
-            {options.empTypes.map((t) => <option key={t}>{t}</option>)}
-          </Combo></div>
-        <div className="field"><label>Status</label>
-          <Combo value={form.employmentStatus} onChange={(e) => set({ employmentStatus: e.target.value })}>
-            {options.empStatuses.map((s) => <option key={s}>{s}</option>)}
-          </Combo></div>
-        {/* Optional and discouraged. Leave it empty and the employee gets a
-            single-use, expiring link to choose their own password — no
-            password is ever emailed, and the account has no guessable default
-            in the meantime. */}
-        <div className="field"><label>Temporary password (leave empty — recommended)</label>
-          <input type="password" placeholder="leave empty to email a set-password link" value={form.password}
-            onChange={(e) => set({ password: e.target.value })} /></div>
+      <div className="small-muted" style={{ marginTop: 4 }}>
+        Creates their employee record and login account together — they can sign in right away to fill in the
+        rest of their profile.
       </div>
 
       {/* What this person will actually be able to do, shown before saving. */}
-      <div className="notice" style={{ marginTop: 10 }}>
-        <span>
-          Login role → <b>{chosen ? atsRoleLabel(chosen.atsRole || 'EMPLOYEE') : '—'}</b>
-          &nbsp;&nbsp;·&nbsp;&nbsp;HRMS → {access.hrms}&nbsp;&nbsp;·&nbsp;&nbsp;ATS → {access.ats}
-          &nbsp;&nbsp;·&nbsp;&nbsp;Accounts → {access.accounts}&nbsp;&nbsp;·&nbsp;&nbsp;Scope: {scope}.
-          All derived from the department and the designation — one login covers all three products, and no
-          second account is created.
-        </span>
-      </div>
+      {chosen && (
+        <div className="notice" style={{ marginTop: 10 }}>
+          <span>
+            Login role → <b>{atsRoleLabel(chosen.atsRole || 'EMPLOYEE')}</b>
+            &nbsp;·&nbsp; HRMS → {access.hrms}&nbsp;·&nbsp; ATS → {access.ats}
+            &nbsp;·&nbsp; Accounts → {access.accounts}&nbsp;·&nbsp; Scope: {scope}.
+            All derived from the department and the designation.
+          </span>
+        </div>
+      )}
     </Modal>
   );
 }

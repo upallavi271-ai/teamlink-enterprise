@@ -1248,26 +1248,25 @@ router.patch('/:id/changes/reject', requirePerm(null, 'hrms', 'Employee Manageme
   res.json(withComputed(employee));
 });
 
-// HR decides an employee's request to unlock their (already-approved) profile.
-// Approving grants a BOUNDED window — see UNLOCK_WINDOW_HOURS. It is not a
-// return to the un-reviewed state: the employee edits, submits, HR approves,
-// and the profile locks again.
+// HR DECIDES THE REQUEST. TWO STEPS, NOT ONE.
+//
+// This used to approve the request AND open the edit window in the same call,
+// which left no moment at which an Unlock button could exist. The asked-for
+// flow is: the employee requests edit access -> Approve / Reject appear ->
+// Approve -> UNLOCK appears -> Unlock opens the window -> they edit and submit
+// -> the profile locks again.
+//
+// So approving only records the DECISION. Opening the window is the separate
+// POST /:id/grant-edit-access below, which is what the Unlock button calls and
+// which is where the duration, the section and the reason are chosen.
 router.patch('/:id/unlock-request/approve', requirePerm(null, 'hrms', 'Employee Management', 'approve'), async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!employee || employee.unlockRequestStatus !== 'Pending') return res.status(400).json({ error: 'No pending unlock request' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
-  // Configurable, not a blanket 48 hours: HR types the window, picks the
-  // section and gives a reason, and all of it is recorded on the employee.
-  const hours = grantHours(req.body && req.body.hours);
   const note = (req.body && req.body.note) ? String(req.body.note).slice(0, 500) : null;
-  const grant = grantEditAccessData({
-    actingUser: req.user, hours, section: req.body && req.body.section,
-    reason: note || employee.unlockRequestReason,
-  });
   const updated = await prisma.employee.update({
     where: { id: req.params.id },
     data: {
-      ...grant,
       unlockRequestStatus: 'Approved',
       unlockDecidedAt: new Date(),
       unlockDecisionNote: note,
@@ -1275,10 +1274,10 @@ router.patch('/:id/unlock-request/approve', requirePerm(null, 'hrms', 'Employee 
   });
   await logAudit({
     userId: req.user.id, actorName: req.user.name,
-    action: `Edit access granted for ${hours}h (${grant.unlockGrantSection})`,
+    action: 'Edit-access request approved — awaiting Unlock',
     entity: 'Employee', entityId: employee.id,
-    fromValue: 'Locked', toValue: grant.unlockExpiresAt.toISOString(),
-    reason: grant.unlockGrantReason, approvalStatus: 'Approved', approvedByName: req.user.name || null, approvedAt: new Date(),
+    reason: note || employee.unlockRequestReason,
+    approvalStatus: 'Approved', approvedByName: req.user.name || null, approvedAt: new Date(),
   });
   res.json(withComputed(updated));
 });
@@ -1362,7 +1361,10 @@ router.post('/:id/grant-edit-access', requirePerm(null, 'hrms', 'Employee Manage
   const grant = grantEditAccessData({ actingUser: req.user, hours, reason, section });
   const employee = await prisma.employee.update({
     where: { id: req.params.id },
-    data: { ...grant, unlockRequestStatus: existing.unlockRequestStatus === 'Pending' ? 'Approved' : null, unlockDecidedAt: new Date() },
+    // THE REQUEST IS SPENT ONCE THE WINDOW IS OPEN. Clearing it is what makes
+    // the Unlock button disappear after it has been used — the row moves on to
+    // "Edit Access Granted" and the next thing HR sees is the submission.
+    data: { ...grant, unlockRequestStatus: null, unlockDecidedAt: new Date() },
   });
   await logAudit({
     userId: req.user.id, actorName: req.user.name,

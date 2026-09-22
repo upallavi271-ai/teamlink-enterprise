@@ -609,3 +609,10 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .pct-bar{flex:1;min-width:46px;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
 .pct-bar > i{display:block;height:100%;border-radius:999px;background:var(--teal);transition:width .2s ease}
 .pct-num{font-size:12px;color:var(--ink-soft);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+
+/* An input with a button welded to its right — Send OTP, Show, Verify. The
+   old markup used an inline flex with a hard-coded gap on each one, which is
+   why those Add Employee rows did not line up with each other. */
+.field-with-btn{display:flex;gap:6px;align-items:stretch}
+.field-with-btn > input{flex:1;min-width:0}
+.field-with-btn > .btn{flex:none;white-space:nowrap}
