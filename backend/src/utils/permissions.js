@@ -531,6 +531,13 @@ const GLOBAL_ROLES = ['SUPER_ADMIN'];
 // configuration as what they must not do.
 // ---------------------------------------------------------------------------
 const VIEW_ONLY_ROLES = ['MANAGER', 'ASSISTANT_MANAGER'];
+// The features whose `approve` is a RUNG ON AN APPROVAL CHAIN rather than an
+// edit. utils/approvalWorkflow.js routes requests through these, and a level
+// that cannot act is a level the request dies at.
+const APPROVAL_CHAIN_FEATURES = [
+  'Leave & Holidays', 'Attendance & Time', 'Employee Services',
+  'Performance & Development', 'Employee Management',
+];
 const WRITE_ACTIONS = ['create', 'edit', 'delete', 'approve', 'configure'];
 
 function emptyActions(value = false) {
@@ -565,8 +572,23 @@ function defaultAccessForRole(role, moduleId) {
 
   // §3 / §4 — the view-only pass. Runs AFTER every rule has been applied, so
   // it cannot be out-run by a rule added later.
+  // §3 / §4 — the view-only pass. Runs AFTER every rule has been applied, so
+  // it cannot be out-run by a rule added later.
+  //
+  // ONE EXCEPTION, AND IT IS THE REASON THESE ROLES EXIST: taking their turn
+  // on an approval chain. The Manager and the Assistant Manager are RUNGS on
+  // the ladder — Employee -> TL -> STL -> Assistant Manager -> Manager -> HR
+  // -> Super Admin — so stripping `approve` from them left a request routed to
+  // a Manager that the Manager could not act on: a dead chain.
+  //
+  // Approving a request that the workflow ROUTED TO YOU is not editing a
+  // record; create, edit, delete and configure are still stripped everywhere,
+  // and the approval engine still refuses anybody whose turn it is not.
   if (VIEW_ONLY_ROLES.includes(role)) {
-    names.forEach((f) => WRITE_ACTIONS.forEach((a) => { features[f][a] = false; }));
+    names.forEach((f) => WRITE_ACTIONS.forEach((a) => {
+      if (a === 'approve' && APPROVAL_CHAIN_FEATURES.includes(f)) return;
+      features[f][a] = false;
+    }));
   }
 
   const anyGranted = names.some((f) => ROLE_FEATURE_ACTIONS.some((a) => features[f][a]));

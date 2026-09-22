@@ -33,15 +33,32 @@ const { employeeInScope } = require('./scope');
 // ONE ordered ladder. `seq` is stored on every step so the order a request
 // climbed is a fact about that request, not something re-derived later from a
 // list that may since have changed.
+// THE APPROVAL LADDER, IN THE ORDER IT MUST BE CLIMBED.
+//
+//   EMPLOYEE -> TL -> STL -> ASSISTANT MANAGER -> MANAGER -> HR -> SUPER ADMIN
+//
+// Two things changed from the first version of this list and both matter:
+// ASSISTANT MANAGER now sits BELOW Manager (it read Manager first), and HR
+// replaces ADMIN as the level above Manager — an approval chain is a line
+// management chain, and the HR desk is the last word before the Super Admin.
+//
+// A TL's own request starts at STL, and an STL's at Assistant Manager, and so
+// on: nobody approves their own request. That is not a special case in this
+// list — buildChain() puts the applicant in `used` and every level resolving
+// to that same person is skipped with a reason.
 const LEVELS = [
   { level: 'EMPLOYEE', label: 'Employee', seq: 1, applicant: true },
   { level: 'TL', label: 'TL', seq: 2 },
   { level: 'STL', label: 'STL', seq: 3 },
-  { level: 'MANAGER', label: 'Manager', seq: 4 },
-  { level: 'ASSISTANT_MANAGER', label: 'Asst Manager', seq: 5 },
-  { level: 'ADMIN', label: 'Admin', seq: 6 },
+  { level: 'ASSISTANT_MANAGER', label: 'Assistant Manager', seq: 4 },
+  { level: 'MANAGER', label: 'Manager', seq: 5 },
+  { level: 'HR', label: 'HR', seq: 6 },
   { level: 'SUPER_ADMIN', label: 'Super Admin', seq: 7 },
 ];
+
+// Steps written before HR replaced ADMIN still say ADMIN. Labelling it here
+// keeps an old timeline readable instead of rendering a blank rung.
+const LEGACY_LEVEL_LABELS = { ADMIN: 'Admin (retired level)' };
 const LEVEL_BY_ID = Object.fromEntries(LEVELS.map((l) => [l.level, l]));
 const APPROVAL_LEVELS = LEVELS.filter((l) => !l.applicant);
 
@@ -171,12 +188,15 @@ async function resolveChain(employee) {
   const asstManager = pick(byRole('ASSISTANT_MANAGER'), [(e) => covers(e)]);
   // Admin and Super Admin are company-level by definition — the account-level
   // role decides, exactly as GLOBAL_SCOPE_ROLES does in utils/scope.js.
-  const admin = others.find((e) => e.user.role === 'ADMIN') || null;
+  // THE HR DESK. hrmsRoleOf() reads the HRMS role, which is where HR lives —
+  // the same test utils/scope.js hrmsGlobal() uses. Company-wide by
+  // definition, so no department test applies.
+  const hr = pick(byRole('HR'), [() => true]);
   const superAdmin = others.find((e) => e.user.role === 'SUPER_ADMIN') || null;
 
   return {
-    TL: tl, STL: stl, MANAGER: manager, ASSISTANT_MANAGER: asstManager,
-    ADMIN: admin, SUPER_ADMIN: superAdmin,
+    TL: tl, STL: stl, ASSISTANT_MANAGER: asstManager, MANAGER: manager,
+    HR: hr, SUPER_ADMIN: superAdmin,
   };
 }
 
@@ -267,6 +287,25 @@ async function start({ workflow, recordId, employee, applicantUserId, applicantN
   }];
   if (applicantUserId) used.add(applicantUserId);
 
+  // A REQUEST STARTS AT THE RUNG ABOVE THE PERSON WHO RAISED IT.
+  //
+  // "TL requests start with STL. No user can approve their own request." The
+  // `used` set below already stops the SAME PERSON appearing twice, but that
+  // is not enough: a TL's leave was routed to a DIFFERENT TL, which is still
+  // a peer reviewing a peer and still not what the ladder says. What has to be
+  // skipped is the requester's own LEVEL, whoever holds it.
+  //
+  // So an Employee starts at TL, a TL starts at STL, an STL at Assistant
+  // Manager, and so on up. The HRMS role is what decides, because this is an
+  // HRMS chain — the same hrmsRoleOf() the approver resolution uses.
+  // The requester IS the employee the request is about — start() is always
+  // called with that row. Their HRMS role names their rung.
+  const applicantUser = applicantUserId
+    ? await prisma.user.findUnique({ where: { id: applicantUserId } })
+    : (employee.userId ? await prisma.user.findUnique({ where: { id: employee.userId } }) : null);
+  const applicantLevel = applicantUser ? LEVEL_BY_ID[hrmsRoleOf(applicantUser)] : null;
+  const startAboveSeq = applicantLevel && !applicantLevel.applicant ? applicantLevel.seq : 1;
+
   APPROVAL_LEVELS.forEach((l) => {
     const c = cfg[l.level] || {};
     const mode = c.mode || MODE_VISIBILITY;
@@ -278,6 +317,14 @@ async function start({ workflow, recordId, employee, applicantUserId, applicantN
       approverName: person ? person.name : null,
       approverDepartment: person ? person.department : null,
     };
+    if (l.seq <= startAboveSeq) {
+      data.push({
+        ...base,
+        status: ST.SKIPPED,
+        note: `Skipped — the request was raised by ${applicantName || employee.name}, who is ${applicantLevel.label}`,
+      });
+      return;
+    }
     if (c.active === false) {
       data.push({ ...base, status: ST.SKIPPED, note: `${l.label} is switched off for this workflow` });
       return;
@@ -509,7 +556,18 @@ async function act(workflowId, recordId, user, { decision, note }) {
   if (!mayAct) return { error: DENY.noPerm };
 
   const isOwner = current.approverUserId && current.approverUserId === user.id;
-  if (!isOwner && !override) {
+  // ONLY THE CURRENT OWNER MAY ACT. NO EXCEPTIONS, INCLUDING AN ADMIN.
+  //
+  // This read `!isOwner && !override`, so anybody holding the configure action
+  // could approve out of turn — a Super Admin could approve a request still
+  // sitting with the TL and the chain would jump straight past the STL, the
+  // Assistant Manager, the Manager and HR. That is exactly what "Super Admin
+  // to approve before HR" and "any user to skip an approval level" forbid.
+  //
+  // The override still EXISTS and is still read — it is what lets an
+  // administrator act on a request they are not personally on, once it has
+  // reached their level — but it no longer buys a turn that has not arrived.
+  if (!isOwner) {
     // The out-of-turn refusal. A login further UP the chain gets told where
     // the request actually sits rather than a flat "denied".
     const onChain = steps.some((s) => s.approverUserId === user.id);
@@ -579,12 +637,15 @@ const WORKFLOWS = {
     // STL, and everybody above simply watches. Editable per level on the
     // Leave screen — that is the whole point of the required/visibility split.
     defaults: {
+      // EVERY LEVEL GATES. The spec is explicit that no approval level may be
+      // skipped, so none of these is visibility-only any more — a request
+      // reaches the next rung only once the current one has approved it.
       TL: { mode: MODE_REQUIRED, slaHours: 24 },
       STL: { mode: MODE_REQUIRED, slaHours: 48 },
-      MANAGER: { mode: MODE_VISIBILITY, slaHours: null },
-      ASSISTANT_MANAGER: { mode: MODE_VISIBILITY, slaHours: null },
-      ADMIN: { mode: MODE_VISIBILITY, slaHours: null },
-      SUPER_ADMIN: { mode: MODE_VISIBILITY, slaHours: null },
+      ASSISTANT_MANAGER: { mode: MODE_REQUIRED, slaHours: 48 },
+      MANAGER: { mode: MODE_REQUIRED, slaHours: 48 },
+      HR: { mode: MODE_REQUIRED, slaHours: 48 },
+      SUPER_ADMIN: { mode: MODE_REQUIRED, slaHours: 72 },
     },
   },
 };
