@@ -616,3 +616,15 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .field-with-btn{display:flex;gap:6px;align-items:stretch}
 .field-with-btn > input{flex:1;min-width:0}
 .field-with-btn > .btn{flex:none;white-space:nowrap}
+
+/* --- Scope checkbox lists (Administration → Users → Edit) ------------------
+   Department, team and client scope are ticked, not typed. A wrapping grid so
+   seven departments read as a block rather than a ragged line, and the boxes
+   line up down the left edge. */
+.scope-checks{display:flex;flex-wrap:wrap;gap:6px 14px}
+.scope-check{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:400;
+  padding:3px 8px 3px 6px;border:1px solid var(--line);border-radius:7px;
+  background:var(--paper-raised);cursor:pointer;white-space:nowrap}
+.scope-check:hover{border-color:var(--teal)}
+.scope-check input{width:auto;margin:0;flex:none}
+.scope-check-orphan{border-style:dashed;color:var(--ink-soft)}

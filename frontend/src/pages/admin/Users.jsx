@@ -5,6 +5,7 @@ import Modal from '../../components/Modal.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { ATS_ROLE_LABELS, atsRoleLabel, DEPTS } from '../../atsVocab';
 import Combo from '../../components/Combo.jsx';
+import ScopeChecklist from '../../components/ScopeChecklist.jsx';
 
 // Users / Employee Management (the prototype's usersView, line 9893).
 //
@@ -102,6 +103,17 @@ export default function Users() {
     api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
     api.get('/admin/departments').then((res) => setDepartments(res.data)).catch(() => setDepartments([]));
   }, []);
+
+  // The department master already arrives with its teams nested, so both
+  // checkbox lists come off the one fetch rather than a second round trip.
+  const departmentOptions = useMemo(
+    () => departments.map((d) => d.name).filter(Boolean).sort(),
+    [departments],
+  );
+  const teamOptions = useMemo(
+    () => [...new Set(departments.flatMap((d) => (d.teams || []).map((t) => t.name)))].filter(Boolean).sort(),
+    [departments],
+  );
 
   const rows = useMemo(() => {
     const q = filters.q.trim().toLowerCase();
@@ -500,23 +512,33 @@ export default function Users() {
             record — leave them empty to fall back to the employee's own
             department and team. An STL carries several departments here.
           </div>
-          <div className="field"><label>Department scope (comma-separated)</label>
-            <input
-              value={editing.atsScopeDepartments}
-              onChange={(e) => setEditing({ ...editing, atsScopeDepartments: e.target.value })}
-              placeholder="e.g. Medical,IT"
-            /></div>
-          <div className="field"><label>Team scope (comma-separated)</label>
-            <input
-              value={editing.atsScopeTeams}
-              onChange={(e) => setEditing({ ...editing, atsScopeTeams: e.target.value })}
-              placeholder="e.g. Medical Team-A"
-            /></div>
-          <div className="field"><label>Client scope (BDE — client ids, comma-separated)</label>
-            <input
-              value={editing.atsScopeClients}
-              onChange={(e) => setEditing({ ...editing, atsScopeClients: e.target.value })}
-            /></div>
+          {/* TICK BOXES, NOT TYPED COMMAS. The value is still the same
+              comma-separated string the API reads, so the PUT body and the
+              scope rule are unchanged — only the way it is chosen. */}
+          <ScopeChecklist
+            label="Department scope"
+            hint="Tick every department this login may reach. An STL or a Manager usually carries several."
+            options={departmentOptions.map((d) => ({ value: d, label: d }))}
+            value={editing.atsScopeDepartments}
+            onChange={(v) => setEditing({ ...editing, atsScopeDepartments: v })}
+            empty="No departments on the master yet — add them on Administration → Departments & Teams."
+          />
+          <ScopeChecklist
+            label="Team scope"
+            hint="Leave every box clear to fall back to their own team."
+            options={teamOptions.map((t) => ({ value: t, label: t }))}
+            value={editing.atsScopeTeams}
+            onChange={(v) => setEditing({ ...editing, atsScopeTeams: v })}
+            empty="No teams on the master yet."
+          />
+          <ScopeChecklist
+            label="Client scope"
+            hint="A BDE is scoped to the client accounts they own."
+            options={clients.map((c) => ({ value: c.id, label: c.name }))}
+            value={editing.atsScopeClients}
+            onChange={(v) => setEditing({ ...editing, atsScopeClients: v })}
+            empty="No client accounts yet."
+          />
         </Modal>
       )}
     </div>
