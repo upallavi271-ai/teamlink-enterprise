@@ -1241,6 +1241,10 @@ model Survey {
   title     String
   status    String   @default("Active") // Active | Closed
   questions String   // JSON-encoded array of question strings
+  // Which departments this survey was published to. NULL / empty = every
+  // department, which is what every survey created before this column meant.
+  // Comma-separated names, the same shape User.atsScopeDepartments uses.
+  departments String?
   createdAt DateTime @default(now())
 
   responses SurveyResponse[]

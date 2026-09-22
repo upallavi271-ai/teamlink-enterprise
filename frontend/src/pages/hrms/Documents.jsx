@@ -58,6 +58,10 @@ export default function Documents() {
               <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                 <option>Policy</option>
                 <option>Compliance</option>
+                {/* The one category that is never pushed to employee
+                    self-service — the company's own paperwork. The server
+                    enforces it; this option is just how it gets chosen. */}
+                <option>Company Documents</option>
               </Combo>
             </label>
           </div>
@@ -82,7 +86,11 @@ export default function Documents() {
                   {!isHR && <button className="btn btn-sm" onClick={() => acknowledge(d.id)}>Acknowledge</button>}
                   {isHR && (
                     <>
-                      <button className="btn btn-sm" onClick={() => toggleVisibility(d.id)}>{d.published ? 'Hide from Employees' : 'Publish'}</button>{' '}
+                      {d.publishable === false ? (
+                        <span className="small-muted" title="Company paperwork is never pushed to employee self-service">Internal only</span>
+                      ) : (
+                        <button className="btn btn-sm" onClick={() => toggleVisibility(d.id)}>{d.published ? 'Hide from Employees' : 'Publish'}</button>
+                      )}
                       <button className="btn btn-sm" onClick={() => remove(d.id)}>Delete</button>
                     </>
                   )}

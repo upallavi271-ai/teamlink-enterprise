@@ -403,7 +403,8 @@ export default function Employees() {
       <div className="page-head">
         <div><h1>Employee Management</h1>
           <div className="page-sub">
-            Employee master administration, login access, product roles and data scope — all of it here.
+            The employee master — records, profile review and department transfers. Logins, product roles
+            and data scope are on Administration → Users.
             {scopeText ? <> You are seeing <b>{scopeText}</b>.</> : null}
           </div></div>
         <div style={{ display: 'flex', gap: 8 }}>

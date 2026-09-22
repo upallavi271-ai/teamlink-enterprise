@@ -34,8 +34,10 @@ function averages(survey) {
   });
 }
 
-function CreateSurveyModal({ onClose, onSaved }) {
-  const [form, setForm] = useState({ title: '', questions: '' });
+function CreateSurveyModal({ departments, onClose, onSaved }) {
+  // `department` empty means publish to EVERY department, which is what an
+  // untargeted survey has always meant on the server.
+  const [form, setForm] = useState({ title: '', questions: '', department: '' });
   const [error, setError] = useState('');
 
   async function submit() {
@@ -44,7 +46,11 @@ function CreateSurveyModal({ onClose, onSaved }) {
     if (!form.title.trim()) { setError('Enter a survey title.'); return; }
     if (!questions.length) { setError('Add at least one question.'); return; }
     try {
-      await api.post('/surveys', { title: form.title.trim(), questions });
+      await api.post('/surveys', {
+        title: form.title.trim(),
+        questions,
+        departments: form.department ? [form.department] : [],
+      });
       onSaved();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not create the survey');
@@ -58,6 +64,16 @@ function CreateSurveyModal({ onClose, onSaved }) {
       footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit}>Publish</button></>}
     >
       <div className="field"><label>Title</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+      {/* DEPARTMENT-WISE PUBLISH. Nothing selected publishes to everybody;
+          choosing one publishes to that department only, and the server
+          refuses a response from anybody else rather than merely hiding it. */}
+      <div className="field">
+        <label>Publish to</label>
+        <Combo value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
+          <option value="">All departments</option>
+          {(departments || []).map((d) => <option key={d} value={d}>{d}</option>)}
+        </Combo>
+      </div>
       <div className="field">
         <label>Questions (one per line)</label>
         <textarea
@@ -119,8 +135,14 @@ export default function Surveys({ view, onOpen, onBack }) {
   const [surveys, setSurveys] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [responding, setResponding] = useState(null);
+  // The department master, for the publish dropdown. Same source Announcements
+  // targets from, so the two screens offer the same list.
+  const [departments, setDepartments] = useState([]);
 
-  function load() { api.get('/surveys').then((res) => setSurveys(res.data)); }
+  function load() {
+    api.get('/surveys').then((res) => setSurveys(res.data));
+    api.get('/admin/departments').then((res) => setDepartments(res.data.map((d) => d.name))).catch(() => setDepartments([]));
+  }
   useEffect(load, []);
 
   async function toggle(s) {
@@ -131,7 +153,7 @@ export default function Surveys({ view, onOpen, onBack }) {
   const createButton = isHR && <button className="btn btn-primary btn-sm" onClick={() => setCreateOpen(true)}>+ Create Survey</button>;
   const modals = (
     <>
-      {createOpen && <CreateSurveyModal onClose={() => setCreateOpen(false)} onSaved={() => { setCreateOpen(false); load(); }} />}
+      {createOpen && <CreateSurveyModal departments={departments} onClose={() => setCreateOpen(false)} onSaved={() => { setCreateOpen(false); load(); }} />}
       {responding && <RespondModal survey={responding} onClose={() => setResponding(null)} onSaved={() => { setResponding(null); load(); }} />}
     </>
   );

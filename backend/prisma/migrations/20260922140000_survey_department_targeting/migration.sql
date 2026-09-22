@@ -1,0 +1,14 @@
+-- survey_department_targeting — "engagement surveys lo department wise publish
+-- avvali, department wise dropdown vundali publish avvadaniki."
+--
+-- ONE PLAIN ADD COLUMN, hand-written. Prisma implements a column change on
+-- SQLite as a table REBUILD (create new_X, copy a fixed column list, drop,
+-- rename), and that silently drops columns other migrations added. An additive
+-- ADD COLUMN cannot do that, so this is written by hand rather than generated.
+--
+-- NULL or '' means EVERY DEPARTMENT — which is what every survey that already
+-- exists means, so no backfill is needed and nothing changes for them.
+-- Otherwise it is a comma-separated list of department names, the same shape
+-- User.atsScopeDepartments already uses, so utils/scope.js style membership
+-- tests read the same way here.
+ALTER TABLE "Survey" ADD COLUMN "departments" TEXT;
