@@ -95,10 +95,31 @@ export default function AtsDashboard() {
           nothing late. */}
       <DoThisNow />
 
+      {/* §19 — PAST SLA, BROKEN DOWN AND CLICKABLE. Renders nothing when
+          nothing is late, for the same reason Do This Now does. */}
+      {data.pastSla && data.pastSla.total > 0 && (
+        <div className="card section past-sla">
+          <div className="panel-head">
+            <h3>⏰ Past SLA</h3>
+            <span className="pending-count">{data.pastSla.total}</span>
+          </div>
+          <div className="past-sla-parts">
+            {data.pastSla.parts.map((s) => (
+              <button key={s.id} className="past-sla-part" onClick={() => navigate(s.to)}>
+                <span className="past-sla-n">{s.count}</span>
+                <span className="past-sla-l">{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 1. My Pending Actions ------------------------------------------- */}
       <div className="panel">
         <div className="panel-head">
-          <h3>My Pending Actions</h3>
+          {/* §15 / §22 — the role's own words, computed server-side so every
+              surface says the same thing. */}
+          <h3>{data.pendingTitle || 'My Pending Actions'}</h3>
           <span className="pending-count">{data.pendingTotal}</span>
         </div>
         {data.pendingActions.length === 0 && (

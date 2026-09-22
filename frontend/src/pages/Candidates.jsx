@@ -638,7 +638,18 @@ export default function Candidates() {
                             </div>
                           </>
                         )
-                        : <span className="small-muted">Not set</span>}
+                        : (
+                          // §4 — NOT EVERY STAGE OWES A PHONE CALL. Saying
+                          // "Not set" on all of them nags about stages that
+                          // need nothing AND makes the ones that do look the
+                          // same. followUpNeed comes from utils/atsVocab.js, so
+                          // the screen and the automatic follow-ups agree.
+                          <span className="small-muted">
+                            {c.followUpNeed === 'required' && <b className="fu-needed">Needs a follow-up</b>}
+                            {c.followUpNeed === 'optional' && 'Optional'}
+                            {(!c.followUpNeed || c.followUpNeed === 'none') && 'Not required'}
+                          </span>
+                        )}
                     </td>
                     <td>
                       {c.lifeStatus

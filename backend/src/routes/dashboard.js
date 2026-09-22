@@ -451,6 +451,22 @@ router.get(
       && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus || ''));
     const overdue = active.filter(applicationIsOverdue);
 
+    // §19 — PAST SLA, BROKEN DOWN AND OPENABLE.
+    //
+    // It was one number counting stage SLA alone, which is why it read 0 on a
+    // dashboard that plainly had late work on it. Late means late whatever
+    // kind of late it is, so it now counts the five things that actually run
+    // out of time — and each part carries the list that opens it, because a
+    // number nobody can click is a number nobody acts on.
+    const overdueClientDecision = active.filter((a) => applicationIsOverdue(a)
+      && ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage));
+    const overdueFeedback = active.filter((a) => applicationIsOverdue(a)
+      && a.stage === 'INTERVIEW_COMPLETED');
+    const overdueJoining = active.filter((a) => applicationIsOverdue(a)
+      && ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage));
+    const overdueReview = active.filter((a) => applicationIsOverdue(a)
+      && ['NEW', 'RECRUITER_REVIEW', 'RECRUITER_APPROVED', 'TL_REVIEW', 'WITH_BDE'].includes(a.stage));
+
     // --- followup_: REAL follow-ups -----------------------------------------
     // "Follow-ups Due" used to be `overdue.length` — the STAGE SLA, because no
     // follow-up record existed. It now counts actual follow-ups somebody
@@ -494,6 +510,22 @@ router.get(
 
     let myWork;
     let myWorkTitle;
+    // §15 / §22 — THE HEADING IS IN THE READER'S OWN WORDS. "My Pending
+    // Actions" was the same phrase for a recruiter, a TL and a client, which
+    // tells none of them whose work they are looking at. Computed here rather
+    // than in the browser so every surface says the same thing.
+    const PENDING_TITLES = {
+      RECRUITER: 'My Work Today',
+      BDE: 'My Client Actions',
+      TL: "My Team's Pending Work",
+      STL: "My Department's Pending Work",
+      MANAGER: 'Company Pending Work',
+      ASSISTANT_MANAGER: 'Company Pending Work',
+      CLIENT: 'Your Pending Decisions',
+      ADMIN: 'Company Actions',
+      SUPER_ADMIN: 'Company Actions',
+    };
+    const pendingTitle = PENDING_TITLES[s.atsRole] || PENDING_TITLES[s.role] || 'Pending Actions';
     switch (s.atsRole) {
       case 'RECRUITER':
         myWorkTitle = 'My Work';
@@ -572,6 +604,18 @@ router.get(
         client: s.clientId ? (clients[0] ? clients[0].name : null) : null,
       },
       pendingTotal,
+      pendingTitle,
+      // §19 — the parts, each with the list that opens it.
+      pastSla: {
+        total: overdue.length,
+        parts: [
+          { id: 'review', label: 'Reviews past SLA', count: overdueReview.length, to: '/candidates?stage=NEW,RECRUITER_REVIEW,RECRUITER_APPROVED,TL_REVIEW,WITH_BDE' },
+          { id: 'client', label: 'Client decisions overdue', count: overdueClientDecision.length, to: '/candidates?stage=SHARED_WITH_CLIENT,CLIENT_REVIEW' },
+          { id: 'feedback', label: 'Feedback pending', count: overdueFeedback.length, to: '/ats/calendar' },
+          { id: 'joining', label: 'Joining confirmation overdue', count: overdueJoining.length, to: '/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED' },
+          { id: 'followup', label: 'Follow-ups overdue', count: followUpsOverdue, to: FOLLOWUPS_OVERDUE_LINK },
+        ].filter((x) => x.count > 0),
+      },
       pendingActions,
       queue: queueRows,
       myWorkTitle,

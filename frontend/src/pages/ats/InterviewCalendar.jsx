@@ -8,7 +8,7 @@ import {
   interviewStatusLabel, interviewStatusClass, resultClass,
 } from '../../atsVocab';
 import { canActOnPipeline } from '../../permissions';
-import { INTJOIN_TABS, HiringTypeChip } from './intjoinShared.jsx';
+import { HiringTypeChip } from './intjoinShared.jsx';
 import Combo from '../../components/Combo.jsx';
 
 // The prototype's Interview Calendar (calendarView, line 9184): two tabs kept
@@ -123,11 +123,11 @@ export default function InterviewCalendar() {
         {canAct && <Link className="btn btn-primary" to="/candidates">Schedule Interview</Link>}
       </div>
 
-      <div className="tabbar">
-        {INTJOIN_TABS.map((t) => (
-          <NavLink key={t.to} to={t.to} end className={({ isActive }) => 'tab-btn' + (isActive ? ' active' : '')}>{t.label}</NavLink>
-        ))}
-      </div>
+      {/* §1 — NO WORKSPACE STRIP HERE. Interview Feedback, Offers, Joining
+          and Internal Hiring are candidate workflow states, not peers of this
+          module; listing them here is what made the ATS look like it had five
+          more modules. They are reached from the candidate record and from the
+          pipeline tabs that already carry them. */}
 
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="card section" style={{ marginBottom: 14 }}>{notice}</div>}

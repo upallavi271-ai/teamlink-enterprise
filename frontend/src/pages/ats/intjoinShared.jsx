@@ -14,8 +14,38 @@ export const money = (n) => (n === '' || n == null ? '—' : `₹${Math.round(Nu
 
 // The module's five tabs. The nav links here too; this strip keeps the group
 // navigable from inside any one of them.
+// §1 — OFFERS, JOINING AND INTERNAL HIRING ARE NOT ATS MODULES.
+//
+// They were rendered as a five-item tab strip at the top of the Interview
+// Calendar, which reads exactly like five more top-level modules and
+// invites "ATS lo inka 5 modules unnaya?". They are workflow states of a
+// CANDIDATE, so they are reached from the candidate record and from the
+// pipeline tabs that already carry them (Selected, Offer, Joining, Joined).
+//
+// The screens still exist and are still routed — nothing was deleted, and
+// a link or a bookmark still opens them. What changed is that the Interview
+// Calendar no longer advertises them as peers of itself.
+// §1 — OFFERS, JOINING AND INTERNAL HIRING ARE NOT ATS MODULES.
+//
+// They were in a five-item strip at the TOP OF THE INTERVIEW CALENDAR, which
+// reads exactly like five more top-level modules and invites "ATS lo inka 5
+// modules unnaya?". They are workflow states of a CANDIDATE.
+//
+// So the strip stays on the four workflow screens — they are a workspace group
+// and still need to reach each other — and the Interview Calendar, which is a
+// real ATS module, no longer advertises them as its peers. Nothing was
+// deleted: every screen is still routed, and the pipeline tabs (Selected,
+// Offer, Joining, Joined) and the candidate record are how they are reached.
 export const INTJOIN_TABS = [
-  { to: '/ats/calendar', label: 'Interview Calendar' },
+  { to: '/ats/interview-feedback', label: 'Interview Feedback' },
+  { to: '/ats/offers', label: 'Offers' },
+  { to: '/ats/joining', label: 'Joining' },
+  { to: '/ats/internal-hiring', label: 'Internal Hiring' },
+];
+
+// Where those workspaces are reached from instead: the candidate record.
+// Kept as data so the screens themselves can still show each other.
+export const WORKFLOW_WORKSPACES = [
   { to: '/ats/interview-feedback', label: 'Interview Feedback' },
   { to: '/ats/offers', label: 'Offers' },
   { to: '/ats/joining', label: 'Joining' },

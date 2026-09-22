@@ -743,3 +743,15 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .report-date{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft)}
 .report-date input{width:auto}
 .report-total td{border-top:2px solid var(--line);background:var(--paper)}
+
+/* §19 — Past SLA, broken down into things you can open. */
+.past-sla{border-left:3px solid var(--amber)}
+.past-sla-parts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.past-sla-part{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:9px;
+  border:1px solid var(--amber);background:var(--amber-tint);cursor:pointer;text-align:left}
+.past-sla-part:hover{border-color:var(--red)}
+.past-sla-n{font-size:17px;font-weight:700;color:var(--amber);font-variant-numeric:tabular-nums}
+.past-sla-l{font-size:12px;color:var(--ink)}
+
+/* §4 — a stage that genuinely owes a contact says so; the rest stay quiet. */
+.fu-needed{color:var(--amber)}

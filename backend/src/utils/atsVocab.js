@@ -126,6 +126,44 @@ function applicationOwner(application, requirement) {
 // Who the NEXT ACTION is waiting on, where that is somebody outside TeamLink.
 // Null on every stage that is waiting on one of our own people — the owner
 // already says who that is.
+// §4 — DOES THIS STAGE ACTUALLY OWE SOMEBODY A CONTACT?
+//
+// Every row without a follow-up read "Not set", on every stage, which is
+// wrong twice over: it nags about stages that owe nobody a phone call, and it
+// makes the stages that DO need one look like all the others. Not every stage
+// needs a communication follow-up — a recruiter reviewing a CV owes an action,
+// not a conversation.
+//
+//   required   the stage is waiting on a HUMAN REPLY, so a date is owed
+//   optional   a chase may help but nothing is blocked on a reply
+//   none       the work is the next step; there is nobody to ring
+const FOLLOWUP_NEED = {
+  NEW: 'none',
+  AI_INTERVIEW_REQUIRED: 'optional',
+  AI_INTERVIEW_SCHEDULED: 'optional',
+  AI_INTERVIEW_COMPLETED: 'none',
+  RECRUITER_REVIEW: 'none',
+  RECRUITER_APPROVED: 'none',
+  TL_REVIEW: 'none',
+  WITH_BDE: 'optional',
+  BDE_APPROVED: 'optional',
+  SHARED_WITH_CLIENT: 'required',
+  CLIENT_REVIEW: 'required',
+  CLIENT_SHORTLISTED: 'required',
+  INTERVIEW_SCHEDULED: 'required',
+  INTERVIEW_COMPLETED: 'required',
+  SELECTED: 'required',
+  OFFER: 'required',
+  OFFER_ACCEPTED: 'required',
+  JOINED: 'optional',
+  HIRED: 'none',
+  REJECTED: 'none',
+  HOLD: 'required',
+};
+function followUpNeed(application) {
+  return FOLLOWUP_NEED[application.stage] || 'optional';
+}
+
 function applicationWaitingOn(application, requirement) {
   const rule = STAGE_OWNER_ACTION[application.stage] || {};
   if (rule.ownerRole !== 'Client') return null;
@@ -471,6 +509,8 @@ module.exports = {
   STAGE_OWNER_ACTION,
   applicationOwner,
   applicationWaitingOn,
+  followUpNeed,
+  FOLLOWUP_NEED,
   applicationNextAction,
   applicationDueDate,
   applicationIsOverdue,
