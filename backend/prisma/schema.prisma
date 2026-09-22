@@ -218,17 +218,20 @@ model Client {
 }
 
 model Requirement {
-  id          String  @id @default(cuid())
-  title       String
-  description String?
-  clientId    String
-  client      Client  @relation(fields: [clientId], references: [id])
-  department  String?
-  priority    String  @default("Medium")
-  status      String  @default("OPEN") // DRAFT | OPEN | CLOSED
-  skills      String? // comma-separated MANDATORY skills, drives candidate matching + JD
-  experience  String? // e.g. "5-8" years, shown on the generated job description
-  openings    Int     @default(1)
+  id             String  @id @default(cuid())
+  title          String
+  description    String?
+  clientId       String
+  client         Client  @relation(fields: [clientId], references: [id])
+  department     String?
+  // The specialisation inside that department — Medical -> Dermatology.
+  // Nullable: most departments do not use one.
+  specialisation String?
+  priority       String  @default("Medium")
+  status         String  @default("OPEN") // DRAFT | OPEN | CLOSED
+  skills         String? // comma-separated MANDATORY skills, drives candidate matching + JD
+  experience     String? // e.g. "5-8" years, shown on the generated job description
+  openings       Int     @default(1)
 
   // Prototype Create Requirement form (openAddRequirementModal / collectRequirementForm).
   internal           Boolean @default(false) // Internal Requirement vs Client Requirement
@@ -500,10 +503,30 @@ model Department {
   name      String   @unique
   createdAt DateTime @default(now())
 
-  teams Team[]
+  teams           Team[]
+  specialisations Specialisation[]
 }
 
 model Team {
+  id           String     @id @default(cuid())
+  name         String
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([departmentId, name])
+}
+
+// THE SECOND LEVEL OF THE HIERARCHY: Department -> Specialisation.
+//
+//   Medical -> MBBS, Dermatology, Gynaecology, Paediatrics, Cardiology
+//
+// Candidate.specialization was already free text, which is why the same
+// specialisation could be spelled three ways and never group in a report.
+// This gives a department its LIST, so a requirement and a candidate pick
+// from the same set and "Medical -> Dermatology -> Candidates" is a real
+// filter rather than a string match that mostly works.
+model Specialisation {
   id           String     @id @default(cuid())
   name         String
   departmentId String

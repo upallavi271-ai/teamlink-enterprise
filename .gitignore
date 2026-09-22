@@ -12,3 +12,8 @@ uploads/
 .teamlink-uploads/
 backend/prisma/*.db
 backend/prisma/*.db-journal
+
+# Local database backups taken before a data import.
+backups/
+# A converted copy of the company's own data — real records, not source code.
+TeamLink-REAL-DATA-converted.xlsx
