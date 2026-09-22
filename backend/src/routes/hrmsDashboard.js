@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
+const { employeeWhere } = require('../utils/scope');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -35,7 +36,17 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
   const today = new Date().toISOString().slice(0, 10);
   const thirtyDaysAgo = new Date(Date.now() - 30 * DAY_MS);
 
-  const allEmployees = await prisma.employee.findMany({ include: { reportingManager: true }, orderBy: { name: 'asc' } });
+  // SCOPED, like every other employee list in the app. This read had no filter
+  // at all, so a TL opening the HRMS Dashboard saw the WHOLE COMPANY: 28 Total
+  // Employees and a Headcount-by-Department panel naming every department,
+  // while HRMS -> Employees beside it correctly showed 8. Same helper
+  // utils/scope.js gives /api/employees, so the two screens agree and widening
+  // a role's scope widens both.
+  const allEmployees = await prisma.employee.findMany({
+    where: employeeWhere(req.user),
+    include: { reportingManager: true },
+    orderBy: { name: 'asc' },
+  });
   const employees = allEmployees.filter((e) => matchesFilters(e, req.query));
   const ids = employees.map((e) => e.id);
 
@@ -46,10 +57,13 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
     prisma.attendanceRegularization.findMany({ where: { employeeId: { in: ids }, status: 'Pending' } }),
     prisma.holiday.findMany({ orderBy: { date: 'asc' } }),
     prisma.announcement.findMany({ orderBy: { createdAt: 'desc' }, take: 4 }),
-    prisma.employeeRecord.count({ where: { type: 'ASSET', status: 'Assigned' } }),
-    prisma.courseAssignment.count({ where: { completed: false } }),
-    prisma.employeeRecord.count({ where: { type: 'TARGET', status: 'In Progress' } }),
-    prisma.employeeRecord.count({ where: { type: 'HELPDESK', status: { notIn: ['Resolved', 'Closed'] } } }),
+    // These four counted the WHOLE COMPANY while every tile above them was
+    // already restricted to `ids` — so a TL's "Pending Tasks" panel reported
+    // other departments' assets, training, targets and tickets.
+    prisma.employeeRecord.count({ where: { type: 'ASSET', status: 'Assigned', employeeId: { in: ids } } }),
+    prisma.courseAssignment.count({ where: { completed: false, employeeId: { in: ids } } }),
+    prisma.employeeRecord.count({ where: { type: 'TARGET', status: 'In Progress', employeeId: { in: ids } } }),
+    prisma.employeeRecord.count({ where: { type: 'HELPDESK', status: { notIn: ['Resolved', 'Closed'] }, employeeId: { in: ids } } }),
   ]);
 
   const countStatus = (s) => attendanceToday.filter((a) => a.status === s).length;

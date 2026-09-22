@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const { employeeRecordWhere } = require('../utils/scope');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
@@ -38,7 +39,13 @@ async function nextCode() {
 }
 
 router.get('/', async (req, res) => {
-  const assets = await prisma.asset.findMany({ include: { assignedTo: true }, orderBy: { createdAt: 'desc' } });
+  // SCOPED BY WHO HOLDS THE ASSET. An unassigned asset is company stock and
+  // stays visible to anyone who may open this screen; an ASSIGNED one is a
+  // fact about that employee, so it follows them. Without this a TL read the
+  // whole company's asset register.
+  const scope = employeeRecordWhere(req.user, 'assignedTo');
+  const where = Object.keys(scope).length ? { OR: [{ assignedToId: null }, scope] } : {};
+  const assets = await prisma.asset.findMany({ where, include: { assignedTo: true }, orderBy: { createdAt: 'desc' } });
   res.json(assets.map(present));
 });
 

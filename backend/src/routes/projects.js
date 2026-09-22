@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const { employeeRecordWhere } = require('../utils/scope');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
@@ -8,7 +9,20 @@ router.use(requireAuth);
 
 
 router.get('/', async (req, res) => {
-  const projects = await prisma.project.findMany({ include: { assignments: { include: { employee: true } } }, orderBy: { createdAt: 'desc' } });
+  // A PROJECT IS VISIBLE WHEN SOMEBODY IN SCOPE IS ON IT. The project row
+  // itself is not departmental, but its assignment list names people — so an
+  // unscoped read handed a TL the staffing of every other department's work.
+  // Projects with nobody assigned stay visible: there is nothing private on
+  // them yet.
+  const scope = employeeRecordWhere(req.user);
+  const where = Object.keys(scope).length
+    ? { OR: [{ assignments: { none: {} } }, { assignments: { some: scope } }] }
+    : {};
+  const projects = await prisma.project.findMany({
+    where,
+    include: { assignments: { where: Object.keys(scope).length ? scope : undefined, include: { employee: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
   res.json(projects);
 });
 

@@ -227,7 +227,12 @@ router.post('/courses', MANAGE, async (req, res) => {
 });
 
 router.get('/assignments', async (req, res) => {
-  const where = {};
+  // SCOPED. Only the self-only branch below was ever applied, so a TL, an STL
+  // and a Manager all read EVERY enrollment in the company — a Medical TL saw
+  // all 8 rows, including IT's and Accounts'. The relation filter is the same
+  // employeeWhere() the rest of HRMS uses, so this list now agrees with
+  // HRMS -> Employees.
+  const where = { employee: employeeWhere(req.user) };
   if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!own) return res.json([]);
