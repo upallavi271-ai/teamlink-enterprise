@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
   sectionLabel, mayRenderSection, groupsForUser, flattenGroups, sectionOf, scoreMatch,
+  SECTION_ICON,
 } from '../nav';
 import Logo from './Logo.jsx';
 import AiAssistant from './AiAssistant.jsx';
@@ -14,6 +15,14 @@ import Combo from './Combo.jsx';
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
 // which tabs appear is decided entirely by the permission engine — see that
 // file's header.
+//
+// Each entry also carries an icon (nav.js, §19). It is rendered in its own
+// fixed-width column, aria-hidden, so the labels still line up and a screen
+// reader reads the label alone.
+
+function Ico({ char }) {
+  return <span className="sb-ico" aria-hidden="true">{char || ''}</span>;
+}
 
 function initials(name) {
   if (!name) return '?';
@@ -101,18 +110,20 @@ export default function Shell() {
             className={'sb-item' + (section === 'dashboard' ? ' top-active' : '')}
             onClick={() => navTo('/')}
           >
-            Dashboard
+            <Ico char={SECTION_ICON.dashboard} />Dashboard
           </div>
-          {groups.map(([s, label, items]) => (
+          {groups.map(([s, label, items, icon]) => (
             <div className={'sb-group' + (isGroupOpen(s) ? ' open' : '')} key={s}>
               <div className="sb-group-head" onClick={() => toggleGroup(s, items)}>
-                <span>{label}</span><span className="chev">▸</span>
+                <span className="sb-group-label"><Ico char={icon} />{label}</span>
+                <span className="chev">▸</span>
               </div>
               <div className="sb-sub">
                 {items.map((item) => (item.children ? (
                   <div className={'sb-sub-group' + (isSubOpen(item.id) ? ' open' : '')} key={item.id}>
                     <div className="sb-sub-head" onClick={() => toggleSub(item.id)}>
-                      <span>{item.label}</span><span className="chev">▸</span>
+                      <span className="sb-group-label"><Ico char={item.icon} />{item.label}</span>
+                      <span className="chev">▸</span>
                     </div>
                     <div className="sb-leaf-list">
                       {item.children.map((c) => (
@@ -121,7 +132,7 @@ export default function Shell() {
                           className={'sb-leaf' + (isActive(c.to) ? ' active' : '')}
                           onClick={() => navTo(c.to)}
                         >
-                          {c.label}
+                          <Ico char={c.icon} />{c.label}
                         </div>
                       ))}
                     </div>
@@ -132,14 +143,16 @@ export default function Shell() {
                     className={'sb-sub-item' + (isActive(item.to) ? ' active' : '')}
                     onClick={() => navTo(item.to)}
                   >
-                    {item.label}
+                    <Ico char={item.icon} />{item.label}
                   </div>
                 )))}
               </div>
             </div>
           ))}
           <div className="sb-group">
-            <a className="sb-item" href="/careers" target="_blank" rel="noreferrer">Job Portal (public) ↗</a>
+            <a className="sb-item" href="/careers" target="_blank" rel="noreferrer">
+              <Ico char="🌐" />Job Portal (public) ↗
+            </a>
           </div>
         </nav>
       </aside>
