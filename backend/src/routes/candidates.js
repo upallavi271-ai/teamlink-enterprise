@@ -7,7 +7,7 @@ const {
 const { logAudit } = require('../utils/audit');
 const { computeMatch } = require('../utils/matching');
 const {
-  applicationOwner, applicationNextAction, applicationDueDate, applicationIsOverdue,
+  applicationOwner, applicationWaitingOn, applicationNextAction, applicationDueDate, applicationIsOverdue,
   applicationLifeStatus, stageLabel, interviewStatusLabel, REQUIREMENT_LIVE_STATUSES,
 } = require('../utils/atsVocab');
 const {
@@ -189,6 +189,7 @@ function decorate(candidate, { user, sharedIds = null, followUps = null } = {}) 
     tlName: requirement ? requirement.tl || null : null,
     appliedDate: latest.createdAt,
     owner: applicationOwner(latest, requirement),
+    waitingOn: applicationWaitingOn(latest, requirement),
     nextAction: applicationNextAction(latest),
     dueDate: applicationDueDate(latest),
     overdue: applicationIsOverdue(latest),
@@ -562,6 +563,9 @@ router.get('/:id', async (req, res) => {
     stageGroupLabel: groupLabelOfStage(a.stage),
     stageDetailLabel: stageDetail(a),
     owner: applicationOwner(a, a.requirement),
+    // Who we are waiting on OUTSIDE TeamLink, reported beside the owner
+    // rather than instead of them (§5).
+    waitingOn: applicationWaitingOn(a, a.requirement),
     nextAction: applicationNextAction(a),
     dueDate: applicationDueDate(a),
     overdue: applicationIsOverdue(a),

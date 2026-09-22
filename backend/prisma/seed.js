@@ -300,7 +300,7 @@ async function main() {
       jobDescription: 'Own reporting and analysis across the Medivant clinical operations group.',
       reqCode: 'REQ-0003',
       clientId: medivant.id, department: 'Medical', priority: 'Low', status: 'AGREEMENT_CHECK',
-      recruiterId: recruiterMedical.id, tl: 'Divya Rao', tlId: tlMedical.id,
+      recruiterId: recruiterMedical.id, tl: 'Divya Rao', stlId: cStl.user.id, stl: cStl.user.name, tlId: tlMedical.id,
       accountManager: 'Meera Iyer', targetDate: '2026-12-15',
       skills: 'SQL, Excel, Data Analysis, Python', goodToHaveSkills: 'Machine Learning',
       experience: '2-4 yrs', relevantExperience: '2 yrs',
@@ -328,7 +328,7 @@ async function main() {
       responsibilities: 'Ship and own Spring Boot services\nPartner with the payments domain team',
       qualifications: 'Bachelor’s degree in Computer Science or equivalent practical experience.',
       clientId: orbit.id, department: 'IT', priority: 'High', status: 'RECRUITER_ASSIGNED',
-      tlId: tlMedical.id, tl: 'Divya Rao',
+      stlId: cStl.user.id, stl: cStl.user.name, tlId: tlMedical.id, tl: 'Divya Rao',
       recruiterId: recruiterMedical.id,
       recruiterIds: recruiter.id, // Arun Nair joins as a co-recruiter
       bdeId: bde.id, stlId: multiProduct.id, stl: 'Priya Nambiar',
@@ -1148,14 +1148,20 @@ async function main() {
   const reqCommon = {
     employmentType: 'Full Time', jobPreference: 'Permanent', salaryType: 'Annual CTC',
     currency: 'INR', noticePeriodMax: '30 Days', joiningTimeline: 'Within 30 Days',
-    stlId: cStl.user.id, stl: cStl.user.name,
+    // NO STL HERE. Ganesh Iyer is scoped to Medical + IT, and putting him on
+    // EVERY requirement made him the named STL on Manufacturing, Educational
+    // and BDE work too — which utils/scope.js then correctly showed him,
+    // because being personally named on a requirement is a real reason to see
+    // it. The effect was a demo that contradicted its own department
+    // isolation: his ATS Reports read 19 applications across four departments
+    // while his scope said two. The STL is set per desk below instead.
   };
   const cReqMed1 = await prisma.requirement.create({
     data: {
       ...reqCommon, reqCode: 'REQ-0006', title: 'Staff Nurse — ICU',
       jobDescription: 'Run ICU shifts for a 200-bed multi-specialty group, owning patient charting and handover.',
       clientId: medivant.id, department: 'Medical', priority: 'High', openings: 4,
-      recruiterId: cMedical1.user.id, tlId: cMedicalTl.user.id, tl: cMedicalTl.user.name,
+      recruiterId: cMedical1.user.id, stlId: cStl.user.id, stl: cStl.user.name, tlId: cMedicalTl.user.id, tl: cMedicalTl.user.name,
       bdeId: cBde1.user.id, accountManager: cMedicalTl.user.name,
       skills: 'Critical Care, Patient Monitoring, BLS', experience: '2-5 yrs', relevantExperience: '2 yrs',
       education: 'B.Sc Nursing', workMode: 'Work From Office', location: 'Hyderabad', preferredLocation: 'Hyderabad',
@@ -1167,7 +1173,7 @@ async function main() {
       ...reqCommon, reqCode: 'REQ-0007', title: 'Pharmacovigilance Associate',
       jobDescription: 'Own adverse-event intake, triage and regulatory reporting for the clinical group.',
       clientId: medivant.id, department: 'Medical', priority: 'Medium', openings: 2,
-      recruiterId: cMedical1.user.id, tlId: cMedicalTl.user.id, tl: cMedicalTl.user.name,
+      recruiterId: cMedical1.user.id, stlId: cStl.user.id, stl: cStl.user.name, tlId: cMedicalTl.user.id, tl: cMedicalTl.user.name,
       skills: 'Pharmacovigilance, Argus, MedDRA', experience: '2-4 yrs', relevantExperience: '2 yrs',
       education: 'B.Pharm', workMode: 'Hybrid', location: 'Hyderabad', preferredLocation: 'Hyderabad',
       salary: '₹5L - ₹8L', targetDate: '2026-12-05',
@@ -1178,7 +1184,7 @@ async function main() {
       ...reqCommon, reqCode: 'REQ-0008', title: 'React Frontend Engineer',
       jobDescription: 'Build Orbit’s customer console in React, owning the design-system components end to end.',
       clientId: orbit.id, department: 'IT', priority: 'High', openings: 3,
-      recruiterId: cIt1.user.id, tlId: cItTl.user.id, tl: cItTl.user.name,
+      recruiterId: cIt1.user.id, stlId: cStl.user.id, stl: cStl.user.name, tlId: cItTl.user.id, tl: cItTl.user.name,
       bdeId: cBde1.user.id, accountManager: cItTl.user.name,
       skills: 'React, TypeScript, CSS, REST', goodToHaveSkills: 'Vite, Testing Library',
       experience: '3-6 yrs', relevantExperience: '3 yrs',
@@ -1191,7 +1197,7 @@ async function main() {
       ...reqCommon, reqCode: 'REQ-0009', title: 'DevOps Engineer',
       jobDescription: 'Own Orbit’s build, deploy and observability pipeline across AWS and Kubernetes.',
       clientId: orbit.id, department: 'IT', priority: 'Medium', openings: 1,
-      recruiterId: cIt1.user.id, tlId: cItTl.user.id, tl: cItTl.user.name,
+      recruiterId: cIt1.user.id, stlId: cStl.user.id, stl: cStl.user.name, tlId: cItTl.user.id, tl: cItTl.user.name,
       skills: 'AWS, Kubernetes, Terraform, CI/CD', experience: '4-8 yrs', relevantExperience: '4 yrs',
       education: 'B.Tech', workMode: 'Remote', location: 'Hyderabad', preferredLocation: 'Anywhere',
       salary: '₹16L - ₹24L', targetDate: '2026-12-20',

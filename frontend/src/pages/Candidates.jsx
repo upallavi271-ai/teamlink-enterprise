@@ -602,7 +602,15 @@ export default function Candidates() {
                         )
                         : <span className="small-muted">No application</span>}
                     </td>
-                    <td>{c.owner || '—'}</td>
+                    {/* §5 — the OWNER is always the person responsible for the
+                        next action. Who we are waiting on outside TeamLink is
+                        shown under it, not instead of it. */}
+                    <td>
+                      {c.owner || '—'}
+                      {c.waitingOn && (
+                        <div className="small-muted" style={{ fontSize: 11 }}>waiting on {c.waitingOn}</div>
+                      )}
+                    </td>
                     <td className="cell-muted">{c.nextAction || '—'}</td>
                     <td className="cell-muted">
                       {protoDate(c.dueDate)}

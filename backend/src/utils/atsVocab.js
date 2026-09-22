@@ -110,8 +110,29 @@ function applicationOwner(application, requirement) {
   // The TL named on the requirement, falling back to the recruiter's own
   // line manager name where the requirement carries one.
   if (rule.ownerRole === 'TL') return (requirement.tl && requirement.tl.name) || requirement.tl || '—';
-  if (rule.ownerRole === 'Client') return (requirement.client && requirement.client.name) || '—';
+  // §5 — AN OWNER IS ALWAYS A PERSON, never a status or a company. This used
+  // to return the CLIENT'S NAME whenever the stage was waiting on a client,
+  // so the Owner column read "Vertex Industrial Manufacturing" or, worse,
+  // "Shared with Client" — neither of which is somebody who can be chased.
+  // Waiting on a client is the BDE's job (the recruiter's where no BDE is
+  // named); the client is reported separately as waitingOn.
+  if (rule.ownerRole === 'Client') {
+    const bde = requirement.bde && requirement.bde.name;
+    return bde || (requirement.recruiter && requirement.recruiter.name) || '—';
+  }
   return rule.ownerRole || '—';
+}
+
+// Who the NEXT ACTION is waiting on, where that is somebody outside TeamLink.
+// Null on every stage that is waiting on one of our own people — the owner
+// already says who that is.
+function applicationWaitingOn(application, requirement) {
+  const rule = STAGE_OWNER_ACTION[application.stage] || {};
+  if (rule.ownerRole !== 'Client') return null;
+  if (!requirement) return 'Client';
+  return requirement.internal
+    ? 'TeamLink Internal'
+    : (requirement.client && requirement.client.name) || 'Client';
 }
 
 function applicationNextAction(application) {
@@ -449,6 +470,7 @@ module.exports = {
   stageLabel,
   STAGE_OWNER_ACTION,
   applicationOwner,
+  applicationWaitingOn,
   applicationNextAction,
   applicationDueDate,
   applicationIsOverdue,

@@ -320,7 +320,7 @@ router.get(
 // only their own company's. There is no second scoping path here.
 // ---------------------------------------------------------------------------
 
-// The five queues. `owners` is the ATS role the next move belongs to (the
+// The six queues. `owners` is the ATS role the next move belongs to (the
 // owner column of utils/atsVocab STAGE_OWNER_ACTION); `to` is the list this
 // queue opens, already filtered to exactly the stages counted here.
 const PENDING_QUEUES = [
@@ -329,15 +329,23 @@ const PENDING_QUEUES = [
     label: 'Candidate Review',
     stages: ['NEW', 'AI_INTERVIEW_COMPLETED', 'RECRUITER_REVIEW'],
     owners: ['RECRUITER'],
-    action: 'Approve / Reject',
+    action: 'Review Candidate',
     to: '/candidates?stage=NEW,AI_INTERVIEW_COMPLETED,RECRUITER_REVIEW',
+  },
+  {
+    id: 'tl-review',
+    label: 'TL Review',
+    stages: ['TL_REVIEW'],
+    owners: ['TL'],
+    action: 'Review Candidate',
+    to: '/candidates?stage=TL_REVIEW',
   },
   {
     id: 'bde-review',
     label: 'BDE Review',
     stages: ['WITH_BDE', 'BDE_APPROVED'],
     owners: ['BDE'],
-    action: 'BDE Review',
+    action: 'Review for Client',
     to: '/candidates?stage=WITH_BDE,BDE_APPROVED',
   },
   {
@@ -345,7 +353,7 @@ const PENDING_QUEUES = [
     label: 'Client Decision',
     stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'],
     owners: ['CLIENT', 'BDE'],
-    action: 'Client Decision',
+    action: 'Review Candidates',
     to: '/candidates?stage=SHARED_WITH_CLIENT,CLIENT_REVIEW',
   },
   {

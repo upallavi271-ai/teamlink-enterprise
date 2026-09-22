@@ -4,7 +4,8 @@ const { requireAuth, requirePerm } = require('../middleware/auth');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
 } = require('../utils/accounts');
-const { requirementIsLive } = require('../utils/atsVocab');
+const { requirementIsLive, stageLabel } = require('../utils/atsVocab');
+const { applicationWhere, scopeLabel } = require('../utils/scope');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -19,20 +20,182 @@ router.use(requireAuth);
 // reports to the ATS roles, the Accounts reports to the accounts roles); it
 // was simply never asked. It is asked now, through the same
 // (module, feature, action) guard every other route uses.
+// ---------------------------------------------------------------------------
+// ATS REPORTS (§18).
+//
+// "specialization wise data kaavali antey yelaaga? team wise report,
+//  individual report kaavali."
+//
+// ONE endpoint, and the question it answers is chosen by `groupBy`. Every
+// grouping is the SAME scoped set of applications counted a different way, so
+// a department total and the sum of its recruiters can never disagree:
+//
+//   department  specialization-wise — Medical, IT, Manufacturing, …
+//   team        team-wise
+//   recruiter   individual-wise, and likewise tl / stl / bde
+//   client      client-wise (what this endpoint used to be, and only that)
+//   source      where the candidate came from
+//   stage       the pipeline, counted
+//
+// FILTERS stack on top of any grouping: from / to, department, team, location,
+// clientId, requirementId, recruiterId, tlId, stlId, bdeId, source, stage,
+// status. So "Medical department, this month, by recruiter" is one request.
+//
+// SCOPED, which it was not. This read every client in the database regardless
+// of who asked, so a Medical TL opening ATS Reports saw every client's
+// pipeline — the numbers the lists beside it correctly refused them. It now
+// counts over utils/scope.js applicationWhere(), the same rule the pipeline
+// uses, so a report can never be a way around a scope.
+// ---------------------------------------------------------------------------
+const GROUPINGS = {
+  department: { label: 'Department / Specialization', of: (a) => a.requirement?.department || '—' },
+  team: { label: 'Team', of: (a) => a.requirement?.team || a.recruiterTeam || '—' },
+  recruiter: { label: 'Recruiter', of: (a) => a.requirement?.recruiter?.name || '—' },
+  tl: { label: 'TL', of: (a) => a.requirement?.tlName || a.requirement?.tl || '—' },
+  stl: { label: 'STL', of: (a) => a.requirement?.stlName || a.requirement?.stl || '—' },
+  bde: { label: 'BDE', of: (a) => a.requirement?.bde?.name || '—' },
+  client: {
+    label: 'Client',
+    of: (a) => (a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'),
+  },
+  source: { label: 'Source', of: (a) => a.source || a.candidate?.source || '—' },
+  location: { label: 'Location', of: (a) => a.requirement?.location || '—' },
+  stage: { label: 'Stage', of: (a) => stageLabel(a.stage) },
+};
+
+const IN_PIPELINE_OUT = ['JOINED', 'HIRED', 'REJECTED'];
+
 router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
-  const clients = await prisma.client.findMany({ include: { requirements: { include: { applications: true } } } });
-  const rows = clients.map((c) => {
-    const apps = c.requirements.flatMap((r) => r.applications);
-    return {
-      client: c.name,
-      open: c.requirements.filter((r) => requirementIsLive(r.status)).length,
-      inPipeline: apps.filter((a) => !['JOINED', 'HIRED', 'REJECTED'].includes(a.stage)).length,
-      selected: apps.filter((a) => a.stage === 'SELECTED').length,
-      joined: apps.filter((a) => ['JOINED', 'HIRED'].includes(a.stage)).length,
-      rejected: apps.filter((a) => a.stage === 'REJECTED').length,
-    };
+  const q = req.query || {};
+  const groupBy = GROUPINGS[q.groupBy] ? q.groupBy : 'client';
+
+  // SCOPED, then filtered. The scope is not negotiable; the filters only ever
+  // narrow what is already allowed.
+  const where = { ...applicationWhere(req.user) };
+  const reqWhere = {};
+  if (q.department) reqWhere.department = q.department;
+  if (q.location) reqWhere.location = q.location;
+  if (q.clientId) reqWhere.clientId = q.clientId;
+  if (q.recruiterId) reqWhere.recruiterId = q.recruiterId;
+  if (q.bdeId) reqWhere.bdeId = q.bdeId;
+  if (q.tlId) reqWhere.tlId = q.tlId;
+  if (q.stlId) reqWhere.stlId = q.stlId;
+  if (q.requirementId) where.requirementId = q.requirementId;
+  if (Object.keys(reqWhere).length) where.requirement = { is: reqWhere };
+  if (q.stage) where.stage = q.stage;
+  if (q.source) where.source = q.source;
+  if (q.from || q.to) {
+    where.createdAt = {};
+    if (q.from) where.createdAt.gte = new Date(q.from);
+    // `to` is inclusive of that whole day, which is what a person means by it.
+    if (q.to) where.createdAt.lte = new Date(`${q.to}T23:59:59.999Z`);
+  }
+
+  const applications = await prisma.application.findMany({
+    where,
+    include: {
+      candidate: { select: { id: true, source: true } },
+      requirement: {
+        include: { client: true, recruiter: true, bde: true },
+      },
+    },
   });
-  res.json(rows);
+
+  // tlId / stlId are plain scalars, so the names are resolved in one query
+  // rather than joined — the same reason utils/followups.js does it.
+  const ids = new Set();
+  applications.forEach((a) => {
+    if (a.requirement?.tlId) ids.add(a.requirement.tlId);
+    if (a.requirement?.stlId) ids.add(a.requirement.stlId);
+  });
+  const names = ids.size
+    ? new Map((await prisma.user.findMany({
+      where: { id: { in: [...ids] } }, select: { id: true, name: true, team: true },
+    })).map((u) => [u.id, u]))
+    : new Map();
+  applications.forEach((a) => {
+    if (!a.requirement) return;
+    const tl = names.get(a.requirement.tlId);
+    const stl = names.get(a.requirement.stlId);
+    a.requirement.tlName = tl ? tl.name : a.requirement.tl;
+    a.requirement.stlName = stl ? stl.name : a.requirement.stl;
+    a.recruiterTeam = a.requirement.recruiter ? a.requirement.recruiter.team : null;
+  });
+
+  const of = GROUPINGS[groupBy].of;
+  const buckets = new Map();
+  applications.forEach((a) => {
+    const key = of(a) || '—';
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        group: key, applications: 0, inPipeline: 0, recruiterReview: 0, tlReview: 0,
+        bdeReview: 0, clientReview: 0, interview: 0, selected: 0, offer: 0,
+        joined: 0, rejected: 0, hold: 0,
+      });
+    }
+    const b = buckets.get(key);
+    b.applications += 1;
+    if (!IN_PIPELINE_OUT.includes(a.stage)) b.inPipeline += 1;
+    if (['RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(a.stage)) b.recruiterReview += 1;
+    if (a.stage === 'TL_REVIEW') b.tlReview += 1;
+    if (['WITH_BDE', 'BDE_APPROVED'].includes(a.stage)) b.bdeReview += 1;
+    if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'].includes(a.stage)) b.clientReview += 1;
+    if (['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'].includes(a.stage)) b.interview += 1;
+    if (a.stage === 'SELECTED') b.selected += 1;
+    if (['OFFER', 'OFFER_ACCEPTED'].includes(a.stage)) b.offer += 1;
+    if (['JOINED', 'HIRED'].includes(a.stage)) b.joined += 1;
+    if (a.stage === 'REJECTED') b.rejected += 1;
+    if (a.stage === 'HOLD') b.hold += 1;
+  });
+
+  const rows = [...buckets.values()]
+    .map((b) => ({
+      ...b,
+      // The number every one of these reports is actually read for.
+      conversionPct: b.applications ? Math.round((b.joined / b.applications) * 100) : 0,
+    }))
+    .sort((x, y) => y.applications - x.applications);
+
+  const totals = rows.reduce((t, r) => {
+    Object.keys(r).forEach((k) => {
+      if (typeof r[k] === 'number' && k !== 'conversionPct') t[k] = (t[k] || 0) + r[k];
+    });
+    return t;
+  }, {});
+  totals.conversionPct = totals.applications
+    ? Math.round((totals.joined / totals.applications) * 100) : 0;
+
+  // What this login may filter BY — the same scoped sets, so the dropdowns
+  // cannot offer a department or a person the report would then refuse.
+  const seen = (fn) => [...new Set(applications.map(fn).filter((v) => v && v !== '—'))].sort();
+
+  res.json({
+    groupBy,
+    groupLabel: GROUPINGS[groupBy].label,
+    scope: scopeLabel(req.user),
+    groupings: Object.entries(GROUPINGS).map(([id, g]) => ({ id, label: g.label })),
+    filterOptions: {
+      departments: seen((a) => a.requirement?.department),
+      locations: seen((a) => a.requirement?.location),
+      teams: seen((a) => a.requirement?.team || a.recruiterTeam),
+      clients: [...new Map(applications
+        .filter((a) => a.requirement?.client)
+        .map((a) => [a.requirement.client.id, { id: a.requirement.client.id, name: a.requirement.client.name }]))
+        .values()],
+      recruiters: [...new Map(applications
+        .filter((a) => a.requirement?.recruiter)
+        .map((a) => [a.requirement.recruiterId, { id: a.requirement.recruiterId, name: a.requirement.recruiter.name }]))
+        .values()],
+      bdes: [...new Map(applications
+        .filter((a) => a.requirement?.bde)
+        .map((a) => [a.requirement.bdeId, { id: a.requirement.bdeId, name: a.requirement.bde.name }]))
+        .values()],
+      sources: seen((a) => a.source || a.candidate?.source),
+      stages: [...new Set(applications.map((a) => a.stage))].map((s) => ({ id: s, label: stageLabel(s) })),
+    },
+    rows,
+    totals,
+  });
 });
 
 // The prototype's Job Portal Reports: four synced-from-the-integration counts
