@@ -10,6 +10,7 @@ import {
 import { canActOnPipeline } from '../../permissions';
 import { HiringTypeChip } from './intjoinShared.jsx';
 import Combo from '../../components/Combo.jsx';
+import ScheduleInterview from '../../components/ScheduleInterview.jsx';
 
 // The prototype's Interview Calendar (calendarView, line 9184): two tabs kept
 // deliberately apart, because an AI interview score is never mixed into
@@ -45,6 +46,7 @@ export default function InterviewCalendar() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [dialog, setDialog] = useState(null); // { kind, row, ...fields }
+  const [scheduling, setScheduling] = useState(false);
 
   const canAct = canActOnPipeline(user);
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
@@ -120,7 +122,19 @@ export default function InterviewCalendar() {
             write this login may not make, so a view-only role (§3) is not
             shown it — the whole point of §3 is that the button is absent, not
             greyed out. `canAct` is the same matrix answer the API enforces. */}
-        {canAct && <Link className="btn btn-primary" to="/candidates">Schedule Interview</Link>}
+        {/* §8 — this used to be a LINK TO THE CANDIDATES PAGE. Pressing
+            "Schedule Interview" and landing on a list is the opposite of what
+            the button says it does. It opens the flow now: candidate →
+            requirement → type → date & time → mode → interviewer → confirm. */}
+        {canAct && (
+          <button className="btn btn-primary" onClick={() => setScheduling(true)}>Schedule Interview</button>
+        )}
+      {scheduling && (
+        <ScheduleInterview
+          onClose={() => setScheduling(false)}
+          onScheduled={() => { setScheduling(false); load(); }}
+        />
+      )}
       </div>
 
       {/* §1 — NO WORKSPACE STRIP HERE. Interview Feedback, Offers, Joining
