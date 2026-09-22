@@ -14,12 +14,33 @@ import { isClientUser } from '../../permissions';
 // (/ats/team, /requirements, /dashboard/ats), so a TL sees their department's
 // people and a recruiter sees themselves.
 // ---------------------------------------------------------------------------
-const TABS = [
+// §9 / §10 — THE TAB SET DEPENDS ON WHO IS LOOKING.
+//
+// A recruiter opening this screen was shown the whole people table — every
+// recruiter, every BDE, every TL — which is a lead's view, not theirs. And a
+// recruiter and a BDE do different jobs: a recruiter works REQUIREMENTS AND
+// CANDIDATES, a BDE works CLIENTS AND CLIENT DECISIONS. Showing each of them
+// the other's workspace is noise.
+//
+// So: individual contributors get their own workspace, leads get the people
+// tables they are responsible for. The DATA was always scoped correctly —
+// this is about not showing somebody a screen that is not their job.
+const LEAD_TABS = [
   ['recruiters', 'Recruiters'],
   ['bdes', 'BDEs'],
   ['assignments', 'Assignments'],
   ['workload', 'Workload'],
   ['pending', 'Pending Actions'],
+];
+const RECRUITER_TABS = [
+  ['mywork', 'My Work'],
+  ['assignments', 'My Assignments'],
+  ['pending', 'My Pending Actions'],
+];
+const BDE_TABS = [
+  ['mywork', 'My Work'],
+  ['assignments', 'My Clients & Requirements'],
+  ['pending', 'Client Decisions'],
 ];
 
 function PeopleTable({ rows, empty }) {
@@ -81,14 +102,33 @@ export default function Team() {
     );
   }
 
+  // The three workspaces §9/§10 describe, chosen by the ATS role.
+  // The same rows the ATS home draws, so the two screens cannot disagree.
+  const myWork = pending ? pending.myWork : null;
+  const myWorkTitle = pending ? pending.myWorkTitle : null;
+  const atsRole = (user && (user.atsRole || user.role)) || '';
+  const isRecruiter = atsRole === 'RECRUITER';
+  const isBde = atsRole === 'BDE';
+  const TABS = isRecruiter ? RECRUITER_TABS : (isBde ? BDE_TABS : LEAD_TABS);
+  const tabIds = TABS.map(([id]) => id);
+  const activeTab = tabIds.includes(tab) ? tab : tabIds[0];
+  const heading = isRecruiter
+    ? 'My Recruiter Workspace'
+    : (isBde ? 'My BDE Workspace' : 'Recruiter & BDE');
+  const sub = isRecruiter
+    ? 'Your requirements, your candidates and what is waiting on you.'
+    : (isBde
+      ? 'Your clients, the decisions they owe and the joinings that follow.'
+      : 'Who is carrying what, and what is waiting on them');
+
   const setTab = (id) => setSearchParams({ tab: id });
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Recruiter &amp; BDE</h1>
-          <div className="page-sub">Who is carrying what, and what is waiting on them</div>
+          <h1>{heading}</h1>
+          <div className="page-sub">{sub}</div>
         </div>
       </div>
 
@@ -96,7 +136,7 @@ export default function Team() {
         {TABS.map(([id, label]) => (
           <button
             key={id}
-            className={'tab-btn' + (tab === id ? ' active' : '')}
+            className={'tab-btn' + (activeTab === id ? ' active' : '')}
             onClick={() => setTab(id)}
           >
             {label}
@@ -105,11 +145,32 @@ export default function Team() {
       </div>
 
       <div className="tab-content">
-        {tab === 'recruiters' && <PeopleTable rows={recruiters} empty="No recruiters in your scope." />}
-        {tab === 'bdes' && <PeopleTable rows={bdes} empty="No BDEs in your scope." />}
-        {tab === 'workload' && <PeopleTable rows={rows} empty="No recruiters or BDEs on file." />}
+        {/* §9 / §10 — an individual contributor sees THEIR OWN work first,
+            drawn from the same /dashboard/ats rows the ATS home uses, so the
+            two screens cannot disagree. */}
+        {activeTab === 'mywork' && (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>{myWorkTitle || 'My Work'}</th><th style={{ width: 110, textAlign: 'right' }}>Count</th></tr></thead>
+              <tbody>
+                {(myWork || []).map((r) => (
+                  <tr key={r.label} className="row-link" onClick={() => r.to && navigate(r.to)}>
+                    <td>{r.label}</td>
+                    <td style={{ textAlign: 'right' }}><b>{r.value}</b></td>
+                  </tr>
+                ))}
+                {(!myWork || myWork.length === 0) && (
+                  <tr><td colSpan="2" className="small-muted" style={{ padding: 16 }}>Nothing assigned to you yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {activeTab === 'recruiters' && <PeopleTable rows={recruiters} empty="No recruiters in your scope." />}
+        {activeTab === 'bdes' && <PeopleTable rows={bdes} empty="No BDEs in your scope." />}
+        {activeTab === 'workload' && <PeopleTable rows={rows} empty="No recruiters or BDEs on file." />}
 
-        {tab === 'assignments' && (
+        {activeTab === 'assignments' && (
           <div className="tbl-wrap">
             <table>
               <thead>
@@ -134,7 +195,7 @@ export default function Team() {
           </div>
         )}
 
-        {tab === 'pending' && (
+        {activeTab === 'pending' && (
           <div className="tbl-wrap">
             <table>
               <thead>
