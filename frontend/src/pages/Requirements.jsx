@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
 import {
-  DEPTS, LOCS, PRIORITIES, priorityBadgeClass,
+  deptOptions, LOCS, PRIORITIES, priorityBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive, REQUIREMENT_STATUS_CODES,
   agreementStatusLabel,
 } from '../atsVocab';
@@ -145,7 +145,7 @@ export default function Requirements() {
             />
             <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
               <option value="">All departments</option>
-              {DEPTS.map((d) => <option key={d} value={d}>{d}</option>)}
+              {deptOptions(user).map((d) => <option key={d} value={d}>{d}</option>)}
             </Combo>
             <Combo value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
               <option value="">All clients</option>

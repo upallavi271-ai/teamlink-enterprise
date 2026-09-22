@@ -5,6 +5,7 @@ const prisma = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { resolveIdentity, tokenPayload } = require('../utils/identity');
 const { effectiveMatrix, allowedStagesFor, STAGE_WORKFLOW_ACTIONS } = require('../utils/permissions');
+const { departmentsOf, scopeOf, hrmsGlobal } = require('../utils/scope');
 
 // Everything the browser needs to render this login: the identity, the
 // EFFECTIVE permission matrix (every module resolved against ITS product's
@@ -12,6 +13,22 @@ const { effectiveMatrix, allowedStagesFor, STAGE_WORKFLOW_ACTIONS } = require('.
 // modules against every role the login holds) and the pipeline stages this
 // login OWNS, which is the workflow half of §17 and is not implied by being
 // able to see a record.
+// The department names this login may choose from, or null when it is not
+// restricted at all. The sentinel departmentsOf() returns for a scoped login
+// with no department is mapped to an EMPTY list, not to null: "no departments"
+// and "every department" must never collapse into each other.
+function scopeDepartmentOptions(identity) {
+  // HR IS COMPANY-WIDE IN HRMS. departmentsOf() is the ATS-shaped answer and
+  // returns ['HR'] for the HR desk — the department they SIT in, not the one
+  // they administer — which would have narrowed every HRMS dropdown to a
+  // single wrong entry. utils/scope.js hrmsGlobal() is the same test
+  // employeeWhere() uses to hand HR every employee.
+  if (hrmsGlobal(identity)) return null;
+  const allowed = departmentsOf(identity);
+  if (allowed === undefined) return null;
+  return allowed.filter((d) => d && !d.startsWith('__'));
+}
+
 async function sessionPayload(identity) {
   const [access, allowedStages] = await Promise.all([
     effectiveMatrix(identity),
@@ -21,6 +38,21 @@ async function sessionPayload(identity) {
     ...identity,
     access,
     workflow: { allowedStages, stageActions: STAGE_WORKFLOW_ACTIONS },
+    // WHAT THIS LOGIN MAY FILTER BY, computed by utils/scope.js — the same
+    // helper that decides what the lists actually return.
+    //
+    // Every department dropdown in the app was drawing from a HARD-CODED
+    // DEPTS array in the browser, so a Medical TL opening Jobs / Requirements
+    // was offered IT, Manufacturing, Education, BDE, HR and Accounts. The list
+    // never widened what the server sent back, but naming other departments at
+    // all is exactly what "vallaki option kuda visible avvakudadhu" rules out.
+    //
+    // `departments: null` means UNRESTRICTED (Super Admin / Admin), and the
+    // browser then falls back to the full catalogue.
+    scope: {
+      departments: scopeDepartmentOptions(identity),
+      teams: scopeOf(identity).teams && scopeOf(identity).teams.length ? scopeOf(identity).teams : null,
+    },
   };
 }
 

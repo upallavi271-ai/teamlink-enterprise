@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
 import {
-  agreementStatusLabel, agreementBadgeClass, DEPTS, LOCS, INDIAN_STATES, CLIENT_INDUSTRIES, CLIENT_STATUSES,
+  agreementStatusLabel, agreementBadgeClass, deptOptions, LOCS, INDIAN_STATES, CLIENT_INDUSTRIES, CLIENT_STATUSES,
   CLIENT_TYPES, CLIENT_PRIORITIES, COMM_MODES, BUSINESS_TYPES, PAYMENT_TERMS,
   INVOICE_TRIGGERS, AGREEMENT_TEMPLATES, RISK_FLAGS, requirementIsLive,
 } from '../atsVocab';
@@ -173,7 +173,7 @@ export default function Clients() {
                 <label className="field">
                   <span>Owner Department</span>
                   <Combo creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
-                    {DEPTS.map((x) => <option key={x}>{x}</option>)}
+                    {deptOptions(user).map((x) => <option key={x}>{x}</option>)}
                   </Combo>
                 </label>
                 <label className="field">

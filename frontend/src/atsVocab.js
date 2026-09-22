@@ -403,3 +403,25 @@ export function initials(name) {
   if (!name) return '?';
   return name.replace(/\(.*\)/, '').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 }
+
+// --- THE DEPARTMENT DROPDOWN, SCOPED ---------------------------------------
+// DEPTS above is the full catalogue. It is the right list for a Super Admin,
+// an Admin or the HR desk, and the WRONG one for everybody else: a Medical TL
+// opening Jobs / Requirements was offered IT, Manufacturing, Education, BDE,
+// HR and Accounts in the filter. Picking one never widened what the server
+// returned — every list is filtered by utils/scope.js — but naming the other
+// departments at all is what "vallaki option kuda visible avvakudadhu" rules
+// out.
+//
+// `user.scope.departments` is computed SERVER-SIDE by utils/scope.js
+// departmentsOf() and sent with the session, so this can never drift from what
+// the API will actually answer. null there means unrestricted.
+export function deptOptions(user) {
+  const allowed = user && user.scope ? user.scope.departments : null;
+  if (!allowed) return DEPTS;
+  // The scope list holds REAL department names off the master, which is the
+  // authority — DEPTS is only a fallback catalogue and spells one of them
+  // differently ('Education' vs 'Educational'), so the scope wins outright
+  // rather than being used to filter DEPTS.
+  return allowed;
+}

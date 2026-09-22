@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import Modal, { SectionHead } from '../components/Modal.jsx';
 import {
-  STAGE_LABELS, LIFE_STATUSES, DEPTS, LOCS,
+  STAGE_LABELS, LIFE_STATUSES, deptOptions, LOCS,
   CANDIDATE_SOURCES, CANDIDATE_FIRST_SOURCES, CANDIDATE_FILTER_SOURCES, APPLICATION_METHODS,
   CANDIDATE_GENDERS, CANDIDATE_NOTICE_PERIODS, CANDIDATE_AVAILABILITY, CANDIDATE_JOB_PREFERENCES,
   CANDIDATE_EMPLOYMENT_TYPES, CANDIDATE_WORK_MODES, CANDIDATE_EDUCATION,
@@ -509,7 +509,7 @@ export default function Candidates() {
             <input type="text" placeholder="Search name or skill…" value={filters.search} onChange={(e) => setFilter({ search: e.target.value })} />
             <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
               <option value="">All departments</option>
-              {DEPTS.map((d) => <option key={d}>{d}</option>)}
+              {deptOptions(user).map((d) => <option key={d}>{d}</option>)}
             </Combo>
             <Combo value={filters.clientId} onChange={(e) => setFilter({ clientId: e.target.value })}>
               <option value="">All clients</option>

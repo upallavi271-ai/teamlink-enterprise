@@ -145,6 +145,100 @@ function productRolesForDesignation(mapping) {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// KEEPING THE LOGIN IN STEP WITH THE HR RECORD.
+//
+// "HRMS lo vundey employees ey ATS lo kuda work chesthar... HRMS lo thana
+// designation Recruiter & department Medical ithe, automatic ga ATS lo Medical
+// Recruiter ani ardham."
+//
+// That derivation was applied ONCE, when the login was created, and then never
+// again — so the two halves drifted the moment anything changed:
+//
+//   * POST /employees/:id/transfer moved Employee.department and left
+//     User.atsDepartment / atsScopeDepartments pointing at the OLD desk. The
+//     person showed as IT in HRMS while still reading Medical's ATS data.
+//   * PUT /employees/:id could change `designation` without re-deriving a
+//     single role, so promoting a Recruiter to TL left an ATS login that was
+//     still a RECRUITER.
+//
+// This is the one place that re-applies it. There is still no compound role
+// anywhere: the DESIGNATION carries the role and the DEPARTMENT carries the
+// scope, exactly as at creation.
+//
+// TWO THINGS IT DELIBERATELY WILL NOT DO:
+//
+//   1. It does not flatten a CONFIGURED scope. manager@ is scoped to
+//      "Medical,IT,Manufacturing,Educational,BDE" on purpose; a department
+//      move must not collapse that to one name. The scope is only re-pointed
+//      when it still held exactly the department the person is leaving, i.e.
+//      when nobody had customised it.
+//   2. It does not re-derive roles unless the DESIGNATION ITSELF CHANGED.
+//      An administrator may override a product role on Administration ->
+//      Users, and editing an unrelated field on the HR record must not quietly
+//      undo that.
+// ---------------------------------------------------------------------------
+function csvList(value) {
+  return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+async function syncLoginToEmployee(employee, previous, { designationChanged = false } = {}) {
+  if (!employee || !employee.userId) return null;
+  const user = await prisma.user.findUnique({ where: { id: employee.userId } });
+  if (!user) return null;
+
+  const data = {};
+  const changes = [];
+
+  // --- the desk the person sits at ----------------------------------------
+  const oldDept = previous ? previous.department : null;
+  if (employee.department && employee.department !== user.atsDepartment) {
+    data.atsDepartment = employee.department;
+    changes.push(`department ${user.atsDepartment || '—'} -> ${employee.department}`);
+  }
+  const scope = csvList(user.atsScopeDepartments);
+  const scopeWasJustTheirDesk = scope.length === 0 || (scope.length === 1 && scope[0] === oldDept);
+  if (employee.department && scopeWasJustTheirDesk && scope[0] !== employee.department) {
+    data.atsScopeDepartments = employee.department;
+    changes.push(`scope ${scope[0] || '—'} -> ${employee.department}`);
+  }
+
+  if ((employee.team || null) !== (user.team || null)) {
+    data.team = employee.team || null;
+    changes.push(`team ${user.team || '—'} -> ${employee.team || '—'}`);
+  }
+  const teams = csvList(user.atsScopeTeams);
+  const teamScopeWasJustTheirs = teams.length === 0
+    || (teams.length === 1 && teams[0] === (previous ? previous.team : null));
+  if (teamScopeWasJustTheirs && teams[0] !== (employee.team || undefined)) {
+    data.atsScopeTeams = employee.team || null;
+  }
+
+  // --- the role the designation carries ------------------------------------
+  if (designationChanged) {
+    const rows = await designationRows();
+    const mapping = rows.find((r) => r.designation === employee.designation) || null;
+    if (mapping) {
+      const roles = productRolesForDesignation(mapping);
+      Object.assign(data, {
+        role: loginRoleFor(mapping),
+        hrmsRole: roles.hrmsRole,
+        atsRole: roles.atsRole,
+        accountsRole: roles.accountsRole,
+        hrmsAccess: !!mapping.hrms,
+        atsAccess: !!mapping.ats,
+        accountsAccess: !!mapping.accounts,
+        landingWorkspace: mapping.landing || null,
+      });
+      changes.push(`role ${user.role} -> ${loginRoleFor(mapping)} (designation ${employee.designation})`);
+    }
+  }
+
+  if (!Object.keys(data).length) return null;
+  const updated = await prisma.user.update({ where: { id: employee.userId }, data });
+  return { user: updated, changes };
+}
 // ---------------------------------------------------------------------------
 // The wide Employee Management row: the HR record, its login and its reach.
 // ---------------------------------------------------------------------------
@@ -238,6 +332,8 @@ module.exports = {
   designationRows,
   defaultProductAccessByRole,
   loginRoleFor,
+  productRolesForDesignation,
+  syncLoginToEmployee,
   fmtDate,
   EMP_MGMT_INCLUDE,
   shapeEmployeeMgmtRow,

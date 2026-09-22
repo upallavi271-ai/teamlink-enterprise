@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can, requireProduct } = require('../middleware/auth');
 const {
-  requirementWhere, matches, scopeOf, isAssignedTo, OUT_OF_SCOPE,
+  requirementWhere, clientWhere, matches, scopeOf, isAssignedTo, OUT_OF_SCOPE,
 } = require('../utils/scope');
 const { logAudit, logFieldChanges } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
@@ -198,6 +198,32 @@ router.get('/assignable-people', requirePerm('ats', 'recruiterbde', 'Team View',
   const s = scopeOf(req.user);
   const where = { atsAccess: true, status: 'Active', atsRole: { in: ['RECRUITER', 'TL', 'STL', 'BDE'] } };
   if (!s.global) {
+    // THE BDE BENCH IS NOT COMPANY-WIDE EITHER. This used to carry an
+    // unconditional `{ atsRole: 'BDE' }` arm on the grounds that a BDE works
+    // across desks — true of the ROLE, but not of any particular BDE. The
+    // effect was that a Medical TL was offered Nandita Rao and Sanjay Mehta,
+    // who between them own Vertex, Nalanda and Orbit and not one Medical
+    // client: "medical tl ki BDE endhuku kanipistharu?"
+    //
+    // A BDE belongs on this list when they actually meet this caller's work —
+    // assigned to a client in scope, or already named on a requirement in
+    // scope. Both sides are computed from the same utils/scope.js helpers the
+    // lists themselves use, so the dropdown cannot offer somebody the caller
+    // could not otherwise see.
+    const [scopedClients, scopedReqs] = await Promise.all([
+      prisma.client.findMany({ where: clientWhere(req.user), select: { id: true } }),
+      prisma.requirement.findMany({ where: requirementWhere(req.user), select: { bdeId: true } }),
+    ]);
+    const clientIds = scopedClients.map((c) => c.id);
+    const namedBdeIds = [...new Set(scopedReqs.map((r) => r.bdeId).filter(Boolean))];
+    const bdeArms = [];
+    if (clientIds.length) {
+      // atsScopeClients is a COMMA-SEPARATED column, so it is matched with a
+      // `contains` per id, the same way atsScopeDepartments is below.
+      bdeArms.push({ atsRole: 'BDE', OR: clientIds.map((id) => ({ atsScopeClients: { contains: id } })) });
+    }
+    if (namedBdeIds.length) bdeArms.push({ atsRole: 'BDE', id: { in: namedBdeIds } });
+
     // `atsScopeDepartments` is a COMMA-SEPARATED column, so `{ in: [...] }`
     // only ever matched a single-department list. `contains` per department is
     // what actually finds an STL scoped to "Medical,IT".
@@ -205,11 +231,9 @@ router.get('/assignable-people', requirePerm('ats', 'recruiterbde', 'Team View',
       ? [
         { atsDepartment: { in: s.departments } },
         ...s.departments.map((d) => ({ atsScopeDepartments: { contains: d } })),
-        // A BDE works across desks by definition, so the BDE bench stays
-        // visible to anyone who may assign — that is the assignment chain.
-        { atsRole: 'BDE' },
+        ...bdeArms,
       ]
-      : [{ id: s.userId }];
+      : [{ id: s.userId }, ...bdeArms];
   }
   const users = await prisma.user.findMany({
     where,

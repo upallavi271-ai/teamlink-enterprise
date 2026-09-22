@@ -26,6 +26,7 @@ const {
   designationRows, defaultProductAccessByRole, loginRoleFor, productRolesForDesignation,
   EMP_MGMT_INCLUDE, shapeEmployeeMgmtRow,
   OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS, OTP_PURPOSE, hashOtp, liveVerification,
+  syncLoginToEmployee,
 } = require('../utils/employeeAdmin');
 const { CATALOG_ROLES } = require('../utils/roleAccess');
 const {
@@ -1107,6 +1108,17 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
   editableFields.forEach((f) => { if (req.body[f] !== undefined) data[f] = req.body[f]; });
   delete data.department; // move departments only via /transfer, which keeps an audit trail
   const employee = await prisma.employee.update({ where: { id: req.params.id }, data });
+  // A DESIGNATION CHANGE IS A ROLE CHANGE. Promoting a Recruiter to TL used to
+  // leave an ATS login that was still a RECRUITER, because the designation ->
+  // role derivation only ever ran when the login was created.
+  const designationChanged = data.designation !== undefined && data.designation !== existingForScope.designation;
+  const synced = await syncLoginToEmployee(employee, existingForScope, { designationChanged });
+  if (synced) {
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Login re-derived from the HR record',
+      entity: 'User', entityId: employee.userId, toValue: synced.changes.join('; ').slice(0, 200),
+    });
+  }
   await logAudit({ userId: req.user.id, action: 'Employee updated', entity: 'Employee', entityId: employee.id });
   res.json(withComputed(employee));
 });
@@ -1419,6 +1431,16 @@ router.post('/:id/transfer', requirePerm(null, 'hrms', 'Employee Management', 'a
   const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
   const employee = await prisma.employee.update({ where: { id: req.params.id }, data: { department, team: team || null } });
+  // THE LOGIN MOVES WITH THE PERSON. Without this the HR record said IT while
+  // the ATS scope still pointed at Medical — the same employee reading the old
+  // desk's requirements, candidates and clients.
+  const moved = await syncLoginToEmployee(employee, existing);
+  if (moved) {
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Login scope followed transfer',
+      entity: 'User', entityId: employee.userId, toValue: moved.changes.join('; ').slice(0, 200),
+    });
+  }
   await logAudit({ userId: req.user.id, action: 'Employee transferred' + (reason ? ` (${reason})` : ''), entity: 'Employee', entityId: employee.id, fromValue: existing.department, toValue: department });
   res.json(withComputed(employee));
 });
