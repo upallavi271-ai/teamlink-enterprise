@@ -532,6 +532,35 @@ router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view
 // Every option list the Add Employee modal, the filter row and the Edit Scope
 // editor render — one call, so the screen never has to reach into
 // /api/admin/* for a lookup it is no longer allowed to make.
+// WHICH DESIGNATIONS ADD EMPLOYEE MAY OFFER.
+//
+// "add employee lo employee matram dropdown undali" — it was offering Super
+// Admin, Admin and Manager, so anybody who could add a person could mint a
+// Super Admin from the joining form. That is not an onboarding decision.
+//
+// EMPLOYEE IS THE BASE IDENTITY. A new joiner is created as one, with HRMS
+// self-service. The ATS or Accounts role that makes them a Recruiter, a BDE
+// or a TL is ADDED to that SAME login afterwards on Administration -> Users,
+// which is the screen that owns roles — one employee, one login, roles
+// layered on, never a second account.
+//
+// Super Admin and Admin keep the full list, because seeding an organisation
+// from scratch has to be possible. Everybody else gets the HRMS-only base
+// identities.
+function addEmployeeDesignations(req, rows) {
+  const s = scopeOf(req.user);
+  if (s.global || ['SUPER_ADMIN', 'ADMIN'].includes(s.role)) return rows;
+  // A BASE IDENTITY carries no role in any product: no ATS, no Accounts, and
+  // an HRMS role that is plain EMPLOYEE. That deliberately excludes HR as well
+  // as Recruiter and Manager — the HR desk sees every employee in the company,
+  // so making one is a role decision and belongs on Users with the rest.
+  return rows.filter((r) => {
+    if (r.ats || r.accounts) return false;
+    const derived = productRolesForDesignation(r);
+    return derived.hrmsRole === 'EMPLOYEE';
+  });
+}
+
 router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const [employees, departments, rows, count, cfg, clients] = await Promise.all([
     prisma.employee.findMany({
@@ -590,7 +619,7 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     roles: CATALOG_ROLES,
     // Straight off the DesignationRole table — this is the Role / Designation
     // picker, and each row says what that designation will actually grant.
-    designations: rows.map((r) => ({
+    designations: addEmployeeDesignations(req, rows).map((r) => ({
       designation: r.designation,
       atsRole: r.atsRole || null,
       // What this designation grants in each product — the picker says it
@@ -710,6 +739,19 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
   if (!String(b.department || '').trim()) return res.status(400).json({ error: 'Select a department.' });
   if (!designation) return res.status(400).json({ error: 'Select a role / designation.' });
+  // ENFORCED, NOT JUST HIDDEN. Narrowing the dropdown is a convenience; this
+  // is the rule. Without it anyone who may add an employee could still POST
+  // designation "Super Admin" and mint one, because the picker is the only
+  // thing that was stopping them.
+  {
+    const allowed = addEmployeeDesignations(req, await designationRows());
+    if (!allowed.some((r) => r.designation === designation)) {
+      return res.status(403).json({
+        error: `You can create a new joiner as ${allowed.map((r) => r.designation).join(', ')}. `
+          + 'Roles beyond that are granted on Administration → Users after the record exists.',
+      });
+    }
+  }
   if (phone && !/^\d{10}$/.test(phone.replace(/\s/g, ''))) {
     return res.status(400).json({ error: 'Mobile should be 10 digits.' });
   }
