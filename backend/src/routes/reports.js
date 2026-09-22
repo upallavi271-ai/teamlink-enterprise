@@ -198,6 +198,165 @@ router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (r
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// INTERVIEW REPORTS (§18).
+//
+// Same shape as /reports/ats and for the same reason: one scoped set counted
+// by whichever grouping is asked for, so a department total and the sum of its
+// interviewers always agree.
+//
+// AI interviews are counted SEPARATELY and never mixed in — an AI screening
+// score is not a client interview outcome, which is the one rule the interview
+// half of this product is built on.
+// ---------------------------------------------------------------------------
+const INTERVIEW_GROUPINGS = {
+  department: { label: 'Department / Specialization', of: (a) => a.requirement?.department || '—' },
+  client: {
+    label: 'Client',
+    of: (a) => (a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'),
+  },
+  interviewer: { label: 'Interviewer', of: (a) => a.interviewer || '—' },
+  recruiter: { label: 'Recruiter', of: (a) => a.requirement?.recruiter?.name || '—' },
+  bde: { label: 'BDE', of: (a) => a.requirement?.bde?.name || '—' },
+  type: { label: 'Interview Type', of: (a) => a.interviewType || '—' },
+  mode: { label: 'Mode', of: (a) => a.interviewMode || '—' },
+};
+
+router.get('/interviews', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
+  const q = req.query || {};
+  const groupBy = INTERVIEW_GROUPINGS[q.groupBy] ? q.groupBy : 'department';
+
+  const where = { ...applicationWhere(req.user), interviewStatus: { not: null } };
+  const reqWhere = {};
+  if (q.department) reqWhere.department = q.department;
+  if (q.clientId) reqWhere.clientId = q.clientId;
+  if (Object.keys(reqWhere).length) where.requirement = { is: reqWhere };
+  if (q.from || q.to) {
+    where.interviewAt = {};
+    if (q.from) where.interviewAt.gte = new Date(q.from);
+    if (q.to) where.interviewAt.lte = new Date(`${q.to}T23:59:59.999Z`);
+  }
+
+  const rows = await prisma.application.findMany({
+    where,
+    include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
+  });
+
+  const of = INTERVIEW_GROUPINGS[groupBy].of;
+  const buckets = new Map();
+  rows.forEach((a) => {
+    const key = of(a) || '—';
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        group: key, scheduled: 0, completed: 0, cancelled: 0,
+        noShow: 0, rescheduled: 0, feedbackPending: 0, selected: 0, rejected: 0,
+      });
+    }
+    const b = buckets.get(key);
+    const s = a.interviewStatus;
+    if (['SCHEDULED', 'CONFIRMED', 'STARTED'].includes(s)) b.scheduled += 1;
+    if (['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(s)) b.completed += 1;
+    if (s === 'CANCELLED') b.cancelled += 1;
+    if (s === 'NO_SHOW') b.noShow += 1;
+    if (s === 'RESCHEDULED') b.rescheduled += 1;
+    if (s === 'PENDING_FEEDBACK') b.feedbackPending += 1;
+    if (a.stage === 'SELECTED') b.selected += 1;
+    if (a.stage === 'REJECTED') b.rejected += 1;
+  });
+
+  // AI interviews, kept apart on purpose.
+  const ai = await prisma.application.count({
+    where: { ...applicationWhere(req.user), aiInterviewStatus: { not: null } },
+  });
+
+  res.json({
+    groupBy,
+    groupLabel: INTERVIEW_GROUPINGS[groupBy].label,
+    scope: scopeLabel(req.user),
+    groupings: Object.entries(INTERVIEW_GROUPINGS).map(([id, g]) => ({ id, label: g.label })),
+    rows: [...buckets.values()].sort((x, y) => (y.scheduled + y.completed) - (x.scheduled + x.completed)),
+    aiInterviews: ai,
+    note: 'AI interviews are counted separately and never mixed into client interview outcomes.',
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOLLOW-UP REPORTS (§18).
+//
+// The half that was missing entirely. Owner-wise, department-wise and
+// client-wise, plus the outcome mix — which is the only way to see whether
+// chasing people is actually working rather than merely happening.
+// ---------------------------------------------------------------------------
+router.get('/followups', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
+  const q = req.query || {};
+  const scopedApps = await prisma.application.findMany({
+    where: applicationWhere(req.user),
+    select: { id: true, requirement: { select: { department: true, client: { select: { name: true } } } } },
+  });
+  const byApp = new Map(scopedApps.map((a) => [a.id, a]));
+  if (!byApp.size) {
+    return res.json({ scope: scopeLabel(req.user), rows: [], outcomes: [], totals: {} });
+  }
+
+  const where = { applicationId: { in: [...byApp.keys()] } };
+  if (q.from || q.to) {
+    where.createdAt = {};
+    if (q.from) where.createdAt.gte = new Date(q.from);
+    if (q.to) where.createdAt.lte = new Date(`${q.to}T23:59:59.999Z`);
+  }
+  const followUps = await prisma.applicationFollowUp.findMany({ where });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const GROUP = {
+    owner: (f) => f.ownerName || 'Unassigned',
+    department: (f) => byApp.get(f.applicationId)?.requirement?.department || '—',
+    client: (f) => byApp.get(f.applicationId)?.requirement?.client?.name || 'TeamLink Internal',
+  };
+  const groupBy = GROUP[q.groupBy] ? q.groupBy : 'owner';
+  const of = GROUP[groupBy];
+
+  const buckets = new Map();
+  const outcomes = new Map();
+  followUps.forEach((f) => {
+    const key = of(f);
+    if (!buckets.has(key)) {
+      buckets.set(key, { group: key, total: 0, completed: 0, due: 0, overdue: 0, escalated: 0 });
+    }
+    const b = buckets.get(key);
+    b.total += 1;
+    if (f.completedAt) b.completed += 1;
+    else if (f.dueDate && f.dueDate < today) b.overdue += 1;
+    else if (f.dueDate === today) b.due += 1;
+    if (f.escalationLevel > 0) b.escalated += 1;
+    if (f.outcome) outcomes.set(f.outcome, (outcomes.get(f.outcome) || 0) + 1);
+  });
+
+  const rows = [...buckets.values()].sort((x, y) => y.overdue - x.overdue || y.total - x.total);
+  res.json({
+    scope: scopeLabel(req.user),
+    groupBy,
+    groupLabel: { owner: 'Owner', department: 'Department / Specialization', client: 'Client' }[groupBy],
+    groupings: [
+      { id: 'owner', label: 'Owner' },
+      { id: 'department', label: 'Department / Specialization' },
+      { id: 'client', label: 'Client' },
+    ],
+    rows,
+    // §8's outcome list, counted — "did the chasing actually achieve anything".
+    outcomes: [...outcomes.entries()].map(([outcome, count]) => ({ outcome, count }))
+      .sort((a, b) => b.count - a.count),
+    totals: rows.reduce((t, r) => ({
+      total: (t.total || 0) + r.total,
+      completed: (t.completed || 0) + r.completed,
+      due: (t.due || 0) + r.due,
+      overdue: (t.overdue || 0) + r.overdue,
+      escalated: (t.escalated || 0) + r.escalated,
+    }), { total: 0, completed: 0, due: 0, overdue: 0, escalated: 0 }),
+  });
+  return undefined;
+});
+
 // The prototype's Job Portal Reports: four synced-from-the-integration counts
 // above the source table. "Synced" means the record reached us through the
 // connected Job Portal rather than being keyed in here.

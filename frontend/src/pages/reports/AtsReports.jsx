@@ -22,20 +22,27 @@ import Combo from '../../components/Combo.jsx';
 // department or a person the report would then refuse.
 // ---------------------------------------------------------------------------
 
-const COLUMNS = [
-  ['applications', 'Applications'],
-  ['inPipeline', 'In Pipeline'],
-  ['recruiterReview', 'Recruiter Review'],
-  ['tlReview', 'TL Review'],
-  ['bdeReview', 'BDE Review'],
-  ['clientReview', 'Client Review'],
-  ['interview', 'Interview'],
-  ['selected', 'Selected'],
-  ['offer', 'Offer'],
-  ['joined', 'Joined'],
-  ['rejected', 'Rejected'],
-  ['hold', 'Hold'],
-];
+// Each family counts different things, so each has its own columns. The
+// grouping is the ROW; these are the numbers on it.
+const COLUMNS_BY_FAMILY = {
+  ats: [
+    ['applications', 'Applications'], ['inPipeline', 'In Pipeline'],
+    ['recruiterReview', 'Recruiter Review'], ['tlReview', 'TL Review'],
+    ['bdeReview', 'BDE Review'], ['clientReview', 'Client Review'],
+    ['interview', 'Interview'], ['selected', 'Selected'], ['offer', 'Offer'],
+    ['joined', 'Joined'], ['rejected', 'Rejected'], ['hold', 'Hold'],
+  ],
+  interviews: [
+    ['scheduled', 'Scheduled'], ['completed', 'Completed'],
+    ['feedbackPending', 'Feedback Pending'], ['rescheduled', 'Rescheduled'],
+    ['cancelled', 'Cancelled'], ['noShow', 'No Show'],
+    ['selected', 'Selected'], ['rejected', 'Rejected'],
+  ],
+  followups: [
+    ['total', 'Follow-ups'], ['due', 'Due Today'], ['overdue', 'Overdue'],
+    ['completed', 'Completed'], ['escalated', 'Escalated'],
+  ],
+};
 
 const EMPTY = {
   from: '', to: '', department: '', location: '', clientId: '',
@@ -45,6 +52,10 @@ const EMPTY = {
 export default function AtsReports() {
   const { user } = useAuth();
   const canExport = canExportReports(user, 'ATS Reports');
+  // §18 — THREE REPORT FAMILIES, one screen. Recruitment is the pipeline,
+  // Interviews is the calendar's outcomes (AI counted separately, never mixed
+  // in), Follow-ups is whether the chasing is actually working.
+  const [family, setFamily] = useState('ats');
   const [groupBy, setGroupBy] = useState('department');
   const [filters, setFilters] = useState(EMPTY);
   const [data, setData] = useState(null);
@@ -53,11 +64,17 @@ export default function AtsReports() {
   const load = useCallback(() => {
     const params = new URLSearchParams({ groupBy });
     Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
-    api.get(`/reports/ats?${params.toString()}`)
+    api.get(`/reports/${family === 'ats' ? 'ats' : family}?${params.toString()}`)
       .then((res) => { setData(res.data); setError(''); })
       .catch((err) => setError(err.response?.data?.error || 'ATS Reports are not included in your role’s permissions.'));
-  }, [groupBy, filters]);
+  }, [family, groupBy, filters]);
   useEffect(load, [load]);
+
+  // Each family has its own groupings, so switching family resets to its first.
+  function pickFamily(id) {
+    setFamily(id);
+    setGroupBy(id === 'followups' ? 'owner' : 'department');
+  }
 
   const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
   const active = Object.values(filters).filter(Boolean).length;
@@ -65,7 +82,10 @@ export default function AtsReports() {
   if (error) return <div className="error-text">{error}</div>;
   if (!data) return <div className="small-muted">Loading reports…</div>;
 
-  const opts = data.filterOptions;
+  const opts = data.filterOptions || {};
+  const COLUMNS = COLUMNS_BY_FAMILY[family];
+  // Conversion only means something on the recruitment family.
+  const showConversion = family === 'ats';
 
   return (
     <div>
@@ -94,6 +114,17 @@ export default function AtsReports() {
 
       {/* THE QUESTION. Department = specialization-wise, Team = team-wise,
           Recruiter / TL / STL / BDE = individual-wise. */}
+      <div className="report-family">
+        {[['ats', 'Recruitment'], ['interviews', 'Interviews'], ['followups', 'Follow-ups']].map(([id, label]) => (
+          <button
+            key={id}
+            className={`report-fam${family === id ? ' is-on' : ''}`}
+            onClick={() => pickFamily(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="report-groupby">
         {data.groupings.map((g) => (
           <button
@@ -107,36 +138,53 @@ export default function AtsReports() {
       </div>
 
       <div className="filter-row" style={{ flexWrap: 'wrap' }}>
+        {/* Dates apply to every family. The rest are offered only where the
+            endpoint actually returns options for them — a filter that does
+            nothing is worse than no filter. */}
         <label className="report-date">From <input type="date" value={filters.from} onChange={(e) => set({ from: e.target.value })} /></label>
         <label className="report-date">To <input type="date" value={filters.to} onChange={(e) => set({ to: e.target.value })} /></label>
-        <Combo value={filters.department} onChange={(e) => set({ department: e.target.value })}>
-          <option value="">All departments</option>
-          {opts.departments.map((d) => <option key={d} value={d}>{d}</option>)}
-        </Combo>
-        <Combo value={filters.location} onChange={(e) => set({ location: e.target.value })}>
-          <option value="">All locations</option>
-          {opts.locations.map((l) => <option key={l} value={l}>{l}</option>)}
-        </Combo>
-        <Combo value={filters.clientId} onChange={(e) => set({ clientId: e.target.value })}>
-          <option value="">All clients</option>
-          {opts.clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Combo>
-        <Combo value={filters.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
-          <option value="">All recruiters</option>
-          {opts.recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </Combo>
-        <Combo value={filters.bdeId} onChange={(e) => set({ bdeId: e.target.value })}>
-          <option value="">All BDEs</option>
-          {opts.bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </Combo>
-        <Combo value={filters.source} onChange={(e) => set({ source: e.target.value })}>
-          <option value="">All sources</option>
-          {opts.sources.map((s) => <option key={s} value={s}>{s}</option>)}
-        </Combo>
-        <Combo value={filters.stage} onChange={(e) => set({ stage: e.target.value })}>
-          <option value="">All stages</option>
-          {opts.stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </Combo>
+        {opts.departments && (
+          <Combo value={filters.department} onChange={(e) => set({ department: e.target.value })}>
+            <option value="">All departments</option>
+            {opts.departments.map((d) => <option key={d} value={d}>{d}</option>)}
+          </Combo>
+        )}
+        {opts.locations && (
+          <Combo value={filters.location} onChange={(e) => set({ location: e.target.value })}>
+            <option value="">All locations</option>
+            {opts.locations.map((l) => <option key={l} value={l}>{l}</option>)}
+          </Combo>
+        )}
+        {opts.clients && (
+          <Combo value={filters.clientId} onChange={(e) => set({ clientId: e.target.value })}>
+            <option value="">All clients</option>
+            {opts.clients.map((cl) => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
+          </Combo>
+        )}
+        {opts.recruiters && (
+          <Combo value={filters.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
+            <option value="">All recruiters</option>
+            {opts.recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </Combo>
+        )}
+        {opts.bdes && (
+          <Combo value={filters.bdeId} onChange={(e) => set({ bdeId: e.target.value })}>
+            <option value="">All BDEs</option>
+            {opts.bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </Combo>
+        )}
+        {opts.sources && (
+          <Combo value={filters.source} onChange={(e) => set({ source: e.target.value })}>
+            <option value="">All sources</option>
+            {opts.sources.map((s) => <option key={s} value={s}>{s}</option>)}
+          </Combo>
+        )}
+        {opts.stages && (
+          <Combo value={filters.stage} onChange={(e) => set({ stage: e.target.value })}>
+            <option value="">All stages</option>
+            {opts.stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </Combo>
+        )}
         {active > 0 && <button className="btn btn-sm" onClick={() => setFilters(EMPTY)}>Clear filters</button>}
       </div>
 
@@ -146,7 +194,7 @@ export default function AtsReports() {
             <tr>
               <th>{data.groupLabel}</th>
               {COLUMNS.map(([k, l]) => <th key={k} style={{ textAlign: 'right' }}>{l}</th>)}
-              <th style={{ textAlign: 'right' }}>Conversion</th>
+              {showConversion && <th style={{ textAlign: 'right' }}>Conversion</th>}
             </tr>
           </thead>
           <tbody>
@@ -156,7 +204,7 @@ export default function AtsReports() {
                 {COLUMNS.map(([k]) => (
                   <td key={k} className={r[k] ? undefined : 'cell-muted'} style={{ textAlign: 'right' }}>{r[k]}</td>
                 ))}
-                <td style={{ textAlign: 'right' }}>{r.conversionPct}%</td>
+                {showConversion && <td style={{ textAlign: 'right' }}>{r.conversionPct}%</td>}
               </tr>
             ))}
             {data.rows.length === 0 && (
@@ -165,12 +213,12 @@ export default function AtsReports() {
               </td></tr>
             )}
           </tbody>
-          {data.rows.length > 0 && (
+          {data.rows.length > 0 && data.totals && (
             <tfoot>
               <tr className="report-total">
                 <td><b>Total</b></td>
                 {COLUMNS.map(([k]) => <td key={k} style={{ textAlign: 'right' }}><b>{data.totals[k] || 0}</b></td>)}
-                <td style={{ textAlign: 'right' }}><b>{data.totals.conversionPct}%</b></td>
+                {showConversion && <td style={{ textAlign: 'right' }}><b>{data.totals.conversionPct}%</b></td>}
               </tr>
             </tfoot>
           )}
@@ -178,8 +226,9 @@ export default function AtsReports() {
       </div>
 
       <div className="notice" style={{ marginTop: 12 }}>
-        Every grouping counts the SAME set of applications — the ones your scope reaches — so a department
-        total and the sum of its recruiters always agree. Conversion is Joined ÷ Applications.
+        {family === 'ats' && <>Every grouping counts the SAME set of applications — the ones your scope reaches — so a department total and the sum of its recruiters always agree. Conversion is Joined ÷ Applications.</>}
+        {family === 'interviews' && <>AI interviews are counted SEPARATELY ({data.aiInterviews ?? 0} in your scope) and are never mixed into client interview outcomes — an AI screening score is not an interview result.</>}
+        {family === 'followups' && <>Overdue is measured against the date somebody committed to, not the stage SLA. Escalated counts follow-ups that have passed their owner; the owner stays responsible at every rung.</>}
       </div>
     </div>
   );
