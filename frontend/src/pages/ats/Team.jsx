@@ -78,7 +78,13 @@ export default function Team() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = TABS.some(([id]) => id === searchParams.get('tab')) ? searchParams.get('tab') : 'workload';
+  // JUST THE RAW ?tab= VALUE. This used to validate it against TABS, which is
+  // declared 30 lines further down — a temporal-dead-zone reference that threw
+  // "Cannot access 'TABS' before initialization" on EVERY render, for every
+  // role, leaving the screen blank. Which tabs exist depends on the viewer's
+  // ATS role, so it cannot be known this early; `activeTab` below already
+  // validates this against the role's own tab list and falls back to the first.
+  const tab = searchParams.get('tab') || '';
 
   const [rows, setRows] = useState([]);
   const [requirements, setRequirements] = useState([]);
