@@ -391,7 +391,11 @@ const DEFAULT_RULES = [
   // an EMPLOYEE both resolve to their own row, so this grants the SCREEN and
   // not a wider set of rows. VIEW only: no create, edit, approve or configure
   // rule names EMPLOYEE anywhere.
-  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE', 'ACCOUNTANT'] },
+  // §1 / §2 — A TL IS ALSO AN EMPLOYEE, so they get the same own-payslip and
+  // own-dashboard view an employee has. Listing TL here rather than relying
+  // on SET.HR is deliberate: the HRMS pass above strips a TL back to reads,
+  // and this is a read.
+  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE', 'ACCOUNTANT', 'TL'] },
   { module: 'hrms', features: ['HRMS Dashboard'], actions: ['view', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Attendance & Time'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
@@ -538,6 +542,23 @@ const APPROVAL_CHAIN_FEATURES = [
   'Leave & Holidays', 'Attendance & Time', 'Employee Services',
   'Performance & Development', 'Employee Management',
 ];
+
+// §11 / §12 / §21 — A TL IS VIEW + DESIGNATED APPROVALS IN HRMS.
+//
+// A TL leads a team; they do not administer HR records. They held create,
+// edit and delete on Attendance, Leave, Performance and Employee Services,
+// and edit on Employee Management — that is HR administration, and §11 says
+// Employee Master, Attendance Master and Payroll are VIEW ONLY for them.
+//
+// This is NOT the §3/§4 view-only pass: that one covers a Manager and an
+// Assistant Manager in EVERY product. A TL is a working role in ATS — they
+// move candidates and raise requirements — so the restriction is HRMS ONLY.
+//
+// `approve` survives, because approving a request the chain routed to them
+// is the TL's designated action and the whole reason they are rung 2. So
+// does `export`, which is a read.
+const HRMS_VIEW_ONLY_ROLES = ['TL'];
+const HRMS_STRIPPED_ACTIONS = ['create', 'edit', 'delete', 'configure', 'assign'];
 const WRITE_ACTIONS = ['create', 'edit', 'delete', 'approve', 'configure'];
 
 function emptyActions(value = false) {
@@ -589,6 +610,11 @@ function defaultAccessForRole(role, moduleId) {
       if (a === 'approve' && APPROVAL_CHAIN_FEATURES.includes(f)) return;
       features[f][a] = false;
     }));
+  }
+
+  // §11 — the TL pass. HRMS only, and `approve` / `view` / `export` survive.
+  if (moduleId === 'hrms' && HRMS_VIEW_ONLY_ROLES.includes(role)) {
+    names.forEach((f) => HRMS_STRIPPED_ACTIONS.forEach((a) => { features[f][a] = false; }));
   }
 
   const anyGranted = names.some((f) => ROLE_FEATURE_ACTIONS.some((a) => features[f][a]));

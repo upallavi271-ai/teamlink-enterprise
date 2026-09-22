@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useAuth } from '../../context/AuthContext.jsx';
 import Helpdesk from './Helpdesk.jsx';
 import Assets from './Assets.jsx';
 import Announcements from './Announcements.jsx';
@@ -22,23 +23,40 @@ const PROTO_TABS = [
 
 const EXTRA_TABS = [
   ['documents', 'Documents', 'Documents', 'Policies, compliance documents and acknowledgements.', Documents],
-  ['shift', 'Shift Roster', 'Shift & Roster', 'Shift patterns and who is rostered on which day.', ShiftRoster],
+  // §17 — the 5th element is a CAPABILITY KEY. Shift Roster is not shown to
+  // a TL: rostering is scheduling other people, which is not theirs. This is
+  // role-based visibility, not deletion — the screen and its route are
+  // untouched for the roles that own it.
+  ['shift', 'Shift Roster', 'Shift & Roster', 'Shift patterns and who is rostered on which day.', ShiftRoster, 'shiftRoster'],
   ['timesheet', 'Timesheet', 'Timesheet', 'Track and assign work across your team — create a task, assign it, and follow it to done.', Timesheet],
   ['expenses', 'Expense Claims', 'Expense & Travel Claims', 'Claims, approvals and reimbursement.', Expenses],
 ];
 
 export default function EmployeeServices() {
+  const { user } = useAuth();
   const [tab, setTab] = useState('helpdesk');
   // Which feature-tile screen is open, per tab — the prototype's svcView.
   const [view, setView] = useState(null);
+
+  // §17 — SHIFT ROSTER IS NOT SHOWN TO A TL. Rostering is scheduling other
+  // people; a TL leads a team but does not set the roster. Role-based
+  // visibility, not deletion: the tab, the screen and the API are all intact
+  // for the roles that own it.
+  const isTl = (user && (user.productRoles ? user.productRoles.hrms : user.hrmsRole)) === 'TL';
+  const extraTabs = useMemo(
+    () => EXTRA_TABS.filter(([, , , , , cap]) => !(cap === 'shiftRoster' && isTl)),
+    [isTl],
+  );
 
   function selectTab(k) { setTab(k); setView(null); }
   const open = (key) => setView(key);
   const back = () => setView(null);
 
   const proto = PROTO_TABS.find(([k]) => k === tab);
-  const extra = EXTRA_TABS.find(([k]) => k === tab);
-  const [, , title, sub] = proto || extra;
+  const extra = extraTabs.find(([k]) => k === tab);
+  // A TL who arrives on the hidden tab by URL gets the first tab, not a crash.
+  const chosen = proto || extra || PROTO_TABS[0];
+  const [, , title, sub] = chosen;
 
   let body = null;
   if (tab === 'helpdesk') body = <Helpdesk view={view} onOpen={open} onBack={back} />;
@@ -52,7 +70,7 @@ export default function EmployeeServices() {
     <div>
       <div className="page-head"><div><h1>{title}</h1><div className="page-sub">{sub}</div></div></div>
       <div className="tabbar">
-        {[...PROTO_TABS, ...EXTRA_TABS].map(([k, label]) => (
+        {[...PROTO_TABS, ...extraTabs].map(([k, label]) => (
           <button key={k} className={'tab-btn' + (tab === k ? ' active' : '')} onClick={() => selectTab(k)}>{label}</button>
         ))}
       </div>
