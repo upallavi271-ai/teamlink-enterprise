@@ -426,9 +426,34 @@ function accountsGlobal(user) {
 }
 
 // What a screen prints when it says "you are seeing X".
+// THE LINE AT THE TOP OF EVERY SCREEN (§43). It used to read the bare
+// department list — "Medical", or "All departments" — which says WHERE the
+// data is from but not WHY this person can see it. The blueprint asks for the
+// answer in the reader's own terms: My Candidates / My Team / Medical
+// Department / All Company, so there is no confusion about why a list is the
+// length it is.
 function scopeLabel(user) {
+  const s = scopeOf(user);
+  if (s.global) return 'All Company';
+  if (hrmsGlobal(user)) return 'All Employees';
   const departments = scopeDepartments(user);
-  return departments === undefined ? 'All departments' : departments.join(', ');
+  if (departments === undefined) return 'All Company';
+
+  switch (s.atsRole || s.hrmsRole) {
+    case 'CLIENT': return 'My Company';
+    case 'CANDIDATE': return 'My Profile';
+    case 'BDE': return 'My Clients';
+    case 'RECRUITER': return 'My Assigned Work';
+    case 'TL': return s.teams && s.teams.length ? `My Team — ${s.teams.join(', ')}` : 'My Team';
+    case 'STL':
+    case 'MANAGER':
+    case 'ASSISTANT_MANAGER':
+      return departments.length === 1
+        ? `${departments[0]} Department`
+        : `${departments.length} Departments — ${departments.join(', ')}`;
+    default:
+      return departments.length ? departments.join(', ') : 'My Own Records';
+  }
 }
 
 // --- Record-level check, used by can(..., record) and by detail endpoints ---

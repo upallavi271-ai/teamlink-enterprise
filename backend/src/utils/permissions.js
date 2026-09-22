@@ -664,7 +664,16 @@ const STAGE_OWNERS = {
   AI_INTERVIEW_COMPLETED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   RECRUITER_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   RECRUITER_APPROVED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  WITH_BDE: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  // STAGE_OWNERS[X] is "who may move a candidate INTO X", and a button's owner
+  // is STAGE_OWNERS[to]. So the RECRUITER is here — forwarding into TL review is
+  // their move — and is deliberately absent from WITH_BDE below, which is what
+  // stops them approving their own candidate straight past the TL.
+  TL_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  // NEITHER THE RECRUITER NOR THE BDE moves a candidate into the BDE queue —
+  // the TL's Approve is what puts it there (§23). The BDE still ACTS at this
+  // stage: their button is Share with Client, whose target SHARED_WITH_CLIENT
+  // they do own.
+  WITH_BDE: ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   BDE_APPROVED: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   SHARED_WITH_CLIENT: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   CLIENT_REVIEW: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
@@ -686,7 +695,12 @@ const STAGE_OWNERS = {
 // /auth/me, so a button is shown only to the login that owns the move.
 const STAGE_WORKFLOW_ACTIONS = {
   RECRUITER_REVIEW: [
-    { id: 'send_to_bde', label: 'Send to BDE', to: 'WITH_BDE' },
+    { id: 'send_to_tl', label: 'Send to TL', to: 'TL_REVIEW' },
+    { id: 'hold', label: 'Hold', to: 'HOLD' },
+    { id: 'reject', label: 'Reject', to: 'REJECTED' },
+  ],
+  TL_REVIEW: [
+    { id: 'approve_to_bde', label: 'Approve', to: 'WITH_BDE' },
     { id: 'hold', label: 'Hold', to: 'HOLD' },
     { id: 'reject', label: 'Reject', to: 'REJECTED' },
   ],

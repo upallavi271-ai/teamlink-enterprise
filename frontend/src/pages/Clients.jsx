@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
+import ScopeLine from '../components/ScopeLine.jsx';
 import {
   agreementStatusLabel, agreementBadgeClass, deptOptions, LOCS, INDIAN_STATES, CLIENT_INDUSTRIES, CLIENT_STATUSES,
   CLIENT_TYPES, CLIENT_PRIORITIES, COMM_MODES, BUSINESS_TYPES, PAYMENT_TERMS,
@@ -116,7 +117,7 @@ export default function Clients() {
         <div>
           <h1>Clients</h1>
           <div className="page-sub">
-            {`Clients · Requirements · Agreements · Job Portal — ${clients.length} client account(s) in your scope`}
+            Clients · Requirements · Agreements · Job Portal — <ScopeLine user={user} count={clients.length} noun="client account" inline />
           </div>
         </div>
         {can(user, 'ats', 'clients', 'Add Client', 'create') && (

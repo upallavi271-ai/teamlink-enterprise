@@ -675,3 +675,10 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .qopt-pick input{width:auto;margin:0}
 .import-sample{background:var(--paper);border:1px solid var(--line);border-radius:7px;
   padding:9px 11px;font-size:11.5px;line-height:1.55;margin:0 0 10px;white-space:pre-wrap}
+
+/* The §43 scope line. A quiet tag rather than a banner — it answers "why is
+   this list this length" without competing with the page title. */
+.scope-tag{display:inline-block;padding:1px 7px;border-radius:999px;
+  background:var(--teal-tint);color:var(--teal);font-size:11px;font-weight:600;
+  letter-spacing:.01em}
+.scope-tag-inline{font-weight:600;color:var(--teal)}

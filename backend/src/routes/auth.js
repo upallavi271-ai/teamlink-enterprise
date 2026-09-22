@@ -5,7 +5,7 @@ const prisma = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { resolveIdentity, tokenPayload } = require('../utils/identity');
 const { effectiveMatrix, allowedStagesFor, STAGE_WORKFLOW_ACTIONS } = require('../utils/permissions');
-const { departmentsOf, scopeOf, hrmsGlobal } = require('../utils/scope');
+const { departmentsOf, scopeOf, hrmsGlobal, scopeLabel } = require('../utils/scope');
 
 // Everything the browser needs to render this login: the identity, the
 // EFFECTIVE permission matrix (every module resolved against ITS product's
@@ -50,6 +50,10 @@ async function sessionPayload(identity) {
     // `departments: null` means UNRESTRICTED (Super Admin / Admin), and the
     // browser then falls back to the full catalogue.
     scope: {
+      // The §43 line every screen puts at the top — "Scope: My Team",
+      // "Scope: Medical Department", "Scope: All Company". One computed
+      // answer, so no two screens can word it differently.
+      label: scopeLabel(identity),
       departments: scopeDepartmentOptions(identity),
       teams: scopeOf(identity).teams && scopeOf(identity).teams.length ? scopeOf(identity).teams : null,
     },

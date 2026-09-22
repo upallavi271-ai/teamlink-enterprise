@@ -11,7 +11,10 @@
 // superset and the one this app follows).
 
 // --- Pipeline stages -------------------------------------------------------
-// The 18 pipeline stages, in the prototype's order.
+// The pipeline stages, in order. TL_REVIEW sits between the recruiter and
+// the BDE: a recruiter forwards, the TL approves, and only then does it
+// reach the BDE. Without that step a recruiter could put a candidate in
+// front of a client with nobody above them having looked.
 const STAGE_CODES = [
   'NEW',
   'AI_INTERVIEW_REQUIRED',
@@ -19,6 +22,7 @@ const STAGE_CODES = [
   'AI_INTERVIEW_COMPLETED',
   'RECRUITER_REVIEW',
   'RECRUITER_APPROVED',
+  'TL_REVIEW',
   'WITH_BDE',
   'BDE_APPROVED',
   'SHARED_WITH_CLIENT',
@@ -45,6 +49,7 @@ const STAGE_LABELS = {
   AI_INTERVIEW_COMPLETED: 'AI Interview Completed',
   RECRUITER_REVIEW: 'Recruiter Review',
   RECRUITER_APPROVED: 'Recruiter Approved',
+  TL_REVIEW: 'TL Review',
   WITH_BDE: 'With BDE',
   BDE_APPROVED: 'BDE Approved',
   SHARED_WITH_CLIENT: 'Shared with Client',
@@ -73,8 +78,9 @@ const STAGE_OWNER_ACTION = {
   AI_INTERVIEW_REQUIRED: { ownerRole: 'Recruiter', action: 'Send AI interview invite', days: 1 },
   AI_INTERVIEW_SCHEDULED: { ownerRole: 'Recruiter', action: 'Await candidate completion', days: 2 },
   AI_INTERVIEW_COMPLETED: { ownerRole: 'Recruiter', action: 'Review AI score, then screen', days: 1 },
-  RECRUITER_REVIEW: { ownerRole: 'Recruiter', action: 'Approve or reject', days: 1 },
-  RECRUITER_APPROVED: { ownerRole: 'Recruiter', action: 'Send to BDE', days: 1 },
+  RECRUITER_REVIEW: { ownerRole: 'Recruiter', action: 'Review and forward to TL', days: 1 },
+  RECRUITER_APPROVED: { ownerRole: 'Recruiter', action: 'Send to TL', days: 1 },
+  TL_REVIEW: { ownerRole: 'TL', action: 'Approve or reject', days: 1 },
   WITH_BDE: { ownerRole: 'BDE', action: 'BDE review', days: 2 },
   BDE_APPROVED: { ownerRole: 'BDE', action: 'Share with client', days: 1 },
   SHARED_WITH_CLIENT: { ownerRole: 'Client', action: 'Await client review', days: 3 },
@@ -101,6 +107,9 @@ function applicationOwner(application, requirement) {
     const bde = requirement.bde && requirement.bde.name;
     return bde || (requirement.recruiter && requirement.recruiter.name) || '—';
   }
+  // The TL named on the requirement, falling back to the recruiter's own
+  // line manager name where the requirement carries one.
+  if (rule.ownerRole === 'TL') return (requirement.tl && requirement.tl.name) || requirement.tl || '—';
   if (rule.ownerRole === 'Client') return (requirement.client && requirement.client.name) || '—';
   return rule.ownerRole || '—';
 }

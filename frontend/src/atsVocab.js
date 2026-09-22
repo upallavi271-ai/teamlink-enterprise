@@ -36,6 +36,7 @@ export const STAGE_LABELS = {
   AI_INTERVIEW_COMPLETED: 'AI Interview Completed',
   RECRUITER_REVIEW: 'Recruiter Review',
   RECRUITER_APPROVED: 'Recruiter Approved',
+  TL_REVIEW: 'TL Review',
   WITH_BDE: 'With BDE',
   BDE_APPROVED: 'BDE Approved',
   SHARED_WITH_CLIENT: 'Shared with Client',

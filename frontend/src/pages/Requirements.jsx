@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
+import ScopeLine from '../components/ScopeLine.jsx';
 import {
   deptOptions, LOCS, PRIORITIES, priorityBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive, REQUIREMENT_STATUS_CODES,
@@ -110,7 +111,7 @@ export default function Requirements() {
         <div>
           <h1>Jobs / Requirements</h1>
           <div className="page-sub">
-            {`${requirements.length} requirement(s) in your scope`}
+            <ScopeLine user={user} count={requirements.length} noun="requirement" />
           </div>
         </div>
         {canRaiseRequirement(user) && (

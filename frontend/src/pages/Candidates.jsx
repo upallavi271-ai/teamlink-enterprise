@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import Modal, { SectionHead } from '../components/Modal.jsx';
+import ScopeLine from '../components/ScopeLine.jsx';
 import {
   STAGE_LABELS, LIFE_STATUSES, deptOptions, LOCS,
   CANDIDATE_SOURCES, CANDIDATE_FIRST_SOURCES, CANDIDATE_FILTER_SOURCES, APPLICATION_METHODS,
@@ -211,7 +212,7 @@ export default function Candidates() {
       <div className="page-head">
         <div>
           <h1>Candidates &amp; Pipeline</h1>
-          <div className="page-sub">{candidates.length} candidates in your scope</div>
+          <div className="page-sub"><ScopeLine user={user} count={candidates.length} noun="candidate" /></div>
         </div>
         {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
           <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Candidate</button>

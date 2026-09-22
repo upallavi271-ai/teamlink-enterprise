@@ -34,6 +34,7 @@ const STAGE_GROUPS = [
     stages: ['AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'],
   },
   { id: 'recruiter_review', label: 'Recruiter Review', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  { id: 'tl_review', label: 'TL Review', stages: ['TL_REVIEW'] },
   { id: 'bde_review', label: 'BDE Review', stages: ['WITH_BDE', 'BDE_APPROVED'] },
   {
     id: 'client_review',

@@ -162,7 +162,7 @@ export const ATS_ITEMS = [
   // reference prototype has it.
   leaf('🏢', '/clients', 'Clients', [['clients', 'Client List', 'view']]),
   leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
-  leaf('👔', '/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
+  leaf('🧑‍💼', '/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
   leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
 ];
 
