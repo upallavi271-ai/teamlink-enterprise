@@ -59,9 +59,26 @@ const INTEGRATION_CATALOG = [
   { id: 'storage', name: 'Document Storage', group: 'Storage', glyph: '\u{1F5C2}️',
     desc: 'Where resumes, offer letters and employee documents are stored.',
     fields: [['Provider (S3 / Drive)', ''], ['Bucket / folder', ''], ['Access key', ''], ['Secret key', '']] },
-  { id: 'esign', name: 'e-Signature', group: 'Storage', glyph: '\u{1F58A}️',
-    desc: 'Send offer letters and client agreements for signature.',
-    fields: [['Provider', ''], ['API key', '']] },
+  // AADHAAR eSIGN. Only a licensed ASP/ESP may perform one — eMudhra, NSDL,
+  // Digio, SignDesk, Leegality. Until this is filled in, the agreement flow
+  // completes on a mobile OTP and SAYS SO on the record rather than claiming an
+  // Aadhaar eSign that never happened (utils/agreementSigning.js).
+  //
+  // The same connection signs both sides of a client agreement and an
+  // employee's documents, so the fields are the account's, not one document's.
+  // Endpoint carries the sandbox or production URL, because getting those two
+  // the wrong way round is the usual way a first eSign goes missing.
+  { id: 'esign', name: 'Aadhaar eSign (eMudhra / NSDL / Digio)', group: 'Compliance', glyph: '\u{1F58A}️',
+    desc: 'Legally recognised Aadhaar eSign for client agreements (both sides) and employee documents. '
+      + 'Requires a subscription with a licensed ASP/ESP.',
+    fields: [
+      ['Provider', 'eMudhra'],
+      ['ASP ID', ''],
+      ['API key', ''],
+      ['API secret', ''],
+      ['Endpoint URL', 'https://…/esign/v3'],
+      ['Callback URL', 'https://your-teamlink-host/api/agreement/esign/callback'],
+    ] },
   { id: 'tally', name: 'Tally / Accounting', group: 'Finance', glyph: '\u{1F4D2}',
     desc: 'Push invoices and payments into the accounting ledger.',
     fields: [['Company name in Tally', ''], ['Connector URL', ''], ['Sync frequency', 'Daily']] },
