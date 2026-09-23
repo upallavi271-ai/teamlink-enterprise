@@ -22,3 +22,6 @@ backend/prisma/*.db-wal
 backend/prisma/*.db-shm
 # The converted copy of the company's own data.
 TeamLink-BATCH2-converted.xlsx
+# Generated from live data, for the user to fill in.
+TeamLink-DATA-NEEDED.xlsx
+TeamLink-BATCH3-converted.xlsx
