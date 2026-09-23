@@ -231,11 +231,19 @@ const SHEETS = [
     model: 'candidate',
     key: ['email', 'phone'],
     title: 'Candidates (ATS)',
-    note: 'Email is the key; if a candidate has no email, Phone is used instead. One of the two is required, otherwise the same person imports twice on the next run. Do NOT put pipeline stage here — that belongs on the Applications sheet, because a candidate can be in more than one pipeline.',
+    note: 'Email is the key; with no email, Phone is used; with neither, External Ref. One of the three is needed, otherwise the same person imports twice on the next run. Do NOT put pipeline stage here — that belongs on the Applications sheet, because a candidate can be in more than one pipeline.',
     columns: [
       c('Full Name', 'name', { req: true, eg: 'Arjun Mehta' }),
       c('Email', 'email', { help: 'The key. Required unless Phone is given.', eg: 'arjun.mehta@example.com' }),
       c('Phone', 'phone', { help: 'Used as the key when there is no email.', eg: '9812345678' }),
+      // THE THIRD WAY TO TELL CANDIDATES APART, for sources that record
+      // neither. Several of the real recruitment sheets have no contact
+      // column at all — a name, a qualification, a branch and nothing else —
+      // and 12,033 rows of genuine interview history were refused because
+      // of it. Keyed on name alone two people called Priyanka become one;
+      // with a reference built from the fields the sheet DOES carry, they
+      // stay two.
+      c('External Ref', 'externalRef', { help: 'Only for candidates with no email and no phone: any stable id from your own system or sheet. Leave blank otherwise.' }),
       c('Date of Birth', 'dob', { t: 'date', eg: '1993-08-22' }),
       c('Gender', 'gender', { t: 'list', list: 'gender', eg: 'Male' }),
       c('Current Location', 'location', { eg: 'Bengaluru' }),

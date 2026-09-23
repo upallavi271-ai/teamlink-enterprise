@@ -481,8 +481,14 @@ const HANDLERS = {
   },
 
   async candidate({ data, ix, dry }) {
-    if (!data.email && !data.phone) throw new Error('give an Email or a Phone — one of the two is needed to tell candidates apart');
-    const key = ix.norm(data.email || data.phone);
+    // EMAIL, THEN PHONE, THEN EXTERNAL REF — the three ways a source can
+    // say which person a row is about. The third exists because several
+    // real sheets carry no contact column at all, and refusing those rows
+    // discarded 12,033 interview records.
+    if (!data.email && !data.phone && !data.externalRef) {
+      throw new Error('give an Email, a Phone or an External Ref — one of the three is needed to tell candidates apart');
+    }
+    const key = ix.norm(data.email || data.phone || `ref:${data.externalRef}`);
     const id = ix.candidate.get(key);
     if (dry) {
       if (!id) ix.candidate.set(key, `dry:${key}`);
@@ -495,6 +501,7 @@ const HANDLERS = {
     const row = await prisma.candidate.create({ data });
     if (data.email) ix.candidate.set(ix.norm(data.email), row.id);
     if (data.phone) ix.candidate.set(ix.norm(data.phone), row.id);
+    if (data.externalRef) ix.candidate.set(ix.norm(`ref:${data.externalRef}`), row.id);
     return 'created';
   },
 

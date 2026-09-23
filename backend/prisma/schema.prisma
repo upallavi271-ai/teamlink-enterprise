@@ -332,6 +332,12 @@ model Candidate {
   firstSource             String?
   sourceCampaign          String?
   profileStatus           String? @default("Active")
+  // A STABLE REFERENCE FROM THE SOURCE SYSTEM, for a candidate who arrives
+  // with no email and no phone. Several of the real recruitment sheets have
+  // no contact column at all; this is what lets those rows be imported and
+  // RE-imported without either duplicating people or merging two people who
+  // happen to share a name. Null for everybody keyed the ordinary way.
+  externalRef             String?
 
   applications Application[]
   invoices     Invoice[]
@@ -340,6 +346,8 @@ model Candidate {
   messages     CandidateMessage[]
   notes        CandidateNote[]
   documents    CandidateDocument[]
+
+  @@index([externalRef])
 }
 
 model Application {

@@ -84,11 +84,18 @@ export default function Requirements() {
   // The server already applied every filter; these are just the two views.
   const rows = requirements;
   const openRows = useMemo(() => requirements.filter((r) => requirementIsLive(r.status)), [requirements]);
-  // 1,939 requirements came in with the real data. Both views show a page at
-  // a time; `rows` and `openRows` stay whole, so the counts above the table
-  // and the agreement report below it keep counting everything.
+  // Everything that is NOT live — Closed, Filled, Cancelled, On Hold. Written
+  // as the COMPLEMENT of openRows rather than as its own status list, so every
+  // requirement is on exactly one of the two tabs and none can fall between
+  // them however the status codes grow.
+  const closedRows = useMemo(() => requirements.filter((r) => !requirementIsLive(r.status)), [requirements]);
+
+  // 2,018 requirements came in with the real data. Each view shows a page at a
+  // time; `rows`, `openRows` and `closedRows` stay whole, so the counts above
+  // the tables and the agreement report below keep counting everything.
   const pagedAll = usePaged(rows);
   const pagedOpen = usePaged(openRows);
+  const pagedClosed = usePaged(closedRows);
 
   // MATCH COUNTS FOR THE ROWS ON SCREEN, and only those.
   //
@@ -96,14 +103,30 @@ export default function Requirements() {
   // to fill this column — 2,018 x 6,312 comparisons on the real data, which
   // stopped the endpoint answering at all. The server now counts a named set,
   // so the page asks for the twenty-five it is about to draw.
+  // FIT THE WINDOW, DO NOT SCROLL SIDEWAYS.
+  //
+  // Fifteen columns did not fit any laptop, so the table scrolled
+  // horizontally and half of it was permanently off screen — and on this
+  // data most of the hidden half is empty, because the source sheets never
+  // recorded a location, an experience band or a target date.
+  //
+  // So the seven that are usually blank are OFF by default and one click
+  // brings them back. Nothing is deleted: every column still exists, and
+  // the requirement detail page shows all of it regardless.
+  const [wideCols, setWideCols] = useState(false);
+
   const [matchCounts, setMatchCounts] = useState({});
-  const openPageIds = pagedOpen.slice.map((r) => r.id).join(',');
+  // Whichever of the two tables is on screen — Open and Closed show the same
+  // Matching column, and a closed requirement's count is worth seeing too
+  // (it is how you tell a post that was filled from one nobody could staff).
+  const matchPageIds = (view === 'open' ? pagedOpen.slice : view === 'closed' ? pagedClosed.slice : [])
+    .map((r) => r.id).join(',');
   useEffect(() => {
-    if (view !== 'open' || !openPageIds) return;
-    api.get('/requirements/match-counts', { params: { ids: openPageIds } })
+    if (!matchPageIds) return;
+    api.get('/requirements/match-counts', { params: { ids: matchPageIds } })
       .then((res) => setMatchCounts((m) => ({ ...m, ...res.data })))
       .catch(() => {});
-  }, [view, openPageIds]);
+  }, [matchPageIds]);
 
   // The prototype's agreementMonthReport() — counts derived from each client's
   // own agreement milestones, months with no activity are not shown.
@@ -150,7 +173,22 @@ export default function Requirements() {
       <div className="tabs" style={{ marginBottom: 12 }}>
         <div className={`tab${view === 'all' ? ' active' : ''}`} onClick={() => setView('all')}>All Requirements</div>
         <div className={`tab${view === 'open' ? ' active' : ''}`} onClick={() => setView('open')}>Open Requirements</div>
+        {/* Beside Open, and reading the same columns. A closed requirement is
+            still the record of a job that was worked — who carried it, how many
+            were placed against it and why it ended — and until now the only way
+            to see one was to find it in the All list. */}
+        <div className={`tab${view === 'closed' ? ' active' : ''}`} onClick={() => setView('closed')}>Closed Requirements</div>
         <div className={`tab${view === 'agreements' ? ' active' : ''}`} onClick={() => setView('agreements')}>Agreement Report</div>
+        {view !== 'agreements' && (
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            style={{ marginLeft: 'auto', alignSelf: 'center' }}
+            onClick={() => setWideCols((v) => !v)}
+          >
+            {wideCols ? 'Fewer columns' : 'All columns'}
+          </button>
+        )}
       </div>
 
       {/* ONE filter set, shared by both list views, applied server-side:
@@ -216,9 +254,13 @@ export default function Requirements() {
             <table>
               <thead>
                 <tr>
-                  <th>Requirement ID</th><th>Job Title</th><th>Client</th><th>Department</th><th>Location</th>
-                  <th>Experience</th><th>Recruiter</th><th>TL</th><th>BDE</th>
-                  <th>Priority</th><th>Openings</th><th>Target Date</th><th>Portal Sync</th><th>Status</th>{/* §13/§14 */}<th>Next Action</th>
+                  <th>Requirement ID</th><th>Job Title</th><th>Client</th><th>Department</th>
+                  {wideCols && <><th>Location</th><th>Experience</th><th>Recruiter</th></>}
+                  <th>TL</th>
+                  {wideCols && <><th>BDE</th><th>Priority</th></>}
+                  <th>Openings</th>
+                  {wideCols && <><th>Target Date</th><th>Portal Sync</th></>}
+                  <th>Status</th><th>Next Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,18 +270,30 @@ export default function Requirements() {
                     <td>{r.title}</td>
                     <td className="cell-muted">{clientNameOf(r)}</td>
                     <td className="cell-muted">{r.department || '—'}</td>
-                    <td className="cell-muted">{r.location || '—'}</td>
-                    <td className="cell-muted">{r.experience || '—'}</td>
-                    <td className="cell-muted">
-                      {r.recruiter?.name || '—'}
-                      {r.coRecruiterNames?.length ? ` +${r.coRecruiterNames.length}` : ''}
-                    </td>
+                    {wideCols && (
+                      <>
+                        <td className="cell-muted">{r.location || '—'}</td>
+                        <td className="cell-muted">{r.experience || '—'}</td>
+                        <td className="cell-muted">
+                          {r.recruiter?.name || '—'}
+                          {r.coRecruiterNames?.length ? ` +${r.coRecruiterNames.length}` : ''}
+                        </td>
+                      </>
+                    )}
                     <td className="cell-muted">{r.tlName || r.tl || '—'}</td>
-                    <td className="cell-muted">{r.bde?.name || '—'}</td>
-                    <td><span className={`status ${priorityBadgeClass(r.priority)}`}>{r.priority}</span></td>
+                    {wideCols && (
+                      <>
+                        <td className="cell-muted">{r.bde?.name || '—'}</td>
+                        <td><span className={`status ${priorityBadgeClass(r.priority)}`}>{r.priority}</span></td>
+                      </>
+                    )}
                     <td>{r.openings}</td>
-                    <td className="cell-muted">{r.targetDate || r.closingDate || '—'}</td>
-                    <td className="cell-muted">{r.portalSyncStatus || 'Not Synced'}</td>
+                    {wideCols && (
+                      <>
+                        <td className="cell-muted">{r.targetDate || r.closingDate || '—'}</td>
+                        <td className="cell-muted">{r.portalSyncStatus || 'Not Synced'}</td>
+                      </>
+                    )}
                     <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
                     {/* §13 / §14 — STATUS is what is happening; this is what to
                         DO about it. Using the status as the action is what makes
@@ -255,7 +309,7 @@ export default function Requirements() {
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>No requirements match.</td></tr>
+                  <tr><td colSpan={wideCols ? 15 : 8} className="small-muted" style={{ padding: 16 }}>No requirements match.</td></tr>
                 )}
               </tbody>
             </table>
@@ -273,9 +327,13 @@ export default function Requirements() {
             <table>
               <thead>
                 <tr>
-                  <th>Requirement ID</th><th>Job Title</th><th>Client / Internal</th><th>Department</th><th>Location</th>
-                  <th>Openings</th><th>Filled</th><th>Remaining</th><th>Matching</th><th>Recruiter</th><th>TL</th><th>BDE</th>
-                  <th>Priority</th><th>Created</th><th>Closing</th><th>Status</th>
+                  <th>Requirement ID</th><th>Job Title</th><th>Client / Internal</th><th>Department</th>
+                  {wideCols && <th>Location</th>}
+                  <th>Openings</th><th>Filled</th><th>Remaining</th>
+                  {wideCols && <><th>Matching</th><th>Recruiter</th></>}
+                  <th>TL</th>
+                  {wideCols && <><th>BDE</th><th>Priority</th><th>Created</th><th>Closing</th></>}
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -285,29 +343,96 @@ export default function Requirements() {
                     <td>{r.title}</td>
                     <td className="cell-muted">{clientNameOf(r)}</td>
                     <td className="cell-muted">{r.department || '—'}</td>
-                    <td className="cell-muted">{r.location || '—'}</td>
+                    {wideCols && <td className="cell-muted">{r.location || '—'}</td>}
                     <td className="cell-muted">{r.openings || 1}</td>
                     <td className="cell-muted">{r.filled ?? 0}</td>
                     <td><b>{r.remaining ?? r.openings}</b></td>
-                    <td onClick={(e) => { e.stopPropagation(); navigate(`/requirements/${r.id}`); }}>
-                      <span className="link-btn">{matchCounts[r.id] ?? r.matchingCandidates ?? '—'}</span>
-                    </td>
-                    <td className="cell-muted">{r.recruiter?.name || '—'}</td>
+                    {wideCols && (
+                      <>
+                        <td onClick={(e) => { e.stopPropagation(); navigate(`/requirements/${r.id}`); }}>
+                          <span className="link-btn">{matchCounts[r.id] ?? r.matchingCandidates ?? '—'}</span>
+                        </td>
+                        <td className="cell-muted">{r.recruiter?.name || '—'}</td>
+                      </>
+                    )}
                     <td className="cell-muted">{r.tlName || r.tl || "—"}</td>
-                    <td className="cell-muted">{r.bde?.name || '—'}</td>
-                    <td className="cell-muted">{r.priority || '—'}</td>
-                    <td className="cell-muted">{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
-                    <td className="cell-muted">{r.closingDate || '—'}</td>
+                    {wideCols && (
+                      <>
+                        <td className="cell-muted">{r.bde?.name || '—'}</td>
+                        <td className="cell-muted">{r.priority || '—'}</td>
+                        <td className="cell-muted">{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
+                        <td className="cell-muted">{r.closingDate || '—'}</td>
+                      </>
+                    )}
                     <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
                   </tr>
                 ))}
                 {openRows.length === 0 && (
-                  <tr><td colSpan="17" className="small-muted" style={{ padding: 16 }}>No open requirements in your scope.</td></tr>
+                  <tr><td colSpan={wideCols ? 16 : 9} className="small-muted" style={{ padding: 16 }}>No open requirements in your scope.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
-            <Pager page={pagedOpen} noun="open requirements" />
+          <Pager page={pagedOpen} noun="open requirements" />
+        </>
+      )}
+
+      {view === 'closed' && (
+        <>
+          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            {`${closedRows.length} closed requirement(s) — Closed, Filled, Cancelled or On Hold.`}
+          </div>
+          <div className="tbl-wrap tbl-fit">
+            <table>
+              <thead>
+                <tr>
+                  <th>Requirement ID</th><th>Job Title</th><th>Client / Internal</th><th>Department</th>
+                  {wideCols && <th>Location</th>}
+                  <th>Openings</th><th>Filled</th><th>Remaining</th>
+                  {wideCols && <><th>Matching</th><th>Recruiter</th></>}
+                  <th>TL</th>
+                  {wideCols && <><th>BDE</th><th>Priority</th><th>Created</th><th>Closing</th></>}
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedClosed.slice.map((r) => (
+                  <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
+                    <td><b>{r.reqCode || r.id.slice(0, 8)}</b></td>
+                    <td>{r.title}</td>
+                    <td className="cell-muted">{clientNameOf(r)}</td>
+                    <td className="cell-muted">{r.department || '—'}</td>
+                    {wideCols && <td className="cell-muted">{r.location || '—'}</td>}
+                    <td className="cell-muted">{r.openings || 1}</td>
+                    <td className="cell-muted">{r.filled ?? 0}</td>
+                    <td><b>{r.remaining ?? r.openings}</b></td>
+                    {wideCols && (
+                      <>
+                        <td onClick={(e) => { e.stopPropagation(); navigate(`/requirements/${r.id}`); }}>
+                          <span className="link-btn">{matchCounts[r.id] ?? r.matchingCandidates ?? '—'}</span>
+                        </td>
+                        <td className="cell-muted">{r.recruiter?.name || '—'}</td>
+                      </>
+                    )}
+                    <td className="cell-muted">{r.tlName || r.tl || "—"}</td>
+                    {wideCols && (
+                      <>
+                        <td className="cell-muted">{r.bde?.name || '—'}</td>
+                        <td className="cell-muted">{r.priority || '—'}</td>
+                        <td className="cell-muted">{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
+                        <td className="cell-muted">{r.closingDate || '—'}</td>
+                      </>
+                    )}
+                    <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
+                  </tr>
+                ))}
+                {closedRows.length === 0 && (
+                  <tr><td colSpan={wideCols ? 16 : 9} className="small-muted" style={{ padding: 16 }}>No closed requirements in your scope.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pager page={pagedClosed} noun="closed requirements" />
         </>
       )}
 

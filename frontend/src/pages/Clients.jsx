@@ -89,6 +89,13 @@ export default function Clients() {
 
   // 624 clients came in with the real data, so the table shows a page at a
   // time. The full list still feeds every count and dropdown above it.
+  // FIT THE WINDOW, DO NOT SCROLL SIDEWAYS. Thirteen columns overflowed any
+  // laptop, and on this data Client Code, Business Type, GST, TDS, Account
+  // Manager, BDE and Expiry are almost all blank — the source sheets never
+  // recorded them. They are off by default and one click brings them back;
+  // the client detail page shows everything regardless.
+  const [wideCols, setWideCols] = useState(false);
+
   const pagedClients = usePaged(clients);
 
   function load() {
@@ -132,6 +139,12 @@ export default function Clients() {
 
       {/* Clients and Requirements are one module now — this is its tab strip. */}
       <ClientModuleTabs active="clients" />
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setWideCols((v) => !v)}>
+          {wideCols ? 'Fewer columns' : 'All columns'}
+        </button>
+      </div>
 
       {showForm && (
       <Modal
@@ -520,25 +533,32 @@ export default function Clients() {
         <table>
           <thead>
             <tr>
-              <th>Client Code</th><th>Client</th><th>Industry</th><th>Business Type</th><th>Location</th>
-              <th>GST</th><th>TDS</th><th>Account Manager</th><th>BDE</th>
-              <th>Agreement</th><th>Expiry</th><th>Open Requirements</th>{/* §12 */}<th>Next Action</th>
+              {wideCols && <th>Client Code</th>}
+              <th>Client</th><th>Industry</th>
+              {wideCols && <><th>Business Type</th><th>GST</th><th>TDS</th><th>Account Manager</th><th>BDE</th></>}
+              <th>Location</th><th>Agreement</th>
+              {wideCols && <th>Expiry</th>}
+              <th>Open Requirements</th>{/* §12 */}<th>Next Action</th>
             </tr>
           </thead>
           <tbody>
             {pagedClients.slice.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
-                <td><b>{c.clientCode || '—'}</b></td>
+                {wideCols && <td><b>{c.clientCode || '—'}</b></td>}
                 <td>{c.name}</td>
                 <td className="cell-muted">{c.industry || '—'}</td>
-                <td className="cell-muted">{c.businessType || '—'}</td>
+                {wideCols && (
+                  <>
+                    <td className="cell-muted">{c.businessType || '—'}</td>
+                    <td className="cell-muted">{c.gst || '—'}</td>
+                    <td className="cell-muted">{c.tdsPercent != null ? `${c.tdsPercent}%` : '—'}</td>
+                    <td className="cell-muted">{c.accountManager || '—'}</td>
+                    <td className="cell-muted">{c.bdeOwner || '—'}</td>
+                  </>
+                )}
                 <td className="cell-muted">{c.location || '—'}</td>
-                <td className="cell-muted">{c.gst || '—'}</td>
-                <td className="cell-muted">{c.tdsPercent != null ? `${c.tdsPercent}%` : '—'}</td>
-                <td className="cell-muted">{c.accountManager || '—'}</td>
-                <td className="cell-muted">{c.bdeOwner || '—'}</td>
                 <td><span className={`status ${agreementBadgeClass(c.agreementStatus)}`}>{agreementStatusLabel(c.agreementStatus)}</span></td>
-                <td className="cell-muted">{c.agreementEnd || '—'}</td>
+                {wideCols && <td className="cell-muted">{c.agreementEnd || '—'}</td>}
                 <td>{openCount(c.id)}</td>
                 {/* §12 — what is owed on this client, and by whom. Without it
                     the Clients screen is a directory rather than a worklist. */}
@@ -554,7 +574,7 @@ export default function Clients() {
               </tr>
             ))}
             {clients.length === 0 && (
-              <tr><td colSpan="13" className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
+              <tr><td colSpan={wideCols ? 13 : 6} className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
             )}
           </tbody>
         </table>
