@@ -282,12 +282,19 @@ model Requirement {
   portalPublishedBy   String? // user id of whoever published it
   portalUnpublishedAt DateTime?
 
-  recruiterId String?
-  recruiter   User?    @relation("RecruiterRequirements", fields: [recruiterId], references: [id])
-  bdeId       String?
-  bde         User?    @relation("BdeRequirements", fields: [bdeId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  // THE SEAT that owns this requirement, beside the person. A requirement
+  // worked by MED-1 stays MED-1 work after the person in MED-1 changes.
+  positionId   String?
+  position     Position? @relation(fields: [positionId], references: [id])
+  // Snapshotted, because a position can be renamed and this must still say
+  // what it said at the time.
+  positionCode String?
+  recruiterId  String?
+  recruiter    User?     @relation("RecruiterRequirements", fields: [recruiterId], references: [id])
+  bdeId        String?
+  bde          User?     @relation("BdeRequirements", fields: [bdeId], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   applications Application[]
   invoices     Invoice[]
@@ -525,6 +532,48 @@ model Team {
   @@unique([departmentId, name])
 }
 
+// A POSITION IS A SEAT, AND IT OUTLIVES THE PERSON SITTING IN IT.
+//
+// MED-1, MED-2, Non IT-03, Edu BDE 1 — the company already staffs and
+// reports by these; the source sheets are full of them. When the person in
+// MED-1 resigns and somebody else takes the desk, the SEAT keeps its work
+// history and the new holder starts adding to it.
+model Position {
+  id         String   @id @default(cuid())
+  code       String   @unique // MED-1, Non IT-03, EDU BDE 1
+  name       String? // "Medical Recruiter 1"
+  department String?
+  team       String?
+  active     Boolean  @default(true)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  assignments  PositionAssignment[]
+  requirements Requirement[]
+
+  @@index([department])
+}
+
+// ONE ROW PER TENURE. `toDate` null means they are sitting in it now.
+//
+// A column on Employee would say who holds MED-1 today and nothing else.
+// The question is a HISTORY — who held it, between which dates — and that
+// is a row per tenure.
+model PositionAssignment {
+  id         String   @id @default(cuid())
+  positionId String
+  position   Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fromDate   String // YYYY-MM-DD
+  toDate     String? // null = currently holding it
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([positionId])
+  @@index([employeeId])
+}
+
 // THE SECOND LEVEL OF THE HIERARCHY: Department -> Specialisation.
 //
 //   Medical -> MBBS, Dermatology, Gynaecology, Paediatrics, Cardiology
@@ -654,6 +703,7 @@ model Employee {
   fnfRequests               FnfRequest[]
   leaveBalances             LeaveBalance[]
   assetsHeld                Asset[]
+  positionAssignments       PositionAssignment[]
 }
 
 // Generic table backing the smaller, similarly-shaped HRMS self-service areas
@@ -1672,6 +1722,10 @@ model ApplicationStageEvent {
   reasonCategory   String? // Skills Mismatch | Salary Expectation | …
   reasonDetail     String? // the detailed, free-text reason
 
+  // Which SEAT moved this candidate, at the moment it was moved.
+  actorPositionId   String?
+  actorPositionCode String?
+
   @@index([candidateId])
   @@index([applicationId])
 }
@@ -1748,10 +1802,14 @@ model ApplicationFollowUp {
   escalatedSuperAdminAt DateTime?
   escalationLevel       Int       @default(0)
 
-  createdById   String?
-  createdByName String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdById       String?
+  createdByName     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  // The SEAT that owns this follow-up — what "did this desk do its
+  // follow-ups" is counted over.
+  ownerPositionId   String?
+  ownerPositionCode String?
 
   @@index([applicationId])
   @@index([candidateId])

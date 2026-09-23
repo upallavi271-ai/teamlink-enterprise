@@ -199,6 +199,7 @@ export const ACCOUNTS_ITEMS = [
 export const ADMIN_ITEMS = [
   leaf('🏢', '/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
   leaf('🗂️', '/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
+  leaf('💺', '/admin/positions', 'Positions', [['administration', 'Departments & Teams', 'view']]),
   leaf('👥', '/employees', 'Employee Management', [['administration', 'Users', 'view']]),
   leaf('👤', '/admin/users', 'Users', [['administration', 'Users', 'view']]),
   leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),

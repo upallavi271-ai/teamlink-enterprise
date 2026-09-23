@@ -17,6 +17,7 @@
 
 const express = require('express');
 const prisma = require('../db');
+const { stampFor } = require('../utils/positions');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const {
   applicationWhere, isAssignedTo, scopeOf, scopeLabel, OUT_OF_SCOPE,
@@ -388,6 +389,9 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'edit'), async
         applicationId: application.id,
         candidateId: application.candidateId,
         requirementId: application.requirementId,
+        // The SEAT this follow-up belongs to — what "did this desk do its
+        // follow-ups" is counted over.
+        ...(await stampFor(req.user, 'owner')),
         ...snap,
         lastContactedAt,
         contactMode,

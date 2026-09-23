@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const { stampFor } = require('../utils/positions');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 // The pipeline's workflow-action guard. Stage ownership is part of THE
 // permission engine now, not a role list in this file.
@@ -116,6 +117,9 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
       actorUserId: req.user.id,
       actorName: req.user.name,
       actorRole: req.user.atsRole || req.user.role,
+      // THE SEAT, beside the person — so this stays MED-1 work after the
+      // person in MED-1 changes. Contributes nothing where no seat is held.
+      ...(await stampFor(req.user, 'actor')),
     },
   });
   await logAudit({ userId: req.user.id, action: 'Candidate added to pipeline', entity: 'Application', entityId: application.id, toValue: 'New' });
@@ -224,6 +228,7 @@ async function applyStageMove(user, applicationId, body = {}) {
       actorUserId: user.id,
       actorName: user.name,
       actorRole: user.atsRole || user.role,
+      ...(await stampFor(user, 'actor')),
       actorSide: ['CLIENT'].includes(user.atsRole || user.role) ? 'Client' : 'Internal',
       requirementId: existing.requirementId,
       requirementTitle: existing.requirement ? existing.requirement.title : null,

@@ -48,6 +48,7 @@ import AccountsReports from './pages/reports/AccountsReports.jsx';
 
 import CompanySetup from './pages/admin/CompanySetup.jsx';
 import Departments from './pages/admin/Departments.jsx';
+import Positions from './pages/admin/Positions.jsx';
 import Users from './pages/admin/Users.jsx';
 import RoleCatalog from './pages/admin/RoleCatalog.jsx';
 import Integrations from './pages/admin/Integrations.jsx';
@@ -174,6 +175,7 @@ export default function App() {
         {/* Administration */}
         <Route path="admin/company" element={<CompanySetup />} />
         <Route path="admin/departments" element={<Departments />} />
+        <Route path="admin/positions" element={<Positions />} />
         <Route path="admin/users" element={<Users />} />
         <Route path="admin/roles" element={<RoleCatalog />} />
         <Route path="admin/integrations" element={<Integrations />} />
