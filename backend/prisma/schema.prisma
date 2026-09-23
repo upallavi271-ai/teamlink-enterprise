@@ -212,6 +212,39 @@ model Client {
   agreementSignedCopyName          String?
   agreementSignedCopyNote          String?
 
+  // --- The executed agreement: both seals, and a verified signature -----
+  //
+  // We stamp and sign before sending; the client stamps and signs on the
+  // signing page; then the client verifies who they are before it counts.
+  agreementCompanyStampFile String?
+  agreementCompanyStampName String?
+  agreementCompanySignFile  String?
+  agreementCompanySignName  String?
+  agreementCompanySignedBy  String?
+  agreementCompanySealedAt  DateTime?
+
+  agreementClientStampFile String?
+  agreementClientStampName String?
+  agreementClientSignFile  String?
+  agreementClientSignName  String?
+  agreementClientSealedAt  DateTime?
+
+  agreementVerifyMethod  String? // AADHAAR | ALTERNATIVE
+  // THE FULL AADHAAR NUMBER IS NEVER STORED. Section 29 of the Aadhaar Act
+  // forbids an unauthenticated entity retaining it. The last four digits are
+  // for display; the provider transaction id is what proves the signature.
+  agreementAadhaarLast4  String?
+  agreementEsignTxnId    String?
+  agreementEsignProvider String?
+  agreementVerifyMobile  String? // masked for display
+  agreementVerifiedAt    DateTime?
+  // Hashed, expiring, attempt-counted — never the OTP itself. A plaintext
+  // column here would make the database a way to sign an agreement.
+  agreementOtpHash       String?
+  agreementOtpExpiresAt  DateTime?
+  agreementOtpAttempts   Int       @default(0)
+  agreementVerifyNote    String?
+
   requirements Requirement[]
   users        User[]
   invoices     Invoice[]
