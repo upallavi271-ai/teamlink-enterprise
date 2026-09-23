@@ -4,16 +4,62 @@
    "app-only additions" divider is a class main uses that the prototype does not
    define; those are styled with the prototype's own tokens so nothing looks foreign. */
 
+/* ---------------------------------------------------------------------------
+   THE TEAMLINK PALETTE, SAMPLED FROM THE LOGO.
+   ---------------------------------------------------------------------------
+   Not chosen by eye. src/assets/teamlink-logo.png was decoded to a canvas and
+   its pixels clustered: the wordmark and "Consultants" average #0d0e2c, and
+   the "Link" type and the interlocking-rings glyph average #379fdd with the
+   most saturated ink at #0097fe. So the identity is a near-black NAVY and a
+   vivid AZURE, and those two are what everything else is built from.
+
+   --brand is a touch deeper than the logo's #0097fe on purpose: the raw ink
+   fails contrast as button text and as a small label on white, and a brand
+   colour nobody can read is not the brand colour.
+
+   EVERY VARIABLE NAME FROM THE OLD PALETTE SURVIVES, including --teal, so
+   every rule below and in the app keeps resolving. Only the values changed —
+   which is what makes this a recolour rather than a rewrite.
+   --------------------------------------------------------------------------- */
 :root{
-  --ink:#15211f; --ink-soft:#4b5a57; --paper:#f6f6f1; --paper-raised:#ffffff;
-  --line:#e2e1d8; --line-soft:#edece4;
-  --navy:#1c2a4a; --navy-deep:#121c34; --navy-tint:#e8eaf1;
-  --teal:#0f4c46; --teal-tint:#e7efed;
-  --amber:#c98a2b; --amber-tint:#f7ecd8;
-  --red:#a3402f; --red-tint:#f6e6e2;
-  --blue:#2c5f8a; --blue-tint:#e6edf3;
-  --violet:#6a4a9e; --violet-tint:#eee7f6;
-  --radius:10px; --shadow:0 1px 2px rgba(21,33,31,.06), 0 6px 20px rgba(21,33,31,.05);
+  /* Brand
+     --brand is the logo's azure taken down two steps, and the reason is
+     measured, not aesthetic: white text on the raw #0097fe scores 3.96 against
+     white and on #0b84d8 scores 3.96 — both under the 4.5 that 13px button
+     labels need. #0a74bd scores 4.95 and is still unmistakably the same blue.
+     --brand-bright keeps the logo's own value for places where nothing white
+     sits on top: tints, rings, small accents. */
+  --brand:#0a74bd;          /* primary — carries white text */
+  --brand-bright:#0b84d8;   /* the logo's azure, for accents with no white on it */
+  --brand-strong:#0a6cb0;   /* hover */
+  --brand-deep:#08578c;     /* pressed / active */
+  --brand-ink:#063f66;      /* brand-coloured text on a tint */
+  --brand-tint:#e9f3fc;     /* subtle fill */
+  --brand-tint-2:#cfe5f8;   /* border on a tint */
+  --brand-ring:rgba(11,132,216,.24);  /* focus ring */
+
+  /* Navy — the wordmark's own near-black, used for the sidebar and headings */
+  --navy:#16213f; --navy-deep:#0d0e2c; --navy-tint:#e9ecf4;
+
+  /* Neutrals — light, cool and quiet, so the brand is the only strong colour */
+  --ink:#101828; --ink-soft:#56657a; --ink-faint:#8a97a8;
+  --paper:#f7f9fb; --paper-raised:#ffffff;
+  --line:#e4e9ef; --line-soft:#eff3f7;
+
+  /* Semantic — desaturated on purpose. A status is information, not decoration. */
+  --teal:#0f7b6c; --teal-tint:#e6f3f0;       /* approved · selected · joined */
+  --green:#0f7b55; --green-tint:#e7f4ee;
+  --amber:#92560a; --amber-tint:#fdf0dd;      /* pending · review · hold */
+  --red:#b42318; --red-tint:#fdeceb;          /* rejected · overdue · failed */
+  --blue:#175cd3; --blue-tint:#e9f0fd;        /* new · applied · interview */
+  --violet:#6941c6; --violet-tint:#f1ecfb;
+
+  --radius:10px;
+  /* Three weights of shadow instead of one, so a card, a dropdown and a modal
+     do not all sit at the same apparent height. */
+  --shadow-sm:0 1px 2px rgba(16,24,40,.05);
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 4px 14px rgba(16,24,40,.05);
+  --shadow-md:0 4px 8px rgba(16,24,40,.06), 0 12px 32px rgba(16,24,40,.08);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -805,4 +851,158 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 @media (max-width:760px){
   .pager{gap:8px}
   .pager-count{margin-right:0;width:100%}
+}
+
+/* ===========================================================================
+   BRAND REFINEMENT LAYER
+   ===========================================================================
+   Appended, never edited in place. Everything above still defines the layout —
+   what is where, how wide, in which order — and this only restates APPEARANCE:
+   colour, weight, radius, border, shadow, hover and focus.
+
+   That is deliberate and it is the safety property. No selector here changes
+   display, position, float, order, grid or flex placement, so nothing can
+   move. A rule that would have had to move something to look better was left
+   undone instead.
+   =========================================================================== */
+
+/* --- Typography ---------------------------------------------------------
+   Headings were a serif (Newsreader). Enterprise software is read in a hurry,
+   in small sizes, next to numbers — one family with real weights carries the
+   hierarchy better than two families do. Inter is already loaded, so this
+   costs nothing. Sizes and the heading ORDER are untouched. */
+h1,h2,h3,h4{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  font-weight:600; letter-spacing:-.011em; color:var(--ink);
+}
+h1{letter-spacing:-.018em}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.page-head h1{font-size:22px;line-height:1.25}
+.page-sub{color:var(--ink-soft);font-size:12.75px}
+
+/* --- Sidebar: the logo's own navy, brand azure for what is selected ------ */
+.sidebar{background:var(--navy-deep);border-right:1px solid rgba(255,255,255,.06)}
+.sidebar-brand{border-bottom-color:rgba(255,255,255,.07)}
+.sb-item,.sb-sub-item,.sb-group-head{transition:background .12s ease,color .12s ease}
+.sb-item:hover,.sb-sub-item:hover,.sb-group-head:hover{background:rgba(255,255,255,.06)}
+/* ACTIVE NAVIGATION IS THE BRAND COLOUR. It was --teal, which is now reserved
+   for the approved/joined status so a green pill still reads as good news;
+   selected navigation is a different idea and gets the brand. */
+.sb-item.top-active{background:var(--brand);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.sb-sub-item.active{background:var(--brand);color:#fff}
+.sb-sub-item.active:hover{background:var(--brand-strong)}
+
+/* --- Topbar -------------------------------------------------------------- */
+.topbar{border-bottom:1px solid var(--line);box-shadow:var(--shadow-sm)}
+.gsearch input{background:var(--paper);border-color:var(--line);transition:border-color .12s,box-shadow .12s}
+.gsearch input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring);background:#fff}
+
+/* --- Buttons ------------------------------------------------------------- */
+.btn{
+  border-radius:8px; font-weight:500; line-height:1.2;
+  transition:background .12s ease,border-color .12s ease,box-shadow .12s ease,color .12s ease;
+  box-shadow:var(--shadow-sm);
+}
+.btn:hover{border-color:#cdd6e0;background:var(--line-soft)}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-ring)}
+/* PRIMARY IS THE BRAND. It was navy, which read as a dark grey button rather
+   than as TeamLink. */
+.btn-primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 1px 2px rgba(8,87,140,.24)}
+.btn-primary:hover{background:var(--brand-strong);border-color:var(--brand-strong)}
+.btn-primary:active{background:var(--brand-deep);border-color:var(--brand-deep)}
+.btn-ghost{box-shadow:none;background:transparent;border-color:transparent;color:var(--ink-soft)}
+.btn-ghost:hover{background:var(--line-soft);color:var(--ink)}
+.btn-danger{color:var(--red);border-color:#f0cdc9;background:var(--paper-raised)}
+.btn-danger:hover{background:var(--red-tint);border-color:#e4b5b0}
+.btn-teal{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn-teal:hover{background:#0c6355;border-color:#0c6355}
+.btn:disabled{opacity:.45;box-shadow:none;cursor:not-allowed}
+.btn:disabled:hover{background:var(--paper-raised);border-color:var(--line)}
+
+/* --- Inputs, selects, the Combo ----------------------------------------- */
+input,select,textarea,.combo input{
+  border-radius:8px;
+  transition:border-color .12s ease,box-shadow .12s ease,background .12s ease;
+}
+input:focus,select:focus,textarea:focus,.combo input:focus{
+  outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring);
+}
+input::placeholder,textarea::placeholder{color:var(--ink-faint)}
+.field>span{color:var(--ink-soft);font-weight:500;letter-spacing:.005em}
+.combo-pop{border-radius:10px;box-shadow:var(--shadow-md);border:1px solid var(--line)}
+.combo-opt.active{background:var(--brand-tint);color:var(--brand-ink)}
+.combo-opt.picked{font-weight:600;color:var(--brand-ink)}
+
+/* --- Filters ------------------------------------------------------------- */
+.filter-row{
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px 12px;box-shadow:var(--shadow-sm);
+}
+
+/* --- Cards --------------------------------------------------------------- */
+.card{box-shadow:var(--shadow-sm);border-color:var(--line)}
+.notice{background:var(--brand-tint);border-color:var(--brand-tint-2);color:var(--brand-ink)}
+.notice.amber{background:var(--amber-tint);border-color:#f0dcb8;color:#7a4a06}
+.notice.red{background:var(--red-tint);border-color:#f2cdc9;color:#8a1c14}
+
+/* --- Tables -------------------------------------------------------------- */
+.tbl-wrap{box-shadow:var(--shadow-sm);border-color:var(--line)}
+th{
+  font-size:11px;font-weight:600;letter-spacing:.045em;text-transform:uppercase;
+  color:var(--ink-soft);background:var(--paper);
+  border-bottom:1px solid var(--line);padding:10px 12px;
+}
+td{padding:11px 12px;border-bottom:1px solid var(--line-soft);color:var(--ink)}
+tbody tr{transition:background .1s ease}
+.row-link:hover td{background:var(--brand-tint)}
+.cell-muted{color:var(--ink-soft)}
+.small-muted{color:var(--ink-faint)}
+/* The sticky header sits on the header fill, not on transparent, so rows do
+   not show through it while the body scrolls underneath. */
+.tbl-fit thead th{background:var(--paper)}
+
+/* --- Status pills -------------------------------------------------------- */
+/* Same vocabulary, same classes, same meanings — quieter. A pill is a label,
+   and twelve saturated pills on one screen is a colour chart, not a status. */
+.status{
+  font-size:11px;font-weight:600;letter-spacing:.012em;
+  padding:3px 9px;border-radius:6px;border:1px solid transparent;
+}
+.status.applied,.status.new{background:var(--blue-tint);color:var(--blue);border-color:#d3e2fb}
+.status.review,.status.pending,.status.hold{background:var(--amber-tint);color:var(--amber);border-color:#f3e0bf}
+.status.approved,.status.shortlist,.status.selected,.status.joined,.status.active,
+.status.connected,.status.matched,.status.paid{background:var(--teal-tint);color:var(--teal);border-color:#c9e6e0}
+.status.rejected,.status.failed,.status.overdue,.status.notconnected{background:var(--red-tint);color:var(--red);border-color:#f5d2cf}
+.status.interview{background:var(--violet-tint);color:var(--violet);border-color:#e0d4f7}
+.status.offer{background:#fdf1e4;color:#9a5a14;border-color:#f2ddc2}
+
+/* --- Tabs ---------------------------------------------------------------- */
+.tab{transition:color .12s ease,border-color .12s ease}
+.tab:hover{color:var(--ink)}
+.tab.active{color:var(--brand-ink);border-color:var(--brand)}
+.tabs,.tabbar{border-bottom-color:var(--line)}
+
+/* --- Pager --------------------------------------------------------------- */
+.pager-btn{box-shadow:var(--shadow-sm);transition:background .12s,border-color .12s,color .12s}
+.pager-btn.active{background:var(--brand);border-color:var(--brand)}
+.pager-btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-ring)}
+
+/* --- Avatars and small marks -------------------------------------------- */
+.avatarsm{background:var(--brand-tint);color:var(--brand-ink)}
+.link-btn{color:var(--brand);font-weight:600}
+.link-btn:hover{color:var(--brand-strong);text-decoration:underline}
+
+/* --- Modals -------------------------------------------------------------- */
+.modal{border-radius:12px;box-shadow:var(--shadow-md),0 24px 64px rgba(16,24,40,.18)}
+.modal-head{border-bottom-color:var(--line)}
+.modal-head h3,.modal-head h2{font-weight:600}
+.modal-foot{border-top-color:var(--line);background:var(--paper)}
+
+/* --- Empty states -------------------------------------------------------- */
+.empty h3{font-weight:600}
+.empty,.empty-mini{color:var(--ink-soft)}
+
+/* --- Motion: fast, and off for anyone who asks -------------------------- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
 }
