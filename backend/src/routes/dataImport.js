@@ -250,6 +250,20 @@ async function unguessableHash() {
 // WOULD do — including whether the key already exists and whether every
 // reference resolves — and returns that verdict without touching the database.
 // ---------------------------------------------------------------------------
+// FIND A CANDIDATE BY WHATEVER THE SHEET USED TO NAME THEM.
+//
+// The Candidates sheet keys on email, or phone, or — where the source has
+// neither — an External Ref. The Applications and Invoices sheets point BACK
+// at a candidate with the same value, so a lookup has to try the plain key
+// and the reference form. Trying only the plain key failed 10,218
+// applications whose candidates had been imported perfectly well moments
+// earlier.
+function findCandidate(ix, value) {
+  const v = ix.norm(value);
+  if (!v) return null;
+  return ix.candidate.get(v) || ix.candidate.get(ix.norm(`ref:${value}`)) || null;
+}
+
 const HANDLERS = {
   async department({ data, ix, dry }) {
     const name = data.name;
@@ -506,7 +520,7 @@ const HANDLERS = {
   },
 
   async application({ data, ix, dry }) {
-    const candidateId = ix.candidate.get(ix.norm(data._candidate));
+    const candidateId = findCandidate(ix, data._candidate);
     if (!candidateId) throw new Error(`candidate "${data._candidate}" is not on the Candidates sheet or in the system`);
     const requirementId = ix.requirement.get(ix.norm(data._requirement));
     if (!requirementId) throw new Error(`requirement "${data._requirement}" is not on the Requirements sheet or in the system`);
@@ -585,7 +599,7 @@ const HANDLERS = {
     Object.entries(data).forEach(([k, v]) => { if (!k.startsWith('_') && v !== null) fields[k] = v; });
     fields.clientId = clientId;
     if (data._candidate) {
-      const cid = ix.candidate.get(ix.norm(data._candidate));
+      const cid = findCandidate(ix, data._candidate);
       if (!cid) throw new Error(`candidate "${data._candidate}" is not on the Candidates sheet or in the system`);
       fields.candidateId = cid;
     }

@@ -596,7 +596,7 @@ const MODE_MAP = { online: 'Online', offline: 'In Person', telephonic: 'Telephon
     const code = codeFor.get(a.reqKey);
     if (!cand || !code) return;
     appRows.push({
-      'Candidate Email or Phone': cand.email || cand.phone,
+      'Candidate Email or Phone': cand.email || cand.phone || cand.externalRef,
       'Requirement Code': code,
       Stage: a.stage || 'NEW',
       'Interview Date/Time': a.interviewDate || '',
@@ -617,7 +617,7 @@ const MODE_MAP = { online: 'Online', offline: 'In Person', telephonic: 'Telephon
     invRows.push({
       'Invoice Number': i.number,
       'Client Name': i.client,
-      'Candidate Email or Phone': cand ? (cand.email || cand.phone) : '',
+      'Candidate Email or Phone': cand ? (cand.email || cand.phone || cand.externalRef) : '',
       'Invoice Date': i.date,
       Amount: i.amount,
       'GST %': i.gstPercent,

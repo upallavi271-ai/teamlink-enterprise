@@ -276,7 +276,7 @@ const SHEETS = [
     title: 'Applications — which candidate is in which pipeline, and where',
     note: 'THIS SHEET IS THE PIPELINE. One row per candidate-per-requirement: the same candidate can appear on several requirements, each at its own stage. Candidate and Requirement must already appear on their own sheets. Stage must be one of the codes in the dropdown — that is what drives the pipeline board. There is no Owner column on purpose: who a candidate is waiting on is WORKED OUT from the stage plus the recruiter, BDE and TL named on the requirement, so it can never disagree with them. Assign people on the Requirements sheet.',
     columns: [
-      c('Candidate Email or Phone', '_candidate', { req: true, help: 'Must match a row on the Candidates sheet.', eg: 'arjun.mehta@example.com' }),
+      c('Candidate Email or Phone', '_candidate', { req: true, help: 'Whatever identifies them on the Candidates sheet — their email, their phone, or their External Ref where the source records neither.', eg: 'arjun.mehta@example.com' }),
       c('Requirement Code', '_requirement', { req: true, help: 'Must match a row on the Requirements sheet.', eg: 'REQ-2026-001' }),
       c('Stage', 'stage', { req: true, t: 'list', list: 'stage', help: 'Where this candidate currently sits in the pipeline.', eg: 'TL_REVIEW' }),
       c('Source', 'source', { eg: 'Naukri' }),
@@ -307,7 +307,7 @@ const SHEETS = [
     columns: [
       c('Invoice Number', 'invoiceNumber', { req: true, help: 'Unique.', eg: 'INV-2026-0041' }),
       c('Client Name', '_client', { req: true, eg: 'Orbit Software Solutions' }),
-      c('Candidate Email or Phone', '_candidate', { help: 'The placement this invoice is for.', eg: 'arjun.mehta@example.com' }),
+      c('Candidate Email or Phone', '_candidate', { help: 'The placement this invoice is for — email, phone or External Ref.', eg: 'arjun.mehta@example.com' }),
       c('Requirement Code', '_requirement', { eg: 'REQ-2026-001' }),
       c('Invoice Date', 'invoiceDate', { req: true, t: 'date', eg: '2026-09-15' }),
       c('Due Date', 'dueDate', { t: 'date', eg: '2026-09-21' }),
