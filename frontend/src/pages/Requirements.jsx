@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
+import Pager, { usePaged } from '../components/Pager.jsx';
 import {
   deptOptions, LOCS, PRIORITIES, priorityBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive, REQUIREMENT_STATUS_CODES,
@@ -83,6 +84,26 @@ export default function Requirements() {
   // The server already applied every filter; these are just the two views.
   const rows = requirements;
   const openRows = useMemo(() => requirements.filter((r) => requirementIsLive(r.status)), [requirements]);
+  // 1,939 requirements came in with the real data. Both views show a page at
+  // a time; `rows` and `openRows` stay whole, so the counts above the table
+  // and the agreement report below it keep counting everything.
+  const pagedAll = usePaged(rows);
+  const pagedOpen = usePaged(openRows);
+
+  // MATCH COUNTS FOR THE ROWS ON SCREEN, and only those.
+  //
+  // The list endpoint used to score every candidate against every requirement
+  // to fill this column — 2,018 x 6,312 comparisons on the real data, which
+  // stopped the endpoint answering at all. The server now counts a named set,
+  // so the page asks for the twenty-five it is about to draw.
+  const [matchCounts, setMatchCounts] = useState({});
+  const openPageIds = pagedOpen.slice.map((r) => r.id).join(',');
+  useEffect(() => {
+    if (view !== 'open' || !openPageIds) return;
+    api.get('/requirements/match-counts', { params: { ids: openPageIds } })
+      .then((res) => setMatchCounts((m) => ({ ...m, ...res.data })))
+      .catch(() => {});
+  }, [view, openPageIds]);
 
   // The prototype's agreementMonthReport() — counts derived from each client's
   // own agreement milestones, months with no activity are not shown.
@@ -190,54 +211,57 @@ export default function Requirements() {
       )}
 
       {view === 'all' && (
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Requirement ID</th><th>Job Title</th><th>Client</th><th>Department</th><th>Location</th>
-                <th>Experience</th><th>Recruiter</th><th>TL</th><th>BDE</th>
-                <th>Priority</th><th>Openings</th><th>Target Date</th><th>Portal Sync</th><th>Status</th>{/* §13/§14 */}<th>Next Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
-                  <td><b>{r.reqCode || r.id.slice(0, 8)}</b></td>
-                  <td>{r.title}</td>
-                  <td className="cell-muted">{clientNameOf(r)}</td>
-                  <td className="cell-muted">{r.department || '—'}</td>
-                  <td className="cell-muted">{r.location || '—'}</td>
-                  <td className="cell-muted">{r.experience || '—'}</td>
-                  <td className="cell-muted">
-                    {r.recruiter?.name || '—'}
-                    {r.coRecruiterNames?.length ? ` +${r.coRecruiterNames.length}` : ''}
-                  </td>
-                  <td className="cell-muted">{r.tlName || r.tl || '—'}</td>
-                  <td className="cell-muted">{r.bde?.name || '—'}</td>
-                  <td><span className={`status ${priorityBadgeClass(r.priority)}`}>{r.priority}</span></td>
-                  <td>{r.openings}</td>
-                  <td className="cell-muted">{r.targetDate || r.closingDate || '—'}</td>
-                  <td className="cell-muted">{r.portalSyncStatus || 'Not Synced'}</td>
-                  <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
-                  {/* §13 / §14 — STATUS is what is happening; this is what to
-                      DO about it. Using the status as the action is what makes
-                      a list read like a database instead of a worklist. */}
-                  <td>
-                    {r.nextAction || <span className="small-muted">—</span>}
-                    {r.owner && (
-                      <div className="small-muted" style={{ fontSize: 11 }}>
-                        {r.owner}{r.ownerRole ? ` · ${r.ownerRole}` : ''}
-                      </div>
-                    )}
-                  </td>
+        <>
+          <div className="tbl-wrap tbl-fit">
+            <table>
+              <thead>
+                <tr>
+                  <th>Requirement ID</th><th>Job Title</th><th>Client</th><th>Department</th><th>Location</th>
+                  <th>Experience</th><th>Recruiter</th><th>TL</th><th>BDE</th>
+                  <th>Priority</th><th>Openings</th><th>Target Date</th><th>Portal Sync</th><th>Status</th>{/* §13/§14 */}<th>Next Action</th>
                 </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>No requirements match.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {pagedAll.slice.map((r) => (
+                  <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
+                    <td><b>{r.reqCode || r.id.slice(0, 8)}</b></td>
+                    <td>{r.title}</td>
+                    <td className="cell-muted">{clientNameOf(r)}</td>
+                    <td className="cell-muted">{r.department || '—'}</td>
+                    <td className="cell-muted">{r.location || '—'}</td>
+                    <td className="cell-muted">{r.experience || '—'}</td>
+                    <td className="cell-muted">
+                      {r.recruiter?.name || '—'}
+                      {r.coRecruiterNames?.length ? ` +${r.coRecruiterNames.length}` : ''}
+                    </td>
+                    <td className="cell-muted">{r.tlName || r.tl || '—'}</td>
+                    <td className="cell-muted">{r.bde?.name || '—'}</td>
+                    <td><span className={`status ${priorityBadgeClass(r.priority)}`}>{r.priority}</span></td>
+                    <td>{r.openings}</td>
+                    <td className="cell-muted">{r.targetDate || r.closingDate || '—'}</td>
+                    <td className="cell-muted">{r.portalSyncStatus || 'Not Synced'}</td>
+                    <td><span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span></td>
+                    {/* §13 / §14 — STATUS is what is happening; this is what to
+                        DO about it. Using the status as the action is what makes
+                        a list read like a database instead of a worklist. */}
+                    <td>
+                      {r.nextAction || <span className="small-muted">—</span>}
+                      {r.owner && (
+                        <div className="small-muted" style={{ fontSize: 11 }}>
+                          {r.owner}{r.ownerRole ? ` · ${r.ownerRole}` : ''}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>No requirements match.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pager page={pagedAll} noun="requirements" />
+        </>
       )}
 
       {view === 'open' && (
@@ -245,7 +269,7 @@ export default function Requirements() {
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 8 }}>
             {`${openRows.length} live requirement(s) — Open, Recruiter Assigned, Sourcing or Candidates Available.`}
           </div>
-          <div className="tbl-wrap">
+          <div className="tbl-wrap tbl-fit">
             <table>
               <thead>
                 <tr>
@@ -255,7 +279,7 @@ export default function Requirements() {
                 </tr>
               </thead>
               <tbody>
-                {openRows.map((r) => (
+                {pagedOpen.slice.map((r) => (
                   <tr key={r.id} className="row-link" onClick={() => navigate(`/requirements/${r.id}`)}>
                     <td><b>{r.reqCode || r.id.slice(0, 8)}</b></td>
                     <td>{r.title}</td>
@@ -266,7 +290,7 @@ export default function Requirements() {
                     <td className="cell-muted">{r.filled ?? 0}</td>
                     <td><b>{r.remaining ?? r.openings}</b></td>
                     <td onClick={(e) => { e.stopPropagation(); navigate(`/requirements/${r.id}`); }}>
-                      <span className="link-btn">{r.matchingCandidates ?? 0}</span>
+                      <span className="link-btn">{matchCounts[r.id] ?? r.matchingCandidates ?? '—'}</span>
                     </td>
                     <td className="cell-muted">{r.recruiter?.name || '—'}</td>
                     <td className="cell-muted">{r.tlName || r.tl || "—"}</td>
@@ -283,6 +307,7 @@ export default function Requirements() {
               </tbody>
             </table>
           </div>
+            <Pager page={pagedOpen} noun="open requirements" />
         </>
       )}
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
+import Pager, { usePaged } from '../components/Pager.jsx';
 import Modal from '../components/Modal.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
 import {
@@ -85,6 +86,10 @@ export default function Clients() {
     }, 250);
     return () => clearTimeout(t);
   }, [showForm, form.name, form.location, form.agreementFeePercent, form.gst, form.tdsPercent, form.paymentTerms, form.guaranteePeriod]);
+
+  // 624 clients came in with the real data, so the table shows a page at a
+  // time. The full list still feeds every count and dropdown above it.
+  const pagedClients = usePaged(clients);
 
   function load() {
     api.get('/clients').then((res) => setClients(res.data));
@@ -511,7 +516,7 @@ export default function Clients() {
       </Modal>
       )}
 
-      <div className="tbl-wrap">
+      <div className="tbl-wrap tbl-fit">
         <table>
           <thead>
             <tr>
@@ -521,7 +526,7 @@ export default function Clients() {
             </tr>
           </thead>
           <tbody>
-            {clients.map((c) => (
+            {pagedClients.slice.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
                 <td><b>{c.clientCode || '—'}</b></td>
                 <td>{c.name}</td>
@@ -554,6 +559,7 @@ export default function Clients() {
           </tbody>
         </table>
       </div>
+      <Pager page={pagedClients} noun="clients" />
     </div>
   );
 }

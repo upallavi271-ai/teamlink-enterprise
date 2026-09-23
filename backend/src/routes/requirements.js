@@ -219,13 +219,49 @@ router.get('/', async (req, res) => {
 
   const permissions = await requirementPermissions(req.user, null);
 
-  // How many candidates in the master list clear the match threshold for each
-  // requirement — the prototype's matchingCandidateCount(), computed live.
-  if (!permissions.matching) return res.json(requirements.map((r) => ({ ...r, permissions })));
+  // THE MATCH COUNT IS NO LONGER COMPUTED HERE. See /match-counts below.
+  //
+  // This used to load every candidate and call rankCandidates() once per
+  // requirement — fine against the demo data's 16 requirements and 24
+  // candidates (384 comparisons), and fatal against the real data's 2,018 and
+  // 6,312: TWELVE AND A HALF MILLION skill comparisons on every single request
+  // for the list. The endpoint stopped answering at all, which is how it was
+  // found.
+  //
+  // The screen only ever shows a page of rows, so it now asks for the counts
+  // of the rows it is actually drawing.
+  res.json(requirements.map((r) => ({ ...r, permissions })));
+});
+
+// Match counts for a NAMED SET of requirements — the ones on screen.
+//
+// 25 requirements against 6,312 candidates is ~158,000 comparisons and returns
+// in well under a second; the whole list was 12.5 million and never returned.
+// The cap is what keeps that true: ask for 200 and you get 200, ask for
+// everything and you get told no, rather than quietly bringing the API down
+// again.
+const MATCH_COUNT_LIMIT = 200;
+router.get('/match-counts', async (req, res) => {
+  const permissions = await requirementPermissions(req.user, null);
+  if (!permissions.matching) return res.json({});
+
+  const ids = String(req.query.ids || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!ids.length) return res.json({});
+  if (ids.length > MATCH_COUNT_LIMIT) {
+    return res.status(400).json({ error: `Ask for at most ${MATCH_COUNT_LIMIT} requirements at a time.` });
+  }
+
+  // Scoped like every other read: ids you may not see return nothing rather
+  // than an error, so a guessed id leaks neither a count nor its existence.
+  const rows = await prisma.requirement.findMany({
+    where: { AND: [requirementWhere(req.user), { id: { in: ids } }] },
+  });
+  if (!rows.length) return res.json({});
+
   const candidates = await prisma.candidate.findMany();
-  res.json(
-    requirements.map((r) => ({ ...r, matchingCandidates: rankCandidates(candidates, r).length, permissions })),
-  );
+  const out = {};
+  rows.forEach((r) => { out[r.id] = rankCandidates(candidates, r).length; });
+  return res.json(out);
 });
 
 // One lookup for every user id named anywhere on the assignment chain.

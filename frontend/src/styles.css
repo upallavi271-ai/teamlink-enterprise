@@ -760,3 +760,49 @@ body.ai-docked .content-col{padding-right:var(--ai-dock)}
 .stage-contents{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;
   font-size:11px;line-height:1.6;color:var(--ink-soft)}
 .stage-contents-item b{color:var(--ink);font-weight:600}
+
+/* --- Long lists: fit the window, page the rest -------------------------- */
+/* "mottham window lo fit ayyelaa chudu" — a table used to render every row,
+   so the page itself grew to 490 rows and the only way to the bottom was to
+   scroll past all of them. Two things fix that together: .tbl-fit caps the
+   table's height to the window and pins its header, and Pager cuts the rows
+   into pages. Either alone is not enough — paging still leaves the controls
+   below the fold on a short window, and a scroll box alone still holds 12,600
+   rows in the DOM. */
+.tbl-fit{max-height:calc(100vh - 290px);min-height:180px;overflow:auto}
+.tbl-fit thead th{
+  position:sticky;top:0;z-index:2;background:var(--paper-raised);
+  /* A sticky <th> loses its own border-bottom when the body scrolls under it,
+     so the line is drawn as a shadow that cannot be scrolled away. */
+  box-shadow:inset 0 -1px 0 var(--line);
+}
+/* Short windows and laptops: give the rows a fair share rather than a fixed
+   cap that leaves a stub of a table. */
+@media (max-height:820px){ .tbl-fit{max-height:calc(100vh - 250px)} }
+@media (max-height:680px){ .tbl-fit{max-height:calc(100vh - 210px)} }
+
+.pager{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px 2px 2px;font-size:12.5px;color:var(--ink-soft);
+}
+.pager-count{margin-right:auto}
+.pager-count strong{color:var(--ink);font-weight:600}
+.pager-nav{display:flex;align-items:center;gap:3px}
+.pager-btn{
+  min-width:30px;height:28px;padding:0 7px;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:6px;
+  font-size:12.5px;color:var(--ink);cursor:pointer;
+}
+.pager-btn:hover:not(:disabled){background:var(--line-soft)}
+.pager-btn.active{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:600}
+.pager-btn:disabled{opacity:.4;cursor:default}
+.pager-gap{padding:0 2px;color:var(--ink-soft)}
+.pager-size{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.pager-size select{
+  height:28px;padding:0 6px;border:1px solid var(--line);border-radius:6px;
+  background:var(--paper-raised);color:var(--ink);font-size:12.5px;
+}
+@media (max-width:760px){
+  .pager{gap:8px}
+  .pager-count{margin-right:0;width:100%}
+}

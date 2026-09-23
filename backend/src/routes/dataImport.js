@@ -410,22 +410,58 @@ const HANDLERS = {
     Object.entries(data).forEach(([k, v]) => { if (!k.startsWith('_') && v !== null) fields[k] = v; });
     fields.clientId = clientId;
 
-    // Assignment is by NAME on the sheet and by user id in the database.
+    // ASSIGNMENT IS BY NAME ON THE SHEET AND BY USER ID IN THE DATABASE, and
+    // those two do not always meet. `recruiterId` is a foreign key to a
+    // LOGIN, but a person imported from a spreadsheet may be an employee
+    // record with no login yet — that is the normal state of somebody whose
+    // name appears in four years of trackers and who has never been given an
+    // account.
+    //
+    // REFUSING THE ROW WAS WRONG. It failed 1,459 requirements, and because
+    // their codes then never registered, every application pointing at them
+    // failed too — 12,619 of them. One missing login took out the whole file.
+    //
+    // So: link the login when there is one, and when there is not, keep the
+    // NAME against the requirement instead of losing it. Creating a login to
+    // satisfy a foreign key would be worse — an account nobody asked for,
+    // with an address nobody can receive mail at.
+    const unlinked = [];
     if (data._recruiter) {
       const uid = ix.user.get(ix.norm(data._recruiter));
-      if (!uid) throw new Error(`recruiter "${data._recruiter}" has no login in the system`);
-      fields.recruiterId = uid;
+      if (uid && !String(uid).startsWith('dry:')) fields.recruiterId = uid;
+      else if (uid) fields.recruiterId = undefined; // a dry run's placeholder
+      else unlinked.push(`Recruiter: ${data._recruiter} (no login yet)`);
     }
     if (data._bde) {
       const uid = ix.user.get(ix.norm(data._bde));
-      if (!uid) throw new Error(`BDE "${data._bde}" has no login in the system`);
-      fields.bdeId = uid;
+      if (uid && !String(uid).startsWith('dry:')) fields.bdeId = uid;
+      else if (uid) fields.bdeId = undefined;
+      else {
+        // accountManager is free text and means exactly this — who owns the
+        // account — so an unlinked BDE has a proper home.
+        if (!fields.accountManager) fields.accountManager = data._bde;
+        unlinked.push(`BDE: ${data._bde} (no login yet)`);
+      }
+    }
+    if (unlinked.length) {
+      const note = `Named on the source sheet but not linked to a login — ${unlinked.join('; ')}. Give them a login on Administration → Users and re-import to link the assignment.`;
+      fields.jobDescription = fields.jobDescription ? `${fields.jobDescription}\n${note}` : note;
     }
     if (data.specialisation) {
       const deptId = ix.department.get(ix.norm(data.department));
       if (deptId && !dry) {
-        const known = await prisma.specialisation.findFirst({ where: { departmentId: deptId, name: data.specialisation } });
+        // MATCHED IGNORING CASE AND PUNCTUATION, like a client name. An
+        // exact match failed 156 requirements whose specialisation was
+        // spelled "EEE" here and "E.E.E" on the specialisations sheet —
+        // the same specialisation, and every application pointing at those
+        // requirements failed with them.
+        const all = await prisma.specialisation.findMany({ where: { departmentId: deptId }, select: { name: true } });
+        const want = ix.ckey(data.specialisation);
+        const known = all.find((s) => ix.ckey(s.name) === want);
         if (!known) throw new Error(`"${data.specialisation}" is not a specialisation of ${data.department} — add it to the Specialisations sheet`);
+        // Store the registered spelling, so the requirement and the
+        // specialisation list always read the same on screen.
+        fields.specialisation = known.name;
       }
     }
 

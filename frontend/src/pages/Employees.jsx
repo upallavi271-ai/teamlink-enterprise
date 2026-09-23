@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
+import Pager, { usePaged } from '../components/Pager.jsx';
 import Modal from '../components/Modal.jsx';
 import { atsRoleLabel } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
@@ -187,6 +188,9 @@ export default function Employees() {
     return true;
   }), [rows, filters]);
 
+  // 257 employee records after the import, so the table shows a page at a
+  // time. `filtered` stays whole for the counts and the filter dropdowns.
+  const pagedEmployees = usePaged(filtered);
   const rowDepts = useMemo(() => [...new Set(rows.map((e) => e.department).filter(Boolean))].sort(), [rows]);
   const rowDesignations = useMemo(() => [...new Set(rows.map((e) => e.designation).filter(Boolean))].sort(), [rows]);
   const rowRoles = useMemo(() => [...new Set(rows.map((e) => e.role).filter(Boolean))].sort(), [rows]);
@@ -726,7 +730,7 @@ export default function Employees() {
         <span className="cell-muted" style={{ alignSelf: 'center', fontSize: 12 }}>{filtered.length} employee(s)</span>
       </div>
 
-      <div className="tbl-wrap">
+      <div className="tbl-wrap tbl-fit">
         <table>
           <thead>
             {/* THE EIGHT COLUMNS THIS SCREEN IS SPECIFIED TO CARRY. It used to
@@ -749,7 +753,7 @@ export default function Employees() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((e) => {
+            {pagedEmployees.slice.map((e) => {
               const h = hrById[e.id];
               // THE LIFECYCLE, IN THE ORDER IT ACTUALLY HAPPENS:
               //
@@ -862,6 +866,7 @@ export default function Employees() {
           </tbody>
         </table>
       </div>
+      <Pager page={pagedEmployees} noun="employees" />
 
       <div className="notice" style={{ marginTop: 14 }}>
         One Employee = One User = One Login. Assigning a role here changes product access on the employee&apos;s

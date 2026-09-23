@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import Modal, { SectionHead } from '../components/Modal.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
+import Pager, { usePaged } from '../components/Pager.jsx';
 import {
   STAGE_LABELS, LIFE_STATUSES, deptOptions, LOCS,
   CANDIDATE_SOURCES, CANDIDATE_FIRST_SOURCES, CANDIDATE_FILTER_SOURCES, APPLICATION_METHODS,
@@ -152,6 +153,10 @@ export default function Candidates() {
     () => filtered.filter((c) => matchesView(view, c.currentStage)),
     [filtered, view],
   );
+  // 6,300 candidates came in with the real data, so the table shows a page at
+  // a time. `rows` stays the full filtered set — the view counts and the
+  // rejected-candidate notice below both count all of them, not just a page.
+  const paged = usePaged(rows);
 
   const viewCounts = useMemo(() => {
     const out = {};
@@ -584,7 +589,7 @@ export default function Candidates() {
 
           {/* Eight columns, and Owner is one of them. Match score, AI interview
               status, resume score and the rest moved to the detail page. */}
-          <div className="tbl-wrap">
+          <div className="tbl-wrap tbl-fit">
             <table>
               <thead>
                 <tr>
@@ -593,7 +598,7 @@ export default function Candidates() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((c) => (
+                {paged.slice.map((c) => (
                   <tr key={c.id} className="row-link" onClick={() => navigate(`/candidates/${c.id}`)}>
                     <td><span className="avatarsm">{initials(c.name)}</span>{c.name}</td>
                     <td>{c.requirementTitle || <span className="small-muted">No application</span>}</td>
@@ -679,6 +684,7 @@ export default function Candidates() {
               </tbody>
             </table>
           </div>
+          <Pager page={paged} noun="candidates" />
           {view === 'rejected' && rows.length > 0 && (
             <div className="notice" style={{ marginTop: 14 }}>
               Rejected candidates stay in the Candidate Master and remain searchable and matchable for other

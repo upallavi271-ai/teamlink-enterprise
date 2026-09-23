@@ -1,0 +1,27 @@
+{
+  "//": [
+    "WATCH src ONLY.",
+    "",
+    "nodemon's default here was every file in backend/, which includes",
+    "prisma/dev.db — so the server restarted on its OWN database writes. A",
+    "normal request never writes enough to notice, but a data import writes",
+    "thousands of rows, and each restart killed the request that was doing the",
+    "writing. Two batch-2 imports died this way at the same point, which looked",
+    "like a timeout and was actually the dev server rebooting under itself.",
+    "",
+    "src is where the code lives, so it is the only thing worth watching.",
+    "scripts/ is excluded on purpose too: those are run by hand and editing one",
+    "should not bounce a running server."
+  ],
+  "watch": ["src"],
+  "ext": "js,mjs,cjs,json",
+  "ignore": [
+    "prisma/*.db",
+    "prisma/*.db-journal",
+    "prisma/*.db-wal",
+    "prisma/*.db-shm",
+    "scripts/**",
+    "uploads/**"
+  ],
+  "delay": 300
+}

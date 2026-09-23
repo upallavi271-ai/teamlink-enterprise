@@ -8,6 +8,38 @@
 // Data Import screen. A script that reached past the API would prove nothing
 // about whether the API works.
 const fs = require('fs');
+const http = require('http');
+
+// NODE'S fetch GIVES UP AFTER FIVE MINUTES, and a real import takes longer
+// than that. undici — the client behind global fetch — enforces a 300s
+// headers timeout that cannot be turned off without adding it as a dependency,
+// and a 21,000-record import spends about that long just on the update pass
+// before it writes its first application. Twice the script reported "fetch
+// failed" while the SERVER was still happily working, which reads like a
+// crash and is not one.
+//
+// core http has no such timeout, so the request waits as long as the work
+// takes. `timeout: 0` says so explicitly rather than relying on the default.
+function post(url, { headers, body }) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = http.request({
+      hostname: u.hostname,
+      port: u.port || 80,
+      path: u.pathname + u.search,
+      method: 'POST',
+      headers,
+      timeout: 0,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 const BASE = process.env.TL_API || 'http://127.0.0.1:4010/api';
 const EMAIL = process.env.TL_EMAIL || 'superadmin@teamlink.com';
@@ -35,8 +67,8 @@ if (!['check', 'commit'].includes(MODE) || !FILE) {
   );
   const body = Buffer.concat([head, data, Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')]);
 
-  const r = await fetch(`${BASE}/data-import/${MODE}`, {
-    method: 'POST',
+  const started = Date.now();
+  const r = await post(`${BASE}/data-import/${MODE}`, {
     headers: {
       Authorization: `Bearer ${lj.token}`,
       'Content-Type': `multipart/form-data; boundary=${boundary}`,
@@ -44,7 +76,9 @@ if (!['check', 'commit'].includes(MODE) || !FILE) {
     },
     body,
   });
-  const j = await r.json();
+  let j;
+  try { j = JSON.parse(r.text); } catch { j = { error: r.text.slice(0, 400) }; }
+  console.log(`took ${Math.round((Date.now() - started) / 1000)}s`);
   const rep = j.report || j;
   console.log(`${MODE.toUpperCase()} -> HTTP ${r.status}`);
   if (j.error) console.log('  ', j.error);

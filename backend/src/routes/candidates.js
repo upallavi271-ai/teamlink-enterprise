@@ -256,8 +256,43 @@ router.get('/', async (req, res) => {
     const wanted = String(req.query.followUp).split(',').map((x) => x.trim()).filter(Boolean);
     rows = rows.filter((r) => wanted.includes(r.followUp ? r.followUp.status : 'Not set'));
   }
-  return res.json(rows);
+  return res.json(rows.map(slimForList));
 });
+
+// THE LIST DOES NOT NEED THE WHOLE OBJECT GRAPH.
+//
+// Every candidate carried its full applications array, and every application
+// its whole requirement AND that requirement's whole client — so the real data
+// turned this endpoint into a 68 MB response that took eleven seconds to build
+// and left the browser to parse all of it before drawing twenty-five rows.
+//
+// The list screen reads exactly six things off an application: the requirement
+// id, its department, its client id, its TL, its recruiter's name and its
+// BDE's name — that is what the filter row filters on. Everything else it
+// needs already sits on the decorated candidate (requirementTitle, clientName,
+// currentStage, followUp). So the list sends those six and nothing more.
+//
+// The DETAIL endpoint is untouched and still returns the full shape: that
+// screen genuinely shows an application's detail, and it fetches one candidate.
+function slimForList(row) {
+  const applications = (row.applications || []).map((a) => ({
+    id: a.id,
+    requirementId: a.requirementId,
+    stage: a.stage,
+    createdAt: a.createdAt,
+    requirement: a.requirement
+      ? {
+        id: a.requirement.id,
+        department: a.requirement.department,
+        clientId: a.requirement.clientId,
+        tl: a.requirement.tl,
+        recruiter: a.requirement.recruiter ? { name: a.requirement.recruiter.name } : null,
+        bde: a.requirement.bde ? { name: a.requirement.bde.name } : null,
+      }
+      : null,
+  }));
+  return { ...row, applications };
+}
 
 // The visible pipeline and the views, served from the same definition the
 // server filters with, so the screen cannot drift from the rules.

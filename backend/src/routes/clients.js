@@ -107,10 +107,29 @@ async function clientWorkload(user, clients) {
     }),
   ]);
 
+  // GROUPED ONCE, not re-scanned per client.
+  //
+  // This filtered the whole application list inside the loop, which is 624
+  // clients x 12,629 applications = 7.9 MILLION passes on the real data, and
+  // it made the client list take eight seconds to return 1.4 MB. Bucketing by
+  // client id first makes it one pass over each list and a lookup per client.
+  const appsByClient = new Map();
+  apps.forEach((a) => {
+    const cid = a.requirement && a.requirement.clientId;
+    if (!cid) return;
+    if (!appsByClient.has(cid)) appsByClient.set(cid, []);
+    appsByClient.get(cid).push(a);
+  });
+  const reqsByClient = new Map();
+  openReqs.forEach((r) => {
+    if (!reqsByClient.has(r.clientId)) reqsByClient.set(r.clientId, []);
+    reqsByClient.get(r.clientId).push(r);
+  });
+
   const out = new Map();
   clients.forEach((c) => {
-    const mine = apps.filter((a) => a.requirement && a.requirement.clientId === c.id);
-    const reqs = openReqs.filter((r) => r.clientId === c.id);
+    const mine = appsByClient.get(c.id) || [];
+    const reqs = reqsByClient.get(c.id) || [];
     // Whoever the work actually sits with — the BDE on their requirements,
     // falling back to the recruiter. A person, never a status (§5).
     const owner = (mine.find((a) => a.requirement.bde) || {}).requirement?.bde?.name
