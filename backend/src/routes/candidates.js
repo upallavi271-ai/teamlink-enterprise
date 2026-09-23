@@ -214,8 +214,30 @@ function decorate(candidate, { user, sharedIds = null, followUps = null } = {}) 
 // Every candidate this login may reach, already scoped. Shared by the list and
 // by source analytics so the two can never disagree.
 async function scopedCandidates(user) {
+  // THE NESTED OBJECTS ARE NARROWED, not pulled whole.
+  //
+  // `client: true` fetched all forty-odd columns of a Client — GST, PAN,
+  // payment terms, agreement text, risk notes — once per APPLICATION, 22,873
+  // times, and the same for the recruiter and BDE user rows. Nothing that
+  // reads this needs more than a name and an id from any of the three.
+  //
+  // The requirement itself stays whole: decorate(), the pipeline vocabulary
+  // and the client-sharing rules read a dozen of its fields between them, and
+  // narrowing it would be a much easier thing to get quietly wrong.
   const all = await prisma.candidate.findMany({
-    include: { applications: { include: { requirement: { include: { client: true, recruiter: true, bde: true } } } } },
+    include: {
+      applications: {
+        include: {
+          requirement: {
+            include: {
+              client: { select: { id: true, name: true } },
+              recruiter: { select: { id: true, name: true } },
+              bde: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
   const sharedIds = await clientSharedApplicationIds(user, all);
@@ -274,6 +296,19 @@ router.get('/', async (req, res) => {
 //
 // The DETAIL endpoint is untouched and still returns the full shape: that
 // screen genuinely shows an application's detail, and it fetches one candidate.
+// The candidate fields the LIST screen actually reads — its columns, its
+// filter row and its view tabs, and nothing else. A candidate row has sixty
+// columns (bank details, education, three kinds of skills, resume scores,
+// source campaigns) and the list shows a dozen; sending all sixty for 16,493
+// people is 32 MB of payload to draw twenty-five rows.
+const LIST_FIELDS = [
+  'id', 'name', 'email', 'phone', 'location', 'source', 'skills',
+  'lifeStatus', 'currentStage', 'currentStageLabel', 'stageGroup',
+  'stageGroupLabel', 'stageDetailLabel', 'requirementTitle', 'requirementId',
+  'clientName', 'clientId', 'owner', 'nextAction', 'dueDate', 'overdue',
+  'followUp', 'followUpNeed', 'createdAt',
+];
+
 function slimForList(row) {
   const applications = (row.applications || []).map((a) => ({
     id: a.id,
@@ -291,7 +326,9 @@ function slimForList(row) {
       }
       : null,
   }));
-  return { ...row, applications };
+  const out = { applications };
+  LIST_FIELDS.forEach((f) => { if (row[f] !== undefined) out[f] = row[f]; });
+  return out;
 }
 
 // The visible pipeline and the views, served from the same definition the

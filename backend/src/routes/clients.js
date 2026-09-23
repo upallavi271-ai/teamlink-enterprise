@@ -97,9 +97,28 @@ async function clientWorkload(user, clients) {
   if (!ids.length) return new Map();
 
   const [apps, openReqs] = await Promise.all([
+    // SELECT, NOT INCLUDE. `include` pulled every column of every application
+    // AND of its requirement AND of that requirement's bde and recruiter
+    // users — 22,873 applications joined three ways, which is why this
+    // endpoint took sixteen seconds to return 1.4 MB.
+    //
+    // The loop below reads exactly six things: the stage, the two dates
+    // applicationIsOverdue() computes from, the requirement's client, and the
+    // NAMES of its BDE and recruiter. So it asks for those.
     prisma.application.findMany({
       where: { ...applicationWhere(user), requirement: { is: { clientId: { in: ids } } } },
-      include: { requirement: { include: { bde: true, recruiter: true } } },
+      select: {
+        stage: true,
+        createdAt: true,
+        updatedAt: true,
+        requirement: {
+          select: {
+            clientId: true,
+            bde: { select: { name: true } },
+            recruiter: { select: { name: true } },
+          },
+        },
+      },
     }),
     prisma.requirement.findMany({
       where: { ...requirementWhere(user), clientId: { in: ids } },

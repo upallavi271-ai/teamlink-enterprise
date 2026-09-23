@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
@@ -96,7 +96,45 @@ export default function Clients() {
   // the client detail page shows everything regardless.
   const [wideCols, setWideCols] = useState(false);
 
-  const pagedClients = usePaged(clients);
+  // FILTERS, so 905 clients can be narrowed to the ones you are looking at.
+  // The screen had none at all: the only way to find a client was to page
+  // through them alphabetically.
+  //
+  // Applied HERE rather than on the server because /clients already returns
+  // exactly the viewer's scope in one payload — so a filter can only ever
+  // narrow what they are already allowed to see, never widen it.
+  const [filters, setFilters] = useState({ search: '', industry: '', department: '', location: '', agreement: '', hasOpen: '' });
+  const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
+  const clearFilters = () => setFilters({ search: '', industry: '', department: '', location: '', agreement: '', hasOpen: '' });
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+  // The options come from the DATA, not from a fixed list, so every value
+  // that actually appears is offered and nothing that does not is.
+  const opts = useMemo(() => {
+    const uniq = (f) => [...new Set(clients.map(f).filter(Boolean))].sort();
+    return {
+      industry: uniq((c) => c.industry),
+      department: uniq((c) => c.ownerDepartment),
+      location: uniq((c) => c.location),
+      agreement: uniq((c) => c.agreementStatus),
+    };
+  }, [clients]);
+
+  const filtered = useMemo(() => {
+    const q = filters.search.trim().toLowerCase();
+    return clients.filter((c) => {
+      if (q && !`${c.name || ''} ${c.clientCode || ''} ${c.contactName || ''} ${c.gst || ''}`.toLowerCase().includes(q)) return false;
+      if (filters.industry && c.industry !== filters.industry) return false;
+      if (filters.department && c.ownerDepartment !== filters.department) return false;
+      if (filters.location && c.location !== filters.location) return false;
+      if (filters.agreement && c.agreementStatus !== filters.agreement) return false;
+      if (filters.hasOpen === 'yes' && openCount(c.id) === 0) return false;
+      if (filters.hasOpen === 'no' && openCount(c.id) > 0) return false;
+      return true;
+    });
+  }, [clients, filters, requirements]);
+
+  const pagedClients = usePaged(filtered);
 
   function load() {
     api.get('/clients').then((res) => setClients(res.data));
@@ -139,6 +177,39 @@ export default function Clients() {
 
       {/* Clients and Requirements are one module now — this is its tab strip. */}
       <ClientModuleTabs active="clients" />
+
+      <div className="filter-row">
+        <input
+          type="text"
+          placeholder="Search client, code, contact or GST…"
+          value={filters.search}
+          onChange={(e) => setFilter({ search: e.target.value })}
+        />
+        <Combo value={filters.industry} onChange={(e) => setFilter({ industry: e.target.value })}>
+          <option value="">All industries</option>
+          {opts.industry.map((v) => <option key={v} value={v}>{v}</option>)}
+        </Combo>
+        <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
+          <option value="">All departments</option>
+          {opts.department.map((v) => <option key={v} value={v}>{v}</option>)}
+        </Combo>
+        <Combo value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
+          <option value="">All locations</option>
+          {opts.location.map((v) => <option key={v} value={v}>{v}</option>)}
+        </Combo>
+        <Combo value={filters.agreement} onChange={(e) => setFilter({ agreement: e.target.value })}>
+          <option value="">Any agreement status</option>
+          {opts.agreement.map((v) => <option key={v} value={v}>{agreementStatusLabel(v)}</option>)}
+        </Combo>
+        <Combo value={filters.hasOpen} onChange={(e) => setFilter({ hasOpen: e.target.value })}>
+          <option value="">Open requirements?</option>
+          <option value="yes">Has open requirements</option>
+          <option value="no">None open</option>
+        </Combo>
+        {activeFilterCount > 0 && (
+          <button className="btn btn-sm btn-ghost" onClick={clearFilters}>{`Clear ${activeFilterCount} filter(s)`}</button>
+        )}
+      </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setWideCols((v) => !v)}>
@@ -574,7 +645,7 @@ export default function Clients() {
               </tr>
             ))}
             {clients.length === 0 && (
-              <tr><td colSpan={wideCols ? 13 : 6} className="small-muted" style={{ padding: 16 }}>No clients in your scope.</td></tr>
+              <tr><td colSpan={wideCols ? 13 : 6} className="small-muted" style={{ padding: 16 }}>{clients.length ? 'No clients match these filters.' : 'No clients in your scope.'}</td></tr>
             )}
           </tbody>
         </table>

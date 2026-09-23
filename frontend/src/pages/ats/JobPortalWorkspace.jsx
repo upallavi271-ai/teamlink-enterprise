@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import ClientModuleTabs from '../../components/ClientModuleTabs.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { canSeePortalApplications, canSeePortalWorkspace, canSyncPortal } from '../../permissions';
 import { JOB_PORTAL_URL } from '../JobPortalRedirect.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // B. The INTERNAL Job Portal workspace.
@@ -73,8 +75,57 @@ export default function JobPortalWorkspace() {
   const perms = data?.permissions || {};
   const stats = data?.stats || {};
   const jobs = data?.jobs || [];
+
+  // FILTERS AND PAGING. 3,048 requirements were rendered in one table with
+  // no way to narrow them — the screen was a wall of rows you had to scroll
+  // past, and the columns ran off the right of the window. Filtering happens
+  // here rather than on the server because this endpoint already returns the
+  // viewer's scope in one payload; the filters can only narrow what is
+  // already allowed.
+  const [jobFilters, setJobFilters] = useState({ search: '', department: '', status: '', published: '' });
+  const setJobFilter = (patch) => setJobFilters((f) => ({ ...f, ...patch }));
+  const [appFilters, setAppFilters] = useState({ search: '', department: '', imported: '' });
+  const setAppFilter = (patch) => setAppFilters((f) => ({ ...f, ...patch }));
+
+  const jobDepartments = useMemo(
+    () => [...new Set(jobs.map((j) => j.department).filter(Boolean))].sort(),
+    [jobs],
+  );
+  const filteredJobs = useMemo(() => {
+    const q = jobFilters.search.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (q && !`${j.reqCode || ''} ${j.title || ''} ${j.clientName || ''}`.toLowerCase().includes(q)) return false;
+      if (jobFilters.department && j.department !== jobFilters.department) return false;
+      if (jobFilters.status && j.status !== jobFilters.status) return false;
+      if (jobFilters.published === 'yes' && !j.portalPublished) return false;
+      if (jobFilters.published === 'no' && j.portalPublished) return false;
+      return true;
+    });
+  }, [jobs, jobFilters]);
+  const pagedJobs = usePaged(filteredJobs);
+
+  // Declared BEFORE the filters that read it. Putting it after them is a
+  // temporal-dead-zone crash — "Cannot access 'applications' before
+  // initialization" — and the build does not catch it, only the blank screen
+  // does. The same mistake blanked /ats/team earlier.
   const applications = apps?.applications || [];
   const canImport = !!apps?.permissions?.import;
+
+  const appDepartments = useMemo(
+    () => [...new Set(applications.map((a) => a.department).filter(Boolean))].sort(),
+    [applications],
+  );
+  const filteredApps = useMemo(() => {
+    const q = appFilters.search.trim().toLowerCase();
+    return applications.filter((a) => {
+      if (q && !`${a.candidateName || ''} ${a.email || ''} ${a.requirementTitle || ''}`.toLowerCase().includes(q)) return false;
+      if (appFilters.department && a.department !== appFilters.department) return false;
+      if (appFilters.imported === 'yes' && !a.portalImportedAt) return false;
+      if (appFilters.imported === 'no' && a.portalImportedAt) return false;
+      return true;
+    });
+  }, [applications, appFilters]);
+  const pagedApps = usePaged(filteredApps);
 
   // Typing the URL is not access. The API already refuses every call this
   // screen makes, but an Accountant or an HRMS-only Employee should not be
@@ -176,7 +227,31 @@ export default function JobPortalWorkspace() {
       </div>
 
       {view === 'jobs' && (
-        <div className="tbl-wrap">
+        <>
+          <div className="filter-row">
+            <input
+              type="text"
+              placeholder="Search req id, job title or client…"
+              value={jobFilters.search}
+              onChange={(e) => setJobFilter({ search: e.target.value })}
+            />
+            <Combo value={jobFilters.department} onChange={(e) => setJobFilter({ department: e.target.value })}>
+              <option value="">All departments</option>
+              {jobDepartments.map((d) => <option key={d} value={d}>{d}</option>)}
+            </Combo>
+            <Combo value={jobFilters.status} onChange={(e) => setJobFilter({ status: e.target.value })}>
+              <option value="">Any requirement status</option>
+              <option value="OPEN">Open</option>
+              <option value="DRAFT">Draft</option>
+              <option value="CLOSED">Closed</option>
+            </Combo>
+            <Combo value={jobFilters.published} onChange={(e) => setJobFilter({ published: e.target.value })}>
+              <option value="">Published or not</option>
+              <option value="yes">Published</option>
+              <option value="no">Not published</option>
+            </Combo>
+          </div>
+        <div className="tbl-wrap tbl-fit">
           <table>
             <thead>
               <tr>
@@ -186,7 +261,7 @@ export default function JobPortalWorkspace() {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((j) => (
+              {pagedJobs.slice.map((j) => (
                 <tr key={j.id}>
                   <td><b>{j.reqCode || j.id.slice(0, 8)}</b></td>
                   <td className="row-link" onClick={() => navigate(`/requirements/${j.id}`)}>
@@ -218,19 +293,38 @@ export default function JobPortalWorkspace() {
                   </td>
                 </tr>
               ))}
-              {!jobs.length && (
+              {!filteredJobs.length && (
                 <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>
-                  {data ? 'No requirements in your scope.' : 'Loading…'}
+                  {!data ? 'Loading…' : (jobs.length ? 'No requirements match these filters.' : 'No requirements in your scope.')}
                 </td></tr>
               )}
             </tbody>
           </table>
         </div>
+        <Pager page={pagedJobs} noun="requirements" />
+        </>
       )}
 
       {view === 'apps' && (
         <>
-          <div className="tbl-wrap">
+          <div className="filter-row">
+            <input
+              type="text"
+              placeholder="Search candidate, email or job…"
+              value={appFilters.search}
+              onChange={(e) => setAppFilter({ search: e.target.value })}
+            />
+            <Combo value={appFilters.department} onChange={(e) => setAppFilter({ department: e.target.value })}>
+              <option value="">All departments</option>
+              {appDepartments.map((d) => <option key={d} value={d}>{d}</option>)}
+            </Combo>
+            <Combo value={appFilters.imported} onChange={(e) => setAppFilter({ imported: e.target.value })}>
+              <option value="">Imported or not</option>
+              <option value="yes">Imported</option>
+              <option value="no">Awaiting import</option>
+            </Combo>
+          </div>
+          <div className="tbl-wrap tbl-fit">
             <table>
               <thead>
                 <tr>
@@ -239,7 +333,7 @@ export default function JobPortalWorkspace() {
                 </tr>
               </thead>
               <tbody>
-                {applications.map((a) => (
+                {pagedApps.slice.map((a) => (
                   <tr key={a.id}>
                     <td className="row-link" onClick={() => navigate(`/candidates/${a.candidateId}`)}>
                       <span className="link-btn">{a.candidate}</span>
@@ -278,6 +372,7 @@ export default function JobPortalWorkspace() {
               </tbody>
             </table>
           </div>
+          <Pager page={pagedApps} noun="portal applications" />
           <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
             <strong>Import to ATS</strong> does not fetch anything. A portal application is already a pipeline row —
             the public form creates the candidate and the application when it is submitted. Import is the recorded
