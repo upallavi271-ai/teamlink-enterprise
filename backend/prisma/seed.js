@@ -302,7 +302,7 @@ async function main() {
       jobDescription: 'Own reporting and analysis across the Medivant clinical operations group.',
       reqCode: 'REQ-0003',
       clientId: medivant.id, department: 'Medical', priority: 'Low', status: 'AGREEMENT_CHECK',
-      recruiterId: recruiterMedical.id, tl: 'Divya Rao', stlId: cStl.user.id, stl: cStl.user.name, tlId: tlMedical.id,
+      recruiterId: recruiterMedical.id, tl: 'Divya Rao', tlId: tlMedical.id,
       accountManager: 'Meera Iyer', targetDate: '2026-12-15',
       skills: 'SQL, Excel, Data Analysis, Python', goodToHaveSkills: 'Machine Learning',
       experience: '2-4 yrs', relevantExperience: '2 yrs',
@@ -330,7 +330,7 @@ async function main() {
       responsibilities: 'Ship and own Spring Boot services\nPartner with the payments domain team',
       qualifications: 'Bachelor’s degree in Computer Science or equivalent practical experience.',
       clientId: orbit.id, department: 'IT', priority: 'High', status: 'RECRUITER_ASSIGNED',
-      stlId: cStl.user.id, stl: cStl.user.name, tlId: tlMedical.id, tl: 'Divya Rao',
+      tlId: tlMedical.id, tl: 'Divya Rao',
       recruiterId: recruiterMedical.id,
       recruiterIds: recruiter.id, // Arun Nair joins as a co-recruiter
       bdeId: bde.id, stlId: multiProduct.id, stl: 'Priya Nambiar',
@@ -924,7 +924,7 @@ async function main() {
   let staffSeq = 10; // EMP-001 .. EMP-010 are taken above.
   async function staffLogin({
     email, name, department, team, designation, location = 'Hyderabad',
-    scopeDepartments, scopeClients, username,
+    scopeDepartments, scopeClients, username, atsRole,
   }) {
     const m = designationByName[designation];
     if (!m) throw new Error(`Seed: no DesignationRole row for "${designation}"`);
@@ -942,7 +942,7 @@ async function main() {
         // are what the permission engine resolves against, one per product.
         role,
         hrmsRole: m.hrms ? role : 'NONE',
-        atsRole: m.ats ? (m.atsRole || role) : 'NONE',
+        atsRole: m.ats ? (atsRole || m.atsRole || role) : 'NONE',
         accountsRole: m.accounts ? role : 'NONE',
         hrmsAccess: !!m.hrms,
         atsAccess: !!m.ats,
@@ -985,7 +985,7 @@ async function main() {
   });
   const cAdmin = await staffLogin({
     email: 'admin@teamlink.com', name: 'Nikhil Joshi', department: 'HR',
-    team: 'Leadership', designation: 'Admin',
+    team: 'Leadership', designation: 'Super Admin',
   });
   // A Manager's scope is CONFIGURED, not automatically global: these
   // departments only, which is what utils/scope.js then enforces.
@@ -1001,6 +1001,8 @@ async function main() {
     email: 'stl@teamlink.com', name: 'Ganesh Iyer', department: 'Medical',
     designation: 'STL', scopeDepartments: 'Medical,IT',
   });
+
+  await prisma.requirement.update({ where: { reqCode: 'REQ-0003' }, data: { stlId: cStl.user.id, stl: cStl.user.name } });
 
   // --- Team leads. Same designation, different department = different scope --
   const cMedicalTl = await staffLogin({
@@ -1027,19 +1029,19 @@ async function main() {
   // --- Recruiters and the BDE ------------------------------------------------
   const cMedical1 = await staffLogin({
     email: 'medical1@teamlink.com', name: 'Anjali Verma', department: 'Medical',
-    team: 'Medical Team-A', designation: 'Recruiter',
+    team: 'Medical Team-A', designation: 'Employee', atsRole: 'RECRUITER',
   });
   const cIt1 = await staffLogin({
     email: 'itrecruiter1@teamlink.com', name: 'Vivek Sharma', department: 'IT',
-    team: 'Section A', designation: 'Recruiter',
+    team: 'Section A', designation: 'Employee', atsRole: 'RECRUITER',
   });
   const cMfg1 = await staffLogin({
     email: 'manufacturingrecruiter1@teamlink.com', name: 'Deepa Kulkarni',
-    department: 'Manufacturing', team: 'Manufacturing Team-A', designation: 'Recruiter', location: 'Pune',
+    department: 'Manufacturing', team: 'Manufacturing Team-A', designation: 'Employee', atsRole: 'RECRUITER', location: 'Pune',
   });
   const cEdu1 = await staffLogin({
     email: 'edu1@teamlink.com', name: 'Farhan Shaikh', department: 'Educational',
-    team: 'Education Team-A', designation: 'Recruiter', location: 'Bengaluru',
+    team: 'Education Team-A', designation: 'Employee', atsRole: 'RECRUITER', location: 'Bengaluru',
   });
 
   // --- The two new client accounts the BDE owns ------------------------------
@@ -1091,7 +1093,7 @@ async function main() {
   // A BDE is scoped to the CLIENTS assigned to them, not to a department.
   const cBde1 = await staffLogin({
     email: 'bde1@teamlink.com', name: 'Nandita Rao', department: 'BDE',
-    team: 'Business Development', designation: 'BDE', location: 'Bengaluru',
+    team: 'Business Development', designation: 'Employee', atsRole: 'BDE', location: 'Bengaluru',
     scopeClients: `${vertex.id},${nalanda.id},${orbit.id}`,
   });
 
