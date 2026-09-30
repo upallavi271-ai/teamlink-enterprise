@@ -21,6 +21,7 @@
 
 const prisma = require('../db');
 const { notifyUsers } = require('./notify');
+const { leadsOfPosition } = require('./positionScope');
 const { STAGE_OWNER_ACTION, stageLabel } = require('./atsVocab');
 
 const FOLLOWUP_STATUSES = ['Upcoming', 'Due Today', 'Overdue', 'Completed'];
@@ -176,12 +177,17 @@ function defaultDueDate(application) {
 // The CURRENT follow-up on each of these applications — the newest row that
 // has not been completed, and where every row is completed, the newest one
 // (so the Candidates table can still show when contact last happened).
-async function currentFollowUpsByApplication(applicationIds) {
+// `select` (optional) narrows the columns read — a caller that only needs the
+// derived status (the ATS dashboard, over thousands of applications) passes
+// { applicationId, completedAt, dueDate }; the choice of row is unchanged.
+async function currentFollowUpsByApplication(applicationIds, { select } = {}) {
   const out = new Map();
   if (!applicationIds || !applicationIds.length) return out;
   const rows = await prisma.applicationFollowUp.findMany({
     where: { applicationId: { in: applicationIds } },
     orderBy: { createdAt: 'desc' },
+    // createdAt stays selected: Prisma orders a chunked IN list in memory by it.
+    ...(select ? { select: { ...select, applicationId: true, completedAt: true, dueDate: true, createdAt: true } } : {}),
   });
   const today = todayStr();
   rows.forEach((row) => {
@@ -225,6 +231,17 @@ const ESCALATION_LADDER = [
 // company-level logins for the last two, resolved once per run rather than per
 // row.
 async function audienceFor(rung, followUp, cache) {
+  // THE SEAT'S LEAD FIRST. A follow-up owned from a recruiter seat escalates
+  // to whoever holds that seat's TL seat TODAY (Positions -> reportsTo), so a
+  // TL handover moves the alerts with the seat. The name snapshotted on the
+  // row is the fallback for a seat outside the structure, or no seat at all.
+  if ((rung.audience === 'tl' || rung.audience === 'stl') && (followUp.ownerPositionId || followUp.ownerPositionCode)) {
+    const key = `seat:${followUp.ownerPositionId || followUp.ownerPositionCode}`;
+    // eslint-disable-next-line no-param-reassign
+    if (!cache[key]) cache[key] = await leadsOfPosition({ positionId: followUp.ownerPositionId, positionCode: followUp.ownerPositionCode });
+    const lead = rung.audience === 'tl' ? cache[key].tlUserId : cache[key].stlUserId;
+    if (lead) return [lead];
+  }
   if (rung.audience === 'tl') return [followUp.tlUserId].filter(Boolean);
   if (rung.audience === 'stl') return [followUp.stlUserId].filter(Boolean);
   const role = rung.audience === 'admin' ? 'ADMIN' : 'SUPER_ADMIN';
@@ -335,7 +352,7 @@ async function escalateOverdue({ limit = 300 } = {}) {
 // does not stack up chases.
 // ---------------------------------------------------------------------------
 const AUTO_FOLLOWUPS = {
-  SHARED_WITH_CLIENT: { purpose: 'Client decision', action: 'Chase the client for a decision' },
+  SHARED_WITH_CLIENT: { purpose: 'Client Review', action: 'Chase the client for their review' },
   CLIENT_SHORTLISTED: { purpose: 'Interview confirmation', action: 'Confirm the interview with the client' },
   INTERVIEW_SCHEDULED: { purpose: 'Interview confirmation', action: 'Confirm the candidate is attending' },
   INTERVIEW_COMPLETED: { purpose: 'Interview feedback', action: 'Chase the client for feedback' },

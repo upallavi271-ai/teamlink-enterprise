@@ -53,14 +53,25 @@ function scopeOf(user) {
   const teams = csv(u.atsScopeTeams).length ? csv(u.atsScopeTeams) : (u.team ? [u.team] : []);
   // The three product roles, each falling back to the account-level role for
   // a login that predates them — the same value this file read before.
-  const atsRole = named(u.atsRole) || u.role;
-  const hrmsRole = named(u.hrmsRole) || u.role;
-  const accountsRole = named(u.accountsRole) || u.role;
+  // A CUSTOM role (utils/roleRegistry.js) is scoped as the system role it
+  // borrows: identity.js puts that alias on u.scopeRoles. For a system role
+  // the alias is the role itself, so nothing changes for them.
+  const sr = u.scopeRoles || {};
+  const atsRole = named(sr.ats) || named(u.atsRole) || u.role;
+  const hrmsRole = named(sr.hrms) || named(u.hrmsRole) || u.role;
+  const accountsRole = named(sr.accounts) || named(u.accountsRole) || u.role;
   // A login is globally scoped if it is Super Admin / Admin ANYWHERE — in its
   // account-level role or in any one of its product roles.
-  const held = [u.role, named(u.hrmsRole), named(u.atsRole), named(u.accountsRole)].filter(Boolean);
-  const configuredGlobal = held.some((r) => CONFIGURABLE_GLOBAL_ROLES.includes(r))
-    && !csv(u.atsScopeDepartments).length;
+  const held = [
+    u.role,
+    named(sr.hrms) || named(u.hrmsRole),
+    named(sr.ats) || named(u.atsRole),
+    named(sr.accounts) || named(u.accountsRole),
+  ].filter(Boolean);
+  // Manager and Assistant Manager see EVERY department (view-only — see
+  // can() in permissions.js). A department list on their login no longer
+  // narrows what they see.
+  const configuredGlobal = held.some((r) => CONFIGURABLE_GLOBAL_ROLES.includes(r));
   return {
     global: held.some((r) => GLOBAL_SCOPE_ROLES.includes(r)) || configuredGlobal,
     role: u.role,
@@ -71,10 +82,103 @@ function scopeOf(user) {
     departments,
     teams,
     clientId: u.clientId || null,
-    clientIds: csv(u.atsScopeClients),
+    // A BDE's clients: the ones assigned to them on Users (atsScopeClients)
+    // plus the ones whose Owner BDE they are (Client.bdeOwner, resolved by
+    // utils/identity.js into atsOwnedClientIds — role spec 2026-09-29).
+    clientIds: [...new Set([...csv(u.atsScopeClients), ...(Array.isArray(u.atsOwnedClientIds) ? u.atsOwnedClientIds : [])])],
+    // ACCOUNTS (role spec 2026-09-29): the requirements that have a joined
+    // candidate — resolved once per request by utils/identity.js.
+    joinedRequirementIds: Array.isArray(u.atsJoinedRequirementIds) ? u.atsJoinedRequirementIds : null,
     candidateId: u.candidateId || null,
     employeeId: u.employeeId || null,
+    // A TL's team members (user ids), resolved by utils/identity.js when the
+    // TL has a team configured; null means "no team — department fallback".
+    teamUserIds: Array.isArray(u.atsTeamUserIds) && u.atsTeamUserIds.length ? u.atsTeamUserIds : null,
+    // THE SEAT STRUCTURE (utils/positionScope.js, resolved by identity.js):
+    // set only for a TL / STL / Recruiter who holds a seat of that kind.
+    // When set it is the ATS scope; null -> the team / department logic.
+    positions: u.atsPositionScope && Array.isArray(u.atsPositionScope.positionCodes)
+      && u.atsPositionScope.role === atsRole ? u.atsPositionScope : null,
   };
+}
+
+// --- Seat (position) scope ---------------------------------------------------
+// Department -> Team -> TL seat -> recruiter seats -> current holder. Three
+// pieces, used by requirementWhere() and applicationWhere() alike so the two
+// can never disagree:
+//   seatAssignedArms  requirements ASSIGNED to the seats' current holders
+//                     (or filed under the seats' codes, for a lead)
+//   work ids          what was DONE from the seats (history for a lead,
+//                     the holder's own tenure for a recruiter)
+//   seatPoolArm       an STL's department(s) still-unassigned openings —
+//                     minus any application another team's seat worked on.
+//                     NOT for a TL: "only my team's work" (user decision
+//                     2026-09-25). An unassigned, unworked requirement is for
+//                     the STL / Managers / HR / Admin to see and assign; a TL
+//                     sees a requirement once it is assigned to their TL seat
+//                     or its holder (tlId / positionCode — the assigned arms)
+//                     or once one of their seats works it.
+function seatAssignedArms(s) {
+  const p = s.positions;
+  if (p.role === 'RECRUITER') {
+    return [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }];
+  }
+  const arms = [p.role === 'STL' ? { stlId: s.userId } : { tlId: s.userId }];
+  if (p.role === 'STL') arms.push({ tlId: { in: p.holderUserIds } });
+  arms.push({ recruiterId: { in: p.holderUserIds } });
+  p.holderUserIds.forEach((id) => arms.push({ recruiterIds: { contains: id } }));
+  if (p.positionCodes.length) arms.push({ positionCode: { in: p.positionCodes } });
+  return arms;
+}
+function seatPoolArm(s) {
+  const p = s.positions;
+  if (p.role !== 'STL') return null;
+  const departments = [...new Set([...(s.departments || []), ...(p.departments || [])])];
+  return departments.length ? { department: { in: departments }, tlId: null, recruiterId: null } : null;
+}
+// UNASSIGNED = no TL, no primary recruiter, no co-recruiter. The same rule
+// the Unassigned chip / badge / alert and POST /requirements/:id/assign's
+// "unclaimed" test use.
+const UNASSIGNED_WHERE = { tlId: null, recruiterId: null, OR: [{ recruiterIds: null }, { recruiterIds: '' }] };
+const isUnassigned = (r) => !!r && !r.tlId && !r.recruiterId && !r.recruiterIds;
+
+// JOBS / REQUIREMENTS ROLE SPEC (2026-09-29) §1 — "TL = assigned to my team
+// + UNASSIGNED requirements in my department". This supersedes the
+// 2026-09-25 "only my team's work" rule FOR THE REQUIREMENT LIST ONLY: a TL
+// sees the department's unassigned openings so they can pick them up and
+// assign them. Candidates / applications keep the team-only rule
+// (applicationWhere never takes this arm), and so does the TL's Clients
+// view ("only clients that have my team's requirements").
+function tlPoolArm(s) {
+  const departments = [...new Set([...(s.departments || []), ...((s.positions && s.positions.departments) || [])])];
+  // Not CLOSED: the pool is work to pick up, not the department's history.
+  // (`notIn`, not `not`, so matches() checks a single record exactly.)
+  return departments.length
+    ? { department: { in: departments }, status: { notIn: ['CLOSED'] }, AND: [UNASSIGNED_WHERE] }
+    : null;
+}
+function seatRequirementWhere(s, { pool: withPool = true } = {}) {
+  const p = s.positions;
+  const pool = withPool ? (p.role === 'TL' ? tlPoolArm(s) : seatPoolArm(s)) : null;
+  return {
+    OR: [
+      ...seatAssignedArms(s),
+      ...(p.workRequirementIds.length ? [{ id: { in: p.workRequirementIds } }] : []),
+      ...(pool ? [pool] : []),
+    ],
+  };
+}
+function seatApplicationWhere(s) {
+  const p = s.positions;
+  const pool = seatPoolArm(s);
+  const arms = [{ requirement: { OR: seatAssignedArms(s) } }];
+  if (p.workApplicationIds.length) arms.push({ id: { in: p.workApplicationIds } });
+  if (pool) {
+    arms.push(p.foreignApplicationIds.length
+      ? { requirement: pool, id: { notIn: p.foreignApplicationIds } }
+      : { requirement: pool });
+  }
+  return { OR: arms };
 }
 
 // --- Requirements ----------------------------------------------------------
@@ -96,16 +200,28 @@ function scopeOf(user) {
 // stored comma-delimited WITH surrounding commas trimmed and `matches()` below
 // implements `contains` identically, so a list query and a single-record check
 // can never disagree.
-function requirementWhere(user) {
+// `opts.pool === false` leaves out a TL's department-unassigned arm — the
+// "my team's requirements" reading (teamRequirementWhere below).
+function requirementWhere(user, opts = {}) {
+  const withPool = !(opts && opts.pool === false);
   const s = scopeOf(user);
   if (s.global) return {};
-  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
-  // Without this an HR login resolved to the default branch and saw nothing,
-  // so the modules opened empty. READ ONLY — no create / edit / approve rule
-  // in utils/permissions.js names HR, so this widens what HR sees and
-  // nothing they can do.
-  if (s.atsRole === 'HR') return {};
+  // HR IN ATS IS INTERNAL HIRING ONLY (access matrix 2026-09-25 §3). HR sees
+  // TeamLink's own openings — requirements filed `internal` under the
+  // "TeamLink Consultants — Internal Hiring" client — and none of the client
+  // recruitment pipeline. The same person made an ATS Recruiter / TL on
+  // Administration -> Users carries that atsRole instead and never reaches
+  // this branch. applicationWhere() and candidateWhere() inherit this.
+  if (s.atsRole === 'HR') return { internal: true };
+  // A TL / STL / Recruiter who holds a seat is scoped by the seat structure.
+  if (s.positions) return seatRequirementWhere(s, { pool: withPool });
   switch (s.atsRole) {
+    case 'ACCOUNTANT':
+      // Accounts (role spec 2026-09-29 §1): ONLY requirements that have a
+      // joined candidate — the ones that bill. An id list (not a relation
+      // filter) so matches() can check a single record exactly.
+      return s.joinedRequirementIds && s.joinedRequirementIds.length
+        ? { id: { in: s.joinedRequirementIds } } : { id: '__none__' };
     case 'CLIENT':
       // Own company only — and never TeamLink's own internal openings, which
       // are stored against a client but are not that client's work.
@@ -120,9 +236,21 @@ function requirementWhere(user) {
       return { OR: or };
     }
     case 'TL': {
-      const or = [{ tlId: s.userId }];
-      if (s.departments.length) or.push({ department: { in: s.departments } });
-      return { OR: or };
+      // TL = THEIR OWN TEAM'S WORK: what they lead and what their team's
+      // recruiters are assigned — never another team's. PLUS (role spec
+      // 2026-09-29 §1) the UNASSIGNED requirements of their department, so
+      // they can be picked up and assigned (tlPoolArm; left out by
+      // teamRequirementWhere). No team configured -> only what they lead.
+      const arms = s.teamUserIds
+        ? [
+          { tlId: s.userId },
+          { recruiterId: { in: s.teamUserIds } },
+          ...s.teamUserIds.map((id) => ({ recruiterIds: { contains: id } })),
+        ]
+        : [{ tlId: s.userId }];
+      const pool = withPool ? tlPoolArm(s) : null;
+      if (pool) arms.push(pool);
+      return arms.length === 1 ? arms[0] : { OR: arms };
     }
     case 'STL': {
       const or = [{ stlId: s.userId }];
@@ -140,6 +268,14 @@ function requirementWhere(user) {
   }
 }
 
+// "My team's requirements" — requirementWhere() without a TL's department
+// pool of unassigned openings. Identical to requirementWhere() for every
+// other role. Drives a TL's Clients view, their candidates / applications
+// and the "My Team" chip.
+function teamRequirementWhere(user) {
+  return requirementWhere(user, { pool: false });
+}
+
 // Is this user personally named on this requirement's assignment chain? Used
 // for the EDIT / ASSIGN split: a TL can SEE a requirement in their department
 // without being the person who may re-assign or edit it.
@@ -151,7 +287,10 @@ function isAssignedTo(user, requirement) {
     || co.includes(s.userId)
     || requirement.tlId === s.userId
     || requirement.stlId === s.userId
-    || requirement.bdeId === s.userId;
+    || requirement.bdeId === s.userId
+    // A BDE owns the requirements of THEIR clients (role spec 2026-09-29:
+    // "full access to own clients"), not only the ones naming them as BDE.
+    || (s.atsRole === 'BDE' && !!requirement.clientId && s.clientIds.includes(requirement.clientId));
 }
 
 // --- Job Portal ------------------------------------------------------------
@@ -177,12 +316,8 @@ function portalRequirementWhere(user, { publishedOnly = false } = {}) {
 function clientWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
-  // Without this an HR login resolved to the default branch and saw nothing,
-  // so the modules opened empty. READ ONLY — no create / edit / approve rule
-  // in utils/permissions.js names HR, so this widens what HR sees and
-  // nothing they can do.
-  if (s.atsRole === 'HR') return {};
+  // HR — Internal Hiring only: the one internal client record, nothing else.
+  if (s.atsRole === 'HR') return { clientType: 'Internal' };
   // AN ATS LOGIN WITH NO ATS WORKING ROLE SEES NO ATS RECORDS.
   //
   // The ATS modules are visible to an Employee (product table), and every
@@ -191,7 +326,16 @@ function clientWhere(user) {
   // showed their department's client while Requirements and Candidates showed
   // zero. One rule: the modules open, and they fill the moment that person is
   // made a Recruiter or a BDE on Administration -> Users.
-  if (s.atsRole === 'EMPLOYEE' || s.atsRole === 'ACCOUNTANT') return { id: '__none__' };
+  if (s.atsRole === 'EMPLOYEE') return { id: '__none__' };
+  // ACCOUNTS (clients role spec 2026-09-29 §1): "clients with billing" —
+  // a requirement with a joined candidate, or an invoice raised against them.
+  if (s.atsRole === 'ACCOUNTANT') {
+    const ids = s.joinedRequirementIds || [];
+    return { OR: [...(ids.length ? [{ requirements: { some: { id: { in: ids } } } }] : []), { invoices: { some: {} } }] };
+  }
+  // TL (clients role spec §1): "only clients that have my team's
+  // requirements" — not the department's directory, not the unassigned pool.
+  if (s.atsRole === 'TL') return { requirements: { some: teamRequirementWhere(user) } };
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
   if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
   // A BDE is scoped to the clients assigned to them; where none are assigned
@@ -232,16 +376,82 @@ function clientWhere(user) {
 function applicationWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
-  // Without this an HR login resolved to the default branch and saw nothing,
-  // so the modules opened empty. READ ONLY — no create / edit / approve rule
-  // in utils/permissions.js names HR, so this widens what HR sees and
-  // nothing they can do.
-  if (s.atsRole === 'HR') return {};
+  // HR falls through to the requirement rule below: internal openings only.
   if (s.atsRole === 'CANDIDATE') {
     return { candidateId: s.candidateId || '__none__' };
   }
-  return { requirement: requirementWhere(user) };
+  // SEAT SCOPE IS PER APPLICATION, not per requirement: one Education opening
+  // can be worked by Team A and Team B, and each TL sees their own team's
+  // candidates on it, not the other's.
+  if (s.positions) return seatApplicationWhere(s);
+  // teamRequirementWhere: a TL's department pool of UNASSIGNED requirements
+  // widens their requirement list only — never their candidates.
+  return { requirement: teamRequirementWhere(user) };
+}
+
+// CLIENT NAMES FOR A PICKER (GET /requirements/client-options — the Add
+// Requirement form and the Client filter). Names only, never the record. A
+// TL may raise a requirement for any client of their department, so the
+// picker keeps the department directory the TL's Clients view no longer has.
+function clientPickerWhere(user) {
+  const s = scopeOf(user);
+  if (s.atsRole === 'TL' && !s.global) {
+    const departments = departmentsOf(user);
+    if (departments === undefined) return {};
+    return {
+      OR: [
+        { ownerDepartment: { in: departments } },
+        { requirements: { some: requirementWhere(user) } },
+      ],
+    };
+  }
+  return clientWhere(user);
+}
+
+// THE ROLE A SCREEN IS DRAWN FOR (Jobs / Requirements and Clients role
+// specs, 2026-09-29). One answer, from the ATS scope role, shared by the
+// routes that shape responses per role (routes/requirements.js,
+// routes/clients.js) so the column / section / tab rules cannot drift:
+//   admin      Super Admin / Admin (global)
+//   mgmt       Manager / Assistant Manager (global, view-only)
+//   bde · tl · stl · recruiter · accounts · hr · client · candidate · none
+function atsViewRole(user) {
+  const s = scopeOf(user);
+  const held = [s.role, s.atsRole];
+  if (held.some((r) => GLOBAL_SCOPE_ROLES.includes(r))) return 'admin';
+  if (held.some((r) => CONFIGURABLE_GLOBAL_ROLES.includes(r))) return 'mgmt';
+  if (s.global) return 'admin';
+  return {
+    BDE: 'bde', TL: 'tl', STL: 'stl', RECRUITER: 'recruiter', ACCOUNTANT: 'accounts',
+    HR: 'hr', CLIENT: 'client', CANDIDATE: 'candidate',
+  }[s.atsRole] || 'none';
+}
+
+// Record-level twin of applicationWhere() for an application already loaded
+// WITH its requirement (candidate detail, etc.). Same rule, evaluated in
+// memory — matches() cannot follow the `requirement` relation by itself.
+function applicationInScope(user, application) {
+  const s = scopeOf(user);
+  if (s.global) return true;
+  if (!application) return false;
+  if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;
+  const r = application.requirement;
+  if (!s.positions) return !!r && matches(r, teamRequirementWhere(user));
+  const p = s.positions;
+  if (idSet(p, 'workApplicationIds').has(application.id)) return true;
+  if (!r) return false;
+  if (matches(r, { OR: seatAssignedArms(s) })) return true;
+  const pool = seatPoolArm(s);
+  return !!pool && matches(r, pool) && !idSet(p, 'foreignApplicationIds').has(application.id);
+}
+// Set views of the seat scope's id lists, built once per request object —
+// applicationInScope() runs once per application on a 20k-row list.
+const ID_SETS = new WeakMap();
+function idSet(p, key) {
+  if (!ID_SETS.has(p)) ID_SETS.set(p, {});
+  const cache = ID_SETS.get(p);
+  if (!cache[key]) cache[key] = new Set(p[key] || []);
+  return cache[key];
 }
 
 // --- Candidates ------------------------------------------------------------
@@ -266,12 +476,7 @@ const CLIENT_SHARED_STAGES = [
 function candidateWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
-  // HR READS ATS COMPANY-WIDE (product table: HRMS + ATS + Job Portal).
-  // Without this an HR login resolved to the default branch and saw nothing,
-  // so the modules opened empty. READ ONLY — no create / edit / approve rule
-  // in utils/permissions.js names HR, so this widens what HR sees and
-  // nothing they can do.
-  if (s.atsRole === 'HR') return {};
+  // HR falls through to applicationWhere(): internal-hiring candidates only.
   if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
   return { applications: { some: applicationWhere(user) } };
 }
@@ -366,6 +571,17 @@ function withSeniority(s, base) {
   };
 }
 
+// A LEAD ALWAYS REACHES THEIR OWN RECORD AND THE PEOPLE WHO REPORT TO THEM.
+// The team/department rule above decides the rest, but a direct report filed
+// under another team — or the lead's own record, if their team is set
+// differently — must not fall out of their leave, attendance and employee
+// screens: "TL should see their own leave and their reportees' leave".
+function withReports(s, where) {
+  if (!s.employeeId) return where || { id: '__none__' };
+  const mine = [{ id: s.employeeId }, { reportingManagerId: s.employeeId }];
+  return { OR: where ? [...mine, where] : mine };
+}
+
 function employeeWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
@@ -388,12 +604,13 @@ function employeeWhere(user) {
     const where = teams
       ? { team: { in: teams } }
       : (s.departments.length ? { department: { in: s.departments } } : null);
-    if (where) return withSeniority(s, where);
+    if (where) return withReports(s, withSeniority(s, where));
   }
 
   if (['STL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
-    return withSeniority(s, { department: { in: s.departments } });
+    return withReports(s, withSeniority(s, { department: { in: s.departments } }));
   }
+  if (['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole)) return withReports(s, null);
   return { id: s.employeeId || '__none__' };
 }
 
@@ -490,19 +707,54 @@ function accountsGlobal(user) {
 // answer in the reader's own terms: My Candidates / My Team / Medical
 // Department / All Company, so there is no confusion about why a list is the
 // length it is.
-function scopeLabel(user) {
+//
+// REVIEW #3 §27 — THE PATH, NOT JUST THE NAME: "Education → Team A → My Team",
+// "Education → Team A → My Work", "All Company". Department and section come
+// from the seat structure where the person holds a seat (utils/positionScope.js
+// label "Education Team A"), else from their department / team fields.
+//
+// `product` = 'ats' asks for the ATS reading of the same login: HR is
+// company-wide in HRMS ("All Employees") but Internal Hiring only in ATS, so
+// the ATS header must not print the HRMS answer. No product = the old
+// behaviour, which the HRMS screens rely on.
+function sectionPath(s) {
+  const p = s.positions;
+  const pairs = [];
+  if (p && p.label) {
+    const depts = p.departments || [];
+    p.label.split(', ').forEach((part) => {
+      const d = depts.find((x) => part === x || part.startsWith(`${x} `));
+      pairs.push(d ? [d, part.slice(d.length).trim()] : [part, '']);
+    });
+  } else if (s.departments.length) {
+    const teams = s.teams || [];
+    pairs.push([s.departments.join(', '), teams.join(', ')]);
+  }
+  const seen = new Set();
+  return pairs
+    .map(([d, t]) => [d, t].filter(Boolean).join(' → '))
+    .filter((x) => x && !seen.has(x) && seen.add(x))
+    .join(', ');
+}
+
+function scopeLabel(user, product) {
   const s = scopeOf(user);
   if (s.global) return 'All Company';
-  if (hrmsGlobal(user)) return 'All Employees';
-  const departments = scopeDepartments(user);
+  const ats = product === 'ats';
+  if (ats && s.atsRole === 'HR') return 'Internal Hiring';
+  if (ats && s.atsRole === 'ACCOUNTANT') return 'Billing — joined candidates';
+  if (!ats && hrmsGlobal(user)) return 'All Employees';
+  const departments = ats ? departmentsOf(user) : scopeDepartments(user);
   if (departments === undefined) return 'All Company';
+  const path = sectionPath(s);
+  const under = (tail) => (path ? `${path} → ${tail}` : tail);
 
   switch (s.atsRole || s.hrmsRole) {
     case 'CLIENT': return 'My Company';
     case 'CANDIDATE': return 'My Profile';
-    case 'BDE': return 'My Clients';
-    case 'RECRUITER': return 'My Assigned Work';
-    case 'TL': return s.teams && s.teams.length ? `My Team — ${s.teams.join(', ')}` : 'My Team';
+    case 'BDE': return s.departments.length ? `${s.departments.join(', ')} → My Clients` : 'My Clients';
+    case 'RECRUITER': return under('My Work');
+    case 'TL': return under('My Team');
     case 'STL':
     case 'MANAGER':
     case 'ASSISTANT_MANAGER':
@@ -547,6 +799,9 @@ function matches(record, where) {
     if (value && typeof value === 'object' && Array.isArray(value.in)) {
       return value.in.includes(record[key]);
     }
+    if (value && typeof value === 'object' && Array.isArray(value.notIn)) {
+      return !value.notIn.includes(record[key]);
+    }
     // `{ contains }` — the co-recruiter list. Same semantics as the Prisma
     // filter above it, so a record the list query returns is a record the
     // single-record check accepts, and vice versa.
@@ -569,10 +824,16 @@ module.exports = {
   departmentsOf,
   scopeOf,
   requirementWhere,
+  teamRequirementWhere,
+  UNASSIGNED_WHERE,
+  isUnassigned,
+  atsViewRole,
+  clientPickerWhere,
   portalRequirementWhere,
   isAssignedTo,
   clientWhere,
   applicationWhere,
+  applicationInScope,
   candidateWhere,
   CLIENT_SHARED_STAGES,
   invoiceWhere,

@@ -3,9 +3,10 @@
 // here is computed from AttendancePunch/Attendance rows rather than stored, so a
 // corrected punch immediately corrects the hours, the lateness and the monthly cut.
 
-// The ways a punch can reach us. Display-only — every method records the same
-// punch; a production check-in would additionally capture GPS and face verification.
-const CHECKIN_METHODS = ['Web Check-in', 'Mobile App', 'Biometric (Fingerprint)'];
+// The ways a punch can reach us — the self check-in methods Super Admin assigns
+// per employee (routes/attendance.js).
+// Older punches keep the method they were recorded with and are still counted.
+const CHECKIN_METHODS = ['GPS / Location', 'Biometric', 'Face Recognition'];
 const DIRECTIONS = ['In', 'Out'];
 
 // Accepts "09:30" and "9:30 AM"; returns minutes since midnight, or null when the
@@ -33,12 +34,60 @@ function isLate(time, graceTime) {
   return t != null && g != null && t > g;
 }
 
-const sortedPunches = (punches) => [...punches].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+// Device punches carry seconds (clockTime); two punches in the same minute keep their order.
+const clockOf = (p) => p.clockTime || p.time || '';
+const sortedPunches = (punches) => [...punches].sort((a, b) => clockOf(a).localeCompare(clockOf(b)));
 const firstIn = (punches) => sortedPunches(punches).find((p) => p.direction === 'In') || null;
 const lastOut = (punches) => {
   const outs = sortedPunches(punches).filter((p) => p.direction === 'Out');
   return outs.length ? outs[outs.length - 1] : null;
 };
+
+// ONE RULE FOR A DAY'S CHECK-IN AND CHECK-OUT, used by every report.
+//   * Each punch is a check-in or a check-out exactly as recorded — for the
+//     biometric device that is the state key the person pressed (deviceState).
+//   * First In = the earliest check-in. Last Out = the latest check-out.
+//   * No check-out is ever inferred: a second scan, however late, is not a
+//     check-out unless the person pressed check-out. A day without one shows
+//     no check-out (and is a missing check-out for regularization).
+const OUT_STATES = new Set(['1', '2', '5']); // check-out, break-out, OT-out
+const directionFromState = (state) => (OUT_STATES.has(String(state)) ? 'Out' : 'In');
+
+function daySplit(punches) {
+  const ps = sortedPunches(punches);
+  const ins = ps.filter((p) => p.direction !== 'Out');
+  const outs = ps.filter((p) => p.direction === 'Out');
+  const last = ps[ps.length - 1];
+  return {
+    punches: ps,
+    ins,
+    outs,
+    checkIn: ins[0] || null,
+    checkOut: outs.length ? outs[outs.length - 1] : null,
+    status: ps.length ? (last.direction === 'Out' ? 'Checked Out' : 'Checked In') : null,
+  };
+}
+const dayCheckIn = (punches) => daySplit(punches).checkIn;
+const dayCheckOut = (punches) => daySplit(punches).checkOut;
+
+// "Biometric (Fingerprint)" etc. from the device's verify code.
+const VERIFY_LABEL = { 0: 'Password', 1: 'Fingerprint', 2: 'Card', 3: 'Password', 4: 'Card', 15: 'Face', 25: 'Palm' };
+function methodLabel(p) {
+  if (!p) return '—';
+  if (p.method === 'Biometric' && p.deviceVerify != null && VERIFY_LABEL[p.deviceVerify]) return `Biometric (${VERIFY_LABEL[p.deviceVerify]})`;
+  return p.method || '—';
+}
+
+// "HH:MM[:SS]" -> seconds since midnight.
+function toSeconds(t) {
+  const m = String(t || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] || 0) : null;
+}
+function hms(totalSeconds) {
+  if (totalSeconds == null || totalSeconds < 0) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(totalSeconds / 3600))}:${pad(Math.floor((totalSeconds % 3600) / 60))}:${pad(totalSeconds % 60)}`;
+}
 
 function calendarDays(month) {
   const [y, m] = String(month || '').split('-').map(Number);
@@ -89,6 +138,11 @@ function monthStats({ month, records, punches, cfg }) {
 // Code / name / department / designation filters, shared by every HR-facing tab.
 // Substring (case-insensitive) on code and name; exact match on department and role.
 function employeeMatchesFilters(e, q = {}) {
+  // One search box: employee ID or name (the attendance filter bars).
+  if (q.q) {
+    const s = String(q.q).trim().toLowerCase();
+    if (s && !`${e.employeeCode || ''} ${e.name || ''}`.toLowerCase().includes(s)) return false;
+  }
   if (q.code && !(e.employeeCode || '').toLowerCase().includes(String(q.code).toLowerCase())) return false;
   if (q.name && !(e.name || '').toLowerCase().includes(String(q.name).toLowerCase())) return false;
   if (q.department && e.department !== q.department) return false;
@@ -98,6 +152,7 @@ function employeeMatchesFilters(e, q = {}) {
 
 module.exports = {
   CHECKIN_METHODS, DIRECTIONS,
-  toMinutes, isLate, sortedPunches, firstIn, lastOut,
+  toMinutes, isLate, sortedPunches, firstIn, lastOut, clockOf,
+  directionFromState, daySplit, dayCheckIn, dayCheckOut, methodLabel, toSeconds, hms,
   calendarDays, businessDays, monthLabel, monthStats, employeeMatchesFilters,
 };

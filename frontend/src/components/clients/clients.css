@@ -1,0 +1,61 @@
+/* Clients — relationship columns, duplicate warning, client header strip.
+   Everything is scoped under .clrel / .cldup / .clhead so nothing leaks into
+   the rest of the app. Colours come from the existing TeamLink tokens. */
+
+/* --- List: horizontal scroll with a sticky Client column (spec §28) ------- */
+.clrel-table { min-width: 100%; }
+.clrel-table th, .clrel-table td { white-space: nowrap; }
+.clrel-table th.clrel-sticky, .clrel-table td.clrel-sticky {
+  position: sticky; left: 0; z-index: 1; background: var(--paper-raised);
+  box-shadow: inset -1px 0 0 var(--line); max-width: 240px; white-space: normal; min-width: 180px;
+}
+.clrel-table thead th.clrel-sticky { z-index: 3; }
+.clrel-table tr.row-link:hover td.clrel-sticky { background: var(--line-soft); }
+.clrel-num { text-align: right; font-variant-numeric: tabular-nums; }
+.clrel-num a, .clrel-num .clrel-zero { display: inline-block; min-width: 22px; }
+.clrel-zero { color: var(--ink-soft); opacity: .6; }
+.clrel-sub { display: block; font-size: 11px; color: var(--ink-soft); font-weight: 400; }
+.clrel-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--ink-soft); }
+.clrel-pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; background: var(--line-soft); color: var(--ink); }
+.clrel-pill.warn { background: #fff4e0; color: #9a5b00; }
+.clrel-pill.bad { background: #fde8e8; color: #a61b1b; }
+.clrel-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.clrel-toolbar label { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink-soft); }
+.clrel-toolbar select { width: auto; }
+
+/* --- Possible duplicate warning (spec §8) --------------------------------- */
+.cldup { border: 1px solid #f0c36d; background: #fffaf0; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.cldup-head { display: flex; align-items: center; gap: 8px; font-weight: 600; color: #8a5300; font-size: 13px; }
+.cldup-head .cldup-count { font-weight: 400; color: var(--ink-soft); font-size: 12px; }
+.cldup-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cldup-item { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.cldup-item-top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.cldup-item-top b { font-size: 13px; }
+.cldup-meta { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
+.cldup-reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.cldup-reason { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--line-soft); }
+.cldup-reason.exact { background: #fde8e8; color: #a61b1b; }
+.cldup-reason.strong { background: #fff0d6; color: #8a5300; }
+.cldup-reason.possible { background: #eef3fb; color: #2b4f86; }
+.cldup-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.cldup-ack { margin-top: 8px; font-size: 12px; }
+.cldup-ack textarea { width: 100%; margin-top: 4px; font-size: 12px; }
+.cldup-ok { font-size: 12px; color: #1f6b3a; margin-top: 6px; }
+.cldup-checking { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 8px; }
+
+/* --- Client detail: relationship strip (spec §9) --------------------------- */
+.clhead-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px; margin: 4px 0 14px; }
+.clhead-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: default; text-align: left; font: inherit; color: inherit; }
+button.clhead-card { cursor: pointer; }
+button.clhead-card:hover { border-color: var(--blue, #2f6fdb); }
+.clhead-card .k { display: block; font-size: 11px; color: var(--ink-soft); }
+.clhead-card .v { display: block; font-size: 18px; font-weight: 700; color: var(--navy, #15306b); line-height: 1.3; }
+.clhead-card .s { display: block; font-size: 11px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clhead-own { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-soft); margin: -4px 0 10px; }
+.clhead-own b { color: var(--ink); font-weight: 600; }
+.clact-filter { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.clact-why { font-size: 11.5px; color: var(--ink-soft); white-space: normal; max-width: 360px; }
+.clrel-table td.clrel-next { white-space: normal; min-width: 240px; max-width: 320px; }
+.clrel-table td.clrel-wrap { white-space: normal; min-width: 120px; max-width: 210px; }
+.clrel-table th.clrel-num, .clrel-table th.clrel-wrap { white-space: normal; }
+.clrel-table td.clrel-wrap .clrel-sub { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }

@@ -18,10 +18,25 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import TabsPage from '../../components/TabsPage.jsx';
 import {
-  Panel, PanelHead, EmptyMini, QaRow, Modal, ScopeNote, Status,
+  Panel, PanelHead, QaRow, Modal, ScopeNote, Status,
 } from '../../components/proto.jsx';
-import { isHR as hasHrmsAdmin, canDecideServices } from '../../permissions';
+import { isHR as hasHrmsAdmin, canDecideServices, canManageServices } from '../../permissions';
+import AudiencePicker, { DeliverVia, audienceReady, useAudienceOptions } from '../../components/AudiencePicker.jsx';
+import {
+  ComposeModal, Field, Row, AiAssist, ResultNote, useSubmit,
+} from '../../components/ComposeForm.jsx';
 import Combo from '../../components/Combo.jsx';
+import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
+import { ListEmpty } from '../../components/ui/ListFilters.jsx';
+import DataIoBar from '../../components/dataio/DataIoBar.jsx';
+
+// The filter bars below offer the person filters (Employee name / ID,
+// Department, Role, Employee status) only when the list actually holds more
+// than one person — an employee who sees only their own row gets none.
+const manyPeople = (rows, idOf) => new Set(rows.map(idOf).filter(Boolean)).size > 1;
+const clearAll = (setPf) => () => setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, ''])));
+const lfOf = (pf, setPf) => ({ activeCount: Object.values(pf).some(Boolean) ? 1 : 0, clear: clearAll(setPf) });
 
 const SUBTITLE = 'Every employee submits 3 unique HRMS-improvement ideas per week. '
   + 'AI screens for duplicates and scores each unique idea on originality, usefulness, impact, clarity, and feasibility.';
@@ -42,54 +57,61 @@ function EmployeeCell({ name, code }) {
   return <>{name} <span className="cell-muted">({code})</span></>;
 }
 
-// --- Log KT Session (unchanged behaviour, /api/kt) --------------------------
-function LogKtModal({ employees, onClose, onSaved }) {
-  const [form, setForm] = useState({ topic: '', from: '', to: '' });
-  const [error, setError] = useState('');
+// --- Log KT Session (/api/kt) ------------------------------------------------
+// The reference compose layout. A lead who may create for others picks the
+// presenter and sends the session to one person, several people, one or MANY
+// departments, or everyone in scope — one KT row per recipient (From =
+// presenter, To = that recipient). Anyone else logs a session of their own.
+function LogKtModal({ canSend, me, onClose, onSaved }) {
+  const { opts } = useAudienceOptions();
+  const [form, setForm] = useState({ topic: '', detail: '', from: '', toName: '', date: new Date().toISOString().slice(0, 10) });
+  const [audience, setAudience] = useState({ mode: 'individuals', departments: [], employeeIds: [] });
+  const [channels, setChannels] = useState([]);
+  const { busy, error, setError, run } = useSubmit();
+  const people = opts?.employees || [];
 
   async function submit() {
-    setError('');
-    const fromEmp = employees.find((e) => e.id === form.from);
-    const toEmp = employees.find((e) => e.id === form.to);
-    try {
-      await api.post('/kt', {
-        employeeId: form.from || employees[0]?.id,
-        title: form.topic || '(untitled)',
-        fromName: fromEmp?.name,
-        toName: toEmp?.name,
-        date: new Date().toISOString().slice(0, 10),
-      });
-      onSaved();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not log the session');
+    if (!form.topic.trim()) { setError('Enter the topic.'); return; }
+    const presenter = people.find((e) => e.id === form.from);
+    let body;
+    if (canSend) {
+      if (!audienceReady(audience)) { setError(audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one employee.'); return; }
+      body = {
+        title: form.topic.trim(), detail: form.detail || null, date: form.date,
+        fromName: presenter ? presenter.name : me, audience, channels,
+      };
+    } else {
+      body = { title: form.topic.trim(), detail: form.detail || null, date: form.date, fromName: me, toName: form.toName || null };
     }
+    const res = await run(() => api.post('/kt', body), 'Could not log the session');
+    if (res) onSaved(res.data);
   }
 
   return (
-    <Modal
-      title="Log KT Session"
-      onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit}>Save</button></>}
-    >
-      <div className="field"><label>Topic</label><input value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} /></div>
-      <div className="grid-2">
-        <div className="field">
-          <label>From</label>
-          <Combo value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })}>
-            <option value="">Select</option>
-            {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </Combo>
-        </div>
-        <div className="field">
-          <label>To</label>
-          <Combo value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })}>
-            <option value="">Select</option>
-            {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </Combo>
-        </div>
-      </div>
-      {error && <div className="error-text">{error}</div>}
-    </Modal>
+    <ComposeModal title="Log KT Session" onClose={onClose} onSubmit={submit} submitLabel="Log Session" busy={busy} error={error} wide={canSend}>
+      <Field label="Topic" required><input value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} /></Field>
+      <AiAssist kind="kt" title={form.topic} text={form.detail} onText={(detail) => setForm((f) => ({ ...f, detail }))} />
+      <Field label="Notes"><textarea rows="3" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="What was handed over" /></Field>
+      <Row>
+        {canSend ? (
+          <Field label="Presented by">
+            <Combo value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })}>
+              <option value="">{me || 'Me'}</option>
+              {people.map((e) => <option key={e.id} value={e.id}>{e.name}{e.employeeCode ? ` · ${e.employeeCode}` : ''}</option>)}
+            </Combo>
+          </Field>
+        ) : (
+          <Field label="Handed over to"><input value={form.toName} onChange={(e) => setForm({ ...form, toName: e.target.value })} placeholder="Name" /></Field>
+        )}
+        <Field label="Date" required><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+      </Row>
+      {canSend && (
+        <>
+          <AudiencePicker value={audience} onChange={setAudience} label="Knowledge transfer to" required />
+          <DeliverVia value={channels} onChange={setChannels} />
+        </>
+      )}
+    </ComposeModal>
   );
 }
 
@@ -165,40 +187,44 @@ function SubmitIdeaModal({ ai, onClose, onSaved }) {
   }
 
   return (
-    <Modal
-      title="Submit Weekly Idea"
-      onClose={onClose}
-      footer={(
-        <>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit} disabled={busy}>{busy ? 'Screening…' : 'Submit'}</button>
-        </>
-      )}
-    >
-      <div className="field"><label>Idea</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="One HRMS improvement, in a line" /></div>
-      <div className="field"><label>Description</label><textarea rows="4" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="What changes, and why it helps" /></div>
+    <ComposeModal title="Submit Weekly Idea" onClose={onClose} onSubmit={submit} submitLabel="Submit Idea" busyLabel="Screening…" busy={busy} error={error}>
+      <Field label="Idea" required><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="One HRMS improvement, in a line" /></Field>
+      <Field label="Description"><textarea rows="4" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="What changes, and why it helps" /></Field>
       <div className="small-muted">
         {ai && ai.configured
           ? 'On submit this is screened for duplicates and scored on originality, usefulness, impact, clarity and feasibility.'
           : 'On submit this is screened for duplicates by a deterministic text-similarity check. AI scoring is not configured, so it will be recorded unscored.'}
       </div>
-      {error && <div className="error-text">{error}</div>}
-    </Modal>
+    </ComposeModal>
   );
 }
 
 // --- Tab 1: Weekly Compliance ----------------------------------------------
 function WeeklyCompliance({ data }) {
-  const rows = (data && data.rows) || [];
+  const all = (data && data.rows) || [];
+  const [pf, setPf] = useState(EMPTY_PEOPLE_FILTERS);
+  // This week's standing is the row's status: Met or Short of the quota.
+  const statusOf = (r) => (r.met ? 'Met' : 'Short');
+  const rows = all.filter((r) => peopleMatches(r, pf, undefined, statusOf));
+  const opts = peopleOptions(all);
+  const many = manyPeople(all, (r) => r.employeeId);
+  const page = usePaged(rows);
   return (
     <Panel>
       <PanelHead title={`Weekly quota — ${(data && data.quota) || 3} unique ideas`} />
-      {rows.length === 0 ? <EmptyMini>No employees in your scope.</EmptyMini> : (
+      <div style={{ padding: '0 18px' }}>
+        <PeopleFilterBar
+          filters={pf} setFilters={setPf} people={many}
+          departments={many ? opts.departments : undefined} roles={many ? opts.roles : undefined}
+          statuses={['Met', 'Short']} shown={rows.length} total={all.length}
+        />
+      </div>
+      {rows.length === 0 ? <ListEmpty lf={lfOf(pf, setPf)} noun="employees" title="No employees in your scope." /> : (
         <div className="tbl-wrap">
           <table>
             <thead><tr><th>Employee</th><th>Department</th><th>This Week</th><th>Status</th></tr></thead>
             <tbody>
-              {rows.map((r) => (
+              {page.slice.map((r) => (
                 <tr key={r.employeeId}>
                   <td><EmployeeCell name={r.name} code={r.employeeCode} /></td>
                   <td className="cell-muted">{r.department}</td>
@@ -210,6 +236,7 @@ function WeeklyCompliance({ data }) {
           </table>
         </div>
       )}
+      {page.total > 0 && <Pager page={page} noun="employees" />}
     </Panel>
   );
 }
@@ -219,12 +246,25 @@ function WeeklyCompliance({ data }) {
 // scored, so the score columns read "—" and the order falls back to unique
 // ideas contributed — a real figure rather than an invented score.
 function Leaderboard({ data }) {
-  const rows = (data && data.rows) || [];
+  const all = (data && data.rows) || [];
+  // A ranking has no status of its own, so only the person filters apply.
+  const [pf, setPf] = useState(EMPTY_PEOPLE_FILTERS);
+  const rows = all.filter((r) => peopleMatches(r, pf));
+  const opts = peopleOptions(all);
   const scored = rows.some((r) => r.totalScore != null);
+  const many = manyPeople(all, (r) => r.employeeId);
+  const page = usePaged(rows);
   return (
     <Panel>
       <PanelHead title={scored ? 'Top contributors — by AI score' : 'Top contributors — by unique ideas'} />
-      {rows.length === 0 ? <EmptyMini>No ideas submitted yet.</EmptyMini> : (
+      <div style={{ padding: '0 18px' }}>
+        <PeopleFilterBar
+          filters={pf} setFilters={setPf} people={many}
+          departments={many ? opts.departments : undefined} roles={many ? opts.roles : undefined}
+          shown={rows.length} total={all.length}
+        />
+      </div>
+      {rows.length === 0 ? <ListEmpty lf={lfOf(pf, setPf)} noun="contributors" title="No ideas submitted yet." /> : (
         <div className="tbl-wrap">
           <table>
             <thead>
@@ -235,7 +275,7 @@ function Leaderboard({ data }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {page.slice.map((r) => (
                 <tr key={r.employeeId}>
                   <td>{r.rank}</td>
                   <td><EmployeeCell name={r.name} code={r.employeeCode} /></td>
@@ -252,6 +292,7 @@ function Leaderboard({ data }) {
           </table>
         </div>
       )}
+      {page.total > 0 && <Pager page={page} noun="contributors" />}
       {!scored && rows.length > 0 && (
         <div className="small-muted" style={{ padding: '0 18px 14px' }}>
           No idea on file carries an AI score, so the ranking is by unique ideas contributed.
@@ -262,11 +303,46 @@ function Leaderboard({ data }) {
 }
 
 // --- Tab 3: All Ideas -------------------------------------------------------
-function AllIdeas({ ideas }) {
+function AllIdeas({ ideas: all }) {
+  // An idea's status is its screening result: Unique or Duplicate.
+  const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, week: '' });
+  const [sort, setSort] = useState('new');
+  const statusOf = (i) => (i.aiDuplicate ? 'Duplicate' : 'Unique');
+  const weekOf = (i) => i.weekStart || i.date || '';
+  const ideas = all.filter((i) => textMatches(`${i.title || ''} ${i.detail || ''}`, pf.q)
+    && peopleMatches(i, pf, undefined, statusOf) && (!pf.week || weekOf(i) === pf.week));
+  const opts = peopleOptions(all);
+  const weeks = [...new Set(all.map(weekOf).filter(Boolean))].sort().reverse();
+  const many = manyPeople(all, (i) => i.employee?.id || i.employeeId);
+  const SORTS = {
+    new: (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
+    score: (a, b) => (b.scoreTotal ?? -1) - (a.scoreTotal ?? -1),
+  };
+  const page = usePaged([...ideas].sort(SORTS[sort] || SORTS.new));
   return (
     <Panel>
-      <PanelHead title={`All ideas on file (${ideas.length})`} />
-      {ideas.length === 0 ? <EmptyMini>No ideas submitted yet.</EmptyMini> : (
+      <PanelHead title={`All ideas on file (${all.length})`} />
+      <div style={{ padding: '0 18px' }}>
+        <PeopleFilterBar
+          filters={pf} setFilters={setPf} people={many} search="Idea"
+          departments={many ? opts.departments : undefined} roles={many ? opts.roles : undefined}
+          statuses={['Unique', 'Duplicate']} statusLabel="All screening results" shown={ideas.length} total={all.length}
+          labels={{ week: 'Week', status: 'Screening' }}
+        >
+          <Combo value={pf.week} title="Week" onChange={(e) => setPf((f) => ({ ...f, week: e.target.value }))}>
+            <option value="">All weeks</option>
+            {weeks.map((w) => <option key={w} value={w}>Week of {w}</option>)}
+          </Combo>
+          <label className="lf-sort">
+            Sort
+            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="new">Newest first</option>
+              <option value="score">Total score (high to low)</option>
+            </select>
+          </label>
+        </PeopleFilterBar>
+      </div>
+      {ideas.length === 0 ? <ListEmpty lf={lfOf(pf, setPf)} noun="ideas" title="No ideas submitted yet." /> : (
         <div className="tbl-wrap">
           <table>
             <thead>
@@ -277,7 +353,7 @@ function AllIdeas({ ideas }) {
               </tr>
             </thead>
             <tbody>
-              {ideas.map((i) => (
+              {page.slice.map((i) => (
                 <tr key={i.id}>
                   <td>{i.employee ? <EmployeeCell name={i.employee.name} code={i.employee.employeeCode} /> : '—'}</td>
                   <td>
@@ -302,6 +378,7 @@ function AllIdeas({ ideas }) {
           </table>
         </div>
       )}
+      {page.total > 0 && <Pager page={page} noun="ideas" />}
     </Panel>
   );
 }
@@ -315,20 +392,28 @@ export default function KT() {
   // gone on offering them every button on this screen. Both halves, because
   // the screen is an administration screen AND these are writes.
   const isHR = hasHrmsAdmin(user) && canDecideServices(user);
+  // May send a KT session to other people (Send-to picker). A view-only
+  // Manager / Assistant Manager reads the list but is not drawn the button;
+  // an employee without the HRMS admin view logs their own session.
+  const hrView = hasHrmsAdmin(user);
+  const canSendKt = hrView && (canManageServices(user) || canDecideServices(user));
+  const canLogKt = !hrView || canSendKt;
+  const [ktDone, setKtDone] = useState('');
   const [compliance, setCompliance] = useState(null);
   const [board, setBoard] = useState(null);
   const [ideas, setIdeas] = useState([]);
   const [records, setRecords] = useState([]);
-  const [employees, setEmployees] = useState([]);
   const [ktOpen, setKtOpen] = useState(false);
   const [ideaOpen, setIdeaOpen] = useState(false);
+  // KT sessions filter by the person handing over (the record's employee) and
+  // the session's own status.
+  const [kf, setKf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, from: '', to: '' });
 
   function load() {
     api.get('/weekly-ideas/compliance').then((res) => setCompliance(res.data)).catch(() => setCompliance(null));
     api.get('/weekly-ideas/leaderboard').then((res) => setBoard(res.data)).catch(() => setBoard(null));
     api.get('/weekly-ideas').then((res) => setIdeas(res.data)).catch(() => setIdeas([]));
     api.get('/kt').then((res) => setRecords(res.data)).catch(() => setRecords([]));
-    api.get('/employees').then((res) => setEmployees(res.data)).catch(() => setEmployees([]));
   }
   useEffect(load, []);
 
@@ -336,6 +421,11 @@ export default function KT() {
     await api.patch(`/kt/${r.id}/status`, { status: 'Completed' });
     load();
   }
+
+  const sessions = records.filter((r) => textMatches(`${r.title} ${r.fromName || ''} ${r.toName || ''} ${r.detail || ''}`, kf.q) && peopleMatches(r, kf));
+  const ktOpts = peopleOptions(records);
+  const ktMany = manyPeople(records, (r) => r.employeeId);
+  const ktPage = usePaged(sessions);
 
   const ai = compliance ? compliance.ai : null;
   const stats = [
@@ -376,7 +466,7 @@ export default function KT() {
         </div>
         <QaRow style={{ margin: 0 }}>
           <button className="btn btn-primary btn-sm" onClick={() => setIdeaOpen(true)}>Submit Idea</button>
-          <button className="btn btn-sm" onClick={() => setKtOpen(true)}>Log KT Session</button>
+          {canLogKt && <button className="btn btn-sm" onClick={() => setKtOpen(true)}>Log KT Session</button>}
         </QaRow>
       </div>
 
@@ -394,12 +484,31 @@ export default function KT() {
           unchanged (/api/kt). */}
       <Panel style={{ marginTop: 18 }}>
         <PanelHead title="KT Sessions" />
-        {records.length === 0 ? <EmptyMini>No KT sessions logged yet.</EmptyMini> : (
+        {ktDone && <div style={{ padding: '0 18px' }}><ResultNote>{ktDone}</ResultNote></div>}
+        {/* Data I/O for KT SESSIONS: export all / one employee and import
+            with the compulsory sample (backend src/io/kt.js). The AI Weekly
+            Ideas are not importable — they are scored on submission. */}
+        <div style={{ padding: '0 18px 8px' }}>
+          <DataIoBar
+            ioKey="kt"
+            params={Object.fromEntries(['department', 'status', 'from', 'to'].filter((k) => kf[k]).map((k) => [k, kf[k]]))}
+            onImported={load}
+          />
+        </div>
+        <div style={{ padding: '0 18px' }}>
+          <PeopleFilterBar
+            filters={kf} setFilters={setKf} search="Topic, from or to" people={ktMany}
+            departments={ktMany ? ktOpts.departments : undefined} roles={ktMany ? ktOpts.roles : undefined}
+            statuses={statusOptions(records, ['Open', 'Completed'])} shown={sessions.length} total={records.length}
+            dates="Date"
+          />
+        </div>
+        {sessions.length === 0 ? <ListEmpty lf={lfOf(kf, setKf)} noun="KT sessions" title="No KT sessions logged yet." /> : (
           <div className="tbl-wrap">
             <table>
               <thead><tr><th>Topic</th><th>From</th><th>To</th><th>Date</th><th>Status</th>{isHR && <th></th>}</tr></thead>
               <tbody>
-                {records.map((r) => (
+                {ktPage.slice.map((r) => (
                   <tr key={r.id}>
                     <td>{r.title}</td>
                     <td className="cell-muted">{r.fromName || r.employee?.name || '—'}</td>
@@ -413,9 +522,17 @@ export default function KT() {
             </table>
           </div>
         )}
+        {ktPage.total > 0 && <Pager page={ktPage} noun="KT sessions" />}
       </Panel>
 
-      {ktOpen && <LogKtModal employees={employees} onClose={() => setKtOpen(false)} onSaved={() => { setKtOpen(false); load(); }} />}
+      {ktOpen && (
+        <LogKtModal
+          canSend={canSendKt}
+          me={user?.name}
+          onClose={() => setKtOpen(false)}
+          onSaved={(r) => { setKtOpen(false); setKtDone(r.created != null ? `KT session logged for ${r.label} — ${r.created} employee(s). ${r.deliveryText || ''}` : 'KT session logged.'); load(); }}
+        />
+      )}
       {ideaOpen && <SubmitIdeaModal ai={ai} onClose={() => { setIdeaOpen(false); load(); }} onSaved={load} />}
     </div>
   );

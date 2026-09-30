@@ -96,6 +96,12 @@ model User {
   branch      String?
   team        String?
   lastLoginAt DateTime?
+  // Password status (hrms-24 §12). Never the password: only WHEN it changed,
+  // whether a reset is outstanding, and the lockout counters the login uses.
+  passwordChangedAt     DateTime?
+  passwordResetRequired Boolean   @default(false)
+  failedLoginCount      Int       @default(0)
+  lockedUntil           DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -331,6 +337,12 @@ model Requirement {
 
   applications Application[]
   invoices     Invoice[]
+
+  // ATS dashboard performance (migration 20260926140000_ats_dashboard_indexes).
+  @@index([clientId])
+  @@index([recruiterId])
+  @@index([tlId])
+  @@index([department])
 }
 
 model Candidate {
@@ -388,6 +400,7 @@ model Candidate {
   documents    CandidateDocument[]
 
   @@index([externalRef])
+  @@index([createdAt])
 }
 
 model Application {
@@ -475,6 +488,11 @@ model Application {
   updatedAt          DateTime            @updatedAt
 
   @@unique([candidateId, requirementId])
+  // ATS dashboard performance (migration 20260926140000_ats_dashboard_indexes).
+  @@index([requirementId])
+  @@index([stage])
+  @@index([createdAt])
+  @@index([interviewAt])
 }
 
 // Every status move a recruitment/client interview makes, kept in full — the
@@ -576,15 +594,22 @@ model Position {
   code       String   @unique // MED-1, Non IT-03, EDU BDE 1
   name       String? // "Medical Recruiter 1"
   department String?
-  team       String?
+  team       String? // "Team A" / "Team B" / "Team"
   active     Boolean  @default(true)
   notes      String?
   createdAt  DateTime @default(now())
+  // THE ORGANISATION STRUCTURE — Department -> Team -> TL seat -> recruiter
+  // seats. What the ATS scope engine reads (utils/positionScope.js).
+  kind        String  @default("OTHER") // TL | RECRUITER | STL | OTHER
+  // The seat this one reports to (recruiter -> TL seat, TL -> STL seat).
+  // Plain scalar, like Requirement.tlId, so the migration is ADD COLUMN only.
+  reportsToId String?
 
   assignments  PositionAssignment[]
   requirements Requirement[]
 
   @@index([department])
+  @@index([reportsToId])
 }
 
 // ONE ROW PER TENURE. `toDate` null means they are sitting in it now.
@@ -670,7 +695,36 @@ model Employee {
   bankAccountNumber        String?
   ifscCode                 String?
   panNumber                String?
-  aadhaarNumber            String?
+  // THE FULL AADHAAR NUMBER IS NOT KEPT HERE EITHER.
+  //
+  // This column predates the rule the client side already follows, and it is
+  // empty on every one of the 290 employee records — so rather than leave a
+  // trap that the first person to type into My Profile would fall into, the
+  // profile form no longer writes it. Section 29 of the Aadhaar Act forbids
+  // an unauthenticated entity retaining the number. What is kept is the last
+  // four digits, below, and the eSign provider transaction id.
+  //
+  // The column stays so nothing that reads it breaks; it is written nowhere.
+  aadhaarNumber            String? // deprecated — see aadhaarLast4
+
+  // --- IDENTITY VERIFICATION, done by the employee after they sign in -----
+  // Aadhaar: validated (12 digits, Verhoeff), used, and dropped. Only the
+  // last four survive, with the provider reference that actually proves it.
+  aadhaarLast4             String?
+  aadhaarVerifiedAt        DateTime?
+  aadhaarVerifyRef         String? // the eSign provider transaction id
+  aadhaarVerifyNote        String? // how it was verified, said plainly
+  // Mobile: the number that was actually proved, masked for display.
+  mobileVerified           String?
+  mobileVerifiedAt         DateTime?
+  // The in-flight one-time code. Hashed, expiring, attempt-counted — the
+  // same shape as the agreement OTP and the employee email OTP.
+  verifyKind               String? // MOBILE | AADHAAR
+  verifyTarget             String? // the digits the code was sent to
+  verifyLast4              String? // Aadhaar last four, held until confirmed
+  verifyOtpHash            String?
+  verifyOtpExpiresAt       DateTime?
+  verifyOtpAttempts        Int       @default(0)
   uanNumber                String?
   pfNumber                 String?
   esiNumber                String?
@@ -729,14 +783,28 @@ model Employee {
   records                   EmployeeRecord[]
   performanceReviews        PerformanceReview[]
   courseAssignments         CourseAssignment[]
+  documents                 EmployeeDocument[]
+  // Self check-in methods Super Admin has allowed THIS employee — comma-
+  // separated from GPS | Biometric | Face. Null or empty = none: the employee
+  // cannot check in by any method until Super Admin assigns one.
+  checkInMethods            String?
+  // User ID enrolled on the biometric device (the ADMS "PIN"). Device punches
+  // carrying this PIN are recorded as this employee's attendance.
+  biometricPin              String?
   projectAssignments        ProjectAssignment[]
   surveyResponses           SurveyResponse[]
   acknowledgments           Acknowledgment[]
   salaryStructure           SalaryStructure?
+  // Payroll -> Accounts (migration 20260926020000_payroll_accounts_integration)
+  salaryVersions            SalaryStructureVersion[]
+  payrollAttendance         PayrollAttendance[]
+  payrollEntries            EmployeePayrollRun[]
   fnfRequests               FnfRequest[]
   leaveBalances             LeaveBalance[]
   assetsHeld                Asset[]
   positionAssignments       PositionAssignment[]
+
+  @@index([biometricPin])
 }
 
 // Generic table backing the smaller, similarly-shaped HRMS self-service areas
@@ -846,6 +914,26 @@ model AttendancePunch {
   direction  String   @default("In") // In | Out
   method     String   @default("Web Check-in") // Web Check-in | Mobile App | Biometric (Fingerprint)
   location   String?
+  // HRMS-24 §5 — what a web/mobile check-in captured and how it was verified.
+  source             String? // Web | Mobile | Manual entry
+  latitude           Float?
+  longitude          Float?
+  accuracyM          Float?
+  locationAt         DateTime?
+  locationStatus     String? // Inside geofence | No geofence configured | Not captured
+  distanceM          Float?
+  imageFile          String? // utils/attachments.js stored name of the live capture
+  verificationStatus String? // Verified | Not applicable
+  verificationScore  Float?  // 1 - median descriptor distance (higher is closer)
+  livenessStatus     String? // Passed (head turn) | Passed (blink)
+  userAgent          String?
+  // Biometric device punches (migration 20260928120000): the state key the
+  // person pressed (0 check-in, 1 check-out, 2 break-out, 3 break-in, 4 OT-in,
+  // 5 OT-out), how they were verified (1 fingerprint, 15 face, 2/4 card,
+  // 0/3 password) and the exact device clock time HH:MM:SS.
+  deviceState        String?
+  deviceVerify       String?
+  clockTime          String?
   createdAt  DateTime @default(now())
 
   @@index([employeeId, date])
@@ -941,6 +1029,11 @@ model ApprovalStep {
   actedByUserId      String?
   actedByName        String?
   note               String?
+  // "Direct Super Admin Approval": a Super Admin decided this request out of
+  // turn (utils/approvalWorkflow.js act()). Set on the step that carries the
+  // Super Admin's decision; the steps it bypassed read "Skipped — decided
+  // directly by Super Admin".
+  direct             Boolean   @default(false)
   createdAt          DateTime  @default(now())
 
   @@index([workflow, recordId])
@@ -962,6 +1055,39 @@ model ApprovalLevelConfig {
   updatedAt DateTime @updatedAt
 
   @@unique([workflow, level])
+}
+
+// The resignation FORM (spec item 7), one row per EmployeeRecord of type
+// RESIGNATION. Kept beside the record rather than as columns on the shared
+// EmployeeRecord table; linked by recordId the same way ApprovalStep is.
+// The employee-info block (ID, name, department, designation, reporting
+// manager) is SNAPSHOTTED at submission so the form reads as it was filed.
+model ResignationDetail {
+  id                       String   @id @default(cuid())
+  recordId                 String   @unique // EmployeeRecord.id (type RESIGNATION)
+  employeeId               String
+  employeeCode             String?
+  employeeName             String?
+  department               String?
+  designation              String?
+  reportingManager         String?
+  resignationDate          String // YYYY-MM-DD
+  requestedLastWorkingDate String? // YYYY-MM-DD, what the employee asked for
+  approvedLastWorkingDate  String? // YYYY-MM-DD, set on final approval
+  reason                   String // one of the configured reasons, or "Other"
+  reasonOther              String? // free text when reason = Other
+  comments                 String? // Detailed Reason / Comments
+  noticePeriodDays         Int?
+  handoverDetails          String?
+  knowledgeTransferDetails String?
+  exitComments             String?
+  submittedAt              DateTime @default(now())
+  submittedByUserId        String?
+  submittedByName          String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([employeeId])
 }
 
 // Configurable leave policy — types, caps, and the reasons offered when approving.
@@ -1012,8 +1138,20 @@ model Payslip {
   // pay each: lateCut = halfDayCut * round(net / 60). Deducted from netPay.
   lateCut          Float?   @default(0)
   lateDays         Float?   @default(0)
+  // The month's working days and the loss-of-pay amount the run deducted
+  // (gross / workingDays x lopDays), stored so the payslip prints exactly what
+  // the run calculated. Days Worked = workingDays - lopDays.
+  workingDays      Float?   @default(0)
+  lopDeduction     Float?   @default(0)
   payMode          String?  @default("Package") // Package | Stipend
   generatedAt      DateTime @default(now())
+  // Payroll -> Accounts: the extra deduction lines, and the EmployeePayrollRun
+  // this payslip was generated from (null for payslips from the old month run).
+  esiEmployee      Float?   @default(0)
+  esiEmployer      Float?   @default(0)
+  tds              Float?   @default(0)
+  otherDeductions  Float?   @default(0)
+  payrollEntryId   String?
 
   @@unique([employeeId, month])
 }
@@ -1035,6 +1173,11 @@ model PayrollRun {
   processedBy     String?
   processedAt     DateTime  @default(now())
   paidAt          DateTime?
+  // The per-employee records of this month (SPEC B). A run created before
+  // them (e.g. August 2026) has none and keeps its own Processing/Paid status.
+  // With entries, `status` is derived from them: Draft | Pending Approval |
+  // Approved | Synced | Paid (the least-advanced entry wins).
+  entries         EmployeePayrollRun[]
 }
 
 // One employee's pay structure — either a flat Stipend, or a Package broken
@@ -1056,6 +1199,162 @@ model SalaryStructure {
   professionalTax  Float    @default(0)
   gratuity         Float    @default(0)
   updatedAt        DateTime @updatedAt
+  // VERSIONED (SPEC B §2). This row is the CURRENT version — a mirror of the
+  // employee's latest SalaryStructureVersion — so every existing reader of
+  // employee.salaryStructure keeps working. Payroll for a month reads the
+  // version effective in that month (SalaryStructureVersion), never this row.
+  effectiveFrom    String? // YYYY-MM-DD (always the 1st of a month)
+  effectiveTo      String? // null = open-ended
+  esiApplicable    Boolean? // null = automatic (gross <= HrConfig.esiGrossCeiling)
+  esiEmployee      Float    @default(0)
+  esiEmployer      Float    @default(0)
+  tds              Float? // monthly TDS; null = HrConfig.tdsDefaultPctOfGross
+  otherDeductions  Float    @default(0)
+  currentVersionId String?
+}
+
+// Every version of an employee's salary structure. A version pays from the
+// 1st of its effectiveFrom month until the day before the next version's
+// effectiveFrom (effectiveTo, kept in step by utils/salaryVersions.js). A
+// revision can never take effect on a month whose payroll is already beyond
+// DRAFT, so past runs are never recomputed from a later revision.
+model SalaryStructureVersion {
+  id               String   @id @default(cuid())
+  employeeId       String
+  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  effectiveFrom    String // YYYY-MM-DD, the 1st of a month
+  effectiveTo      String? // YYYY-MM-DD, last day it applies; null = current
+  payMode          String   @default("Package") // Package | Stipend
+  ctc              Float    @default(0) // ANNUAL, like SalaryStructure.ctc
+  stipend          Float    @default(0)
+  basic            Float    @default(0)
+  hra              Float    @default(0)
+  bonus            Float    @default(0)
+  specialAllowance Float    @default(0)
+  employerPf       Float    @default(0)
+  employeePf       Float    @default(0)
+  professionalTax  Float    @default(0)
+  gratuity         Float    @default(0)
+  esiApplicable    Boolean?
+  esiEmployee      Float    @default(0)
+  esiEmployer      Float    @default(0)
+  tds              Float?
+  otherDeductions  Float    @default(0)
+  note             String?
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([employeeId, effectiveFrom])
+}
+
+// HR's monthly attendance input override for one employee (SPEC B §3). The
+// DEFAULT is computed live from the attendance module (utils/attendanceDays.js)
+// and never stored; a row here means HR overrode it, and every override also
+// writes an AuditLog row (entity PayrollAttendance).
+model PayrollAttendance {
+  id               String    @id @default(cuid())
+  employeeId       String
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  month            String // YYYY-MM
+  year             Int
+  monthNum         Int
+  workingDays      Float     @default(0)
+  daysPresent      Float     @default(0)
+  daysLop          Float     @default(0)
+  autoDaysPresent  Float?
+  autoDaysLop      Float?
+  reason           String?
+  overriddenBy     String?
+  overriddenByName String?
+  overriddenAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([employeeId, month])
+}
+
+// ONE PAYROLL RECORD PER EMPLOYEE PER MONTH (SPEC B §4/§5) — the spec's
+// payroll_run. Status: DRAFT -> PENDING_APPROVAL -> APPROVED ->
+// SYNCED_TO_ACCOUNTS -> PAID, enforced by utils/payrollEngine.js. Amounts are
+// a snapshot: recalculation only ever touches a DRAFT.
+model EmployeePayrollRun {
+  id                    String      @id @default(cuid())
+  employeeId            String
+  employee              Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payrollRunId          String?
+  payrollRun            PayrollRun? @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  month                 String // YYYY-MM
+  year                  Int
+  monthNum              Int
+  salaryVersionId       String?
+  payMode               String      @default("Package")
+  workingDays           Float       @default(0)
+  daysPresent           Float       @default(0)
+  daysLop               Float       @default(0)
+  attendanceSource      String      @default("ATTENDANCE") // ATTENDANCE | OVERRIDE
+  basic                 Float       @default(0)
+  hra                   Float       @default(0)
+  bonus                 Float       @default(0)
+  specialAllowance      Float       @default(0)
+  grossPay              Float       @default(0) // full-month gross earnings
+  lopDeduction          Float       @default(0)
+  earnedGross           Float       @default(0) // grossPay - lopDeduction
+  pfEmployee            Float       @default(0)
+  esiEmployee           Float       @default(0)
+  professionalTax       Float       @default(0)
+  tds                   Float       @default(0)
+  otherDeductions       Float       @default(0)
+  totalDeductions       Float       @default(0) // PF + ESI + PT + TDS + LOP + other
+  netPay                Float       @default(0) // grossPay - totalDeductions
+  pfEmployer            Float       @default(0)
+  esiEmployer           Float       @default(0)
+  gratuity              Float       @default(0) // informational, not booked
+  status                String      @default("DRAFT")
+  payslipId             String?
+  calculatedBy          String?
+  calculatedAt          DateTime?
+  submittedBy           String?
+  submittedAt           DateTime?
+  approvedBy            String?
+  approvedAt            DateTime?
+  syncedAt              DateTime?
+  journalEntryId        String?
+  paidBy                String?
+  paidAt                DateTime?
+  paymentJournalEntryId String?
+  bankTransactionId     String?
+  paymentReference      String?
+  rejectionReason       String?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@unique([employeeId, month])
+  @@index([month, status])
+}
+
+// HRMS -> Accounts delivery log (SPEC B §6). One row per idempotency key:
+// ACCRUAL = "payroll-run:<id>" (the salary journal), PAYMENT =
+// "payroll-payment:<id>" (the bank payment journal). Retried by hand and by
+// the sweep in utils/payrollSync.js.
+model PayrollSyncLog {
+  id                   String    @id @default(cuid())
+  kind                 String    @default("ACCRUAL") // ACCRUAL | PAYMENT
+  employeePayrollRunId String
+  employeeId           String?
+  month                String?
+  idempotencyKey       String    @unique
+  status               String    @default("PENDING") // PENDING | SUCCESS | FAILED
+  attempts             Int       @default(0)
+  lastError            String?
+  lastAttemptAt        DateTime?
+  nextAttemptAt        DateTime?
+  payload              String? // JSON, exactly what is POSTed
+  journalEntryId       String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([status])
 }
 
 // Full & Final settlement request, raised when an employee's offboarding completes.
@@ -1113,6 +1412,10 @@ model Invoice {
   tdsCertDate     String?
   gstPercent      Float?
   tdsPercent      Float?
+  // The Form 16A file itself (utils/attachments.js stored name), when uploaded.
+  tdsCertFile     String?
+  tdsCertName     String?
+  tdsCertMime     String?
 
   payments InvoicePayment[]
 }
@@ -1131,6 +1434,9 @@ model InvoicePayment {
   bankTxnId  String?
   recordedBy String?
   createdAt  DateTime @default(now())
+  // A hand-recorded receipt a bank line was later linked to as proof — undoing
+  // the link clears bankTxnId but never deletes or reverses the receipt.
+  bankLinked Boolean  @default(false)
 }
 
 model BankTransaction {
@@ -1166,6 +1472,43 @@ model BankTransaction {
   counterparty  String?
   excess        Float? // part of a credit that was more than the client owed
   importFile    String?
+  // Match / Categorise panel: the office bill it created from this line, and
+  // the existing bills it settled (JSON [{id, approvalStatus, paidStatus}]).
+  createdBillId String?
+  billLinks     String?
+}
+
+// Hand loans (Bank & Reconciliation). Money borrowed from a person; the bank
+// lines that prove the taking (a credit) and each repayment (a debit) are
+// HandLoanLink rows — one statement line can back one loan line only.
+model HandLoan {
+  id          String         @id @default(cuid())
+  name        String
+  lender      String?
+  amount      Float
+  dateTaken   String
+  notes       String?
+  createdById String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  links       HandLoanLink[]
+}
+
+model HandLoanLink {
+  id          String   @id @default(cuid())
+  loanId      String
+  loan        HandLoan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  bankTxnId   String   @unique
+  kind        String // taken | repayment
+  date        String
+  amount      Float
+  reference   String?
+  description String?
+  auto        Boolean  @default(false)
+  linkedBy    String?
+  createdAt   DateTime @default(now())
+
+  @@index([loanId])
 }
 
 // A bank account or credit card. Each one keeps its own statement, its own
@@ -1224,6 +1567,68 @@ model BankImport {
   createdAt     DateTime @default(now())
 }
 
+// ---------------------------------------------------------------------------
+// THE LEDGER (Accounts module, SPEC B §7). A minimal chart of accounts and a
+// double-entry journal. HRMS payroll books into it ONLY through
+// POST /api/accounts/journal-entries (routes/journal.js), with an
+// idempotencyKey per payroll record so a retry can never double-book.
+// ---------------------------------------------------------------------------
+model LedgerAccount {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  name        String        @unique
+  type        String // ASSET | LIABILITY | EXPENSE | INCOME | EQUITY
+  aliases     String? // other names a payload may use, comma-separated
+  description String?
+  isActive    Boolean       @default(true)
+  isSystem    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  lines       JournalLine[]
+}
+
+model JournalEntry {
+  id             String        @id @default(cuid())
+  date           String // YYYY-MM-DD
+  month          String // YYYY-MM (the payroll month for payroll entries)
+  narration      String?
+  source         String        @default("MANUAL") // HRMS_PAYROLL | MANUAL
+  referenceType  String? // PAYROLL_RUN | PAYROLL_PAYMENT
+  referenceId    String? // EmployeePayrollRun.id
+  idempotencyKey String        @unique
+  employeeId     String?
+  employeeName   String?
+  totalDebit     Float         @default(0)
+  totalCredit    Float         @default(0)
+  payload        String? // the payload as received
+  createdBy      String?
+  createdByName  String?
+  createdAt      DateTime      @default(now())
+  lines          JournalLine[]
+
+  @@index([month])
+  @@index([referenceType, referenceId])
+}
+
+model JournalLine {
+  id             String        @id @default(cuid())
+  journalEntryId String
+  journalEntry   JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  lineNo         Int           @default(0)
+  accountId      String
+  account        LedgerAccount @relation(fields: [accountId], references: [id])
+  accountCode    String
+  accountName    String
+  debit          Float         @default(0)
+  credit         Float         @default(0)
+  referenceType  String?
+  referenceId    String?
+  memo           String?
+  createdAt      DateTime      @default(now())
+
+  @@index([journalEntryId])
+  @@index([accountCode])
+}
+
 model OfficeExpense {
   id            String   @id @default(cuid())
   category      String
@@ -1277,10 +1682,71 @@ model OfficeExpense {
   proofSize    Int?
   proofAt      String?
   proofBy      String?
+  // The stored upload behind proofName (utils/attachments.js — a random name
+  // inside UPLOAD_DIR, never a client path). Null when only a name was typed.
+  proofFile    String?
   // The imported bank statement line this payment came off. That line is the
   // proof of payment on its own; only input GST still needs the vendor's own
   // tax invoice.
   bankTxnId    String?
+
+  // Edit-expense form — the rest of the accounting application's expense
+  // record. All nullable; a row without them reads exactly as before.
+  //   expenseAccount  the ledger the bill is booked to (Category is the
+  //                   grouping the register and the filters use)
+  //   hsnSac          HSN for goods, SAC for services — GSTR-2B lists it
+  //   destState       place of supply (sourceState above is where it came from)
+  //   reverseCharge   GST paid by us under RCM rather than charged by the vendor
+  //   billableClient  the client this cost is to be recharged to, by name
+  //   reportingTags   comma-separated free tags for reports
+  expenseAccount String?
+  hsnSac         String?
+  destState      String?
+  reverseCharge  Boolean?
+  billableClient String?
+  reportingTags  String?
+
+  // APPROVAL LIFECYCLE (Office & Expenses spec A). PENDING -> APPROVED -> PAID,
+  // or PENDING -> REJECTED with a reason. paidStatus above stays the PAYMENT
+  // status and is kept in step: PAID <=> paidStatus "Paid". Editing is allowed
+  // only while PENDING (routes/office.js). approvedBy (text) is still written
+  // with the approver's name; the ids and times below are the record.
+  approvalStatus  String    @default("PENDING") // PENDING | APPROVED | PAID | REJECTED
+  rejectionReason String?
+  createdById     String?
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectedById    String?
+  rejectedAt      DateTime?
+  paidById        String?
+  paidAt          DateTime?
+  updatedAt       DateTime? @updatedAt
+
+  // Office & Accounts one-page (2026-09-26). expenseCode is the human Expense
+  // ID (EXP-0001, sequential; existing rows backfilled in date order by the
+  // migration). updatedById is "Modified By" (updatedAt above is "Modified
+  // At"). REIMBURSED is an extra final approvalStatus — a bill someone paid
+  // out of pocket and the office has since paid back — reached from APPROVED
+  // or PAID by an approver; these two columns record who and when.
+  expenseCode     String?   @unique
+  updatedById     String?
+  reimbursedById  String?
+  reimbursedAt    DateTime?
+
+  @@index([approvalStatus])
+  @@index([expenseDate])
+}
+
+// The Office & Expenses category list. Preloaded with the eight defaults and
+// every category already used on an expense, so no expense is orphaned. Only
+// the Accounts Admin / Approver adds or retires one.
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =============================================================================
@@ -1326,6 +1792,72 @@ model Course {
   assignments CourseAssignment[]
   materials   CourseMaterial[]
   questions   AssessmentQuestion[]
+
+  // COMPLETION RULES — what a learner must do before the course completes on
+  // its own (there is no manual "Mark as completed").
+  requireVideos     Boolean @default(true)
+  requireDocuments  Boolean @default(true)
+  requireAssessment Boolean @default(true)
+  // Who the course was assigned to, as chosen: Everyone | Departments |
+  // Individuals, and the departments picked (comma-separated). The per-person
+  // CourseAssignment rows are what actually give access.
+  assignMode        String?
+  assignDepartments String?
+  // ASSESSMENT RULES (HRMS-24 §14). questionsPerAttempt: how many questions
+  // each attempt draws from the bank (null = all). timeLimitMinutes: null =
+  // untimed. maxAttempts: null = unlimited. Migration
+  // 20260925233000_hrms24_lms_assessment_rules_audit.
+  questionsPerAttempt Int?
+  timeLimitMinutes    Int?
+  maxAttempts         Int?
+  randomizeQuestions  Boolean @default(true)
+}
+
+// HRMS-24 §22 — ONE ROW PER "ASSIGN" ACTION: who assigned the course, to
+// what audience (Everyone / departments / individuals), when, with what due
+// date and how many people it reached. The per-person CourseAssignment rows it
+// created carry its id in `batchId`.
+model CourseAssignmentBatch {
+  id             String    @id @default(cuid())
+  courseId       String
+  mode           String // Everyone | Departments | Individuals
+  departments    String? // comma-separated
+  employeeIds    String? // JSON array
+  label          String?
+  assignedById   String?
+  assignedByName String?
+  assignedByRole String?
+  // Assigned by an organisation-wide login — the only kind whose Everyone /
+  // department assignment also reaches people who join later.
+  orgWide        Boolean   @default(false)
+  dueDate        DateTime?
+  assignedCount  Int       @default(0)
+  alreadyCount   Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  @@index([courseId])
+}
+
+// HRMS-24 §14 — one assessment attempt: the questions drawn for it, its
+// clock, and its result. correct answers stay in AssessmentQuestion.
+model CourseAssessmentAttempt {
+  id           String    @id @default(cuid())
+  assignmentId String
+  courseId     String
+  employeeId   String
+  attemptNo    Int
+  questionIds  String // JSON array — the paper drawn for this attempt
+  startedAt    DateTime  @default(now())
+  expiresAt    DateTime?
+  submittedAt  DateTime?
+  score        Int?
+  correct      Int?
+  total        Int       @default(0)
+  passed       Boolean?
+  timedOut     Boolean   @default(false)
+
+  @@index([assignmentId])
+  @@index([courseId, employeeId])
 }
 
 model CourseAssignment {
@@ -1347,6 +1879,25 @@ model CourseAssignment {
   scoredAt       DateTime?
   attempts       Int       @default(0)
   assignedAt     DateTime  @default(now())
+  // When every required material was finished — the moment the assessment opens.
+  contentCompletedAt  DateTime?
+  // Issued when the course completes; the ID printed on the certificate.
+  certificateId       String?   @unique
+  certificateIssuedAt DateTime?
+  // HRMS-24 §14 / §22 — the assignment audit and the completion record.
+  assignedById          String?
+  assignedByName        String?
+  source                String? // Individual | Department | Everyone | Self | Auto
+  department            String? // the employee's department when assigned
+  batchId               String?
+  dueDate               DateTime?
+  startedAt             DateTime? // first time the learner opened anything
+  lastAccessedAt        DateTime?
+  assessmentStartedAt   DateTime?
+  assessmentCompletedAt DateTime? // last submitted attempt
+  passedAttempt         Int?
+  certificateEligible   Boolean   @default(false)
+  extraAttempts         Int       @default(0) // granted by an assigner after the limit
 
   @@unique([courseId, employeeId])
 }
@@ -1366,8 +1917,40 @@ model CourseMaterial {
   url        String?
   uploadedBy String?
   createdAt  DateTime @default(now())
+  // Video | Document | Link — how the learner's player shows it.
+  kind            String?
+  // Length of a video, recorded the first time a player loads it.
+  durationSeconds Int?
+  // Counts toward completion unless marked optional.
+  required        Boolean @default(true)
+
+  progress CourseMaterialProgress[]
 
   @@index([courseId])
+}
+
+// One learner's progress on one course material: seconds actually watched
+// (not just the furthest point reached), where to resume, and whether it is done.
+model CourseMaterialProgress {
+  id              String         @id @default(cuid())
+  materialId      String
+  material        CourseMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  courseId        String
+  employeeId      String
+  secondsWatched  Int            @default(0)
+  lastPosition    Int            @default(0)
+  durationSeconds Int?
+  completed       Boolean        @default(false)
+  completedAt     DateTime?
+  updatedAt       DateTime       @updatedAt
+  // HRMS-24 §14 — when the material was first opened, and for a PDF how many
+  // of its pages have been on screen (it completes once every page has).
+  firstViewedAt   DateTime?
+  pagesViewed     Int            @default(0)
+  pageCount       Int?
+
+  @@unique([materialId, employeeId])
+  @@index([courseId, employeeId])
 }
 
 // One multiple-choice question in a course's question bank.
@@ -1419,6 +2002,11 @@ model Survey {
   // department, which is what every survey created before this column meant.
   // Comma-separated names, the same shape User.atsScopeDepartments uses.
   departments String?
+  // AUDIENCE (utils/audience.js). Individually picked Employee.ids, JSON
+  // array. NULL = not individually targeted — the departments column above
+  // (or nothing = everybody) decides, exactly as before.
+  employeeIds String?
+  createdById String? // User.id of whoever published it
   createdAt   DateTime @default(now())
 
   responses SurveyResponse[]
@@ -1443,6 +2031,12 @@ model PolicyDocument {
   mandatory    Boolean  @default(false)
   published    Boolean  @default(true)
   target       String?  @default("All Employees")
+  // AUDIENCE (utils/audience.js). Comma-separated department names and a
+  // JSON array of Employee.ids. Both NULL = every employee, which is what
+  // every document created before these columns meant.
+  departments  String?
+  employeeIds  String?
+  createdById  String?
   uploadedBy   String?
   uploadedDate String
   createdAt    DateTime @default(now())
@@ -1468,6 +2062,13 @@ model Announcement {
   category  String? // Holiday | Policy | General | Event
   pinned    Boolean  @default(false)
   target    String?  @default("All Employees")
+  // AUDIENCE (utils/audience.js). `target` stays the human label; these two
+  // are what visibility is decided on. Both NULL = a row written before they
+  // existed, which keeps the old free-text `target` rule.
+  departments String? // comma-separated department names
+  employeeIds String? // JSON array of Employee.ids
+  delivery    String? // JSON: what each "Also deliver via" channel did
+  postedById  String? // User.id of whoever posted it
   postedBy  String?
   date      String
   createdAt DateTime @default(now())
@@ -1488,6 +2089,12 @@ model HrConfig {
   fullDayHours                 Float   @default(8)
   // Calendar days of notice an employee serves after resigning.
   noticePeriodDays             Int     @default(45)
+  // Resignation form (routes/resignations.js). Reasons offered in the Reason
+  // select (JSON array of strings; null = the built-in list) and which of the
+  // optional fields the form shows (JSON array of keys: noticePeriod,
+  // handover, knowledgeTransfer, exitComments; null = all of them).
+  resignationReasons           String?
+  resignationOptionalFields    String?
   // Payroll policy — how attendance turns into pay
   unmarkedDaysUnpaid           Boolean @default(true)
   weekendsPaid                 Boolean @default(true)
@@ -1504,6 +2111,12 @@ model HrConfig {
   employerPfMonthlyCap         Float   @default(1800)
   gratuityPctOfBasic           Float   @default(4.81)
   professionalTaxFlat          Float   @default(200)
+  // Standard Package (utils/salaryRules.js): Bonus is a FIXED monthly amount,
+  // not a % of Basic — bonusPctOfBasic and professionalTaxFlat are no longer
+  // read (PT is the Telangana slab in utils/salaryRules.js). basicPctOfCtc is
+  // 40 on live data (migration 20260925160000); its column default stays 50
+  // only because changing a SQLite default needs a table rebuild.
+  bonusFixedMonthly            Float   @default(1000)
   // Leave policy — concurrent leave caps
   concurrentLeaveCapPct        Int     @default(30)
   concurrentLeaveCapFlat       Int     @default(2)
@@ -1517,6 +2130,26 @@ model HrConfig {
   // Approval escalation order (comma-separated roles) — a leave, attendance
   // regularization or issue request climbs this chain top to bottom.
   escalationOrder              String  @default("Recruiter,TL,Manager,Admin,Super Admin")
+  // HRMS-24 §4 — how a past working day with NO check-in reads: "Absent" or
+  // "Missing Check-In". Weekly offs are day numbers (0 = Sunday … 6 = Saturday).
+  missingCheckInRule           String  @default("Missing Check-In")
+  weeklyOffDays                String  @default("0,6")
+  // HRMS-24 §5 — web/mobile check-in geofence (Super Admin) and the face-match
+  // threshold (euclidean distance between face descriptors; lower is stricter).
+  geofenceEnabled              Boolean @default(false)
+  officeLatitude               Float?
+  officeLongitude              Float?
+  geofenceRadiusM              Int     @default(200)
+  faceMatchThreshold           Float   @default(0.45)
+  // Payroll statutory settings (SPEC B). ESI applies only while the monthly
+  // gross is at or under the ceiling; contributions are on the earned gross,
+  // rounded UP to the rupee. TDS: a version's own monthly figure wins, else
+  // this % of earned gross (0 = no TDS unless entered on the structure).
+  esiEnabled                   Boolean @default(true)
+  esiEmployeePct               Float   @default(0.75)
+  esiEmployerPct               Float   @default(3.25)
+  esiGrossCeiling              Float   @default(21000)
+  tdsDefaultPctOfGross         Float   @default(0)
 }
 
 // =============================================================================
@@ -1553,6 +2186,59 @@ model Company {
   accountType   String?
   upi           String?
   invoiceTerms  String? // "Due on Receipt", "Net 30" — printed as Terms
+  // Office & Expenses → Business Details. This row IS the business profile:
+  // GSTIN, bank and UPI above; PAN (null = fall back to the PAN inside the
+  // GSTIN) and TAN (the TRACES login id) are the two it was missing.
+  pan           String?
+  tan           String?
+}
+
+// Office & Expenses — the vendor master. Bills keep the vendor as free text
+// (OfficeExpense.vendor); this row only adds what a vendor has once for every
+// bill, its GSTIN. A bill's own vendorGstin wins; this is the fallback.
+model OfficeVendor {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  gstin         String?
+  // "Add Vendor" (Office & Expenses): who to call and how the vendor is paid.
+  // All optional; `gstin` above doubles as the GST / Tax ID.
+  contactPerson String?
+  phone         String?
+  email         String?
+  address       String?
+  paymentTerms  String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Office & Expenses → Government portals. One row per portal (gst | traces |
+// incometax): the page last chosen and the address it opens. `pageUrls` is a
+// JSON map page -> edited address, so an address fixed for one page is kept
+// when the other page is picked. The app stores NO portal password.
+model PortalLink {
+  id           String    @id @default(cuid())
+  portalKey    String    @unique
+  selectedPage String?
+  url          String?
+  pageUrls     String?
+  lastEditedAt DateTime?
+  lastEditedBy String?
+}
+
+// A portal balance typed in by hand for a period — never fetched. periodStart
+// and periodEnd are ISO dates, '' for "All time".
+model PortalBalance {
+  id            String   @id @default(cuid())
+  portalKey     String
+  periodStart   String   @default("")
+  periodEnd     String   @default("")
+  enteredAmount Float
+  enteredBy     String?
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+
+  @@unique([portalKey, periodStart, periodEnd])
 }
 
 model Notification {
@@ -1609,6 +2295,17 @@ model Asset {
   purchaseDate  String?
   warrantyUntil String?
   history       String    @default("[]") // JSON array of {at, by, text}
+  // Asset report filters (hrms-24 §6). Additive, all nullable: the TYPE is the
+  // finer grain under category (e.g. Laptop -> "MacBook Pro 14"), LOCATION is
+  // where it sits, and the allocation stamps record the CURRENT allocation
+  // (assignedAt/By) and the last hand-back (returnedAt), so the report filters
+  // run on the server instead of parsing `history`.
+  assetType      String?
+  location       String?
+  assignedAt     DateTime?
+  assignedById   String?
+  assignedByName String?
+  returnedAt     DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 }
@@ -1706,6 +2403,36 @@ model DesignationRole {
 }
 
 // =============================================================================
+// ROLES — the role catalogue as data (Role & Permission Management).
+//
+// Seeded with the 13 system roles (isSystem = true); an administrator adds
+// custom roles (code CUSTOM_…) with their own permission matrix, stored in
+// RoleAccess rows keyed by `code` exactly like a system role's overrides.
+// A custom role has NO built-in defaults: deny by default.
+//
+// scopeLevel (OWN | TEAM | DEPARTMENT | ALL) + behavesLike decide DATA SCOPE
+// and ATS stage ownership only (utils/roleRegistry.js); they never grant a
+// permission. `permissions` is the simple module x action matrix the Role
+// Catalog form edits, kept for display; the engine reads RoleAccess.
+// =============================================================================
+model Role {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String   @unique
+  description String?
+  status      String   @default("Active") // Active | Inactive
+  isSystem    Boolean  @default(false)
+  scopeLevel  String   @default("OWN") // OWN | TEAM | DEPARTMENT | ALL
+  behavesLike String? // JSON { hrms, ats, accounts }: system role codes used for scope / stage ownership
+  permissions String? // JSON { rowId: [action, …] } — the Role Catalog matrix
+  products    String? // JSON { hrms, ats, accounts }: which product roles it fills
+  position    Int      @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// =============================================================================
 // CANDIDATES — pipeline history, communications, notes, documents (cand_)
 //
 // Four NEW tables. Nothing here alters an existing table: the only schema
@@ -1761,6 +2488,8 @@ model ApplicationStageEvent {
 
   @@index([candidateId])
   @@index([applicationId])
+  @@index([createdAt])
+  @@index([actorPositionCode])
 }
 
 // ---------------------------------------------------------------------------
@@ -1848,6 +2577,7 @@ model ApplicationFollowUp {
   @@index([candidateId])
   @@index([ownerUserId])
   @@index([dueDate])
+  @@index([ownerPositionCode])
 }
 
 // Candidate communications — Email / SMS / WhatsApp.
@@ -2017,4 +2747,224 @@ model EmailVerification {
   createdAt     DateTime  @default(now())
 
   @@index([email])
+}
+
+// Documents on an employee's file — as many as needed, of any type (Aadhaar,
+// PAN, degree, experience letter, joining documents, other). `file` is the
+// name THIS SERVER generated in the upload directory (utils/attachments.js);
+// `fileName` is the sanitised original name, for display only.
+model EmployeeDocument {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  docType    String
+  docName    String?
+  file       String
+  fileName   String
+  mime       String?
+  size       Int?
+  uploadedBy String?
+  uploadedAt DateTime @default(now())
+
+  @@index([employeeId])
+}
+
+// Rewards & Recognition -> NOMINATION (hrms-24 §13). A nomination is a REQUEST:
+// Nominated -> Pending Review -> Approved / Rejected -> Awarded. Plain scalars
+// (no relation fields) so this stays an additive CREATE TABLE and the Employee
+// model is untouched. The nominee's ID / name / department / designation are
+// snapshotted at nomination time so the record reads as it was decided.
+model RecognitionNomination {
+  id                 String    @id @default(cuid())
+  nomineeId          String // Employee.id
+  nomineeCode        String?
+  nomineeName        String
+  nomineeDepartment  String?
+  nomineeDesignation String?
+  recognitionType    String
+  reason             String
+  achievements       String?
+  nominationDate     String // YYYY-MM-DD
+  comments           String?
+  recommendedReward  String?
+  docFile            String? // stored name from utils/attachments.js
+  docName            String?
+  docMime            String?
+  docSize            Int?
+  status             String    @default("Pending Review") // Nominated | Pending Review | Approved | Rejected | Awarded
+  nominatedById      String // User.id
+  nominatedByName    String
+  reviewerId         String?
+  reviewerName       String?
+  decision           String? // Approved | Rejected
+  remarks            String?
+  reviewedAt         DateTime?
+  awardedAt          DateTime?
+  awardedById        String?
+  awardedByName      String?
+  awardRecordId      String? // the RECOGNITION EmployeeRecord written on award
+  history            String    @default("[]") // JSON array of {at, by, status, note}
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([nomineeId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// BIOMETRIC DEVICE — eSSL (ZKTeco) ADMS / iClock push. The device calls
+// /iclock on this server; every call from a registered serial refreshes
+// lastSeenAt, which is what the Integrations screen reads as its heartbeat.
+// Migration 20260928100000_biometric_adms_device.
+model BiometricDevice {
+  id              String    @id @default(cuid())
+  vendor          String
+  protocol        String    @default("ADMS/iClock")
+  serialNumber    String    @unique
+  endpoint        String
+  port            Int?
+  status          String    @default("Active") // Active | Inactive
+  lastSeenAt      DateTime?
+  lastSeenIp      String?
+  lastRequest     String?
+  deviceInfo      String? // JSON of the INFO the device reports (firmware, users, ...)
+  attlogStamp     String?
+  punchesReceived Int       @default(0)
+  lastPunchAt     String?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Every ATTLOG line the device pushed, as received. employeeId is set when the
+// PIN is mapped to an employee (Employee.biometricPin); unmapped lines wait
+// here and are applied when HR maps the PIN.
+model BiometricPunchLog {
+  id                String   @id @default(cuid())
+  deviceSerial      String
+  pin               String
+  punchAt           String // YYYY-MM-DD HH:MM:SS, device local time
+  statusCode        String?
+  verifyCode        String?
+  raw               String?
+  employeeId        String?
+  attendancePunchId String?
+  createdAt         DateTime @default(now())
+
+  @@unique([deviceSerial, pin, punchAt])
+  @@index([pin])
+}
+
+// Names enrolled on the device (from its OPERLOG USER lines), to help map PINs.
+model BiometricDeviceUser {
+  id           String   @id @default(cuid())
+  deviceSerial String
+  pin          String
+  name         String?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([deviceSerial, pin])
+}
+
+// ---------------------------------------------------------------------------
+// PAST ATTENDANCE imported from the old HRMS (PulseHRM CSV exports) —
+// migration 20260928140000. Kept exactly as exported. The employee is matched
+// by Employee ID (employeeRef) against Employee Management; name, department
+// and designation always come from Employee Management, never from the file.
+// sourceName is kept only so an Unmatched Employee row can be identified.
+model AttendanceHistory {
+  id              String   @id @default(cuid())
+  employeeRef     String // Employee ID as written in the file
+  employeeId      String? // set when the Employee ID matches Employee Management
+  matchStatus     String // Matched | Unmatched Employee
+  sourceName      String?
+  date            String // YYYY-MM-DD
+  firstCheckIn    String? // HH:MM:SS as exported
+  lastCheckOut    String?
+  totalTimeWorked String?
+  totalBreak      String?
+  totalHours      String?
+  workLocation    String?
+  punchTimes      String? // every punch of the day, "HH:MM:SS|HH:MM:SS|..."
+  sources         String // which files had this day: report, logs
+  result          String // what the import did in TeamLink for this day
+  importBatch     String
+  importedById    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([employeeRef, date])
+  @@index([employeeId, date])
+}
+
+model AttendanceHistorySummary {
+  id             String   @id @default(cuid())
+  employeeRef    String
+  employeeId     String?
+  matchStatus    String
+  sourceName     String?
+  periodFrom     String
+  periodTo       String
+  location       String?
+  halfDay        Float?
+  present        Float?
+  weekOffs       Float?
+  publicHolidays Float?
+  leaves         Float?
+  payableDays    Float?
+  totalHours     String?
+  importBatch    String
+  importedById   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([employeeRef, periodFrom, periodTo])
+}
+
+// A contact purpose a user added (Contact button -> "Why are you contacting
+// them?"), shown to everyone after the built-in ones in utils/followups.js.
+// template: the message drafted for it; {name} {role} {client} are filled in.
+model ContactPurpose {
+  id            String   @id @default(cuid())
+  audience      String   @default("candidate") // candidate | client
+  label         String
+  template      String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([audience, label])
+}
+
+// Duplicate-client merge (migration 20260928160000). ClientAlias keeps every
+// name a merged-away client had (aliasKey = normalised name) so imports and
+// search resolve to the surviving client. ClientMerge is the record of each
+// merge with a JSON snapshot of the donor rows and counts of what moved.
+model ClientAlias {
+  id        String   @id @default(cuid())
+  clientId  String
+  alias     String
+  aliasKey  String   @unique
+  source    String   @default("merge")
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+}
+
+model ClientMerge {
+  id            String   @id @default(cuid())
+  primaryId     String
+  primaryName   String
+  donorIds      String // comma-separated
+  donorSnapshot String // JSON array of the donor Client rows as they were
+  moved         String // JSON counts: requirements, invoices, users, events, ...
+  filledFields  String? // JSON: fields filled on the primary from donors
+  note          String?
+  mergedById    String?
+  mergedByName  String?
+  createdAt     DateTime @default(now())
+
+  @@index([primaryId])
 }

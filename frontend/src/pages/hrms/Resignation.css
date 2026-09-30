@@ -1,0 +1,104 @@
+/* pages/hrms/Resignation.jsx — the resignation form and its detail view.
+   Scoped under .rsg; the form itself keeps the shared ComposeForm look. */
+.rsg-section { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); margin: 14px 0 6px; }
+.rsg-section:first-child { margin-top: 0; }
+.rsg-info {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px;
+  padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--paper);
+}
+.rsg-info > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+.rsg-info > div > span:first-child { font-size: 11px; color: var(--ink-faint); }
+.rsg-info > div > b { font-weight: 600; overflow-wrap: anywhere; }
+.rsg-info .rsg-wide { grid-column: 1 / -1; }
+.rsg-info .rsg-pre { white-space: pre-wrap; font-weight: 500; }
+@media (max-width: 640px) { .rsg-info { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 420px) { .rsg-info { grid-template-columns: minmax(0, 1fr); } }
+.rsg-note { font-size: 11.5px; color: var(--ink-faint); margin-top: 4px; }
+.rsg-warn { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--amber-tint); color: var(--amber); margin-bottom: 8px; }
+.rsg-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.rsg-row-meta { font-size: 11.5px; color: var(--ink-faint); }
+.rsg-settings { display: flex; flex-direction: column; gap: 8px; }
+.rsg-settings textarea { width: 100%; box-sizing: border-box; }
+.rsg-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
+
+/* ---- Letter of Resignation (LOR) — the form and the read-only letter ---- */
+.rsg-lor-who { margin-bottom: 12px; max-width: 420px; }
+.rsg-lor-card {
+  background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 20px 24px; box-shadow: var(--shadow-sm);
+}
+.rsg-lor-head {
+  display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 16px;
+  border-bottom: 2px solid var(--brand-bright); padding-bottom: 8px; margin-bottom: 14px;
+}
+.rsg-lor-title { margin: 0; font-size: 19px; font-weight: 700; color: var(--brand-bright); font-family: var(--font-serif, inherit); }
+.rsg-lor-today { font-size: 13px; color: var(--ink-soft); }
+.rsg-lor-today b { color: var(--ink); letter-spacing: .02em; }
+.rsg-lor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 16px; }
+.rsg-lor-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.rsg-lor-ro { display: flex; flex-direction: column; gap: 3px; min-width: 0; margin-bottom: 4px; }
+.rsg-lor-ro label { font-size: 11.5px; color: var(--ink-soft); font-weight: 600; }
+.rsg-lor-ro-val {
+  min-height: 36px; box-sizing: border-box; padding: 7px 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line-soft); border-radius: 8px; overflow-wrap: anywhere;
+}
+.rsg-lor-ro-text { margin-top: 6px; }
+.rsg-lor-text {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; min-height: 40px;
+  padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--paper);
+}
+.rsg-lor-sec {
+  margin: 20px 0 4px; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--brand);
+}
+.rsg-lor-line { margin: 2px 0 6px; font-size: 14px; color: var(--ink); }
+.rsg-lor-date { color: var(--brand); font-size: 15px; letter-spacing: .02em; white-space: nowrap; }
+.rsg-lor-note { font-size: 12px; color: var(--ink-soft); }
+.rsg-lor-link {
+  background: none; border: 0; padding: 0; font: inherit; color: var(--brand-bright); text-decoration: underline; cursor: pointer;
+}
+.rsg-lor-lwd { max-width: 260px; margin-top: 8px; }
+.rsg-lor-req { color: var(--red); }
+.rsg-lor-err { font-size: 11.5px; color: var(--red); margin-top: 4px; }
+.rsg-lor .is-invalid input, .rsg-lor .is-invalid textarea { border-color: var(--red); }
+.rsg-lor textarea { width: 100%; box-sizing: border-box; }
+.rsg-lor-pick { position: relative; }
+.rsg-lor-pick-ic {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%); z-index: 1;
+  color: var(--brand-bright); display: flex; pointer-events: none;
+}
+.rsg-lor-pick .rsg-lor-combo input { padding-left: 32px; }
+.rsg-lor-extra { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.rsg-lor-extra summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-bottom: 8px; }
+.rsg-lor-foot {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: flex-end; gap: 12px 20px;
+  margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line-soft);
+}
+.rsg-lor-view .rsg-lor-foot { border-top: 0; }
+.rsg-lor-sign { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; margin-right: auto; }
+.rsg-lor-foot .rsg-lor-sign { margin-left: auto; margin-right: 0; }
+.rsg-lor-script {
+  font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriting", "Apple Chancery", cursive;
+  font-size: 24px; line-height: 1.2; color: var(--brand); border-bottom: 1px solid var(--ink-faint); padding: 0 6px 2px;
+}
+.rsg-lor-sign-date { font-size: 12px; color: var(--ink-soft); letter-spacing: .02em; }
+.rsg-lor-foot-err { flex-basis: 100%; text-align: right; }
+.rsg-lor-actions { display: flex; gap: 8px; flex-basis: 100%; justify-content: flex-end; }
+.rsg-lor-submit { display: inline-flex; align-items: center; gap: 7px; }
+.modal-foot .btn svg { vertical-align: -3px; margin-right: 4px; }
+@media (max-width: 640px) {
+  .rsg-lor-card { padding: 14px; }
+  .rsg-lor-grid, .rsg-lor-two { grid-template-columns: minmax(0, 1fr); }
+  .rsg-lor-title { font-size: 17px; }
+  .rsg-lor-script { font-size: 20px; }
+  .rsg-lor-lwd { max-width: none; }
+  .rsg-lor-actions .btn { flex: 1 1 auto; justify-content: center; }
+}
+
+/* Date-wise: month totals + the imported-history tag (2026-09-29). */
+.rsg .rsg-months{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px;max-height:320px;overflow:auto}
+.rsg .rsg-month{display:flex;justify-content:space-between;align-items:center;gap:6px;border:1px solid var(--line);background:var(--paper-raised);border-radius:8px;padding:5px 8px;font-size:12.5px;color:var(--ink);cursor:pointer}
+.rsg .rsg-month b{color:var(--brand-ink)}
+.rsg .rsg-month:hover{border-color:var(--brand-tint-2)}
+.rsg .rsg-month.on{background:var(--brand-tint);border-color:var(--brand-tint-2)}
+.rsg .rsg-hist{display:inline-block;font-size:10.5px;font-weight:600;padding:0 6px;border-radius:6px;background:var(--amber-tint);color:var(--amber)}
+.rsg .rsg-clear{background:none;border:0;padding:0;color:var(--brand-ink);text-decoration:underline;cursor:pointer;font-size:inherit}

@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PasswordBadge } from '../../components/PasswordStatus.jsx';
+import { HR_STATUSES, EXIT_EMPLOYMENT, hrStatusOf } from '../../hrStatus';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { ATS_ROLE_LABELS, atsRoleLabel, DEPTS } from '../../atsVocab';
+import { ATS_ROLE_LABELS, atsRoleLabel, registerRoleLabels } from '../../atsVocab';
+import { useMasters, withCurrent } from '../../utils/masters';
 import Combo from '../../components/Combo.jsx';
 import ScopeChecklist from '../../components/ScopeChecklist.jsx';
+import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
+import { ViewAsButton } from '../../components/ViewAs.jsx';
 
 // Users / Employee Management (the prototype's usersView, line 9893).
 //
@@ -33,6 +39,9 @@ import ScopeChecklist from '../../components/ScopeChecklist.jsx';
 
 const ROLES = Object.keys(ATS_ROLE_LABELS);
 const STATUSES = ['Active', 'Inactive', 'Suspended'];
+// The login's own status (the form) is Active / Inactive / Suspended; the
+// FILTER uses the five HRMS statuses, which also know who is on notice or has left.
+const hasExited = (u) => EXIT_EMPLOYMENT.includes(u.employmentStatus);
 
 // The role vocabulary each product offers. It is the SAME catalog for all
 // three — that is the point of the product dimension: one role name can mean
@@ -45,7 +54,9 @@ const STATUSES = ['Active', 'Inactive', 'Suspended'];
 // nothing to say about.
 const PRODUCT_WORK_ROLES = {
   hrms: ['', ...ROLES],
-  ats: ['', ...ROLES.filter((r) => r !== 'ACCOUNTANT'), 'CANDIDATE'],
+  // ACCOUNTANT is an ATS role now too — the read-only billing view of Jobs /
+  // Requirements and Clients (role specs 2026-09-29).
+  ats: ['', ...ROLES, 'CANDIDATE'],
   accounts: ['', ...ROLES],
 };
 
@@ -79,7 +90,6 @@ export default function Users() {
   const [clients, setClients] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
-  const [filters, setFilters] = useState({ q: '', role: '', status: '', department: '' });
   const [resetFor, setResetFor] = useState(null);
   // What POST /employees/:id/send-credentials hands back: the one-time
   // sign-in link. Shown once, never stored — the same contract Employee
@@ -90,6 +100,9 @@ export default function Users() {
   // this modal is where main's inline editing of them moved to.
   const [editing, setEditing] = useState(null);
   const [departments, setDepartments] = useState([]);
+  // ROLES ARE DATA: custom roles from Role Catalog join the product pickers
+  // and the filter without a code change (GET /admin/roles).
+  const [roleCatalog, setRoleCatalog] = useState([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -98,11 +111,21 @@ export default function Users() {
     api.get('/admin/users').then((res) => setUsers(res.data)).catch(() => setError('Could not load users.'));
     api.get('/admin/users/employees-without-login').then((res) => setFreeEmployees(res.data)).catch(() => setFreeEmployees([]));
   }
+  // THE LIVE MASTERS (utils/masters.js): departments, teams, branches and the
+  // role list. A role added on Role Catalog or a department / team added on
+  // Departments & Teams changes masters.version, which re-reads the two lists
+  // below — no reload, no hard-coded array.
+  const masters = useMasters();
   useEffect(() => {
     load();
     api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
-    api.get('/admin/departments').then((res) => setDepartments(res.data)).catch(() => setDepartments([]));
   }, []);
+  useEffect(() => {
+    api.get('/admin/departments').then((res) => setDepartments(res.data)).catch(() => setDepartments([]));
+    api.get('/admin/roles', { params: { all: '1' } })
+      .then((res) => { registerRoleLabels(res.data); setRoleCatalog(res.data); })
+      .catch(() => setRoleCatalog([]));
+  }, [masters?.version]);
 
   // The department master already arrives with its teams nested, so both
   // checkbox lists come off the one fetch rather than a second round trip.
@@ -115,16 +138,57 @@ export default function Users() {
     [departments],
   );
 
-  const rows = useMemo(() => {
-    const q = filters.q.trim().toLowerCase();
-    return users.filter((u) => {
-      if (filters.role && u.role !== filters.role) return false;
-      if (filters.status && u.status !== filters.status) return false;
-      if (filters.department && u.department !== filters.department) return false;
-      if (q && !`${u.name} ${u.email} ${u.employeeId || ''} ${u.username || ''}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [users, filters]);
+  // A product's picker: the system roles, plus every ACTIVE custom role that
+  // fills that product. A login still holding an inactive one keeps it listed.
+  const customRoles = roleCatalog.filter((r) => !r.isSystem);
+  // System roles live in the Role table too (e.g. HR); any the static list
+  // above does not carry are added from the catalog, never typed here.
+  const liveSystemRoles = [...roleCatalog, ...(masters?.roles || [])]
+    .filter((r) => r.isSystem && !r.external && !['CLIENT', 'CANDIDATE'].includes(r.code)).map((r) => r.code)
+    .filter((c, i, all) => !ROLES.includes(c) && all.indexOf(c) === i);
+  const accountRoles = (current) => withCurrent([...ROLES, ...liveSystemRoles], current);
+  // Department / branch / team choices: the live masters, falling back to the
+  // department master this screen reads anyway until /masters answers.
+  const deptChoices = masters ? masters.departments : departments.map((d) => d.name).filter(Boolean).sort();
+
+  // THE FILTER STANDARD (components/ui/ListFilters.jsx): Search · Role ·
+  // Status · Department on screen; Product access · Login status ·
+  // Designation under More Filters; chips, Clear All, Sort, paging. The list
+  // is loaded whole (Administration only), so it is filtered here.
+  const roleOptions = [
+    ...[...ROLES, ...liveSystemRoles].map((r) => ({ value: r, label: atsRoleLabel(r) })),
+    ...customRoles.map((r) => ({ value: r.code, label: `${r.name}${r.active ? '' : ' (inactive)'}` })),
+  ];
+  const lf = useListFilters(users, [
+    { key: 'q', type: 'search', placeholder: 'Search name, email, employee ID…',
+      get: (u) => `${u.name} ${u.email} ${u.employeeId || ''} ${u.username || ''}` },
+    { key: 'role', label: 'Role', allLabel: 'All roles', options: roleOptions, primary: true,
+      match: (u, v) => u.role === v || Object.values(u.productRoles || {}).includes(v) },
+    { key: 'status', label: 'Status', allLabel: 'All statuses', options: HR_STATUSES, primary: true,
+      match: (u, v) => hrStatusOf(u.employmentStatus, u.status) === v },
+    { key: 'department', label: 'Department', allLabel: 'All departments', primary: true, get: (u) => u.department },
+    { key: 'product', label: 'Product access', allLabel: 'Any product',
+      options: [{ value: 'hrms', label: 'HRMS' }, { value: 'ats', label: 'ATS' }, { value: 'accounts', label: 'Accounts' }],
+      match: (u, v) => !!(u.products && u.products[v]) },
+    { key: 'login', label: 'Login status', allLabel: 'All login statuses', options: STATUSES, get: (u) => u.status },
+    { key: 'designation', label: 'Designation', allLabel: 'All designations', get: (u) => u.designation },
+  ], {
+    sorts: [
+      { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
+      { key: 'code', label: 'Employee ID', cmp: (a, b) => String(a.employeeId || '~').localeCompare(String(b.employeeId || '~'), undefined, { numeric: true }) },
+      { key: 'new', label: 'Newest first', cmp: (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) },
+      { key: 'dept', label: 'Department', cmp: (a, b) => String(a.department || '~').localeCompare(String(b.department || '~')) || String(a.name || '').localeCompare(String(b.name || '')) },
+    ],
+  });
+  const rows = lf.rows;
+  const page = usePaged(rows);
+  const productOptions = (product, current) => {
+    const list = [...PRODUCT_WORK_ROLES[product],
+      ...(product === 'ats' ? [] : liveSystemRoles.filter((c) => !PRODUCT_WORK_ROLES[product].includes(c))),
+      ...customRoles.filter((r) => r.active && r.products && r.products[product]).map((r) => r.code)];
+    if (current && !list.includes(current)) list.push(current);
+    return list;
+  };
 
   async function run(fn, successMessage) {
     setError(''); setNotice('');
@@ -292,17 +356,23 @@ export default function Users() {
               <input required type="password" minLength="6" value={form.password} onChange={(e) => set({ password: e.target.value })} /></label>
             <label className="field"><span>Role *</span>
               <Combo value={form.role} onChange={(e) => set({ role: e.target.value })}>
-                {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
+                {accountRoles(form.role).map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
               </Combo></label>
             <label className="field"><span>Department scope</span>
               <Combo creatable value={form.atsDepartment} onChange={(e) => set({ atsDepartment: e.target.value })}>
                 <option value="">All departments</option>
-                {DEPTS.map((d) => <option key={d}>{d}</option>)}
+                {withCurrent(deptChoices, form.atsDepartment).map((d) => <option key={d}>{d}</option>)}
               </Combo></label>
             <label className="field"><span>Branch</span>
-              <input value={form.branch} onChange={(e) => set({ branch: e.target.value })} /></label>
+              <Combo creatable value={form.branch} onChange={(e) => set({ branch: e.target.value })} placeholder="Select or type a branch">
+                <option value="">—</option>
+                {withCurrent(masters?.branches, form.branch).map((b) => <option key={b}>{b}</option>)}
+              </Combo></label>
             <label className="field"><span>Team</span>
-              <input value={form.team} onChange={(e) => set({ team: e.target.value })} placeholder="e.g. Section A" /></label>
+              <Combo creatable value={form.team} onChange={(e) => set({ team: e.target.value })} placeholder="e.g. Section A">
+                <option value="">—</option>
+                {withCurrent(masters?.teamNames, form.team).map((t) => <option key={t}>{t}</option>)}
+              </Combo></label>
             <label className="field"><span>Status</span>
               <Combo value={form.status} onChange={(e) => set({ status: e.target.value })}>
                 {STATUSES.map((s) => <option key={s}>{s}</option>)}
@@ -325,75 +395,62 @@ export default function Users() {
           <h3>Reset password — {resetFor.name}</h3>
           <div className="grid-2">
             <label className="field"><span>New password *</span>
-              <input required type="password" minLength="6" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} /></label>
+              <input required type="password" minLength="8" autoComplete="new-password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} /></label>
           </div>
           <div className="small-muted" style={{ marginBottom: 10 }}>
-            The password is stored hashed and never shown again — pass it to the user yourself.
+            At least 8 characters with a letter and a number. Stored hashed and never shown again — pass it to the user
+            yourself; they must change it at their next sign-in.
           </div>
           <button className="btn btn-primary btn-sm" type="submit">Reset password</button>{' '}
           <button className="btn btn-sm" type="button" onClick={() => { setResetFor(null); setResetPassword(''); }}>Cancel</button>
         </form>
       )}
 
-      <div className="filter-row" style={{ flexWrap: 'wrap' }}>
-        <input
-          type="text" placeholder="Search name, email, employee ID…"
-          value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-        />
-        <Combo value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
-          <option value="">All roles</option>
-          {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
-        </Combo>
-        <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => <option key={s}>{s}</option>)}
-        </Combo>
-        <Combo value={filters.department} onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))}>
-          <option value="">All departments</option>
-          {DEPTS.map((d) => <option key={d}>{d}</option>)}
-        </Combo>
-        <button className="btn btn-sm" onClick={() => setFilters({ q: '', role: '', status: '', department: '' })}>Clear</button>
-        <span className="small-muted">{rows.length} login(s)</span>
-      </div>
+      <ListFilterBar lf={lf} storageKey="admin-users" noun="logins" />
 
-      <div className="tbl-wrap">
+      {/* FITS THE WINDOW: the table's height is capped to the viewport
+          (tbl-fit), so its header stays in view and its own scrollbar is on
+          screen — nobody scrolls to the bottom of the page to move sideways. */}
+      <div className="tbl-wrap tbl-fit users-table">
         <table>
           <thead>
             {/* Grouped exactly as the model reads: EMPLOYEE, then one group
                 per product, then the account. */}
             <tr>
-              <th colSpan="5">Employee</th>
+              <th colSpan="2">Employee</th>
               <th colSpan="2">HRMS</th>
-              <th colSpan="6">ATS</th>
+              <th colSpan="2">ATS</th>
               <th colSpan="1">Accounts</th>
-              <th colSpan="4">Account</th>
+              <th colSpan="3">Account</th>
             </tr>
             <tr>
-              <th>User ID</th><th>Employee ID</th><th>Employee Name</th><th>Mobile</th><th>Branch</th>
+              {/* Mobile, branch, STL, assigned clients, open requirements and
+                  last login are not on this screen — Users is for logins and
+                  roles. Clients and open requirements per person are in
+                  Reports → ATS Reports → Recruiters. */}
+              <th style={{ width: 90 }}>Employee ID</th><th>Employee Name</th>
               <th>HRMS Role</th><th>Scope</th>
-              <th>ATS Role</th><th>Department</th><th>STL</th><th>TL</th>
-              <th>Assigned Clients</th><th>Assigned Requirements</th>
+              <th>ATS Role</th><th>Department · TL</th>
               <th>Accounts Role</th>
-              <th>Status</th><th>Last Login</th><th>Username</th><th>Actions</th>
+              <th>Status</th><th>Username</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((u) => (
+            {page.slice.map((u) => (
               <tr key={u.id}>
-                <td><b>{u.id.slice(-6).toUpperCase()}</b></td>
-                <td className="small-muted">{u.employeeId || '—'}</td>
+                <td><b>{u.employeeId || '—'}</b></td>
                 <td className="row-link">
                   {u.employeeRecordId
                     ? <Link to={`/employees/${u.employeeRecordId}`}>{u.name}</Link>
                     : u.name}
-                  <div className="small-muted" style={{ fontSize: 11 }}>{u.email}</div>
+                  <div className="small-muted" style={{ fontSize: 11 }}>
+                    {u.email}
+                  </div>
                 </td>
-                <td className="cell-muted">{u.mobile || '—'}</td>
-                <td className="cell-muted">{u.branch || '—'}</td>
                 {/* HRMS — its own role, and the scope that role reaches. */}
                 <td>
-                  <Combo style={{ minWidth: 120 }} value={shownRole(u.productRoles?.hrms)} onChange={(e) => setProductRole(u, 'hrms', e.target.value)}>
-                    {PRODUCT_WORK_ROLES.hrms.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
+                  <Combo style={{ minWidth: 104 }} value={shownRole(u.productRoles?.hrms)} onChange={(e) => setProductRole(u, 'hrms', e.target.value)}>
+                    {productOptions('hrms', shownRole(u.productRoles?.hrms)).map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
                   </Combo>
                 </td>
                 <td className="cell-muted">
@@ -423,26 +480,34 @@ export default function Users() {
                 {/* ATS — its own role, then the desk it works: department, the
                     STL and TL above it, its clients and its requirements. */}
                 <td>
-                  <Combo style={{ minWidth: 120 }} value={shownRole(u.productRoles?.ats ?? u.atsRole)} onChange={(e) => setProductRole(u, 'ats', e.target.value)}>
-                    {PRODUCT_WORK_ROLES.ats.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
+                  <Combo style={{ minWidth: 104 }} value={shownRole(u.productRoles?.ats ?? u.atsRole)} onChange={(e) => setProductRole(u, 'ats', e.target.value)}>
+                    {productOptions('ats', shownRole(u.productRoles?.ats ?? u.atsRole)).map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
                   </Combo>
                 </td>
-                <td className="cell-muted">{u.department || u.atsDepartment || '—'}</td>
-                <td className="cell-muted">{u.atsStl?.length ? u.atsStl.join(', ') : '—'}</td>
-                <td className="cell-muted">{u.atsTl?.length ? u.atsTl.join(', ') : '—'}</td>
-                <td className="cell-muted">{u.assignedClients?.length ? u.assignedClients.join(', ') : '—'}</td>
-                <td className="cell-muted">{u.assignedRequirements}</td>
+                <td className="cell-muted">
+                  {u.department || u.atsDepartment || '—'}
+                  {u.atsTl?.length ? <div style={{ fontSize: 11 }}>TL: {u.atsTl.join(', ')}</div> : null}
+                </td>
                 {/* Accounts — its own role. "No Access" here is a refusal the
                     API enforces, not a hidden menu. */}
                 <td>
-                  <Combo style={{ minWidth: 120 }} value={shownRole(u.productRoles?.accounts)} onChange={(e) => setProductRole(u, 'accounts', e.target.value)}>
-                    {PRODUCT_WORK_ROLES.accounts.map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
+                  <Combo style={{ minWidth: 104 }} value={shownRole(u.productRoles?.accounts)} onChange={(e) => setProductRole(u, 'accounts', e.target.value)}>
+                    {productOptions('accounts', shownRole(u.productRoles?.accounts)).map((r) => <option key={r || 'none'} value={r}>{r ? atsRoleLabel(r) : 'No Access'}</option>)}
                   </Combo>
                 </td>
-                <td><span className={'status ' + statusClass(u.status)}>{u.status}</span></td>
-                <td className="cell-muted">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
+                <td>
+                  <span className={'status ' + statusClass(u.status)}>{u.status}</span>
+                  {/* Password / account status (hrms-24 §12). */}
+                  {u.passwordStatus && <div style={{ marginTop: 4 }}><PasswordBadge ps={u.passwordStatus} /></div>}
+                  {hasExited(u) && (
+                    <span className="status priority-high" style={{ marginLeft: 4 }} title={u.status === 'Active' ? 'This person has left, but the login still works — disable it.' : 'This person has left.'}>
+                      {u.employmentStatus}
+                    </span>
+                  )}
+                </td>
                 <td className="cell-muted">{u.username || '—'}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
+                <td className="users-actions">
+                  <div className="row-actions">
                   <button className="btn btn-sm" onClick={() => setEditing({
                     id: u.id, name: u.name, role: u.role, branch: u.branch || '', team: u.team || '',
                     atsDepartment: u.atsDepartment || '',
@@ -461,13 +526,18 @@ export default function Users() {
                     title="Email this person a fresh single-use sign-in link">
                     Send Sign-in
                   </button>
+                  {' '}
+                  <ViewAsButton userId={u.id} name={u.name} active={u.status === 'Active'}
+                    superAdmin={u.role === 'SUPER_ADMIN' || u.hrmsRole === 'SUPER_ADMIN'} />
+                  </div>
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan="18" className="small-muted" style={{ padding: 16 }}>No logins match these filters.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan="10"><ListEmpty lf={lf} noun="logins" /></td></tr>}
           </tbody>
         </table>
       </div>
+      <Pager page={page} noun="logins" />
 
       <div className="notice" style={{ marginTop: 14 }}>
         One login, three independent product roles. HRMS, ATS and Accounts each carry their own role on the
@@ -490,7 +560,7 @@ export default function Users() {
         >
           <div className="field"><label>Account-level role</label>
             <Combo value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}>
-              {ROLES.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
+              {accountRoles(editing.role).map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
             </Combo></div>
           <div className="notice">
             THE ACCOUNT-LEVEL ROLE, not a product role. It says what kind of account this is — Super Admin,
@@ -499,13 +569,19 @@ export default function Users() {
             editable in their own column on the table.
           </div>
           <div className="field"><label>Branch</label>
-            <input value={editing.branch} onChange={(e) => setEditing({ ...editing, branch: e.target.value })} /></div>
+            <Combo creatable value={editing.branch} onChange={(e) => setEditing({ ...editing, branch: e.target.value })} placeholder="Select or type a branch">
+              <option value="">—</option>
+              {withCurrent(masters?.branches, editing.branch).map((b) => <option key={b}>{b}</option>)}
+            </Combo></div>
           <div className="field"><label>Assigned team</label>
-            <input value={editing.team} onChange={(e) => setEditing({ ...editing, team: e.target.value })} placeholder="e.g. Section A" /></div>
+            <Combo creatable value={editing.team} onChange={(e) => setEditing({ ...editing, team: e.target.value })} placeholder="e.g. Section A">
+              <option value="">—</option>
+              {withCurrent(masters?.teamNames, editing.team).map((t) => <option key={t}>{t}</option>)}
+            </Combo></div>
           <div className="field"><label>Primary ATS department</label>
             <Combo creatable value={editing.atsDepartment} onChange={(e) => setEditing({ ...editing, atsDepartment: e.target.value })}>
               <option value="">All departments</option>
-              {DEPTS.map((d) => <option key={d}>{d}</option>)}
+              {withCurrent(deptChoices, editing.atsDepartment).map((d) => <option key={d}>{d}</option>)}
             </Combo></div>
           <div className="notice">
             Data scope. These are what the API itself enforces on every list and

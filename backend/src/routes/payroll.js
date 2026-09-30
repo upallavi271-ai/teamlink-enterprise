@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const {
-  employeeWhere, employeeRecordWhere, employeeInScope, departmentWhere, accountsGlobal, matches, OUT_OF_SCOPE,
+  employeeWhere, departmentWhere, accountsGlobal, matches, OUT_OF_SCOPE,
 } = require('../utils/scope');
 
 // Who this caller may see payroll for. The payroll SCREENS are already gated
@@ -16,17 +16,22 @@ function payrollEmployeeWhere(req) {
   if (req.user.caps.payrollManage) return departmentWhere(req.user);
   return employeeWhere(req.user);
 }
-function payrollPayslipWhere(req) {
-  const where = payrollEmployeeWhere(req);
-  return Object.keys(where).length ? { employee: where } : {};
-}
 // Record-level twin, so editing a salary structure obeys the same rule the
 // list does rather than a second, hand-written one.
 function matchesScope(req, employee) {
   return matches(employee, payrollEmployeeWhere(req));
 }
 const { logAudit } = require('../utils/audit');
-const { monthStats, monthLabel } = require('../utils/attendanceMath');
+const { withoutSystemAccounts } = require('../utils/systemAccounts');
+const { monthLabel } = require('../utils/attendanceMath');
+const { can } = require('../utils/permissions');
+const {
+  computeStructure, structureFromRow, PT_SLAB, PT_STATE, DEFAULT_RULES,
+} = require('../utils/salaryRules');
+const { renderPayslip } = require('../utils/payslipPdf');
+// Payroll -> Accounts (SPEC B): versioned structures, the per-employee engine.
+const SV = require('../utils/salaryVersions');
+const PE = require('../utils/payrollEngine');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -34,40 +39,54 @@ router.use(requireAuth);
 
 async function getPolicy() {
   let config = await prisma.hrConfig.findFirst();
-  if (!config) config = await prisma.hrConfig.create({ data: {} });
+  // basicPctOfCtc is passed explicitly: the column's default is still the old
+  // 50% (see schema.prisma), the Standard Package is 40%.
+  if (!config) config = await prisma.hrConfig.create({ data: { basicPctOfCtc: DEFAULT_RULES.basicPctOfCtc } });
   return config;
 }
 
-// CTC breakup driven by the configurable CTC Split Settings (see PUT /ctc-settings)
-// rather than hardcoded percentages: Basic is a % of CTC, HRA/Bonus/PF/Gratuity are
-// % of Basic (PF capped), flat professional tax, Special Allowance absorbs the
-// remainder so the pieces reconcile exactly back to CTC — mirrors the reference
-// app's Salary Structure panel and its Configuration Policies screen.
+// CTC breakup — utils/salaryRules.js holds the rules (Standard Package: Basic
+// 40% of CTC, HRA 40% of Basic, fixed Bonus, PF 12% of Basic, Gratuity 4.81%
+// of Basic, Telangana PT slab, Special Allowance absorbs the rest so the pieces
+// reconcile exactly to CTC). SalaryStructure.ctc is stored ANNUAL, as it always
+// has been; the rules work on the monthly figure.
 function salaryBreakup(annualCtc, cfg) {
-  const monthlyCtc = annualCtc / 12;
-  const basic = Math.round(monthlyCtc * (cfg.basicPctOfCtc / 100));
-  const hra = Math.round(basic * (cfg.hraPctOfBasic / 100));
-  const bonus = Math.round(basic * (cfg.bonusPctOfBasic / 100));
-  const employeePf = Math.round(Math.min(basic * (cfg.employeePfPctOfBasic / 100), cfg.employeePfMonthlyCap));
-  const employerPf = Math.round(Math.min(basic * (cfg.employerPfPctOfBasic / 100), cfg.employerPfMonthlyCap));
-  const professionalTax = cfg.professionalTaxFlat;
-  const gratuity = Math.round(basic * (cfg.gratuityPctOfBasic / 100));
-  const gross = basic + hra + bonus;
-  const special = Math.max(0, Math.round(monthlyCtc - gross - employerPf - gratuity));
-  const grossWithSpecial = gross + special;
-  const deductions = employeePf + professionalTax;
-  const net = grossWithSpecial - deductions;
-  const ctcCheck = Math.round((grossWithSpecial + employerPf + gratuity) * 12);
-  return { basic, hra, bonus, special, employerPf, employeePf, professionalTax, gratuity, gross: grossWithSpecial, deductions, net, ctcCheck };
+  return computeStructure((Number(annualCtc) || 0) / 12, cfg);
+}
+
+// ---- Who may read whose payslip ---------------------------------------------
+//
+// Everybody reads their OWN payslips. Reading OTHER people's is for:
+//   - the payroll desk (Payroll & Compensation / edit — Super Admin, Admin,
+//     Accountant, HR), held to payrollEmployeeWhere() like every payroll list;
+//   - the view-only oversight roles (Manager, Assistant Manager), who hold
+//     `export` but no write action, held to their HRMS data scope.
+// An employee and a TL hold only `view` — their own payslips, nothing more.
+async function payslipReach(req) {
+  const own = await prisma.employee.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+  const ownId = own ? own.id : null;
+  if (req.user.caps.payrollManage) return { ownId, where: payrollEmployeeWhere(req) };
+  if (!req.user.caps.hrmsSelfOnly && await can(req.user, 'hrms', 'hrms', 'Payroll & Compensation', 'export')) {
+    return { ownId, where: employeeWhere(req.user) };
+  }
+  return { ownId, where: null };
+}
+function reachWhere(reach) {
+  if (!reach.where) return { employeeId: reach.ownId || '__no_employee__' };
+  if (!Object.keys(reach.where).length) return {};
+  return reach.ownId ? { OR: [{ employeeId: reach.ownId }, { employee: reach.where }] } : { employee: reach.where };
+}
+function reachAllows(reach, employee) {
+  if (!employee) return false;
+  if (reach.ownId && reach.ownId === employee.id) return true;
+  return !!reach.where && matches(employee, reach.where);
 }
 
 router.get('/', async (req, res) => {
-  // A payslip is the most personal HRMS record there is. This list is an
-  // employee's own payslip history, NOT the payroll operator's register —
-  // /payroll/structure, /preview and /runs are that — so it stays on the HRMS
-  // rule for everyone: your own, or your departments' if you lead them.
-  // Narrowed only: an accountant's reach here is unchanged from before.
-  const where = { ...employeeRecordWhere(req.user) };
+  // A payslip is the most personal HRMS record there is: your own, or — for
+  // the payroll desk and the view-only oversight roles — the ones inside
+  // your scope (payslipReach above).
+  const where = { ...reachWhere(await payslipReach(req)) };
   if (req.query.employeeId) where.employeeId = req.query.employeeId;
   if (req.query.month) where.month = req.query.month;
   const payslips = await prisma.payslip.findMany({ where, include: { employee: true }, orderBy: { month: 'desc' } });
@@ -85,60 +104,219 @@ router.get('/', async (req, res) => {
 // so the two are separated: SET.ACCOUNTS has edit, EMPLOYEE does not.
 //
 // GET '/' above is the employee's own payslip history and stays open — it is
-// scoped by employeeRecordWhere() to their own rows.
+// scoped by payslipReach() to their own rows.
+function breakupOf(ss, cfg) {
+  if (!ss) return null;
+  if (ss.payMode === 'Stipend') return null;
+  // Stored components win (they may carry HR's overrides); a row with only a
+  // CTC on it is computed from the rules.
+  if (Number(ss.basic) > 0) return structureFromRow(ss);
+  return Number(ss.ctc) > 0 ? salaryBreakup(ss.ctc, cfg) : null;
+}
+
 router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const cfg = await getPolicy();
   // Salary is the most department-sensitive record in HRMS, so the structure
   // list is held to the caller's departments like everything else.
   const employees = await prisma.employee.findMany({
-    where: payrollEmployeeWhere(req), include: { salaryStructure: true }, orderBy: { name: 'asc' },
+    where: withoutSystemAccounts(payrollEmployeeWhere(req)), include: { salaryStructure: true }, orderBy: { name: 'asc' },
   });
   res.json(
     employees.map((e) => {
       const ss = e.salaryStructure;
-      const breakup = ss && ss.payMode === 'Package' ? salaryBreakup(ss.ctc || 0, cfg) : null;
-      return { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, structure: ss, breakup };
+      return { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, structure: ss, breakup: breakupOf(ss, cfg) };
     })
   );
 });
 
-// Reference CTC breakup for the "Standard Package" example shown on the Payroll dashboard.
-router.get('/reference-structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
+// The Standard Package reference card (and the live preview while HR types a
+// CTC). Pure arithmetic — nothing is read about or written to any employee.
+// ?monthlyCtc=25000 (default) · ?ctc=300000 (annual, older callers) · ?bonus=1000
+router.get('/reference-structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'view'), async (req, res) => {
   const cfg = await getPolicy();
-  res.json(salaryBreakup(Number(req.query.ctc) || 300000, cfg));
+  const monthly = req.query.monthlyCtc != null && req.query.monthlyCtc !== ''
+    ? Number(req.query.monthlyCtc)
+    : (req.query.ctc != null && req.query.ctc !== '' ? Number(req.query.ctc) / 12 : 25000);
+  const bonus = req.query.bonus != null && req.query.bonus !== '' ? Number(req.query.bonus) : undefined;
+  res.json(computeStructure(Number.isFinite(monthly) ? monthly : 0, cfg, { bonus }));
 });
 
+// The caller's OWN salary structure — the employee's side of Payroll &
+// Compensation. Never anybody else's.
+router.get('/my-structure', async (req, res) => {
+  const me = await prisma.employee.findUnique({ where: { userId: req.user.id }, include: { salaryStructure: true } });
+  if (!me) return res.json({ employee: null, structure: null, breakup: null });
+  const cfg = await getPolicy();
+  const ss = me.salaryStructure;
+  return res.json({
+    employee: { id: me.id, name: me.name, employeeCode: me.employeeCode, department: me.department, designation: me.designation },
+    structure: ss ? { payMode: ss.payMode, ctc: ss.ctc, stipend: ss.stipend, updatedAt: ss.updatedAt } : null,
+    breakup: breakupOf(ss, cfg),
+  });
+});
+
+router.get('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
+  const emp = await prisma.employee.findUnique({ where: { id: req.params.employeeId }, include: { salaryStructure: true } });
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  if (!matchesScope(req, emp)) return res.status(403).json(OUT_OF_SCOPE);
+  const cfg = await getPolicy();
+  // Every version, newest first, with which months' payroll used it.
+  const [versions, used, locked] = await Promise.all([
+    prisma.salaryStructureVersion.findMany({ where: { employeeId: emp.id }, orderBy: { effectiveFrom: 'desc' } }),
+    prisma.employeePayrollRun.findMany({ where: { employeeId: emp.id }, select: { month: true, status: true, salaryVersionId: true }, orderBy: { month: 'asc' } }),
+    SV.lastLockedMonth(emp.id),
+  ]);
+  return res.json({
+    employee: { id: emp.id, name: emp.name, employeeCode: emp.employeeCode, department: emp.department, designation: emp.designation, dateOfJoining: emp.dateOfJoining },
+    structure: emp.salaryStructure,
+    breakup: breakupOf(emp.salaryStructure, cfg),
+    versions: versions.map((v) => ({
+      ...v,
+      breakup: v.payMode === 'Stipend' ? null : structureFromRow(v),
+      runs: used.filter((r) => r.salaryVersionId === v.id).map((r) => ({ month: r.month, status: r.status })),
+    })),
+    // A new or edited version may only take effect after this month.
+    lockedThrough: locked ? locked.month : null,
+  });
+});
+
+// Removes a version nobody's payroll beyond DRAFT has used.
+router.delete('/structure/versions/:versionId', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
+  const v = await prisma.salaryStructureVersion.findUnique({ where: { id: req.params.versionId }, include: { employee: true } });
+  if (!v) return res.status(404).json({ error: 'Version not found' });
+  if (!matchesScope(req, v.employee)) return res.status(403).json(OUT_OF_SCOPE);
+  const usedBy = await prisma.employeePayrollRun.findFirst({ where: { salaryVersionId: v.id, status: { not: 'DRAFT' } } });
+  if (usedBy) return res.status(409).json({ error: `This version paid ${usedBy.month} (${usedBy.status}); it can no longer be removed.` });
+  const locked = await SV.lastLockedMonth(v.employeeId);
+  if (locked && v.effectiveFrom <= `${locked.month}-01`) return res.status(409).json({ error: `Removing it would change ${locked.month}'s payroll, which is already ${locked.status}.` });
+  await prisma.salaryStructureVersion.delete({ where: { id: v.id } });
+  await SV.relink(v.employeeId);
+  await logAudit({ userId: req.user.id, action: 'Salary structure version removed', entity: 'SalaryStructureVersion', entityId: v.id, fromValue: v.effectiveFrom });
+  return res.json({ ok: true });
+});
+
+const COMPONENT_FIELDS = ['basic', 'hra', 'bonus', 'specialAllowance', 'employerPf', 'employeePf', 'professionalTax', 'gratuity'];
+
+// Saves ONE employee's structure AS A VERSION (SPEC B §2). Components are
+// computed from the CTC HR enters (utils/salaryRules.js) and any component HR
+// typed over is kept as typed. Nothing here ever runs for employees HR did
+// not save.
+//
+// Body: { payMode, monthlyCtc | ctc (annual), bonus, components: { basic, … }, stipend,
+//         effectiveFrom ('YYYY-MM'; default: the latest version's month, or the
+//         joining month / this month for a first structure),
+//         esiApplicable (true | false | null = automatic), tds (monthly, '' = policy),
+//         otherDeductions (monthly), note }
+//
+// Same effectiveFrom as an existing version → that version is edited; a new
+// month → a new version (the previous one ends the day before). Refused when
+// the version would take effect on a month whose payroll is beyond DRAFT, so a
+// revision never changes a past run. SalaryStructure is then re-mirrored to
+// the latest version (the "current version" everything else reads).
 router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
-  const inScope = await prisma.employee.findUnique({ where: { id: req.params.employeeId } });
+  const inScope = await prisma.employee.findUnique({ where: { id: req.params.employeeId }, include: { salaryStructure: true } });
   if (!inScope) return res.status(404).json({ error: 'Employee not found' });
   if (!matchesScope(req, inScope)) return res.status(403).json(OUT_OF_SCOPE);
-  const { payMode, ctc, stipend } = req.body;
+  const body = req.body || {};
+  const { stipend } = body;
+  const current = inScope.salaryStructure;
+  const payMode = body.payMode || (current && current.payMode) || 'Package';
+  if (!['Package', 'Stipend'].includes(payMode)) return res.status(400).json({ error: 'Pay mode must be Package or Stipend' });
   const cfg = await getPolicy();
-  const data = {};
-  if (payMode) data.payMode = payMode;
-  if (ctc != null) {
-    data.ctc = Number(ctc);
-    const b = salaryBreakup(Number(ctc), cfg);
-    Object.assign(data, { basic: b.basic, hra: b.hra, bonus: b.bonus, specialAllowance: b.special, employerPf: b.employerPf, employeePf: b.employeePf, professionalTax: b.professionalTax, gratuity: b.gratuity });
-  }
-  if (stipend != null) data.stipend = Number(stipend);
 
-  const structure = await prisma.salaryStructure.upsert({
-    where: { employeeId: req.params.employeeId },
-    update: data,
-    create: { employeeId: req.params.employeeId, payMode: payMode || 'Package', ...data },
+  // Which month the version takes effect from.
+  const latest = await prisma.salaryStructureVersion.findFirst({ where: { employeeId: inScope.id }, orderBy: { effectiveFrom: 'desc' } });
+  let effectiveFrom;
+  if (body.effectiveFrom) {
+    effectiveFrom = SV.monthStart(body.effectiveFrom);
+    if (!effectiveFrom) return res.status(400).json({ error: 'effectiveFrom must be a month (YYYY-MM)' });
+  } else if (latest) {
+    effectiveFrom = latest.effectiveFrom;
+  } else {
+    const doj = inScope.dateOfJoining ? new Date(inScope.dateOfJoining) : null;
+    effectiveFrom = doj && !Number.isNaN(doj.getTime())
+      ? `${doj.getFullYear()}-${String(doj.getMonth() + 1).padStart(2, '0')}-01`
+      : `${new Date().toISOString().slice(0, 7)}-01`;
+  }
+  const locked = await SV.lastLockedMonth(inScope.id);
+  if (locked && effectiveFrom <= `${locked.month}-01`) {
+    return res.status(409).json({
+      error: `${inScope.name}'s payroll for ${locked.month} is already ${PE.STATUS_LABEL[locked.status] || locked.status}. A revision can only take effect from the following month onwards.`,
+      lockedThrough: locked.month,
+    });
+  }
+  const sameMonth = await prisma.salaryStructureVersion.findUnique({ where: { employeeId_effectiveFrom: { employeeId: inScope.id, effectiveFrom } } });
+  // The version this one starts from: the one it edits, else the one in force.
+  const base = sameMonth || await SV.versionFor(inScope.id, effectiveFrom.slice(0, 7)) || latest || current;
+
+  let annual = null;
+  if (body.monthlyCtc != null && body.monthlyCtc !== '') annual = Math.round(Number(body.monthlyCtc)) * 12;
+  else if (body.ctc != null && body.ctc !== '') annual = Number(body.ctc);
+  if (annual != null && (!Number.isFinite(annual) || annual < 0)) return res.status(400).json({ error: 'CTC must be a positive amount' });
+  if (annual == null) annual = base ? Number(base.ctc) || 0 : 0;
+  if (payMode === 'Package' && !(annual > 0)) return res.status(400).json({ error: 'Enter the monthly CTC' });
+
+  // HR's overrides, kept exactly as typed. Without a new CTC, the base
+  // version's stored components carry over as overrides.
+  const overrides = {};
+  const ctcGiven = (body.monthlyCtc != null && body.monthlyCtc !== '') || (body.ctc != null && body.ctc !== '');
+  if (!ctcGiven && base && payMode === 'Package' && Number(base.basic) > 0) COMPONENT_FIELDS.forEach((f) => { overrides[f] = Number(base[f]) || 0; });
+  const typed = body.components && typeof body.components === 'object' ? body.components : {};
+  for (const f of COMPONENT_FIELDS) {
+    if (typed[f] === undefined || typed[f] === null || typed[f] === '') continue;
+    const v = Number(typed[f]);
+    if (!Number.isFinite(v)) return res.status(400).json({ error: `${f} must be a number` });
+    overrides[f] = Math.round(v);
+  }
+  let stipendAmount = base ? Number(base.stipend) || 0 : 0;
+  if (stipend != null && stipend !== '') {
+    const v = Number(stipend);
+    if (!Number.isFinite(v) || v < 0) return res.status(400).json({ error: 'Stipend must be a positive amount' });
+    stipendAmount = v;
+  }
+  const pick = (k, fallback) => (Object.prototype.hasOwnProperty.call(body, k) ? body[k] : fallback);
+  const esiRaw = pick('esiApplicable', base ? base.esiApplicable : null);
+  const esiApplicable = esiRaw === true || esiRaw === 'true' ? true : (esiRaw === false || esiRaw === 'false' ? false : null);
+  const tds = pick('tds', base ? base.tds : null);
+  const otherDeductions = pick('otherDeductions', base ? base.otherDeductions : 0);
+  if (tds !== null && tds !== '' && tds !== undefined && !(Number(tds) >= 0)) return res.status(400).json({ error: 'TDS must be 0 or more' });
+  if (!(Number(otherDeductions || 0) >= 0)) return res.status(400).json({ error: 'Other deductions must be 0 or more' });
+
+  const bonus = body.bonus != null && body.bonus !== '' ? Number(body.bonus) : undefined;
+  const data = SV.buildComponents({
+    payMode, annualCtc: annual, bonus, overrides, stipend: stipendAmount, cfg, esiApplicable, tds, otherDeductions,
   });
-  await logAudit({ userId: req.user.id, action: 'Salary structure updated', entity: 'SalaryStructure', entityId: structure.id });
-  res.json(structure);
+  data.note = body.note ? String(body.note).slice(0, 300) : (sameMonth ? sameMonth.note : null);
+
+  const version = sameMonth
+    ? await prisma.salaryStructureVersion.update({ where: { id: sameMonth.id }, data })
+    : await prisma.salaryStructureVersion.create({ data: { employeeId: inScope.id, effectiveFrom, createdBy: req.user.name, ...data } });
+  const structure = await SV.relink(inScope.id);
+  await logAudit({
+    userId: req.user.id, action: sameMonth ? 'Salary structure version updated' : 'Salary structure version created',
+    entity: 'SalaryStructure', entityId: structure.id, toValue: `effective ${effectiveFrom.slice(0, 7)} · CTC ${Math.round(annual / 12)}/month`,
+  });
+  // Drafts already calculated from what this changed must be recalculated
+  // before they can be submitted (payrollEngine.transition checks this).
+  const staleDrafts = await prisma.employeePayrollRun.findMany({
+    where: { employeeId: inScope.id, status: 'DRAFT', month: { gte: effectiveFrom.slice(0, 7) } }, select: { month: true },
+  });
+  res.json({ structure, version, breakup: breakupOf(structure, cfg), staleDrafts: staleDrafts.map((d) => d.month) });
 });
 
 // ---- CTC Split Settings (how CTC is broken into components) ----
 
 router.put('/ctc-settings', requirePerm(null, 'hrms', 'Payroll & Compensation', 'configure'), async (req, res) => {
-  const fields = ['basicPctOfCtc', 'hraPctOfBasic', 'bonusPctOfBasic', 'employeePfPctOfBasic', 'employerPfPctOfBasic', 'employeePfMonthlyCap', 'employerPfMonthlyCap', 'gratuityPctOfBasic', 'professionalTaxFlat'];
+  const fields = ['basicPctOfCtc', 'hraPctOfBasic', 'bonusFixedMonthly', 'bonusPctOfBasic', 'employeePfPctOfBasic', 'employerPfPctOfBasic', 'employeePfMonthlyCap', 'employerPfMonthlyCap', 'gratuityPctOfBasic', 'professionalTaxFlat',
+    // SPEC B statutory settings: ESI rates / ceiling, default TDS %.
+    'esiEmployeePct', 'esiEmployerPct', 'esiGrossCeiling', 'tdsDefaultPctOfGross'];
   const config = await getPolicy();
   const data = {};
   fields.forEach((f) => { if (req.body[f] != null) data[f] = Number(req.body[f]); });
+  if (typeof req.body.esiEnabled === 'boolean') data.esiEnabled = req.body.esiEnabled;
+  if (Object.values(data).some((v) => typeof v === 'number' && (!Number.isFinite(v) || v < 0))) {
+    return res.status(400).json({ error: 'Settings must be numbers of 0 or more' });
+  }
   const updated = await prisma.hrConfig.update({ where: { id: config.id }, data });
   await logAudit({ userId: req.user.id, action: 'CTC split settings updated', entity: 'HrConfig', entityId: updated.id });
   res.json(updated);
@@ -147,7 +325,9 @@ router.put('/ctc-settings', requirePerm(null, 'hrms', 'Payroll & Compensation', 
 // ---- Payroll policy (how attendance turns into pay) ----
 
 router.get('/policy', async (req, res) => {
-  res.json(await getPolicy());
+  // The PT slab rides along so the settings screen can show it; it is edited
+  // in utils/salaryRules.js, its one home.
+  res.json({ ...(await getPolicy()), ptSlab: PT_SLAB, ptState: PT_STATE });
 });
 
 router.put('/policy', requirePerm(null, 'hrms', 'Payroll & Compensation', 'configure'), async (req, res) => {
@@ -194,150 +374,80 @@ router.patch('/fnf/:id/process', requirePerm(null, 'hrms', 'Payroll & Compensati
 });
 
 // ---- Payroll calculation -----------------------------------------------------
-// One function feeds both the preview (Process Payroll → Calculate) and the real
-// run, so what you confirm is exactly what gets written. Pay is prorated against
-// the month's attendance per the payroll policy — unmarked/absent working days
-// beyond the paid-leave allowance become loss of pay — and each late arrival
-// beyond the free monthly allowance costs half a day's pay.
-async function calculatePayroll({ month, department, defaultCTC }) {
-  const policy = await getPolicy();
+// The per-employee engine lives in utils/payrollEngine.js (SPEC B): the salary
+// structure VERSION effective in the month, the month's attendance input (the
+// attendance module's day statuses, or HR's override), and one record per
+// employee per month with its own approval status.
 
-  const [year, mo] = month.split('-').map(Number);
-  const daysInMonth = new Date(year, mo, 0).getDate();
-  let workingDays = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(year, mo - 1, d).getDay();
-    if (policy.weekendsPaid || (dow !== 0 && dow !== 6)) workingDays++;
-  }
-
-  const where = { employmentStatus: { in: ['Active', 'Notice Period'] } };
-  if (department) where.department = department;
-  const employees = await prisma.employee.findMany({ where, include: { salaryStructure: true }, orderBy: { name: 'asc' } });
-  const ids = employees.map((e) => e.id);
-  const [allRecords, allPunches] = await Promise.all([
-    prisma.attendance.findMany({ where: { employeeId: { in: ids }, date: { startsWith: month } } }),
-    prisma.attendancePunch.findMany({ where: { employeeId: { in: ids }, date: { startsWith: month } } }),
-  ]);
-
-  const rows = employees.map((emp) => {
-    const isStipend = emp.salaryStructure?.payMode === 'Stipend';
-    const stipend = Number(emp.salaryStructure?.stipend || 0);
-    const ctc = emp.salaryStructure?.payMode === 'Package' ? emp.salaryStructure.ctc : Number(defaultCTC) || 600000;
-    // A stipend is a flat monthly figure with no components and no deductions.
-    const b = isStipend
-      ? { basic: 0, hra: 0, bonus: 0, special: 0, employerPf: 0, employeePf: 0, professionalTax: 0, gratuity: 0, gross: stipend, deductions: 0, net: stipend }
-      : salaryBreakup(ctc, policy);
-    const gross = b.gross;
-
-    const records = allRecords.filter((r) => r.employeeId === emp.id);
-    const absentDays = records.filter((r) => r.status === 'Absent').length;
-    const unmarkedDays = policy.unmarkedDaysUnpaid ? Math.max(0, workingDays - records.length) : 0;
-    const leaveDays = records.filter((r) => r.status === 'Leave').length;
-    const unpaidLeaveDays = Math.max(0, leaveDays - policy.paidLeaveDaysPerMonth);
-    const lopDays = absentDays + unmarkedDays + unpaidLeaveDays;
-
-    const perDayPay = workingDays ? gross / workingDays : 0;
-    const lopDeduction = Math.round(perDayPay * lopDays);
-
-    const stats = monthStats({
-      month,
-      records,
-      punches: allPunches.filter((p) => p.employeeId === emp.id),
-      cfg: policy,
-    });
-    // Half a day's pay per excess late arrival; a "day" here is net/30.
-    const netBeforeLate = Math.max(0, gross - b.deductions - lopDeduction);
-    const lateCut = Math.round(netBeforeLate / 60) * stats.halfDayCut;
-    const netPay = Math.max(0, netBeforeLate - lateCut);
-
-    return {
-      employeeId: emp.id,
-      employeeCode: emp.employeeCode,
-      name: emp.name,
-      department: emp.department,
-      payMode: isStipend ? 'Stipend' : 'Package',
-      basic: b.basic, hra: b.hra, bonus: b.bonus, specialAllowance: b.special,
-      employerPf: b.employerPf, employeePf: b.employeePf, professionalTax: b.professionalTax, gratuity: b.gratuity,
-      gross, deductions: b.deductions,
-      lopDays, lateDays: stats.late, halfDayCut: stats.halfDayCut, lateCut,
-      netPay,
-    };
-  });
-
-  const totals = rows.reduce((acc, r) => ({
-    employees: acc.employees + 1,
-    gross: acc.gross + r.gross,
-    deductions: acc.deductions + r.deductions,
-    lateCuts: acc.lateCuts + r.lateCut,
-    net: acc.net + r.netPay,
-  }), { employees: 0, gross: 0, deductions: 0, lateCuts: 0, net: 0 });
-
-  return { month, period: monthLabel(month), workingDays, rows, totals };
-}
-
-// Preview a cycle without writing anything — the Calculate step on Process Payroll.
+// Preview a cycle without writing anything — the Calculate step on Process
+// Payroll. Since SPEC B this is the per-employee engine (utils/payrollEngine.js)
+// in dry-run mode: the versioned structure effective that month and the
+// month's attendance input. The row shape keeps the old keys the screen reads.
 router.get('/preview', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const month = req.query.month;
-  if (!month) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
+  if (!PE.isMonth(month)) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
   const existing = await prisma.payrollRun.findUnique({ where: { month } });
-  const preview = await calculatePayroll({ month, department: req.query.department || null, defaultCTC: req.query.defaultCTC });
-  res.json({ ...preview, alreadyProcessed: !!existing, run: existing });
+  const r = await PE.calculateMonth({ month, department: req.query.department || null, employeeWhere: payrollEmployeeWhere(req), dryRun: true });
+  const rows = r.rows.map((x) => ({
+    ...x, gross: x.grossPay, deductions: x.pfEmployee + x.esiEmployee + x.professionalTax + x.tds + x.otherDeductions,
+    lopDays: x.daysLop, lateDays: 0, lateCut: 0, attendance: undefined,
+  }));
+  const hasEntries = await prisma.employeePayrollRun.count({ where: { month } });
+  res.json({
+    ...r, rows, totals: { ...r.totals, lateCuts: 0 },
+    // "Already processed" now means: a month run from before the per-employee
+    // records (it cannot be recalculated). Drafts can always be recalculated.
+    alreadyProcessed: !!existing && !hasEntries, hasEntries: hasEntries > 0, run: existing,
+  });
 });
 
-// Runs a payroll cycle for every active employee for a given month, writes a
-// payslip each and records the run so Reports can compare month over month.
+// Calculates the month for every payable employee in scope as DRAFT records
+// (utils/payrollEngine.js). Idempotent: a DRAFT is recalculated in place;
+// a record beyond DRAFT is never touched (reported as locked). Payslips are
+// generated when a record is APPROVED, not here.
 router.post('/run', requirePerm(null, 'hrms', 'Payroll & Compensation', 'create'), async (req, res) => {
-  const { month, defaultCTC, department } = req.body; // month = "YYYY-MM"
-  if (!month) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
-
-  const existing = await prisma.payrollRun.findUnique({ where: { month } });
-  if (existing && !req.body.rerun) {
-    return res.status(409).json({ error: `Payroll for ${monthLabel(month)} has already been processed.`, run: existing });
+  const { month, department } = req.body;
+  if (!PE.isMonth(month)) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
+  const legacy = await prisma.payrollRun.findUnique({ where: { month } });
+  const hasEntries = await prisma.employeePayrollRun.count({ where: { month } });
+  if (legacy && !hasEntries && legacy.status === 'Paid') {
+    return res.status(409).json({ error: `Payroll for ${monthLabel(month)} was processed and paid before per-employee records existed; it cannot be recalculated.`, run: legacy });
   }
-
-  const { rows, totals, period } = await calculatePayroll({ month, department: department || null, defaultCTC });
-  const payslips = [];
-  for (const r of rows) {
-    const slip = await prisma.payslip.upsert({
-      where: { employeeId_month: { employeeId: r.employeeId, month } },
-      update: {
-        basic: r.basic, hra: r.hra, allowances: r.bonus + r.specialAllowance, deductions: r.deductions, netPay: r.netPay,
-        bonus: r.bonus, specialAllowance: r.specialAllowance, employerPf: r.employerPf, employeePf: r.employeePf,
-        professionalTax: r.professionalTax, gratuity: r.gratuity, lopDays: r.lopDays,
-        gross: r.gross, lateCut: r.lateCut, lateDays: r.lateDays, payMode: r.payMode,
-      },
-      create: {
-        employeeId: r.employeeId, month, basic: r.basic, hra: r.hra, allowances: r.bonus + r.specialAllowance,
-        deductions: r.deductions, netPay: r.netPay, bonus: r.bonus, specialAllowance: r.specialAllowance,
-        employerPf: r.employerPf, employeePf: r.employeePf, professionalTax: r.professionalTax, gratuity: r.gratuity,
-        lopDays: r.lopDays, gross: r.gross, lateCut: r.lateCut, lateDays: r.lateDays, payMode: r.payMode,
-      },
+  try {
+    const r = await PE.calculateMonth({
+      month, department: department || null, employeeWhere: payrollEmployeeWhere(req), actor: { id: req.user.id, name: req.user.name || req.user.email },
     });
-    payslips.push(slip);
+    if (!r.rows.length && !r.locked.length) {
+      return res.status(409).json({ error: 'Nobody in this run has a salary structure effective this month — set a CTC on Salary Structure first.', skipped: r.skipped });
+    }
+    return res.status(201).json({
+      month, period: r.period, count: r.rows.length, created: r.created, updated: r.updated,
+      locked: r.locked, skipped: r.skipped, run: r.run, totals: r.totals,
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    throw err;
   }
-
-  const runData = {
-    month, period, department: department || null, status: 'Processing',
-    employees: totals.employees, totalGross: totals.gross, totalDeductions: totals.deductions,
-    totalLateCuts: totals.lateCuts, totalNet: totals.net,
-    processedBy: req.user.name || req.user.email, processedAt: new Date(),
-  };
-  const run = await prisma.payrollRun.upsert({ where: { month }, update: runData, create: runData });
-
-  await logAudit({ userId: req.user.id, action: 'Payroll processed', entity: 'PayrollRun', entityId: run.id, toValue: `${payslips.length} payslips, net ${Math.round(totals.net)}` });
-  res.status(201).json({ month, period, count: payslips.length, run, payslips });
 });
 
 // ---- Payroll runs ----
 
 router.get('/runs', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
-  const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' } });
-  res.json(runs);
+  const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' }, include: { _count: { select: { entries: true } } } });
+  // perEmployee: the month is run through per-employee records (SPEC B) and
+  // is paid per record through Accounts; otherwise it is an older month run.
+  res.json(runs.map(({ _count, ...r }) => ({ ...r, perEmployee: _count.entries > 0, records: _count.entries })));
 });
 
+// Marks an OLDER month run (one with no per-employee records, e.g. August
+// 2026) paid. A month with per-employee records is paid record by record —
+// Mark paid posts the bank payment journal through Accounts.
 router.patch('/runs/:id/paid', requirePerm(null, 'hrms', 'Payroll & Compensation', 'approve'), async (req, res) => {
   const existing = await prisma.payrollRun.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Payroll run not found' });
+  if (await prisma.employeePayrollRun.count({ where: { payrollRunId: existing.id } })) {
+    return res.status(409).json({ error: 'This month is paid per employee: sync the approved records to Accounts, then use Mark paid on them.' });
+  }
   if (existing.status === 'Paid') return res.status(409).json({ error: 'This run is already marked paid.' });
   const run = await prisma.payrollRun.update({ where: { id: req.params.id }, data: { status: 'Paid', paidAt: new Date() } });
   await logAudit({ userId: req.user.id, action: 'Payroll paid', entity: 'PayrollRun', entityId: run.id, fromValue: 'Processing', toValue: 'Paid' });
@@ -349,7 +459,7 @@ router.patch('/runs/:id/paid', requirePerm(null, 'hrms', 'Payroll & Compensation
 router.get('/reports', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' } });
   const cfg = await getPolicy();
-  const employees = await prisma.employee.findMany({ where: { employmentStatus: { not: 'Relieved' } }, include: { salaryStructure: true } });
+  const employees = await prisma.employee.findMany({ where: withoutSystemAccounts({ employmentStatus: { not: 'Relieved' } }), include: { salaryStructure: true } });
 
   let comparison = null;
   if (runs.length >= 2) {
@@ -367,7 +477,7 @@ router.get('/reports', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit
   employees.forEach((e) => {
     const key = e.department || 'Unassigned';
     const ss = e.salaryStructure;
-    const net = ss?.payMode === 'Stipend' ? Number(ss.stipend || 0) : salaryBreakup(ss?.ctc || 0, cfg).net;
+    const net = ss?.payMode === 'Stipend' ? Number(ss.stipend || 0) : (breakupOf(ss, cfg)?.net || 0);
     if (!byDepartment[key]) byDepartment[key] = { department: key, employees: 0, net: 0 };
     byDepartment[key].employees += 1;
     byDepartment[key].net += net;
@@ -384,40 +494,144 @@ router.get('/reports', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit
   });
 });
 
-// ---- A single payslip, expanded for the printable view ----
+// ---- A single payslip, laid out as the user's sample payslip ----
+//
+// ONE payload feeds the on-screen payslip (frontend components/PayslipView.jsx)
+// and the PDF (utils/payslipPdf.js). Missing values are null; both print "—".
 
-router.get('/payslips/:id', async (req, res) => {
-  const slip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { employee: true } });
-  if (!slip) return res.status(404).json({ error: 'Payslip not found' });
-  if (req.user.caps.hrmsSelfOnly) {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
-    if (!own || own.id !== slip.employeeId) return res.status(403).json({ error: "This isn't included in your role's permissions" });
-  } else if (!req.user.caps.payrollManage) {
-    return res.status(403).json({ error: "This isn't included in your role's permissions" });
-  }
+function companyAddress(co) {
+  if (!co) return null;
+  let text = (co.address || '').trim();
+  const lower = text.toLowerCase();
+  [co.city, co.state].forEach((part) => {
+    if (part && !lower.includes(String(part).toLowerCase())) text = text ? `${text}, ${part}` : String(part);
+  });
+  if (co.pin && !text.includes(String(co.pin))) text = text ? `${text} - ${co.pin}` : String(co.pin);
+  return text || null;
+}
+
+function fmtDoj(d) {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+async function payslipPayload(slip) {
   const company = await prisma.company.findFirst();
-  const gross = slip.gross || slip.basic + slip.hra + (slip.bonus || 0) + (slip.specialAllowance || 0);
-  res.json({
-    ...slip,
-    period: monthLabel(slip.month),
-    gross,
-    company: company || { name: 'TeamLink Consultants' },
-    earnings: [
-      { label: 'Basic', amount: slip.basic },
-      { label: 'HRA', amount: slip.hra },
+  const e = slip.employee;
+  const isStipend = slip.payMode === 'Stipend';
+  const gross = Number(slip.gross) || (slip.basic + slip.hra + (slip.bonus || 0) + (slip.specialAllowance || 0));
+  const pf = Number(slip.employeePf) || 0;
+  const pt = Number(slip.professionalTax) || 0;
+  const lateCut = Number(slip.lateCut) || 0;
+  const lopDays = Number(slip.lopDays) || 0;
+  // Stored by the run since 2026-09-25. An older payslip did not store it, so
+  // it is read back from the run's own arithmetic: whatever of gross the net,
+  // PF, PT and late cut do not account for is what loss of pay took.
+  let lopDeduction = Number(slip.lopDeduction) || 0;
+  if (!lopDeduction && lopDays > 0 && !slip.payrollEntryId) lopDeduction = Math.max(0, Math.round(gross - pf - pt - lateCut - (Number(slip.netPay) || 0)));
+  const workingDays = Number(slip.workingDays) > 0 ? Number(slip.workingDays) : null;
+
+  const earnings = isStipend
+    ? [{ label: 'Stipend', amount: gross }]
+    : [
+      { label: 'Basic', amount: slip.basic || 0 },
+      { label: 'HRA', amount: slip.hra || 0 },
       { label: 'Bonus', amount: slip.bonus || 0 },
       { label: 'Special Allowance', amount: slip.specialAllowance || 0 },
-    ],
-    deductionLines: [
-      { label: 'Provident Fund', amount: slip.employeePf || 0 },
-      { label: 'Professional Tax', amount: slip.professionalTax || 0 },
-      ...(slip.lateCut ? [{ label: `Late arrival cut (${slip.lateDays || 0} late day(s))`, amount: slip.lateCut }] : []),
-    ],
-    employerCost: [
-      { label: 'Employer PF', amount: slip.employerPf || 0 },
-      { label: 'Gratuity', amount: slip.gratuity || 0 },
-    ],
-  });
+    ];
+  const deductions = [
+    ...(isStipend ? [] : [{ label: 'PF', amount: pf }, { label: 'PT', amount: pt }]),
+    // SPEC B lines, printed only when the run deducted them.
+    ...(Number(slip.esiEmployee) > 0 ? [{ label: 'ESI', amount: Number(slip.esiEmployee) }] : []),
+    ...(Number(slip.tds) > 0 ? [{ label: 'TDS', amount: Number(slip.tds) }] : []),
+    ...(Number(slip.otherDeductions) > 0 ? [{ label: 'Other Deductions', amount: Number(slip.otherDeductions) }] : []),
+    ...(lopDeduction > 0 ? [{ label: `LOP (${lopDays} day${lopDays === 1 ? '' : 's'})`, amount: lopDeduction }] : []),
+    ...(lateCut > 0 ? [{ label: `Late arrivals (${slip.lateDays || 0})`, amount: lateCut }] : []),
+  ];
+  const totalDeductions = deductions.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+
+  return {
+    id: slip.id,
+    month: slip.month,
+    period: monthLabel(slip.month),
+    payMode: slip.payMode || 'Package',
+    generatedAt: slip.generatedAt,
+    company: {
+      name: (company && (company.legalName || company.name)) || 'TeamLink Consultants',
+      address: companyAddress(company),
+    },
+    employee: {
+      id: e.id,
+      employeeCode: e.employeeCode || null,
+      name: e.name || null,
+      panNumber: e.panNumber || null,
+      uanNumber: e.uanNumber || null,
+      esiNumber: e.esiNumber || null,
+      pfNumber: e.pfNumber || null,
+      dateOfJoining: fmtDoj(e.dateOfJoining),
+      department: e.department || null,
+      designation: e.designation || null,
+      location: e.location || e.branch || null,
+      bankAccountNumber: e.bankAccountNumber || null,
+      bankName: e.bankName || null,
+    },
+    workingDays,
+    lopDays,
+    daysWorked: workingDays != null ? Math.max(0, workingDays - lopDays) : null,
+    monthlyGross: gross,
+    earnings,
+    deductions,
+    gross,
+    totalDeductions,
+    netPay: Number(slip.netPay) || 0,
+    lopDeduction,
+    lateCut,
+  };
+}
+
+async function slipForReader(req, res) {
+  const slip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { employee: true } });
+  if (!slip) { res.status(404).json({ error: 'Payslip not found' }); return null; }
+  const reach = await payslipReach(req);
+  if (!reachAllows(reach, slip.employee)) {
+    res.status(403).json({ error: "This isn't included in your role's permissions" });
+    return null;
+  }
+  return slip;
+}
+
+router.get('/payslips/:id', async (req, res) => {
+  const slip = await slipForReader(req, res);
+  if (!slip) return undefined;
+  return res.json(await payslipPayload(slip));
 });
 
+router.get('/payslips/:id/pdf', async (req, res) => {
+  const slip = await slipForReader(req, res);
+  if (!slip) return undefined;
+  const payload = await payslipPayload(slip);
+  const safe = (s) => String(s || '').replace(/[^A-Za-z0-9_-]+/g, '-');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="Payslip-${safe(payload.employee.employeeCode || payload.employee.name)}-${payload.month}.pdf"`);
+  res.setHeader('Cache-Control', 'no-store');
+  await logAudit({ userId: req.user.id, action: 'Payslip downloaded', entity: 'Payslip', entityId: slip.id, toValue: payload.month });
+  renderPayslip(payload, res);
+  return undefined;
+});
+
+// SPEC B — per-employee payroll records, attendance input, approval, sync to
+// Accounts, mark paid and the compliance report (routes/payrollRuns.js).
+require('./payrollRuns')(router, { payrollEmployeeWhere });
+
 module.exports = router;
+module.exports.payslipPayload = payslipPayload;
+// The one payslip reach rule, reused by the dashboard charts and exports
+// (routes/insights.js) so they can never see more than GET / does.
+module.exports.payslipReach = payslipReach;
+module.exports.reachWhere = reachWhere;
+// The payroll register's employee scope, reused by the payroll import/export
+// specs (src/io/payroll-*.js) so a spreadsheet reaches exactly who the
+// Salary Structure / Attendance input screens reach.
+module.exports.payrollEmployeeWhere = payrollEmployeeWhere;

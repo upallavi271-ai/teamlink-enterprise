@@ -459,8 +459,22 @@ function toolDefinitions() {
 async function runTool(user, name, input) {
   const tool = TOOL_BY_NAME[name];
   if (!tool) return { error: `Unknown tool ${name}.` };
+  // The AI grant (Role Catalog → AI Assistant & Agent) decides which
+  // PRODUCTS' data the AI may read for this user; the tool's own can() +
+  // scope check below still applies on top. Only when the AI routes attached
+  // the grant (req.user.ai) — never widens anything.
+  // eslint-disable-next-line global-require
+  const refused = require('./aiAccess').toolRefusal(user, name);
+  if (refused) return refused;
   try {
-    return await tool.run(user, input && typeof input === 'object' ? input : {});
+    const out = await tool.run(user, input && typeof input === 'object' ? input : {});
+    // The model is a reader like any screen: outside the client desk it is
+    // handed client NAMES only, so it cannot repeat contacts or terms.
+    if (user && user.caps && !user.caps.clientDetail) {
+      // eslint-disable-next-line global-require
+      return require('./clientRedact').redactClients(out);
+    }
+    return out;
   } catch (err) {
     return { error: `That lookup failed: ${short((err && err.message) || err, 200)}` };
   }

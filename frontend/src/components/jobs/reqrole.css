@@ -1,0 +1,28 @@
+/* Jobs / Requirements — per-role additions (role spec 2026-09-29).
+   Everything is scoped under .reqrole so nothing leaks into other screens. */
+.reqrole .rr-type {
+  display: inline-block; margin-top: 3px; padding: 0 6px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em; line-height: 16px;
+}
+.reqrole .rr-type.client { background: #e8f0fe; color: #1a56db; }
+.reqrole .rr-type.internal { background: #f3e8ff; color: #6b21a8; }
+.reqrole .rr-org-internal { color: #6b21a8; font-style: italic; }
+.reqrole .rr-client-link { color: inherit; text-decoration: none; border-bottom: 1px dotted #93a4c3; }
+.reqrole .rr-client-link:hover { color: #1a56db; border-bottom-color: #1a56db; }
+.reqrole .rr-assignee { font-size: 11px; color: #5b6b86; margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.reqrole .rr-unassigned {
+  display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 10px; font-weight: 700; line-height: 16px;
+  background: #fff1e0; color: #c2410c; border: 1px solid #fdba74;
+}
+.reqrole .rr-days { font-variant-numeric: tabular-nums; }
+.reqrole .rr-days.overdue { color: #b91c1c; font-weight: 700; }
+.reqrole .rr-mini { display: inline-flex; gap: 3px; align-items: center; font-size: 11px; white-space: nowrap; color: #5b6b86; }
+.reqrole .rr-mini b { color: #1f2a44; font-weight: 700; }
+.reqrole .rr-mini .sep { color: #b6c2d6; }
+.reqrole .rr-alert {
+  display: flex; gap: 10px; align-items: center; justify-content: space-between;
+  background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; border-radius: 8px; padding: 8px 12px; margin: 8px 0;
+}
+.reqrole .rr-alert b { color: #c2410c; }
+.reqrole .rr-showclosed { display: flex; gap: 6px; align-items: center; font-size: 12px; color: #5b6b86; margin-left: 8px; }
+.reqrole .rr-money { font-variant-numeric: tabular-nums; }

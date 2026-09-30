@@ -1,0 +1,60 @@
+/* Client portal + candidate portal (user notes #4). Everything is scoped under
+   .tlp so nothing here can restyle another screen. TeamLink blue/white. */
+.tlp { max-width: 1180px; }
+.tlp .tlp-hello { font-size: 20px; margin: 0; }
+.tlp .tlp-sub { color: var(--muted, #64748b); font-size: 13px; margin-top: 2px; }
+.tlp .tlp-banner {
+  display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; border-radius: 10px; padding: 10px 14px; margin: 12px 0;
+  font-size: 13px;
+}
+.tlp .tlp-banner.amber { background: #fffbeb; border-color: #fde68a; color: #78350f; }
+.tlp .tlp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 14px 0; }
+.tlp .tlp-stat {
+  background: #fff; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; padding: 12px 14px; cursor: pointer; text-align: left;
+  font: inherit; color: inherit;
+}
+.tlp .tlp-stat:hover { border-color: #93c5fd; }
+.tlp .tlp-stat .v { font-size: 22px; font-weight: 700; color: #1d4ed8; }
+.tlp .tlp-stat .l { font-size: 12px; color: var(--muted, #64748b); margin-top: 2px; }
+.tlp .tlp-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line, #e2e8f0); margin: 6px 0 14px; -webkit-overflow-scrolling: touch; }
+.tlp .tlp-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; padding: 9px 12px; font: inherit; font-size: 13px;
+  color: var(--muted, #64748b); cursor: pointer; white-space: nowrap;
+}
+.tlp .tlp-tab.active { color: #1d4ed8; border-bottom-color: #1d4ed8; font-weight: 600; }
+.tlp .tlp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.tlp .tlp-card { background: #fff; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; padding: 14px; }
+.tlp .tlp-card h3 { font-size: 14px; margin: 0 0 10px; }
+.tlp .tlp-kv { display: grid; grid-template-columns: minmax(110px, 38%) 1fr; gap: 6px 10px; font-size: 13px; }
+.tlp .tlp-kv dt { color: var(--muted, #64748b); }
+.tlp .tlp-kv dd { margin: 0; word-break: break-word; }
+.tlp .tlp-list { display: grid; gap: 10px; }
+.tlp .tlp-item { background: #fff; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; padding: 12px 14px; }
+.tlp .tlp-item-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.tlp .tlp-item-title { font-weight: 600; font-size: 14px; }
+.tlp .tlp-meta { color: var(--muted, #64748b); font-size: 12.5px; margin-top: 3px; }
+.tlp .tlp-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.tlp .tlp-box { background: #f8fafc; border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: 12.5px; }
+.tlp .tlp-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.tlp .tlp-filters input, .tlp .tlp-filters select { min-width: 0; flex: 1 1 180px; max-width: 320px; }
+.tlp .tlp-steps { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.tlp .tlp-step { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #94a3b8; }
+.tlp .tlp-step.done { background: #dbeafe; color: #1d4ed8; }
+.tlp .tlp-step.now { background: #1d4ed8; color: #fff; }
+.tlp .tlp-step.stop { background: #fee2e2; color: #b91c1c; }
+.tlp .tlp-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; }
+.tlp .tlp-form label { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted, #64748b); }
+.tlp .tlp-form input, .tlp .tlp-form textarea { font: inherit; font-size: 13px; color: var(--text, #0f172a); }
+.tlp .tlp-muted { color: var(--muted, #64748b); font-size: 12.5px; }
+.tlp .tlp-link { word-break: break-all; }
+@media (max-width: 640px) {
+  .tlp .tlp-kv { grid-template-columns: 1fr; gap: 2px; }
+  .tlp .tlp-kv dd { margin-bottom: 6px; }
+  .tlp .tlp-stat .v { font-size: 19px; }
+  .tlp .tlp-actions .btn { flex: 1 1 auto; }
+}
+/* The invite control on Client 360 / Candidate 360. */
+.tlp-invite { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tlp-invite .tlp-invite-state { font-size: 11.5px; color: var(--muted, #64748b); }
+.tlp-invite-link { word-break: break-all; background: #f8fafc; border: 1px dashed #93c5fd; border-radius: 8px; padding: 8px; font-size: 12px; margin-top: 8px; }

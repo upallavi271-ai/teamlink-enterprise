@@ -1,0 +1,61 @@
+/* ---------------------------------------------------------------------------
+   AudiencePicker, DeliverVia and the compose-form layout.
+   Every rule is scoped under .aud-picker / .deliver-via / .compose-form so
+   nothing here reaches another screen. Colours are the app's own tokens
+   (styles.css :root), so the pieces follow the theme like everything else.
+   --------------------------------------------------------------------------- */
+
+/* ---- the compose form: labelled fields stacked, actions at the bottom ---- */
+.compose-form .compose-req{color:var(--red);margin-left:2px}
+.compose-form .compose-row{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.compose-form textarea{width:100%;min-height:96px;resize:vertical}
+.compose-form .compose-ai{display:flex;align-items:center;gap:10px;margin:-4px 0 10px;flex-wrap:wrap}
+.compose-form .compose-ai .btn{border-color:var(--brand-tint-2);color:var(--brand-ink);background:var(--brand-tint)}
+.compose-form .compose-ai .btn:hover{background:var(--brand-tint-2)}
+.compose-form .compose-check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin:2px 0 12px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
+.compose-form .compose-check input{width:auto;min-height:0;margin:0}
+.compose-form .compose-actions{display:flex;gap:10px;align-items:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);flex-wrap:wrap}
+.compose-form .compose-hint{font-size:11.5px;color:var(--ink-soft);margin-top:4px}
+.compose-form .compose-result{margin-top:10px;font-size:12.5px;color:var(--brand-ink);background:var(--brand-tint);border:1px solid var(--brand-tint-2);border-radius:8px;padding:8px 11px}
+@media (max-width:640px){
+  .compose-form .compose-row{grid-template-columns:1fr}
+  .compose-form .compose-actions .btn{flex:1 1 auto;justify-content:center}
+}
+
+/* ---- Send to ---- */
+.aud-picker{margin-bottom:12px}
+.aud-picker .aud-box{border:1px solid var(--line);border-radius:10px;background:var(--paper-raised);margin-top:8px;padding:10px 12px}
+.aud-picker .aud-all{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--line-soft);cursor:pointer;color:var(--ink)}
+.aud-picker .aud-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 12px;max-height:200px;overflow:auto}
+.aud-picker label.aud-opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);padding:4px 2px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400;margin:0;border-radius:6px}
+.aud-picker label.aud-opt:hover{background:var(--line-soft)}
+.aud-picker input[type=checkbox]{width:auto;min-height:0;margin:0;accent-color:var(--brand)}
+.aud-picker .aud-count{color:var(--ink-soft);font-size:11.5px;margin-left:auto}
+.aud-picker .aud-tools{display:grid;grid-template-columns:minmax(140px,200px) 1fr;gap:8px;margin-bottom:8px}
+.aud-picker .aud-tools input{width:100%}
+.aud-picker .aud-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.aud-picker .aud-chip{display:inline-flex;align-items:center;gap:6px;background:var(--brand-tint);color:var(--brand-ink);border:1px solid var(--brand-tint-2);padding:3px 4px 3px 10px;border-radius:999px;font-size:12px;font-weight:500}
+.aud-picker .aud-chip button{background:none;border:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 5px;border-radius:999px;opacity:.7}
+.aud-picker .aud-chip button:hover{opacity:1;background:var(--brand-tint-2)}
+.aud-picker .aud-list{max-height:220px;overflow:auto;border-top:1px solid var(--line-soft);padding-top:4px}
+.aud-picker .aud-person{display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 4px;border-radius:6px;cursor:pointer;color:var(--ink);text-transform:none;letter-spacing:0;font-weight:400;margin:0}
+.aud-picker .aud-person:hover{background:var(--line-soft)}
+.aud-picker .aud-person .aud-meta{color:var(--ink-soft);font-size:11.5px}
+.aud-picker .aud-listbar{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--ink-soft);margin:4px 0}
+.aud-picker .aud-link{background:none;border:none;color:var(--brand-ink);cursor:pointer;font-size:11.5px;font-weight:600;padding:0}
+.aud-picker .aud-link:hover{text-decoration:underline}
+.aud-picker .aud-summary{margin-top:8px;font-size:12.5px;color:var(--ink-soft)}
+.aud-picker .aud-summary b{color:var(--ink)}
+.aud-picker .aud-summary.warn{color:var(--red)}
+@media (max-width:640px){
+  .aud-picker .aud-tools{grid-template-columns:1fr}
+}
+
+/* ---- Also deliver via ---- */
+.deliver-via{margin-bottom:12px}
+.deliver-via .dv-row{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:2px}
+.deliver-via label.dv-opt{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400;margin:0}
+.deliver-via input[type=checkbox]{width:auto;min-height:0;margin:0;accent-color:var(--brand)}
+.deliver-via .dv-note{font-size:11.5px;color:var(--ink-soft)}
+.deliver-via .dv-note.off{color:#7a5416}
+.deliver-via .dv-foot{font-size:11.5px;color:var(--ink-soft);margin-top:5px}

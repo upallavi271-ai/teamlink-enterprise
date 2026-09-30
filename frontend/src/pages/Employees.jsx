@@ -1,11 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { PasswordBadge, PasswordStatusRows } from '../components/PasswordStatus.jsx';
+import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+// "Apr 2026" — seat dates are YYYY-MM-DD strings.
+const seatMonth = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '');
 import { Link } from 'react-router-dom';
+import EmployeePhoto from '../components/EmployeePhoto.jsx';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import Modal from '../components/Modal.jsx';
-import { atsRoleLabel } from '../atsVocab';
+import { atsRoleLabel, registerRoleLabels } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
+import EmployeeBulkImport from '../components/employees/EmployeeBulkImport.jsx';
+import GlobalExportPanel from '../components/employees/GlobalExportPanel.jsx';
+// Template export / import (every form field), for everyone who can open this
+// screen — scoped; view-only roles send an import REQUEST (Super Admin approves).
+import DataIoBar from '../components/dataio/DataIoBar.jsx';
+import { useMasters } from '../utils/masters';
+import ImportRequests from '../components/dataio/ImportRequests.jsx';
+import TlWiseView from '../components/employees/TlWiseView.jsx';
+// List avatar (lazy, cached), transfer history and the documents panel.
+import EmployeeAvatar from '../components/employees/EmployeeAvatar.jsx';
+import TransferHistory from '../components/employees/TransferHistory.jsx';
+import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
+import '../components/employees/EmpMgmtExtras.css';
+// "12 Oct 2026" for a YYYY-MM-DD last working date.
+const lwdLabel = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+const ON_NOTICE = ['Notice Period', 'Exit Process'];
+// The list's horizontal scrollbar at the TOP as well as the bottom.
+import ScrollTable from '../components/ScrollTable.jsx';
+import { ViewAsButton } from '../components/ViewAs.jsx';
 
 // HRMS -> Employee Management — the prototype's employeeMgmtView() (line 9754)
 // and openAddEmployeeModal() (line 2857).
@@ -24,7 +48,10 @@ import Combo from '../components/Combo.jsx';
 const EMPTY_NEW = {
   employeeId: '', name: '', dateOfBirth: '', gender: '—',
   email: '', phone: '', location: '',
-  department: '', designation: '', reportingManagerId: '', stl: '', tl: '', team: '',
+  department: '', departments: [], designation: '', reportingManagerId: '', stl: '', tl: '', team: '',
+  // The Role dropdown (roles are data — Role Catalog). '' = the designation's own roles.
+  roleCode: '',
+  position: '',
   dateOfJoining: new Date().toISOString().slice(0, 10), employeeType: 'Full Time', employmentStatus: 'Active',
   password: '',
 };
@@ -78,7 +105,9 @@ export default function Employees() {
   const [options, setOptions] = useState(null);
   const [employeeIds, setEmployeeIds] = useState([]);
   const [filters, setFilters] = useState({
-    q: '', dept: '', designation: '', role: '', status: '', login: '',
+    // Opens on the people who work here now: after the PulseHRM import 319 of
+    // 359 records are people who have left.
+    q: '', dept: '', designation: '', role: '', status: 'Active', login: '', position: '',
   });
   const [adding, setAdding] = useState(null);
   const [otp, setOtp] = useState(EMPTY_OTP);
@@ -90,15 +119,10 @@ export default function Employees() {
   const [resetFor, setResetFor] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showImport, setShowImport] = useState(false);
-  const [csvText, setCsvText] = useState('');
-  const [importResult, setImportResult] = useState(null);
-  const [importErrors, setImportErrors] = useState([]);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importFileName, setImportFileName] = useState('');
-  // Validate -> PREVIEW -> Confirm -> Import. `importPreview` holds the
-  // server's split of the file; nothing is written while it is on screen.
-  const [importPreview, setImportPreview] = useState(null);
-  const [importCreateLogins, setImportCreateLogins] = useState(false);
+  // Bulk Import (Sample Excel, .xlsx/.csv upload, row-wise checks, valid rows
+  // only) lives in components/employees/EmployeeBulkImport.jsx.
+  // GLOBAL EXPORT — the Export Fields panel (components/employees/GlobalExportPanel.jsx).
+  const [showGlobalExport, setShowGlobalExport] = useState(false);
   const [exporting, setExporting] = useState('');
   // GRANT EDIT ACCESS — temporarily reopening one employee's OWN profile.
   // Deliberately NOT the same thing as Edit scope, which changes which
@@ -110,6 +134,9 @@ export default function Employees() {
   // a decision, both scoped by the server to what this caller may see.
   const [queue, setQueue] = useState(null);
   const [credentials, setCredentials] = useState(null);
+  // The employee just created — Add Employee makes the record and the login;
+  // their documents are attached on the record itself, so say where.
+  const [justCreated, setJustCreated] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
   const [transferForm, setTransferForm] = useState({ department: '', team: '', reason: '' });
   // The inline Reject dialog. Rejecting needs a REASON — the API refuses
@@ -118,26 +145,47 @@ export default function Employees() {
   const [rejectReason, setRejectReason] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Employees list | TL-wise summary.
+  const [view, setView] = useState('list');
+  // CHANGE EMPLOYEE ID — HR / Super Admin (caps.editCode).
+  const [codeFor, setCodeFor] = useState(null);
+  const [codeForm, setCodeForm] = useState({ employeeCode: '', reason: '' });
+  // Last working date draft in the View drawer (HR / Super Admin — caps.lastWorkingDate).
+  const [lwdDraft, setLwdDraft] = useState('');
 
   function load() {
     api.get('/employees/management').then((res) => {
       setRows(res.data.rows || []);
       setCaps(res.data.caps || {});
       setScopeText(res.data.scope || '');
-      setEmployeeIds((res.data.rows || []).map((r) => ({ id: r.id, name: r.name })));
+      setEmployeeIds((res.data.rows || []).map((r) => ({ id: r.id, name: r.name, code: r.employeeCode })));
     }).catch((err) => setError(err.response?.data?.error || 'Employee Management is not included in your role’s permissions.'));
     // profileStage / isLocked / completion come off the HR record.
     api.get('/employees').then((res) => setHr(res.data)).catch(() => setHr([]));
     api.get('/employees/review-queue').then((res) => setQueue(res.data)).catch(() => setQueue(null));
   }
   function loadOptions() {
-    api.get('/employees/management/options').then((res) => setOptions(res.data)).catch(() => setOptions(null));
+    api.get('/employees/management/options').then((res) => {
+      registerRoleLabels(res.data.roleCatalog);
+      setOptions(res.data);
+    }).catch(() => setOptions(null));
   }
   useEffect(() => {
     load();
     loadOptions();
     api.get('/employees/me/config').then((res) => setMeConfig(res.data)).catch(() => setMeConfig(null));
   }, []);
+  // A role / department / designation added in the masters appears in this
+  // screen's pickers by itself: the options re-load when the masters change.
+  const masters = useMasters();
+  const mastersVersion = masters && masters.version;
+  const seenVersion = useRef(null);
+  useEffect(() => {
+    if (!mastersVersion) return;
+    if (seenVersion.current && seenVersion.current !== mastersVersion) loadOptions();
+    seenVersion.current = mastersVersion;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mastersVersion]);
 
   async function run(fn, message) {
     setError(''); setNotice('');
@@ -177,131 +225,115 @@ export default function Employees() {
     if (ok) { setRejectFor(null); setRejectReason(''); }
   }
 
-  const filtered = useMemo(() => rows.filter((e) => {
+  // A POSITION (MED-1, EDU-6 …) lists EVERYONE who held it — the person in
+  // it today and every earlier holder — whatever the status filter says, in
+  // the order they sat in it.
+  const tenureIn = (e, code) => [...(e.seats || [])].reverse().find((t) => t.code === code) || null;
+  // `ignoreStatus`: the TL-wise view counts every status (its columns ARE the
+  // status split), under all the other filters.
+  const matchesFilters = (e, ignoreStatus = false) => {
+    if (filters.position && !(e.seats || []).some((t) => t.code === filters.position)) return false;
     const q = filters.q.trim().toLowerCase();
     if (q && !`${e.name} ${e.employeeCode} ${e.email || ''}`.toLowerCase().includes(q)) return false;
     if (filters.dept && e.department !== filters.dept) return false;
     if (filters.designation && e.designation !== filters.designation) return false;
-    if (filters.role && (e.role || '') !== filters.role) return false;
-    if (filters.status && (e.employmentStatus || 'Active') !== filters.status) return false;
+    if (filters.role && (e.role || '') !== filters.role
+      && !Object.values(e.productRoles || {}).includes(filters.role)) return false;
+    if (!ignoreStatus && !filters.position && filters.status && hrStatusOf(e.employmentStatus, e.loginStatus) !== filters.status) return false;
     if (filters.login && e.loginStatus !== filters.login) return false;
     return true;
-  }), [rows, filters]);
+  };
+  const filtered = useMemo(() => rows.filter((e) => matchesFilters(e)).sort((a, b) => (filters.position
+    ? (tenureIn(a, filters.position)?.from || '').localeCompare(tenureIn(b, filters.position)?.from || '')
+    : 0)), [rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tlWiseIds = useMemo(() => rows.filter((e) => matchesFilters(e, true)).map((e) => e.id), [rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The Positions dropdown: every seat anyone has held, in the chosen
+  // department, with how many people have sat in it.
+  const positionOptions = useMemo(() => {
+    const count = new Map();
+    rows.forEach((e) => (e.seats || []).forEach((t) => {
+      if (filters.dept && t.department && t.department !== filters.dept) return;
+      if (!count.has(t.code)) count.set(t.code, new Set());
+      count.get(t.code).add(e.id);
+    }));
+    return [...count.entries()].map(([code, ids]) => ({ code, n: ids.size }))
+      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+  }, [rows, filters.dept]);
 
   // 257 employee records after the import, so the table shows a page at a
   // time. `filtered` stays whole for the counts and the filter dropdowns.
   const pagedEmployees = usePaged(filtered);
+  // How many people sit in each of the five HRMS statuses — shown in the
+  // status dropdown beside each choice.
+  const statusCounts = useMemo(() => {
+    const out = {};
+    HR_STATUSES.forEach((st) => { out[st] = 0; });
+    rows.forEach((e) => { out[hrStatusOf(e.employmentStatus, e.loginStatus)] += 1; });
+    return out;
+  }, [rows]);
   const rowDepts = useMemo(() => [...new Set(rows.map((e) => e.department).filter(Boolean))].sort(), [rows]);
-  const rowDesignations = useMemo(() => [...new Set(rows.map((e) => e.designation).filter(Boolean))].sort(), [rows]);
-  const rowRoles = useMemo(() => [...new Set(rows.map((e) => e.role).filter(Boolean))].sort(), [rows]);
+  // Every configured designation (incl. Role Catalog custom roles), not only
+  // the ones somebody already holds — a role added a minute ago is filterable.
+  const rowDesignations = useMemo(() => [...new Set([
+    ...rows.map((e) => e.designation),
+    ...(options?.designations || []).map((d) => d.designation),
+  ].filter(Boolean))].sort(), [rows, options]);
+  // Account-level and product roles on file, plus every active role on the
+  // registry (custom roles included) — never a hard-coded list.
+  const rowRoles = useMemo(() => [...new Set([
+    ...rows.map((e) => e.role),
+    ...rows.flatMap((e) => Object.values(e.productRoles || {})),
+    ...(options?.roleCatalog || []).map((r) => r.code),
+  ].filter((r) => r && r !== 'NONE'))].sort(), [rows, options]);
   const hrById = useMemo(() => Object.fromEntries(hr.map((e) => [e.id, e])), [hr]);
   const deptTree = options?.departmentTree || [];
   const transferTeams = deptTree.find((d) => d.name === transferForm.department)?.teams || [];
   const filtersOn = Object.values(filters).some(Boolean);
-
-  // RFC 4180 parsing — quoted fields may hold commas, newlines and doubled
-  // quotes. Splitting on "," alone silently shifted every later column of a
-  // row whose designation read "Engineer, Senior".
-  function parseCsv(text) {
-    const out = [];
-    let row = [];
-    let cell = '';
-    let quoted = false;
-    const src = String(text).replace(/^﻿/, '');
-    for (let i = 0; i < src.length; i += 1) {
-      const ch = src[i];
-      if (quoted) {
-        if (ch === '"') {
-          if (src[i + 1] === '"') { cell += '"'; i += 1; } else quoted = false;
-        } else cell += ch;
-      } else if (ch === '"') quoted = true;
-      else if (ch === ',') { row.push(cell); cell = ''; }
-      else if (ch === '\n') { row.push(cell); out.push(row); row = []; cell = ''; }
-      else if (ch !== '\r') cell += ch;
-    }
-    if (cell !== '' || row.length) { row.push(cell); out.push(row); }
-    const nonEmpty = out.filter((r) => r.some((c) => String(c).trim() !== ''));
-    if (!nonEmpty.length) return { headers: [], rows: [] };
-    const headers = nonEmpty[0].map((h) => h.trim().toLowerCase());
-    return {
-      headers,
-      rows: nonEmpty.slice(1).map((cells) => {
-        const obj = {};
-        headers.forEach((h, i) => { obj[h] = (cells[i] || '').trim(); });
-        return obj;
-      }),
-    };
-  }
-
-  // STEP 2 — PREVIEW. The server validates and returns the split (valid rows
-  // and, for each invalid one, Row · Field · Error · expected value). It
-  // writes nothing, so HR sees exactly what will land before agreeing to it.
-  async function previewImport() {
-    setError(''); setNotice(''); setImportResult(null); setImportErrors([]); setImportPreview(null);
-    const parsed = parseCsv(csvText);
-    if (!parsed.rows.length) { setError('That file has no data rows.'); return; }
-    setImportBusy(true);
-    try {
-      const res = await api.post('/employees/bulk-import/preview', {
-        rows: parsed.rows, createLogins: importCreateLogins,
-      });
-      setImportPreview(res.data);
-      setImportErrors(res.data.invalid || []);
-    } catch (err) {
-      const data = err.response?.data;
-      setImportErrors(data?.invalid || data?.errors || []);
-      if (!data?.errors && !data?.invalid) setError(data?.error || 'The file could not be checked.');
-    } finally { setImportBusy(false); }
-  }
-
-  // STEP 3 — CONFIRM. Still all-or-nothing on the server: one bad row and the
-  // whole file is refused, so the preview and the result cannot disagree.
-  async function confirmImport() {
-    setError(''); setNotice(''); setImportResult(null);
-    const parsed = parseCsv(csvText);
-    if (!parsed.rows.length) { setError('That file has no data rows.'); return; }
-    setImportBusy(true);
-    try {
-      const res = await api.post('/employees/bulk-import', {
-        rows: parsed.rows, createLogins: importCreateLogins,
-      });
-      setImportResult(res.data);
-      setImportPreview(null);
-      setImportErrors([]);
-      setCsvText(''); setImportFileName('');
-      load();
-    } catch (err) {
-      const data = err.response?.data;
-      setImportErrors(data?.invalid || data?.errors || []);
-      setImportPreview(data && (data.invalid || data.errors) ? data : null);
-      if (!data?.errors && !data?.invalid) setError(data?.error || 'The import could not be run.');
-    } finally { setImportBusy(false); }
-  }
-
-  function readFile(file) {
-    if (!file) return;
-    setImportFileName(file.name);
-    setImportResult(null); setImportErrors([]); setImportPreview(null);
-    const reader = new FileReader();
-    reader.onload = () => setCsvText(String(reader.result || ''));
-    reader.readAsText(file);
-  }
+  // PEOPLE WHO HELD A SEAT HERE BUT ARE HIDDEN by the status filter — after a
+  // department is picked, the list opens on today's team, and the ones they
+  // took over from must be one click away, not invisible.
+  const hiddenHolders = useMemo(() => (filters.status && !filters.position ? rows.filter((e) => e.seatCount > 0
+    && (!filters.dept || e.department === filters.dept)
+    && hrStatusOf(e.employmentStatus, e.loginStatus) !== filters.status) : []), [rows, filters.status, filters.dept, filters.position]);
 
   // The server builds the file and scopes it: a TL downloads their own
   // department, not the company. The browser only saves what comes back, so
   // CSV, Excel and PDF all carry the same rows and the same permission.
-  async function exportAs(format) {
-    setError(''); setNotice(''); setExporting(format);
+  function saveBlob(res, fallback) {
+    const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || fallback;
+    const url = URL.createObjectURL(res.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    a.remove();
+  // Released a moment later: revoking at once can cancel the download and
+  // leave an empty file in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return name;
+  }
+  // THE LIST, AS EXCEL — exactly the rows the filters are showing now.
+  async function exportAs() {
+    setError(''); setNotice(''); setExporting('list');
     try {
-      const res = await api.get(`/employees/export.${format}`, { responseType: 'blob' });
-      const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || `employees.${format}`;
-      const url = URL.createObjectURL(res.data);
-      const a = document.createElement('a');
-      a.href = url; a.download = name; document.body.appendChild(a); a.click();
-      a.remove(); URL.revokeObjectURL(url);
-      setNotice(`Exported ${name} — scoped to what your role may see.`);
+      const res = await api.post('/employees/export.xlsx', { ids: filtered.map((e) => e.id) }, { responseType: 'blob' });
+      const name = saveBlob(res, 'employees.xlsx');
+      setNotice(`Exported ${name} — ${filtered.length} employee(s), as filtered on screen.`);
     } catch {
       setError('Export is not included in your role’s permissions.');
+    } finally { setExporting(''); }
+  }
+  // ONE EMPLOYEE'S FULL RECORD, AS EXCEL — the row action. A role without the
+  // export permission (view-only) gets the same person in the import TEMPLATE
+  // columns instead (scoped, sensitive fields masked by the server).
+  async function exportOne(e) {
+    setError(''); setNotice(''); setExporting(e.id);
+    try {
+      const res = caps.export
+        ? await api.get(`/employees/${e.id}/export.xlsx`, { responseType: 'blob' })
+        : await api.get('/io/employees/export', { params: { employeeId: e.id, format: 'xlsx' }, responseType: 'blob' });
+      const name = saveBlob(res, `${e.employeeCode}.xlsx`);
+      setNotice(`Exported ${name} — ${e.name}'s full record, positions and documents.`);
+    } catch {
+      setError(`Could not export ${e.name}'s record.`);
     } finally { setExporting(''); }
   }
 
@@ -324,6 +356,24 @@ export default function Employees() {
     if (ok) setTransferTarget(null);
   }
 
+  // CHANGE EMPLOYEE ID — unique in any case, audited old -> new on the record.
+  async function submitCode(ev) {
+    if (ev) ev.preventDefault();
+    setError(''); setNotice('');
+    try {
+      const res = await api.put(`/employees/management/${codeFor.id}/code`, {
+        employeeCode: codeForm.employeeCode.trim(), reason: codeForm.reason.trim(),
+      });
+      setNotice(`${codeFor.name}'s Employee ID changed ${res.data.from} → ${res.data.to}.${res.data.warning ? ` Note: ${res.data.warning}` : ''}`);
+      setCodeFor(null);
+      load(); loadOptions();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The Employee ID could not be changed.');
+    }
+  }
+  const codeDraft = codeForm.employeeCode.trim();
+  const codeClash = codeFor && codeDraft && rows.find((r) => r.id !== codeFor.id && r.employeeCode.toLowerCase() === codeDraft.toLowerCase());
+
   // --- Add Employee ---------------------------------------------------------
   // A code goes to the address BEFORE the account exists. Where no SMTP
   // channel is configured the button says so and nothing is sent — the form
@@ -333,7 +383,20 @@ export default function Employees() {
   function openAdd() {
     setOtp(EMPTY_OTP);
     setCredentials(null);
-    setAdding({ ...EMPTY_NEW, department: options?.departments?.length === 1 ? options.departments[0] : '' });
+    setJustCreated(null);
+    // EMPLOYEE ID PRE-FILLED with the next one in the series (TL516 -> TL517),
+    // editable. Re-read on open: somebody may have added a person since the
+    // options loaded.
+    const suggested = options?.nextEmployeeCode || '';
+    setAdding({
+      ...EMPTY_NEW, employeeId: suggested, suggestedId: suggested,
+      department: options?.departments?.length === 1 ? options.departments[0] : '',
+    });
+    api.get('/employees/next-code').then((res) => {
+      const fresh = res.data?.nextEmployeeCode;
+      if (!fresh) return;
+      setAdding((f) => (f && f.employeeId === f.suggestedId ? { ...f, employeeId: fresh, suggestedId: fresh } : f));
+    }).catch(() => {});
   }
 
   async function sendOtp() {
@@ -359,10 +422,18 @@ export default function Employees() {
     }
   }
 
-  async function saveNew() {
+  // `keepOpen` — the Add form has documents waiting: it stays open after the
+  // employee is created so it can upload them and show each file's result.
+  // Returns the created employee (or null when the create was refused).
+  async function saveNew({ keepOpen = false } = {}) {
     setError(''); setNotice(''); setCredentials(null);
     try {
-      const res = await api.post('/employees/management', adding);
+      // The untouched suggestion goes as blank, so the SERVER allocates the
+      // next free ID at the moment of saving (two people adding at once
+      // cannot both get TL517). A typed ID is sent as typed.
+      const { suggestedId, ...body } = adding;
+      if (body.employeeId.trim() === (suggestedId || '')) body.employeeId = '';
+      const res = await api.post('/employees/management', body);
       setNotice(`${res.data.name} (${res.data.employeeCode}) created — employee record and login together.`
         + ` Role ${atsRoleLabel(res.data.login.role)}${res.data.login.atsRole ? ` · ATS ${atsRoleLabel(res.data.login.atsRole)}` : ''}`
         + ` · scope ${res.data.login.scope}. Email ${res.data.emailChannel}.`);
@@ -370,10 +441,13 @@ export default function Employees() {
       // When there is no SMTP provider this says so and hands over the link;
       // it never implies the employee has been told.
       setCredentials(res.data.credentials ? { ...res.data.credentials, name: res.data.name } : null);
-      setAdding(null); setOtp(EMPTY_OTP);
+      setJustCreated({ id: res.data.id, name: res.data.name });
+      if (!keepOpen) { setAdding(null); setOtp(EMPTY_OTP); }
       load(); loadOptions();
+      return res.data;
     } catch (err) {
       setError(err.response?.data?.error || 'That employee could not be created.');
+      return null;
     }
   }
 
@@ -405,21 +479,54 @@ export default function Employees() {
 
   async function openDetail(id) {
     setError('');
-    try { setDetail((await api.get(`/employees/management/${id}`)).data); } catch { setError('Could not open that employee.'); }
+    try {
+      const d = (await api.get(`/employees/management/${id}`)).data;
+      setDetail(d);
+      setLwdDraft(d.lastWorkingDate || '');
+    } catch { setError('Could not open that employee.'); }
+  }
+
+  // LAST WORKING DATE — written onto the resignation record (created, already
+  // serving notice, when the person resigned outside TeamLink).
+  async function saveLwd() {
+    setError(''); setNotice('');
+    try {
+      await api.put(`/employees/management/${detail.id}/last-working-date`, { lastWorkingDate: lwdDraft });
+      setNotice(`${detail.name}'s last working date set to ${lwdLabel(lwdDraft)}.`);
+      load(); openDetail(detail.id);
+    } catch (err) {
+      setError(err.response?.data?.error || 'The last working date could not be saved.');
+    }
   }
 
   async function submitReset(e) {
     e.preventDefault();
     const ok = await run(() => api.post(`/employees/management/${resetFor.id}/reset-password`, { password: resetPassword }),
-      `Password reset for ${resetFor.name}. Share it out of band — it is never shown again.`);
+      `Password reset for ${resetFor.name}. Share it out of band — it is never shown again. They must change it at their next sign-in.`);
     if (ok) { setResetFor(null); setResetPassword(''); }
+  }
+
+  // SEND PASSWORD RESET (hrms-24 §12) — a single-use set-password link, emailed
+  // from the company mailbox. HR never learns the new password. When it could
+  // not be emailed the screen says why and hands the link over once.
+  async function sendReset(emp) {
+    setError(''); setNotice('');
+    try {
+      const res = await api.post(`/employees/management/${emp.id}/send-password-reset`, {});
+      setNotice(res.data.sent
+        ? `Password reset link emailed to ${emp.name}. ${res.data.status}`
+        : `Reset link NOT emailed — ${res.data.status}${res.data.link ? ` Pass this single-use link to ${emp.name} yourself: ${res.data.link}` : ''}`);
+      load();
+      if (detail && detail.id === emp.id) openDetail(emp.id);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not send the password reset.');
+    }
   }
 
   const productAccess = (row, product) => (row.productAccess ? row.productAccess[product] : '—');
 
   return (
     <div>
-      <div className="breadcrumb">HRMS / Employee Management</div>
       <div className="page-head">
         <div><h1>Employee Management</h1>
           <div className="page-sub">
@@ -427,20 +534,48 @@ export default function Employees() {
             and data scope are on Administration → Users.
             {scopeText ? <> You are seeing <b>{scopeText}</b>.</> : null}
           </div></div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {/* Three formats, one scoped query behind them. */}
-          {caps.export && <>
-            <button className="btn" onClick={() => exportAs('csv')} disabled={!!exporting}>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</button>
-            <button className="btn" onClick={() => exportAs('xlsx')} disabled={!!exporting}>{exporting === 'xlsx' ? 'Exporting…' : 'Export Excel'}</button>
-            <button className="btn" onClick={() => exportAs('pdf')} disabled={!!exporting}>{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}</button>
-          </>}
-          {caps.create && <button className="btn" onClick={() => setShowImport((s) => !s)}>Bulk Import</button>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'flex-start' }}>
+          {/* The list as Excel — the rows the filters show, scoped server-side. */}
+          {caps.export && (
+            <button className="btn" onClick={exportAs} disabled={!!exporting} title="Download the employees shown below as an Excel file">
+              {exporting === 'list' ? 'Exporting…' : `Export Excel (${filtered.length})`}
+            </button>
+          )}
+          {/* GLOBAL EXPORT — pick the fields; same scope and filters as the list. */}
+          {caps.export && (
+            <button className="btn btn-primary" onClick={() => setShowGlobalExport(true)} title="Choose the fields and export everyone the current filters show, within your scope">
+              ⬇ Global Export
+            </button>
+          )}
+          {/* EXPORT / IMPORT in the template columns — every role that can open
+              this screen; the server scopes the rows and decides direct import
+              (Super Admin / Admin / HR) vs an import request (everyone else). */}
+          <DataIoBar
+            ioKey="employees"
+            size="md"
+            exportLabel="Export (template)"
+            params={{ q: filters.q, dept: filters.dept, designation: filters.designation, role: filters.role, status: filters.status, login: filters.login }}
+            onImported={() => load()}
+          />
+          {caps.create && <button className="btn" title="Create new employees with logins from the short sample (sign-in links, no passwords)" onClick={() => setShowImport((s) => !s)}>Bulk create + logins</button>}
           {caps.create && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
         </div>
       </div>
 
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
+      {caps.viewOnly && (
+        <div className="notice emgx-viewonly">
+          <span>You are viewing <b>every department</b>, <b>view only</b> — records, documents and exports can be
+            opened; adding, editing, deleting and ID changes are for HR and the Super Admin.</span>
+        </div>
+      )}
+      {justCreated && (
+        <div className="notice" style={{ marginBottom: 12 }}>
+          Next: <Link to={`/employees/${justCreated.id}`}>attach {justCreated.name}&apos;s documents</Link> — Aadhaar, PAN,
+          certificates and joining paperwork go on their employee record.
+        </div>
+      )}
 
       {credentials && (
         <div className="card section" style={{ borderColor: credentials.sent ? undefined : 'var(--warn)' }}>
@@ -519,155 +654,17 @@ export default function Employees() {
         </div>
       )}
 
-      {showImport && (
-        <div className="card section">
-          <h3>Bulk import (CSV)</h3>
-          <div className="small-muted" style={{ marginBottom: 8 }}>
-            Header row required. Recognized columns: name, email, phone, department, designation, location.
-            <b> Validate → Preview → Confirm → Import.</b> Checking the file writes nothing: you see the valid rows
-            and every problem, row by row, before you agree to anything. <b>Nothing is written unless every row
-            passes</b> — a file with one bad row is refused whole.
-          </div>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8, fontSize: 12.5 }}>
-            <input type="checkbox" style={{ width: 'auto', marginTop: 2 }}
-              checked={importCreateLogins}
-              onChange={(e) => { setImportCreateLogins(e.target.checked); setImportPreview(null); }} />
-            <span>
-              <b>Create logins for these employees</b> — one User and one login each, with the role, product access
-              and data scope derived from their designation and department. No password is generated or emailed:
-              each person gets a single-use, expiring link to set their own. Every row then needs an email address
-              and a known designation.
-            </span>
-          </label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-            <input type="file" accept=".csv,text/csv" onChange={(e) => readFile(e.target.files?.[0])} />
-            {importFileName && <span className="cell-muted" style={{ fontSize: 12 }}>{importFileName}</span>}
-          </div>
-          <textarea
-            rows="5" style={{ width: '100%', padding: 8, borderRadius: 7, border: '1px solid var(--line)', fontFamily: 'monospace', fontSize: 12.5 }}
-            placeholder={'name,email,phone,department,designation,location\nAsha Rao,asha.rao@example.com,9876543210,IT,Software Engineer,Hyderabad'}
-            value={csvText} onChange={(e) => { setCsvText(e.target.value); setImportResult(null); setImportErrors([]); }}
-          />
-          <div style={{ marginTop: 8 }}>
-            <button className="btn btn-sm" disabled={importBusy} onClick={previewImport}>
-              {importBusy ? 'Checking…' : 'Check file & preview'}
-            </button>{' '}
-            <button className="btn btn-primary btn-sm" disabled={importBusy || !importPreview || !importPreview.canImport}
-              onClick={confirmImport}>
-              {importPreview && importPreview.canImport
-                ? `Confirm & import ${importPreview.validCount} row(s)`
-                : 'Confirm & import'}
-            </button>
-            {!importPreview && <span className="small-muted" style={{ marginLeft: 10 }}>Check the file first — the preview is what you confirm.</span>}
-          </div>
+      {showImport && <EmployeeBulkImport onImported={load} />}
+      {/* Import requests: the Super Admin's queue; everyone else sees their own. */}
+      <ImportRequests ioKey="employees" onChanged={load} />
 
-          {/* THE PREVIEW — valid records and invalid records, side by side. */}
-          {importPreview && (
-            <div style={{ marginTop: 12 }}>
-              <div className={importPreview.canImport ? 'notice' : 'notice amber'}>
-                {importPreview.message} Scope: {importPreview.scope}.
-              </div>
-
-              {importPreview.invalidCount > 0 && (
-                <>
-                  <div className="section-label">Invalid Records ({importPreview.invalidCount})</div>
-                  <div className="tbl-wrap">
-                    <table>
-                      <thead><tr><th style={{ width: 70 }}>Row</th><th style={{ width: 130 }}>Field</th><th>Error</th><th>Expected</th></tr></thead>
-                      <tbody>
-                        {importErrors.map((e, i) => (
-                          <tr key={i}>
-                            <td><b>{e.row || e.line || '—'}</b></td>
-                            <td>{e.field || '—'}</td>
-                            <td className="error-text" style={{ margin: 0 }}>{e.message}</td>
-                            <td className="cell-muted">{e.expected || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-
-              <div className="section-label">Valid Records ({importPreview.validCount})</div>
-              {importPreview.validCount === 0
-                ? <div className="small-muted">No row in this file can be imported as it stands.</div>
-                : (
-                  <div className="tbl-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th style={{ width: 70 }}>Row</th><th>Name</th><th>Email</th><th>Mobile</th>
-                          <th>Department</th><th>Designation</th><th>Location</th><th>Login</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importPreview.valid.map((r) => (
-                          <tr key={r.row}>
-                            <td className="cell-muted">{r.row}</td>
-                            <td><b>{r.name}</b></td>
-                            <td className="cell-muted">{r.email || '—'}</td>
-                            <td className="cell-muted">{r.phone || '—'}</td>
-                            <td className="cell-muted">{r.department || '—'}</td>
-                            <td className="cell-muted">{r.designation || '—'}</td>
-                            <td className="cell-muted">{r.location || '—'}</td>
-                            <td>{r.willCreateLogin
-                              ? <span className="status approved">Login + sign-in link</span>
-                              : <span className="cell-muted">Record only</span>}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-            </div>
-          )}
-
-          {!importPreview && importErrors.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <div className="error-text">
-                Nothing was imported. {importErrors.length} problem(s) — fix the file and try again.
-              </div>
-              <div className="tbl-wrap" style={{ marginTop: 6 }}>
-                <table>
-                  <thead><tr><th style={{ width: 70 }}>Row</th><th style={{ width: 130 }}>Field</th><th>Error</th><th>Expected</th></tr></thead>
-                  <tbody>
-                    {importErrors.map((e, i) => (
-                      <tr key={i}>
-                        <td><b>{e.row || e.line || '—'}</b></td>
-                        <td>{e.field || '—'}</td>
-                        <td>{e.message}</td>
-                        <td className="cell-muted">{e.expected || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {importResult && importResult.ok && (
-            <div className="notice" style={{ marginTop: 8 }}>{importResult.message}</div>
-          )}
-          {importResult && importResult.invites && importResult.invites.length > 0 && (
-            <div className="tbl-wrap" style={{ marginTop: 8 }}>
-              <table>
-                <thead><tr><th>Employee</th><th>Email</th><th>Sign-in link</th></tr></thead>
-                <tbody>
-                  {importResult.invites.map((i, n) => (
-                    <tr key={n}>
-                      <td>{i.name}</td>
-                      <td className="cell-muted">{i.email}</td>
-                      <td className={i.sent ? 'cell-muted' : 'error-text'} style={{ margin: 0, wordBreak: 'break-all' }}>
-                        {i.status}{!i.sent && i.link ? ` — ${i.link}` : ''}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+      {showGlobalExport && (
+        <GlobalExportPanel
+          filters={filters}
+          shownCount={filtered.length}
+          onClose={() => setShowGlobalExport(false)}
+          onDone={(msg) => { setShowGlobalExport(false); setError(''); setNotice(msg); }}
+        />
       )}
 
       {transferTarget && (
@@ -694,6 +691,12 @@ export default function Employees() {
         </form>
       )}
 
+      {/* THE TWO VIEWS of the same scoped list: every employee, or grouped by TL. */}
+      <div className="tabs" style={{ marginBottom: 12 }}>
+        <div className={`tab${view === 'list' ? ' active' : ''}`} onClick={() => setView('list')}>Employees ({filtered.length})</div>
+        <div className={`tab${view === 'tl' ? ' active' : ''}`} onClick={() => setView('tl')}>TL-wise</div>
+      </div>
+
       {/* FILTERS — search, department, designation, role, employment status and
           login status. They narrow what the server already scoped; they never
           widen it. */}
@@ -710,13 +713,17 @@ export default function Employees() {
           <option value="">All designations</option>
           {rowDesignations.map((d) => <option key={d}>{d}</option>)}
         </Combo>
+        <Combo value={filters.position} onChange={(e) => setFilters((f) => ({ ...f, position: e.target.value }))}>
+          <option value="">All positions</option>
+          {positionOptions.map((o) => <option key={o.code} value={o.code}>{`${o.code} · ${o.n} ${o.n === 1 ? 'person' : 'people'}`}</option>)}
+        </Combo>
         <Combo value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
           <option value="">All roles</option>
           {rowRoles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
         </Combo>
         <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-          <option value="">All statuses</option>
-          {(options?.statusFilter || ['Active', 'Notice Period', 'Relieved', 'Inactive']).map((s) => <option key={s}>{s}</option>)}
+          <option value="">All statuses ({rows.length})</option>
+          {HR_STATUSES.map((st) => <option key={st} value={st}>{`${st} (${statusCounts[st] ?? 0})`}</option>)}
         </Combo>
         <Combo value={filters.login} onChange={(e) => setFilters((f) => ({ ...f, login: e.target.value }))}>
           <option value="">Any login state</option>
@@ -725,12 +732,36 @@ export default function Employees() {
           <option>No login</option>
         </Combo>
         {filtersOn && (
-          <button className="btn btn-sm" onClick={() => setFilters({ q: '', dept: '', designation: '', role: '', status: '', login: '' })}>Clear</button>
+          <button className="btn btn-sm" onClick={() => setFilters({ q: '', dept: '', designation: '', role: '', status: '', login: '', position: '' })}>Clear</button>
         )}
-        <span className="cell-muted" style={{ alignSelf: 'center', fontSize: 12 }}>{filtered.length} employee(s)</span>
+        <span className="cell-muted" style={{ alignSelf: 'center', fontSize: 12 }}>
+          {view === 'tl' ? `${tlWiseIds.length} employee(s), all statuses` : `${filtered.length} employee(s)`}
+        </span>
       </div>
+      {view === 'tl' && (
+        <TlWiseView
+          ids={tlWiseIds}
+          canExport={!!caps.export}
+          onNotice={(m) => { setError(''); setNotice(m); }}
+          onError={(m) => setError(m)}
+        />
+      )}
+      {view === 'list' && hiddenHolders.length > 0 && (
+        <div className="notice" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>
+            <b>{hiddenHolders.length}</b> earlier position holder{hiddenHolders.length === 1 ? '' : 's'}
+            {filters.dept ? ` in ${filters.dept}` : ''} {hiddenHolders.length === 1 ? 'is' : 'are'} not {filters.status} —{' '}
+            {hiddenHolders.slice(0, 4).map((e) => e.name).join(', ')}{hiddenHolders.length > 4 ? '…' : ''}
+          </span>
+          <button className="btn btn-sm" onClick={() => setFilters((f) => ({ ...f, status: '' }))}>Show everyone</button>
+          <Link className="btn btn-sm btn-ghost" to="/admin/positions?tab=history">Seat history</Link>
+        </div>
+      )}
 
-      <div className="tbl-wrap tbl-fit">
+      {view === 'list' && (<>
+      {/* Horizontal scrollbar at the TOP too (synced), sticky header, box
+          capped to the viewport (.tbl-fit) so the bottom bar stays in view. */}
+      <ScrollTable maxHeight={null} bodyClassName="tbl-fit">
         <table>
           <thead>
             {/* THE EIGHT COLUMNS THIS SCREEN IS SPECIFIED TO CARRY. It used to
@@ -744,10 +775,11 @@ export default function Employees() {
             <tr>
               <th style={{ width: 110 }}>Emp ID</th>
               <th>Name</th>
-              <th>Designation</th>
-              <th style={{ width: 120 }}>Status</th>
+              <th style={{ width: 70 }}>Docs</th>
+              <th>Designation · Team</th>
+              <th style={{ width: 150 }}>Status</th>
               <th style={{ width: 150 }}>Profile Status</th>
-              <th>Team</th>
+              <th>Position · Handover</th>
               <th style={{ width: 130 }}>Completion</th>
               <th className="col-actions">Actions</th>
             </tr>
@@ -779,19 +811,67 @@ export default function Employees() {
               return (
                 <tr key={e.id}>
                   <td><b>{e.employeeCode}</b></td>
-                  <td className="row-link"><Link to={`/employees/${e.id}`}>{e.name}</Link></td>
-                  <td className="cell-muted">{e.designation || '—'}</td>
+                  <td className="row-link">
+                    <div className="emgx-name">
+                      <EmployeeAvatar employeeId={e.id} photoDocId={e.photoDocId} name={e.name} />
+                      <div>
+                        <Link to={`/employees/${e.id}`}>{e.name}</Link>
+                        {e.email && !e.emailVerified && <div className="small-muted" style={{ fontSize: 11 }} title={`${e.email} has not been verified by code`}>✉ email not verified</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span className={`emgx-docs${e.docCount ? '' : ' none'}`} title="Documents on this employee's file — open View to see them">
+                      {e.docCount ? `${e.docCount} doc${e.docCount === 1 ? '' : 's'}` : 'No docs'}
+                    </span>
+                  </td>
+                  <td className="cell-muted">
+                    {e.designation || '—'}
+                    {e.team && <div style={{ fontSize: 11.5 }}>{e.team}</div>}
+                  </td>
                   <td>
                     <span className={`status ${(e.employmentStatus || 'Active') === 'Active' ? 'active' : 'pending'}`}>
                       {e.employmentStatus || 'Active'}
                     </span>
+                    {ON_NOTICE.includes(e.employmentStatus) && (
+                      <div className={`emgx-lwd${e.lastWorkingDate ? '' : ' missing'}`} title={e.lastWorkingDateSource || 'No last working date recorded — set it from View'}>
+                        Last working date: {e.lastWorkingDate ? lwdLabel(e.lastWorkingDate) : 'not set'}
+                      </div>
+                    )}
+                    {/* Password / account status (hrms-24 §12). */}
+                    {e.passwordStatus && <div style={{ marginTop: 4 }}><PasswordBadge ps={e.passwordStatus} /></div>}
                   </td>
                   <td>
                     <span className={`status ${STATUS_BADGE[h?.profileStatus] || ''}`}>
                       {h ? statusLabel(h.profileStatus) : '—'}
                     </span>
                   </td>
-                  <td className="cell-muted">{e.team || '—'}</td>
+                  <td>
+                    {(() => {
+                      const st = filters.position ? tenureIn(e, filters.position) : e.seat;
+                      if (!st) return <span className="cell-muted">—</span>;
+                      return (
+                        <div style={{ lineHeight: 1.35 }}>
+                          <b>{st.code}</b>
+                          {filters.position && (
+                            <span className={`status ${st.current ? 'active' : 'pending'}`} style={{ marginLeft: 6, fontSize: 10.5 }}>
+                              {st.current ? 'Current' : 'Previous'}
+                            </span>
+                          )}
+                          <span className="small-muted">
+                            {' '}{seatMonth(st.from)} – {st.current ? 'today' : seatMonth(st.to)}
+                            {!filters.position && e.seatCount > 1 ? ` · ${e.seatCount} seats` : ''}
+                          </span>
+                          {st.tookOverFrom && (
+                            <div className="small-muted" style={{ fontSize: 11.5 }}>← took over from <b>{st.tookOverFrom.name}</b></div>
+                          )}
+                          {st.handedTo && (
+                            <div className="small-muted" style={{ fontSize: 11.5 }}>→ handed to <b>{st.handedTo.name}</b> ({seatMonth(st.handedTo.from)})</div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td>
                     {pct == null ? <span className="cell-muted">—</span> : (
                       <span className="pct-cell">
@@ -803,7 +883,30 @@ export default function Employees() {
                   <td className="col-actions">
                     <div className="row-actions">
                       <button className="btn btn-sm" onClick={() => openDetail(e.id)}>View</button>
-                      {caps.edit && <Link className="btn btn-sm" to={`/employees/${e.id}`}>Edit</Link>}
+                      {/* Super Admin only (renders nothing for anyone else). */}
+                      <ViewAsButton userId={e.userId} name={e.name} active={e.loginStatus === 'Active'} />
+                      {caps.edit && <Link className="btn btn-sm" to={`/employees/${e.id}?edit=1`} title="Open the full employee form">Edit</Link>}
+                      {caps.editCode && (
+                        <button className="btn btn-sm" title="Change this employee's Employee ID" onClick={() => { setCodeFor(e); setCodeForm({ employeeCode: e.employeeCode, reason: '' }); }}>
+                          Change ID
+                        </button>
+                      )}
+                      {caps.passwords && e.userId && (
+                        <>
+                          <button className="btn btn-sm" title="Set a temporary password — they must change it at next sign-in" onClick={() => { setResetFor(e); setResetPassword(''); }}>Reset Password</button>
+                          <button className="btn btn-sm" title="Email a single-use set-password link" onClick={() => sendReset(e)}>Send Reset</button>
+                        </>
+                      )}
+                      {/* Everyone who can open this screen may export a person in
+                          their scope (the Super Admin is notified of every export). */}
+                      <button
+                        className="btn btn-sm"
+                        title={caps.export ? `Download ${e.name}'s full record as Excel` : `Download ${e.name} in the import-template columns (Excel)`}
+                        onClick={() => exportOne(e)}
+                        disabled={!!exporting}
+                      >
+                        {exporting === e.id ? 'Exporting…' : 'Export'}
+                      </button>
                       {/* Approve / Reject, for whichever decision is waiting. */}
                       {caps.approve && awaitingDecision && (
                         <>
@@ -825,7 +928,7 @@ export default function Employees() {
                         </>
                       )}
                       {/* ONLY after an edit-access request has been approved. */}
-                      {caps.approve && canUnlock && (
+                      {caps.approve && !caps.viewOnly && canUnlock && (
                         <button
                           className="btn btn-sm"
                           title="Reopen this employee's own profile for a bounded window so they can correct it"
@@ -861,12 +964,13 @@ export default function Employees() {
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
+              <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
             )}
           </tbody>
         </table>
-      </div>
+      </ScrollTable>
       <Pager page={pagedEmployees} noun="employees" />
+      </>)}
 
       <div className="notice" style={{ marginTop: 14 }}>
         One Employee = One User = One Login. Assigning a role here changes product access on the employee&apos;s
@@ -908,6 +1012,38 @@ export default function Employees() {
                 placeholder="e.g. The PAN number does not match the document uploaded."
                 onChange={(ev) => setRejectReason(ev.target.value)}
               />
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {codeFor && (
+        <Modal
+          title={`Change Employee ID — ${codeFor.name}`}
+          onClose={() => setCodeFor(null)}
+          foot={<>
+            <button className="btn" onClick={() => setCodeFor(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={!codeDraft || codeDraft === codeFor.employeeCode || !!codeClash} onClick={submitCode}>Change ID</button>
+          </>}
+        >
+          <form onSubmit={submitCode}>
+            <div className="small-muted" style={{ marginBottom: 10 }}>
+              Current ID <b>{codeFor.employeeCode}</b>. Attendance, leave, payroll, documents and positions follow the
+              person, not the ID, so nothing is lost. The change is recorded on their history (old → new).
+            </div>
+            <div className="field">
+              <label>New Employee ID *</label>
+              <input autoFocus value={codeForm.employeeCode} onChange={(ev) => setCodeForm({ ...codeForm, employeeCode: ev.target.value })} />
+              {codeClash && <span className="small-muted" style={{ color: 'var(--red)' }}>Already used by {codeClash.name}.</span>}
+              {!codeClash && codeDraft && codeDraft !== codeFor.employeeCode && !/^TL\d{3,}$/.test(codeDraft) && (
+                <span className="small-muted" style={{ color: 'var(--amber)' }}>
+                  {codeDraft} does not follow the TL series (TL + at least three digits). You can still save it.
+                </span>
+              )}
+            </div>
+            <div className="field">
+              <label>Reason (optional)</label>
+              <input value={codeForm.reason} onChange={(ev) => setCodeForm({ ...codeForm, reason: ev.target.value })} placeholder="e.g. Matches the HR master sheet" />
             </div>
           </form>
         </Modal>
@@ -960,9 +1096,11 @@ export default function Employees() {
         >
           <form onSubmit={submitReset}>
             <div className="field"><label>New password *</label>
-              <input required type="password" minLength="6" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} /></div>
+              <input required type="password" minLength="8" autoComplete="new-password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} /></div>
             <div className="cell-muted" style={{ fontSize: 11.5 }}>
-              The password is stored hashed and never shown again — pass it to the user yourself.
+              At least 8 characters with a letter and a number. The password is stored hashed and never shown again —
+              pass it to the user yourself; they must change it at their next sign-in. To avoid knowing it at all, use
+              Send Password Reset instead.
             </div>
           </form>
         </Modal>
@@ -973,6 +1111,7 @@ export default function Employees() {
           form={adding} setForm={setAdding} options={options} employees={employeeIds}
           otp={otp} setOtp={setOtp} emailReady={emailReady} sendOtp={sendOtp} verifyOtp={verifyOtp}
           onClose={() => { setAdding(null); setOtp(EMPTY_OTP); }} onSave={saveNew}
+          canDocs={!!caps.edit} error={error}
         />
       )}
 
@@ -1098,7 +1237,12 @@ export default function Employees() {
             <Link className="btn btn-primary" to={`/employees/${detail.id}`} onClick={() => setDetail(null)}>Open HR record</Link>
           </>}
         >
-          <div className="kv"><span className="k">Email</span><span>{detail.email || '—'}</span></div>
+          <EmployeePhoto employeeId={detail.id} name={detail.name} canChange={false} />
+          <div className="kv"><span className="k">Email</span><span>{detail.email || '—'}{detail.email && detail.emailVerification && (
+            <span className={`status ${detail.emailVerification.verified ? 'approved' : 'priority-high'}`} style={{ marginLeft: 6 }}>
+              {detail.emailVerification.verified ? '✓ Verified' : 'Not verified'}
+            </span>
+          )}</span></div>
           <div className="kv"><span className="k">Mobile</span><span>{detail.phone || '—'}</span></div>
           <div className="kv"><span className="k">Department</span><span>{detail.department || '—'}</span></div>
           <div className="kv"><span className="k">Designation</span><span>{detail.designation || '—'}</span></div>
@@ -1107,6 +1251,43 @@ export default function Employees() {
           <div className="kv"><span className="k">Location</span><span>{detail.location || '—'}</span></div>
           <div className="kv"><span className="k">Joining Date</span><span>{detail.joiningDate || '—'}</span></div>
           <div className="kv"><span className="k">Employment Status</span><span>{detail.employmentStatus}</span></div>
+          {/* NOTICE PERIOD — the last working date off the resignation record. */}
+          {(ON_NOTICE.includes(detail.employmentStatus) || detail.lastWorkingDate) && (
+            <div className="kv">
+              <span className="k">Last working date</span>
+              <span>
+                {detail.lastWorkingDate
+                  ? <><b>{lwdLabel(detail.lastWorkingDate)}</b> <span className="small-muted">· {detail.lastWorkingDateSource}</span></>
+                  : <span style={{ color: 'var(--red)' }}>Not recorded</span>}
+                {caps.lastWorkingDate && (
+                  <div className="emgx-lwd-edit">
+                    <input type="date" value={lwdDraft} onChange={(ev) => setLwdDraft(ev.target.value)} aria-label="Last working date" />
+                    <button type="button" className="btn btn-sm btn-primary" disabled={!lwdDraft || lwdDraft === detail.lastWorkingDate} onClick={saveLwd}>
+                      {detail.lastWorkingDate ? 'Change date' : 'Set date'}
+                    </button>
+                  </div>
+                )}
+              </span>
+            </div>
+          )}
+          {/* TRANSFER HISTORY — always for a TL / STL / Asst Manager / Manager,
+              for anyone else when something is recorded. */}
+          <TransferHistory entries={detail.transferHistory} isLead={detail.isLead} />
+          {detail.seatHistory?.length > 0 && (
+            <>
+              <h4 style={{ margin: '14px 0 6px' }}>Positions held</h4>
+              {detail.seatHistory.map((t) => (
+                <div className="kv" key={`${t.code}-${t.from}`}>
+                  <span className="k">{t.code}</span>
+                  <span>
+                    {seatMonth(t.from)} – {t.current ? 'today' : seatMonth(t.to)}
+                    {t.tookOverFrom && <div className="small-muted">took over from {t.tookOverFrom.name}</div>}
+                    {t.handedTo && <div className="small-muted">handed to {t.handedTo.name} ({seatMonth(t.handedTo.from)})</div>}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
           <div className="section-label">Login &amp; product access</div>
           {detail.userId ? (
             <>
@@ -1115,6 +1296,13 @@ export default function Employees() {
                 <span>{detail.productAccess.hrms} · {detail.productAccess.ats} · {detail.productAccess.accounts}</span></div>
               <div className="kv"><span className="k">Scope</span><span>{detail.scope}</span></div>
               <div className="kv"><span className="k">Login status</span><span>{detail.loginStatus}</span></div>
+              <PasswordStatusRows ps={detail.passwordStatus} />
+              {caps.passwords && (
+                <div style={{ display: 'flex', gap: 8, margin: '8px 0 4px' }}>
+                  <button className="btn btn-sm" onClick={() => { setResetFor(detail); setResetPassword(''); }}>Reset Password</button>
+                  <button className="btn btn-sm" onClick={() => sendReset(detail)}>Send Password Reset</button>
+                </div>
+              )}
             </>
           ) : <div className="empty-mini">No login created yet.</div>}
           <div className="section-label">Recent activity</div>
@@ -1124,6 +1312,12 @@ export default function Employees() {
               <span className="cell-muted" style={{ fontSize: 11.5 }}>{a.date}</span>
             </div>
           )) : <div className="empty-mini">No recorded activity for this employee yet.</div>}
+          {/* DOCUMENTS — the same panel as the HR record. Upload / delete appear
+              only where the server allows them (HR / Super Admin); a view-only
+              Manager or Assistant Manager can open and download. */}
+          <div style={{ marginTop: 14 }}>
+            <EmployeeDocuments key={detail.id} employeeId={detail.id} />
+          </div>
         </Modal>
       )}
     </div>
@@ -1138,11 +1332,81 @@ export default function Employees() {
 // master, and those two are what the identity model DERIVES the login's role,
 // product access, landing workspace and data scope from — so there is no
 // compound role like "Medical Recruiter" to choose anywhere.
+// Add Employee's department picker: "All departments" plus one box per
+// department. The order ticked is kept — the first is the home department.
+function DepartmentChecklist({ all, value, onChange }) {
+  const allOn = all.length > 0 && all.every((d) => value.includes(d));
+  const toggle = (d, on) => onChange(on ? [...value.filter((x) => x !== d), d] : value.filter((x) => x !== d));
+  return (
+    <div className="field" style={{ gridColumn: '1 / -1' }}>
+      <label>Departments <i style={{ fontWeight: 400 }}>(tick one or more — the first ticked is their home department)</i></label>
+      <div className="dept-checklist">
+        <label className="dept-all">
+          <input type="checkbox" checked={allOn} onChange={(e) => onChange(e.target.checked ? [...value, ...all.filter((d) => !value.includes(d))] : [])} />
+          All departments
+        </label>
+        {all.map((d) => (
+          <label key={d}>
+            <input type="checkbox" checked={value.includes(d)} onChange={(e) => toggle(d, e.target.checked)} />
+            {d}{value[0] === d && value.length > 1 ? <span className="small-muted"> · home</span> : null}
+          </label>
+        ))}
+      </div>
+      {value.length > 0 && (
+        <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+          Home: <b>{value[0]}</b>{value.length > 1 ? ` · works in ${value.length} departments: ${value.join(', ')}` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AddEmployeeModal({
   form, setForm, options, employees, otp, setOtp, emailReady, sendOtp, verifyOtp, onClose, onSave,
+  canDocs = false, error = '',
 }) {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const [showPassword, setShowPassword] = useState(false);
+  // DOCUMENTS ARE PART OF THIS FORM (user, 2026-09-29). The files wait in the
+  // browser; Create employee makes the employee FIRST, then uploads each file
+  // to them through the ordinary documents API (its rules, its audit). A file
+  // that fails is listed with a Retry — the employee exists either way.
+  const docsRef = useRef(null);
+  const [pendingDocs, setPendingDocs] = useState(0);
+  const [docErr, setDocErr] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [tried, setTried] = useState(false);
+  const [created, setCreated] = useState(null);
+  const [docResult, setDocResult] = useState(null);
+  const showDocs = canDocs && !!options.documents;
+
+  async function create() {
+    setDocErr('');
+    const waiting = showDocs && docsRef.current ? docsRef.current.pendingCount() : 0;
+    if (waiting) {
+      const bad = docsRef.current.validate();
+      if (bad) { setDocErr(bad); return; }
+    }
+    setSaving(true); setTried(true);
+    const made = await onSave({ keepOpen: waiting > 0 });
+    if (made && waiting) {
+      setCreated({ id: made.id, name: made.name, code: made.employeeCode });
+      setDocResult(await docsRef.current.uploadAll(made.id));
+    }
+    setSaving(false);
+  }
+  // The seats of the chosen department, free ones first so the common case
+  // is at the top of the list.
+  const deptPositions = (options.positions || [])
+    .filter((r) => r.department === form.department)
+    .sort((a, b) => (a.holder ? 1 : 0) - (b.holder ? 1 : 0) || a.code.localeCompare(b.code, undefined, { numeric: true }));
+  const vacantCount = deptPositions.filter((r) => !r.holder).length;
+  // TEAMS ARE AN EDUCATION THING. Rather than naming Education in the code,
+  // this asks the department master which departments actually have teams —
+  // so the field appears for exactly those, and adding or removing a team in
+  // Administration is the only thing needed to change that.
+  const deptTeams = ((options.departmentTree || []).find((d) => d.name === form.department) || {}).teams || [];
+
   const chosen = (options.designations || []).find((d) => d.designation === form.designation);
   const access = chosen
     ? {
@@ -1152,18 +1416,40 @@ function AddEmployeeModal({
     }
     : { hrms: '—', ats: '—', accounts: '—' };
   const scope = form.department ? `${form.department}${form.team ? ` · team ${form.team}` : ''}` : '—';
-  const canSave = form.name.trim() && form.email.trim() && form.department && form.designation
-    && (!emailReady || otp.verified);
+  // NO OTP GATE. HR types the address and the password and presses Create;
+  // the welcome mail goes out on its own. Nothing here waits on a code.
+  // No Designation field any more (user, 2026-09-29): the server takes it from
+  // the chosen Role (or "Employee"); HR can change it later on Edit.
+  const canSave = form.name.trim() && form.email.trim() && form.department;
 
   return (
     <Modal
       title="Add Employee — creates their employee record and login together"
+      size="xwide"
+      bodyStyle={{ padding: '20px 26px' }}
       onClose={onClose}
-      foot={<>
-        <button className="btn btn-primary" disabled={!canSave} onClick={onSave}>Create employee</button>
+      foot={created ? (
+        <button className="btn btn-primary" disabled={saving} onClick={onClose}>{saving ? 'Uploading documents…' : 'Done'}</button>
+      ) : <>
+        <button className="btn btn-primary" disabled={!canSave || saving} onClick={create}>
+          {saving ? 'Creating…' : `Create employee${pendingDocs ? ` + ${pendingDocs} document${pendingDocs === 1 ? '' : 's'}` : ''}`}
+        </button>
         <button className="btn" onClick={onClose}>Cancel</button>
       </>}
     >
+      {created && (
+        <div className={`notice${docResult && docResult.failed ? ' amber' : ''}`}>
+          <span>
+            <b>{created.name}{created.code ? ` (${created.code})` : ''}</b> created — employee record and login.{' '}
+            {!docResult ? 'Uploading their documents…'
+              : docResult.failed
+                ? `${docResult.ok} of ${docResult.total} documents uploaded; ${docResult.failed} failed — the reason is on each file below. Retry it, or add it later on their Edit form.`
+                : `All ${docResult.total} document${docResult.total === 1 ? '' : 's'} uploaded.`}
+          </span>
+        </div>
+      )}
+      {!created && tried && error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
+      {!created && (<>
       {/* SIX FIELDS, AND NO MORE.
           "oka emp create cheyyadaniki start just small fields ey enter cheyyali
           HR" — HR opens the account, the credentials go out, and the employee
@@ -1171,14 +1457,25 @@ function AddEmployeeModal({
           Date of birth, gender, team, reporting line, mobile, location, joining
           date, employment type and status are NOT gone: they are on the
           employee record, which is where the employee now enters them. */}
-      <div className="grid-2">
+      {/* Bigger form (user, 2026-09-29): wide modal, fields spread across up to
+          three columns and fall back to one on a phone. */}
+      <div className="grid-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '14px 20px' }}>
         <div className="field">
-          <label>Employee ID <i style={{ fontWeight: 400 }}>(optional — auto if blank)</i></label>
+          <label>Employee ID <i style={{ fontWeight: 400 }}>(next in series — auto if blank)</i></label>
           <input
             value={form.employeeId}
             onChange={(e) => set({ employeeId: e.target.value })}
-            placeholder={`e.g. ${options.nextEmployeeCode || 'EMP-0009'}`}
+            placeholder={`e.g. ${options.nextEmployeeCode || 'TL517'}`}
           />
+          {form.employeeId && form.employeeId.trim() !== (form.suggestedId || '') && !/^TL\d{3,}$/.test(form.employeeId.trim()) && (
+            <span className="small-muted" style={{ color: 'var(--amber)' }}>
+              {form.employeeId.trim()} does not follow the TL series (e.g. {form.suggestedId || 'TL517'}).
+            </span>
+          )}
+          {employees.length > 0 && form.employeeId.trim() && form.employeeId.trim() !== (form.suggestedId || '')
+            && employees.some((x) => (x.code || '').toLowerCase() === form.employeeId.trim().toLowerCase()) && (
+            <span className="small-muted" style={{ color: 'var(--red)' }}>That Employee ID is already in use.</span>
+          )}
         </div>
         <div className="field">
           <label>Full name</label>
@@ -1189,73 +1486,128 @@ function AddEmployeeModal({
           />
         </div>
 
-        {/* Department master — it becomes the login's data scope. */}
+        {/* DEPARTMENTS — a checklist, with "All departments" on top. A TL can
+            be given two, an STL three, anyone all of them. The FIRST one ticked
+            is the home department (seat, team, employee record); every ticked
+            one becomes the login's data scope. Changing the home department
+            clears the seat: a seat belongs to one department. */}
+        <DepartmentChecklist
+          all={options.departments}
+          value={form.departments && form.departments.length ? form.departments : (form.department ? [form.department] : [])}
+          onChange={(list) => set({
+            departments: list,
+            department: list[0] || '',
+            ...(list[0] !== form.department ? { position: '', team: '' } : {}),
+          })}
+        />
+
+        {/* THE SEAT — MED-1, MED-2, EDU BDE 1.
+
+            Offered only once a department is chosen, and then only that
+            department's seats, because "MED-1" is not a choice that means
+            anything under Education. Creatable, like Department beside it:
+            typing MED-6 when the company opens a sixth medical desk creates
+            the seat on save, so nobody has to go to Administration first.
+
+            A seat someone already holds is listed and labelled rather than
+            hidden — a missing MED-3 reads as "no such seat", which is a
+            different fact from "taken". The server refuses it either way. */}
         <div className="field">
-          <label>Department</label>
-          <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
-            <option value="">Select department</option>
-            {options.departments.map((d) => <option key={d}>{d}</option>)}
-          </Combo>
-        </div>
-        {/* DesignationRole master — it gives the ATS role, the product access
-            and the landing workspace. Never typed free-hand, because the role
-            is DERIVED from it: department Medical + designation Recruiter is
-            what "Medical Recruiter" means, and no compound role is stored. */}
-        <div className="field">
-          <label>Role / Designation</label>
-          <Combo value={form.designation} onChange={(e) => set({ designation: e.target.value })}>
-            <option value="">Select role</option>
-            {/* THE WHOLE IDENTITY, not half of it — "Recruiter — Employee +
-                Recruiter", so it is plain that ONE login covers both HRMS and
-                ATS and that no second account is made. */}
-            {(options.designations || []).map((d) => (
-              <option key={d.designation} value={d.designation}>
-                {d.label || d.designation}{d.productsLabel ? ` · ${d.productsLabel}` : ''}
+          <label>Position <i style={{ fontWeight: 400 }}>(optional — the seat, not the person)</i></label>
+          <Combo
+            creatable
+            disabled={!form.department}
+            value={form.position}
+            onChange={(e) => set({ position: e.target.value })}
+          >
+            <option value="">
+              {form.department ? 'No seat' : 'Choose a department first'}
+            </option>
+            {deptPositions.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.code}
+                {r.name ? ` · ${r.name}` : ''}
+                {r.holder ? ` · held by ${r.holder}` : ''}
               </option>
             ))}
           </Combo>
-        </div>
-
-        {/* THE EMAIL GATE. A code goes to the address before the account
-            exists — and where there is no channel the button says exactly
-            that instead of pretending one was sent. */}
-        <div className="field">
-          <label>Email</label>
-          <div className="field-with-btn">
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => { set({ email: e.target.value }); setOtp({ sending: false, sent: false, code: '', verified: false, message: '', error: '' }); }}
-            />
-            <button
-              type="button" className="btn btn-sm"
-              disabled={!emailReady || !form.email || otp.sending}
-              title={emailReady ? 'Email a one-time code to this address' : (options.email?.reason || '')}
-              onClick={sendOtp}
-            >
-              {emailReady
-                ? (otp.sending ? 'Sending…' : (otp.sent ? 'Resend OTP' : 'Send OTP'))
-                : 'No email channel'}
-            </button>
-          </div>
-          {!emailReady && (
+          {form.department && (
             <span className="small-muted">
-              No SMTP provider is configured, so no code can be sent — {options.email?.reason} The
-              employee can still be created, and the address stays unverified.
+              {deptPositions.length
+                ? `${vacantCount} of ${deptPositions.length} free in ${form.department}. Type a new code to add one.`
+                : `No seats set up for ${form.department} yet — type one (e.g. MED-1) to create it.`}
             </span>
           )}
-          {otp.message && <span className="small-muted">{otp.message}</span>}
-          {otp.error && <span className="error-text">{otp.error}</span>}
-          {otp.sent && !otp.verified && (
-            <div className="field-with-btn" style={{ marginTop: 6 }}>
-              <input
-                inputMode="numeric" maxLength="6" placeholder="6-digit code"
-                value={otp.code} onChange={(e) => setOtp({ ...otp, code: e.target.value })}
-              />
-              <button type="button" className="btn btn-sm" onClick={verifyOtp} disabled={!otp.code}>Verify</button>
-            </div>
+        </div>
+
+        {/* TEAM — only for a department that HAS teams, which today means
+            Education (Team-A / Team-B) and nothing else. Showing an empty
+            Team picker on Medical would invite somebody to invent one.
+
+            It sets the employee record AND the login's team scope, which is
+            what a team lead is then held to. */}
+        {deptTeams.length > 0 && (
+          <div className="field">
+            <label>Team</label>
+            <Combo value={form.team} onChange={(e) => set({ team: e.target.value })}>
+              <option value="">No team</option>
+              {deptTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
+            </Combo>
+          </div>
+        )}
+        {/* NO DESIGNATION FIELD (user, 2026-09-29). The server sets it from
+            the Role below (or "Employee"); HR changes it later on Edit. */}
+
+        {/* ROLE — every ACTIVE role from Role Catalog (system + custom), loaded
+            from the API; a role added there appears here with no code change.
+            It sets the product role(s) it is for on the new login, so its
+            permissions apply from the first request. Empty = the
+            designation's own roles. */}
+        <div className="field">
+          <label>Role</label>
+          <Combo value={form.roleCode || ''} onChange={(e) => set({ roleCode: e.target.value })}>
+            <option value="">Employee (HRMS only)</option>
+            {(options.roleCatalog || []).map((r) => (
+              <option key={r.code} value={r.code}>{r.name}{r.isSystem ? '' : ' (custom)'}</option>
+            ))}
+          </Combo>
+          {form.roleCode && (() => {
+            const r = (options.roleCatalog || []).find((x) => x.code === form.roleCode);
+            const prods = r && !r.isSystem
+              ? ['hrms', 'ats', 'accounts'].filter((p) => r.products && r.products[p]).map((p) => ({ hrms: 'HRMS', ats: 'ATS', accounts: 'Accounts' }[p]))
+              : [];
+            return r ? (
+              <span className="small-muted">
+                {r.isSystem ? `${r.name} for the products it works in.` : `Sets the ${prods.join(' + ') || '—'} role to ${r.name}; the other products follow the designation.`}
+                {r.description ? ` ${r.description}` : ''}
+              </span>
+            ) : null;
+          })()}
+        </div>
+
+        {/* The address the welcome mail goes to, and the one they sign in
+            with. It is checked for shape and for uniqueness on the server;
+            it is NOT proved by a code any more, so a typo means a mail that
+            lands nowhere — which the result panel reports. */}
+        <div className="field">
+          <label>Email</label>
+          <input
+            type="email"
+            /* Not the signing-in user's address — see the note on the
+               password below. */
+            autoComplete="off"
+            name="new-employee-email"
+            value={form.email}
+            onChange={(e) => set({ email: e.target.value })}
+          />
+          {/* Still worth saying when there is no channel at all: the
+              employee is created either way, but nothing will reach them. */}
+          {!emailReady && (
+            <span className="small-muted">
+              No SMTP provider is configured — {options.email?.reason} The employee will be
+              created, but no welcome mail can be sent.
+            </span>
           )}
-          {otp.verified && <span className="status approved" style={{ marginTop: 6 }}>Email verified</span>}
         </div>
 
         <div className="field">
@@ -1263,6 +1615,12 @@ function AddEmployeeModal({
           <div className="field-with-btn">
             <input
               type={showPassword ? 'text' : 'password'}
+              /* THE PASSWORD BEING SET FOR SOMEBODY ELSE, not the one this
+                 browser has saved for the person signed in. Chrome ignores
+                 autoComplete="off" on password inputs; "new-password" is
+                 the value it honours, and it is the truthful one. */
+              autoComplete="new-password"
+              name="new-employee-password"
               value={form.password}
               onChange={(e) => set({ password: e.target.value })}
               placeholder="leave empty to email a set-password link"
@@ -1290,6 +1648,21 @@ function AddEmployeeModal({
           </span>
         </div>
       )}
+      </>)}
+
+      {/* DOCUMENTS — inside the form, below the fields; the same section as
+          the Edit form and My Profile. Only for a caller who may upload to an
+          employee (Employee Management edit); the server re-checks each file. */}
+      {showDocs && (
+        <EmployeeDocuments
+          ref={docsRef}
+          embedded
+          meta={options.documents}
+          onChange={(n) => { setPendingDocs(n); setDocErr(''); }}
+          intro={created ? null : 'Attach what you have now — several files per type is fine. They upload to the new employee when you press Create employee; more can be added later.'}
+        />
+      )}
+      {docErr && <div className="error-text" style={{ marginTop: 8 }}>{docErr}</div>}
     </Modal>
   );
 }

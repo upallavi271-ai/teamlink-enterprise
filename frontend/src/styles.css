@@ -29,30 +29,61 @@
      labels need. #0a74bd scores 4.95 and is still unmistakably the same blue.
      --brand-bright keeps the logo's own value for places where nothing white
      sits on top: tints, rings, small accents. */
-  --brand:#0a74bd;          /* primary — carries white text */
-  --brand-bright:#0b84d8;   /* the logo's azure, for accents with no white on it */
-  --brand-strong:#0a6cb0;   /* hover */
-  --brand-deep:#08578c;     /* pressed / active */
-  --brand-ink:#063f66;      /* brand-coloured text on a tint */
-  --brand-tint:#e9f3fc;     /* subtle fill */
-  --brand-tint-2:#cfe5f8;   /* border on a tint */
-  --brand-ring:rgba(11,132,216,.24);  /* focus ring */
+  /* ---------------------------------------------------------------------
+     THE PALETTE: slate · sage · tan, on an off-white paper.
 
-  /* Navy — the wordmark's own near-black, used for the sidebar and headings */
-  --navy:#16213f; --navy-deep:#0d0e2c; --navy-tint:#e9ecf4;
+     Chosen over the rainbow scheme on measured grounds, not taste. Sampled,
+     the rainbow put four of six hues below 3:1 against a light surface, one
+     outside the usable lightness band, and two neighbours below the
+     normal-vision separation floor. It is a poster palette; this is a screen
+     people read all day.
 
-  /* Neutrals — light, cool and quiet, so the brand is the only strong colour */
-  --ink:#101828; --ink-soft:#56657a; --ink-faint:#8a97a8;
-  --paper:#f7f9fb; --paper-raised:#ffffff;
-  --line:#e4e9ef; --line-soft:#eff3f7;
+     The four given colours are used for the JOBS THEY CAN DO:
+
+       #EFF3F1  paper      the page behind everything
+       #22333B  ink        body text (11.7:1) and the sidebar (13.1:1)
+       #5E8B7E  sage       fills, tints, rings — never text
+       #C7A17A  tan        fills and the Offer status — never text
+
+     Sage and tan CANNOT carry text at the values given: sage reads 3.43:1
+     and tan 2.13:1 on this paper, and white on them is 3.84:1 and 2.38:1 —
+     all below 4.5:1. So text and buttons use darker steps of the SAME hues
+     (#4A6F64, #7D5C36), and the light originals stay for fills where nothing
+     sits on top. Every value below was measured, not eyeballed.
+     --------------------------------------------------------------------- */
+  --brand:#4A6F64;          /* primary — white on it 5.60:1 AA */
+  --brand-bright:#5E8B7E;   /* the sage as given, for fills with no text on it */
+  --brand-strong:#3C5A51;   /* hover */
+  --brand-deep:#2F473F;     /* pressed / active */
+  --brand-ink:#2A4139;      /* brand-coloured text on a tint — 9.36:1 AAA */
+  --brand-tint:#e6efeb;     /* subtle fill */
+  --brand-tint-2:#c9dcd4;   /* border on a tint */
+  --brand-ring:rgba(94,139,126,.34);  /* focus ring */
+
+  /* Tan — the fourth colour. Warm, so it is the one status that is genuinely
+     warm: an Offer. Used as a fill everywhere else. */
+  --accent:#C7A17A;         /* the tan as given — fills only */
+  --accent-strong:#7D5C36;  /* the step that can carry text — 6.08:1 AA */
+  --accent-tint:#f6ede2;
+
+  /* Slate — the sidebar and the headings. The wordmark navy is gone; this is
+     #22333B from the palette, which is quieter and warmer than the old navy. */
+  --navy:#22333B; --navy-deep:#1A2830; --navy-tint:#e3eae8;
+
+  /* Neutrals — the same slate, lightened. They are not grey: a warm-grey
+     text on a cool-grey page is the thing that makes an interface look
+     slightly dirty, so these are stepped off #22333B itself. */
+  --ink:#22333B; --ink-soft:#56666E; --ink-faint:#64767D;
+  --paper:#EFF3F1; --paper-raised:#ffffff;
+  --line:#dde5e2; --line-soft:#e9efec;
 
   /* Semantic — desaturated on purpose. A status is information, not decoration. */
-  --teal:#0f7b6c; --teal-tint:#e6f3f0;       /* approved · selected · joined */
-  --green:#0f7b55; --green-tint:#e7f4ee;
-  --amber:#92560a; --amber-tint:#fdf0dd;      /* pending · review · hold */
-  --red:#b42318; --red-tint:#fdeceb;          /* rejected · overdue · failed */
-  --blue:#175cd3; --blue-tint:#e9f0fd;        /* new · applied · interview */
-  --violet:#6941c6; --violet-tint:#f1ecfb;
+  --teal:#0F6B5C; --teal-tint:#e4f0ed;       /* approved · selected · joined  5.49:1 */
+  --green:#0F6B4F; --green-tint:#e5f0ea;
+  --amber:#8A5206; --amber-tint:#fbf0de;      /* pending · review · hold      5.66:1 */
+  --red:#B02318; --red-tint:#fbebea;          /* rejected · overdue · failed  5.86:1 */
+  --blue:#1B58C0; --blue-tint:#e8effb;        /* new · applied · interview    5.67:1 */
+  --violet:#6941c6; --violet-tint:#f1ecfb;    /*                              5.72:1 */
 
   --radius:10px;
   /* Three weights of shadow instead of one, so a card, a dropdown and a modal
@@ -156,7 +187,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--navy-tint);borde
 .status.approved,.status.shortlist,.status.selected,.status.joined,.status.active,.status.connected,.status.matched,.status.paid{background:var(--teal-tint);color:var(--teal)}
 .status.rejected,.status.failed,.status.overdue,.status.notconnected{background:var(--red-tint);color:var(--red)}
 .status.interview{background:var(--violet-tint);color:var(--violet)}
-.status.offer{background:#fdf0e6;color:#b56a1e}
+.status.offer{background:var(--accent-tint);color:var(--accent-strong)}
 
 table{width:100%;border-collapse:collapse}
 th{text-align:left;font-size:11px;color:var(--ink-soft);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line)}
@@ -974,7 +1005,7 @@ tbody tr{transition:background .1s ease}
 .status.connected,.status.matched,.status.paid{background:var(--teal-tint);color:var(--teal);border-color:#c9e6e0}
 .status.rejected,.status.failed,.status.overdue,.status.notconnected{background:var(--red-tint);color:var(--red);border-color:#f5d2cf}
 .status.interview{background:var(--violet-tint);color:var(--violet);border-color:#e0d4f7}
-.status.offer{background:#fdf1e4;color:#9a5a14;border-color:#f2ddc2}
+.status.offer{background:var(--accent-tint);color:var(--accent-strong);border-color:#ecdcc6}
 
 /* --- Tabs ---------------------------------------------------------------- */
 .tab{transition:color .12s ease,border-color .12s ease}
@@ -1006,3 +1037,326 @@ tbody tr{transition:background .1s ease}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
 }
+
+/* =========================================================================
+   DATA LAYER — stat tiles, filters, charts.
+   Appended, never edited in place: every rule here restates an existing
+   selector later in the file, so appearance changes and layout does not.
+   Nothing moves, nothing is renamed, no markup is required to change.
+
+   The categorical hues below are not a taste judgement. They were run
+   through the six checks (lightness band, chroma floor, CVD separation,
+   normal-vision floor, contrast vs surface) and this is the order that
+   passed all five at four slots. A fifth hue failed CVD separation against
+   the green, so there is deliberately no fifth: a 9th — or 5th — series
+   folds into "Other" rather than inventing a colour nobody can name.
+   ========================================================================= */
+:root{
+  /* NOT the brand sage, and that is deliberate. A series colour has a
+     different job from a UI colour: it must hold its own chroma at small
+     sizes and stay separable under colour-blind simulation. #4A6F64 scores
+     0.046 chroma — it reads as grey in a chart — and a sage/tan pair sits at
+     ΔE 9.2 in normal vision, below the 15 floor. These four were measured
+     against this exact surface (#EFF3F1) and pass all five checks. */
+  --c1:#0a74bd;  /* blue         */
+  --c2:#c2410c;  /* orange       */
+  --c3:#7f56d9;  /* violet       */
+  --c4:#15803d;  /* green        */
+  --c-other:#8a97a8;             /* the "Other" bucket — deliberately grey */
+  --grid:rgba(16,24,40,.07);     /* recessive: a grid is scaffolding       */
+}
+
+/* --- Stat tiles ----------------------------------------------------------
+   A stat tile is label · value · delta. The value carries the weight, so it
+   is set in the same sans as everything else — a serif numeral on a KPI
+   reads as decoration, not as data, and both tile styles were doing that.
+   Proportional figures here (a standalone number), tabular only in columns. */
+.statitem,.stat-cell{
+  background:var(--paper-raised);border:1px solid var(--line);
+  border-radius:var(--radius);box-shadow:var(--shadow-sm);
+  padding:13px 16px;position:relative;overflow:hidden;
+}
+.statitem .n,.stat-cell .v{
+  font-family:inherit;               /* was 'Newsreader',serif */
+  font-size:25px;font-weight:600;line-height:1.15;letter-spacing:-.018em;
+  color:var(--ink);font-variant-numeric:proportional-nums;
+}
+.statitem .l,.stat-cell .l{
+  font-size:11.5px;font-weight:500;color:var(--ink-soft);
+  margin-top:3px;letter-spacing:.005em;
+}
+/* The click affordance now reads as the brand, not the old navy. */
+.stat-cell[data-goto]:hover,.statitem[data-goto]:hover{
+  background:var(--brand-tint);border-color:var(--brand-tint-2);
+}
+.stat-cell[data-goto]:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-ring)}
+
+/* Optional, only if a page supplies it — a tile without a delta is complete. */
+.stat-delta{
+  display:inline-flex;align-items:center;gap:3px;
+  font-size:11.5px;font-weight:600;margin-top:5px;
+}
+.stat-delta.up{color:var(--teal)}
+.stat-delta.down{color:var(--red)}
+.stat-delta .since{color:var(--ink-faint);font-weight:500}
+
+/* --- Filters -------------------------------------------------------------
+   One row, above the data, controls all of one height so the row reads as a
+   single instrument rather than a pile of widgets. */
+.filter-row{gap:8px;align-items:flex-end}
+.filter-row select,.filter-row input,.filter-row .combo input[type=text]{
+  height:34px;font-size:13px;
+}
+.filter-row .btn{height:34px}
+.filter-row select{
+  appearance:none;padding-right:28px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-soft) 50%),
+                   linear-gradient(135deg,var(--ink-soft) 50%,transparent 50%);
+  background-position:calc(100% - 15px) 14px,calc(100% - 10px) 14px;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+}
+/* A filter that is doing something looks different from one that is not.
+   Opt-in: a page adds .on when its own state says the control is narrowing
+   the data. There is no CSS selector for "this select is off its default"
+   — :valid matches every one of them — so this is driven by the page that
+   knows, not guessed at by the stylesheet. */
+.filter-row select.on,.filter-row input.on,
+.filter-row select[data-on],.filter-row input[data-on]{
+  border-color:var(--brand-tint-2);background-color:var(--brand-tint);color:var(--brand-ink);
+}
+.filter-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 0}
+.filter-chips .chip{
+  background:var(--brand-tint);color:var(--brand-ink);
+  border:1px solid var(--brand-tint-2);font-weight:500;
+}
+.filter-chips .chip button{cursor:pointer;opacity:.65;font-size:14px;line-height:1}
+.filter-chips .chip button:hover{opacity:1}
+
+/* --- Charts --------------------------------------------------------------
+   Thin marks, 4px rounded ends anchored to the baseline, 2px surface gaps
+   between adjacent fills, recessive axes. Text wears text tokens — a value
+   is never painted in its series colour. */
+.chart{background:var(--paper-raised);border:1px solid var(--line);
+  border-radius:var(--radius);box-shadow:var(--shadow-sm);padding:16px 18px;margin-bottom:14px}
+.chart-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}
+.chart-head h3{font-size:13.5px;font-weight:600;margin:0}
+.chart-head .sub{font-size:11.5px;color:var(--ink-faint)}
+
+/* Horizontal bars: the form for ranked magnitude with readable labels. */
+.barlist{display:flex;flex-direction:column;gap:9px}
+.barrow{display:grid;grid-template-columns:minmax(80px,148px) 1fr auto;gap:10px;align-items:center;font-size:12.5px}
+.barrow .k{color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.barrow .track{height:9px;background:var(--grid);border-radius:5px;overflow:hidden}
+.barrow .fill{height:100%;border-radius:0 4px 4px 0;background:var(--c1);
+  transition:width .3s ease}
+.barrow .n{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink);min-width:44px;text-align:right}
+
+/* A stacked meter: 2px of surface between segments so they never fuse. */
+.meter{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--grid);gap:2px}
+.meter span{display:block;height:100%}
+.meter span:first-child{border-radius:5px 0 0 5px}
+.meter span:last-child{border-radius:0 5px 5px 0}
+
+/* A legend is always present at two or more series — identity is never
+   carried by colour alone. */
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:11.5px;color:var(--ink-soft)}
+.legend i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}
+
+.s1{background:var(--c1)} .s2{background:var(--c2)}
+.s3{background:var(--c3)} .s4{background:var(--c4)}
+.s-other{background:var(--c-other)}
+
+/* Columns of numbers line up; standalone figures do not need to. */
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* Two charts side by side above a table; one column as soon as that would
+   squeeze the labels. */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;align-items:start}
+@media(max-width:1000px){.chart-grid{grid-template-columns:1fr}}
+
+/* ===========================================================================
+   THEME — THE TEAMLINK ACCOUNTS LOOK
+   ---------------------------------------------------------------------------
+   Taken from the standalone Teamlink Accounts app (Teamlink_Accounts_App_233):
+   a white sidebar, navy + gold on a cool off-white page, a serif only for page
+   titles, small uppercase captions over every field and figure, pill tabs,
+   and money in a monospace so columns of figures line up.
+
+   It is the LAST block in this file on purpose: it re-points the tokens every
+   rule above already reads, then restyles the handful of components that
+   carry the look. Nothing above needs to change for it to apply.
+   =========================================================================== */
+:root{
+  --paper:#F5F7FA; --paper-raised:#FFFFFF; --card2:#F0F3F8;
+  --line:#DDE3EC; --line-soft:#EDF1F6;
+  --ink:#16202B; --ink-soft:#53637A; --ink-faint:#8695A9;
+
+  --navy:#1F3864; --navy-deep:#16294A; --navy-3:#2B4F86; --navy-tint:#E7EDF7;
+  --brand:#1F3864; --brand-bright:#2B4F86; --brand-strong:#16294A; --brand-deep:#0F1F3A;
+  --brand-ink:#1F3864; --brand-tint:#E7EDF7; --brand-tint-2:#CFDAEC; --brand-ring:rgba(31,56,100,.16);
+  --sb-active:#DCE7F7;
+
+  --gold:#BF8F00; --gold-strong:#8A6300; --gold-tint:#FBF3DE;
+  --accent:#BF8F00; --accent-strong:#8A6300; --accent-tint:#FBF3DE;
+
+  --teal:#17734A; --teal-tint:#E4F4EC; --green:#17734A; --green-tint:#E4F4EC;
+  --amber:#9A6B12; --amber-tint:#FBF1DD;
+  --red:#A5342A; --red-tint:#FAE7E4;
+  --blue:#2B4F86; --blue-tint:#E7EDF7;
+
+  --radius:12px;
+  --shadow-sm:0 1px 2px rgba(22,32,43,.05);
+  --shadow:0 1px 2px rgba(22,32,43,.05), 0 10px 26px rgba(22,32,43,.06);
+  --shadow-md:0 20px 52px rgba(22,32,43,.18);
+
+  --font-ui:"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif:"Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* ---- type ---- */
+body{font-family:var(--font-ui);font-size:14px;line-height:1.5;background:var(--paper);color:var(--ink)}
+input,select,textarea,button{font-family:var(--font-ui)}
+h1,h2{font-family:var(--font-serif);font-weight:700;letter-spacing:-.01em;color:var(--ink)}
+h3,h4{font-family:var(--font-ui);font-weight:700;letter-spacing:0;color:var(--ink)}
+.page-head{align-items:flex-end;margin-bottom:20px}
+.page-head h1{font-size:26px;line-height:1.2;font-weight:700}
+.page-head h2{font-size:20px}
+.page-sub{font-size:13.5px;color:var(--ink-soft);max-width:760px;margin-top:4px}
+.eyebrow,.section-label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);font-weight:700}
+.small-muted,.cell-muted{color:var(--ink-soft)}
+.mono,.num{font-family:var(--font-mono)}
+
+/* ---- sidebar: white, with a pale-blue current item ---- */
+.sidebar{background:#fff;color:var(--ink);border-right:1px solid var(--line);box-shadow:none}
+.sidebar-brand{border-bottom:1px solid var(--line-soft);justify-content:center;padding:18px 16px 14px}
+.sidebar-close{color:var(--ink-faint)}
+.sidebar-nav{padding:12px 12px 20px}
+.sb-item,.sb-group-head{color:var(--ink);font-size:14px;font-weight:500;border-radius:9px;padding:9px 12px}
+.sb-item:hover,.sb-group-head:hover,.sb-sub-item:hover{background:var(--card2);color:var(--ink)}
+.sb-group.open>.sb-group-head{background:transparent;color:var(--ink);font-weight:600}
+.sb-group-head .chev,.sb-group.open .chev{color:var(--ink-faint)}
+.sb-sub-item{color:var(--ink-soft);font-size:13.5px;border-radius:9px;padding:8px 12px 8px 20px}
+.sb-item.top-active,.sb-sub-item.active,.sb-sub-item.active:hover{
+  background:var(--sb-active);color:var(--navy);font-weight:600;box-shadow:none}
+
+/* ---- top bar and breadcrumb ---- */
+.topbar{background:#fff;border-bottom:1px solid var(--line);box-shadow:none}
+.topbar-title{font-weight:700}
+.gsearch input{border-radius:9px;background:#fff}
+.rolechip{background:var(--navy-tint);color:var(--navy);font-weight:600}
+.breadcrumb{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-faint);background:transparent;border-bottom:0;padding:16px 28px 0}
+.breadcrumb .bc-link{color:var(--ink-soft)}
+.breadcrumb .bc-current{color:var(--ink-soft);font-weight:500}
+main{padding:14px 28px 70px}
+
+/* ---- buttons ---- */
+.btn{border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;font-size:13px;
+  padding:8px 14px;box-shadow:0 1px 2px rgba(22,32,43,.05);transition:border-color .12s,background .12s,box-shadow .12s}
+.btn:hover{border-color:var(--navy-3);background:#fff;box-shadow:0 2px 10px rgba(31,56,100,.10)}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-ring)}
+.btn-sm{padding:5px 11px;font-size:12.5px;border-radius:8px}
+.btn-primary{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn-primary:hover{background:var(--navy-deep);border-color:var(--navy-deep)}
+.btn-accent,.btn-gold{background:var(--gold);border-color:var(--gold);color:#fff}
+.btn-accent:hover,.btn-gold:hover{background:var(--gold-strong);border-color:var(--gold-strong)}
+.btn-ghost{background:transparent;border-color:transparent;box-shadow:none;color:var(--ink-soft)}
+.btn-ghost:hover{background:var(--card2);color:var(--ink);box-shadow:none}
+.btn-danger{color:var(--red);border-color:#EBC9C4}
+.btn-danger:hover{background:var(--red-tint);border-color:#E0B1AA}
+.btn:disabled,.btn:disabled:hover{opacity:.45;box-shadow:none;border-color:var(--line);background:#fff}
+.btn-primary:disabled,.btn-primary:disabled:hover{background:var(--navy);border-color:var(--navy)}
+
+/* ---- fields: small uppercase captions, 38px controls ---- */
+.field>span,.field>label,.filter-row .field>span{
+  display:block;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;margin-bottom:5px}
+input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],input[type=password],input[type=search],
+select,textarea,.combo input{
+  border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);font-size:13.5px}
+input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],input[type=password],input[type=search],select,.combo input{min-height:38px}
+input:focus,select:focus,textarea:focus,.combo input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px var(--brand-ring)}
+input::placeholder,textarea::placeholder{color:var(--ink-faint)}
+.combo-pop{border-radius:12px;box-shadow:var(--shadow-md);border:1px solid var(--line)}
+.combo-opt.active{background:var(--card2);color:var(--ink)}
+.combo-opt.picked{background:var(--sb-active);color:var(--navy);font-weight:600}
+
+/* ---- surfaces ---- */
+.card,.panel{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.card h3,.panel-head h3{font-size:14.5px;font-weight:700}
+.panel-head{border-bottom:1px solid var(--line-soft)}
+.filter-row{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:12px 14px;gap:10px}
+.modal .filter-row{background:transparent;border:0;box-shadow:none;padding:0}
+.tbl-wrap{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-sm);overflow:auto}
+.modal{border-radius:14px;box-shadow:var(--shadow-md)}
+.modal-head h3{font-size:15.5px;font-weight:700}
+.modal-foot{background:var(--paper);border-bottom-left-radius:14px;border-bottom-right-radius:14px}
+.notice{border-radius:10px;border:1px solid var(--brand-tint-2);background:var(--navy-tint);color:var(--navy)}
+.notice.amber{background:var(--amber-tint);border-color:#F0DDB5;color:#7A5410}
+.notice.red{background:var(--red-tint);border-color:#EFCBC6;color:#86261E}
+.divider{background:var(--line-soft)}
+
+/* ---- tables ---- */
+th{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;
+  background:var(--card2);border-bottom:1px solid var(--line);padding:10px 12px}
+td{border-bottom:1px solid var(--line-soft);padding:11px 12px;font-size:13.25px}
+tbody tr:nth-child(even) td{background:#FAFBFD}
+.row-link:hover td{background:var(--navy-tint)}
+
+/* ---- tabs: pills, the current one filled navy ---- */
+.tabbar,.tabs{border-bottom:0;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.tab-btn,.tabs .tab{border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font-weight:600;
+  font-size:13px;padding:7px 13px;margin:0;box-shadow:0 1px 2px rgba(22,32,43,.04)}
+.tab-btn:hover,.tabs .tab:hover{border-color:var(--navy-3);color:var(--ink)}
+.tab-btn.active,.tabs .tab.active{background:var(--navy);border-color:var(--navy);color:#fff}
+
+/* ---- figures: caption on top, number in mono, a coloured top edge ---- */
+.statitem,.stat-cell{display:flex;flex-direction:column;background:#fff;border:1px solid var(--line);border-top:3px solid var(--navy);
+  border-radius:12px;box-shadow:var(--shadow);padding:12px 16px}
+.statitem:nth-child(4n+2),.stat-cell:nth-child(4n+2){border-top-color:var(--gold)}
+.statitem:nth-child(4n+3),.stat-cell:nth-child(4n+3){border-top-color:var(--teal)}
+.statitem:nth-child(4n+4),.stat-cell:nth-child(4n+4){border-top-color:var(--navy-3)}
+.statitem .l,.stat-cell .l{order:-1;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;margin:0 0 6px}
+.statitem .n,.stat-cell .v{font-family:var(--font-mono);font-size:21px;font-weight:600;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
+.statitem .s{font-size:11.5px;color:var(--ink-soft);margin-top:4px}
+.statitem.acct-good .n{color:var(--teal)}
+.statitem.acct-bad .n{color:var(--red)}
+.stat-cell[data-goto]:hover,.statitem[data-goto]:hover{background:#fff;border-color:var(--navy-3);box-shadow:0 2px 14px rgba(31,56,100,.12)}
+
+/* ---- status pills ---- */
+.status{border-radius:999px;font-size:11px;font-weight:600;padding:3px 10px;letter-spacing:.01em}
+.chip,.skillpill{border-radius:999px}
+.toast{border-radius:10px;box-shadow:var(--shadow-md)}
+
+/* The logo is the 1600px tmlink.in artwork drawn smaller, so it wants the
+   browser's normal smooth downscaling — "crisp-edges" (kept above for the old
+   136px bitmap) turns a downscaled logo jagged. */
+.brand-mark{image-rendering:auto}
+
+/* Dropdown options: the list is sized to its longest option (Combo.jsx); an
+   option longer than the widest list wraps to a second line instead of
+   being cut off. */
+.combo-opt{white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+
+/* Administration → Users: nine columns that fit the window. Actions wrap to
+   two rows instead of widening the table; role pickers stay compact. */
+.users-table table{width:100%}
+.users-table td,.users-table th{padding-left:10px;padding-right:10px}
+.users-table .users-actions{min-width:190px;max-width:230px}
+.users-table .users-actions .row-actions{gap:4px}
+
+/* Email verification under the employee's details form. */
+.email-verify{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card2, #F8FAFC);display:grid;gap:6px}
+.email-verify-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.email-verify-row .k{font-weight:600;font-size:12.5px}
+
+/* Add Employee → Departments checklist. */
+.dept-checklist{display:flex;flex-wrap:wrap;gap:6px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;max-height:170px;overflow:auto}
+.dept-checklist label{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:400;margin:0}
+.dept-checklist input{width:auto;min-height:0}
+.dept-checklist .dept-all{flex-basis:100%;font-weight:600;padding-bottom:6px;border-bottom:1px solid var(--line-soft, var(--line))}
+
+/* Employee photo on the details form. */
+.emp-photo{display:flex;align-items:center;gap:14px;margin:4px 0 14px}
+.emp-photo-img{width:88px;height:88px;border-radius:50%;overflow:hidden;border:2px solid var(--line);background:var(--card2, #F1F4F9);display:flex;align-items:center;justify-content:center;flex:none}
+.emp-photo-img img{width:100%;height:100%;object-fit:cover}
+.emp-photo-img span{font-size:26px;font-weight:600;color:var(--navy, #1F3864)}

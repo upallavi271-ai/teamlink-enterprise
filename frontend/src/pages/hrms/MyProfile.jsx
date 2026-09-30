@@ -1,21 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { hasTeamOversight } from '../../permissions';
 import ProfileStatusBanner, { STATUS_BADGE, statusLabel } from '../../components/ProfileStatusBanner.jsx';
 import Combo from '../../components/Combo.jsx';
+import EmployeeProfileForm, { SELF_FIELDS, formFromEmployee } from '../../components/EmployeeProfileForm.jsx';
+import EmployeeDocuments from '../../components/EmployeeDocuments.jsx';
+import EmailVerify from '../../components/EmailVerify.jsx';
+import EmployeePhoto from '../../components/EmployeePhoto.jsx';
+import ExportMenu from '../../components/ExportMenu.jsx';
+import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
 
 // Only STL/TL are restricted to their own department — Manager/Assistant
 // Manager have cross-department oversight (matches backend/src/routes/employees.js).
 
-const emptyForm = {
-  phone: '', email: '', dateOfBirth: '', gender: '', bloodGroup: '',
-  addressType: '', addressLine1: '', addressLine2: '', city: '', district: '', state: '', country: '', postalCode: '',
-  emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '',
-  branch: '', shift: '', employmentExperience: 'Fresher', educationDetails: '', skills: '',
-  bankName: '', bankAccountNumber: '', ifscCode: '', panNumber: '', aadhaarNumber: '', uanNumber: '', pfNumber: '', esiNumber: '',
-};
+// MY EMPLOYEE PROFILE — the employee's COMPLETE record, in the same form HR
+// edits (components/EmployeeProfileForm.jsx), not a summary card. The fields
+// they may provide are SELF_FIELDS; everything HR owns is on the form too,
+// shown and disabled.
+//
+// NO aadhaarNumber among SELF_FIELDS. The full number is never typed into a
+// field that gets saved — Section 29 of the Aadhaar Act forbids retaining it.
+// It is entered in the verification panel below, used, and dropped; only the
+// last four digits are kept. See backend/src/utils/employeeVerification.js.
+//
+// SUBMIT LOCKS IT. PUT /me parks the submission as pendingChanges and the
+// profile becomes Pending Review, so the server refuses the next self-edit
+// from that moment; HR's approval locks it for good, a send-back reopens it,
+// and after that only an edit-access grant does. This is the existing
+// profile workflow — the screen just shows every section of it read-only.
 
 export default function MyProfile() {
   const { user } = useAuth();
@@ -24,20 +39,44 @@ export default function MyProfile() {
   const [employee, setEmployee] = useState(null);
   const [config, setConfig] = useState(null);
   const [error, setError] = useState('');
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => formFromEmployee(null, SELF_FIELDS));
   const [message, setMessage] = useState('');
   const [unlockReason, setUnlockReason] = useState('');
   const [unlockMessage, setUnlockMessage] = useState('');
+  // The Documents section inside the profile form; Submit uploads its files.
+  const docsRef = useRef(null);
   const [team, setTeam] = useState([]);
+  // Identity verification. `vf` is the form, `vr` the server's answer to the
+  // last start/confirm — kept apart so a stale message never sits under a
+  // fresh form.
+  const [vf, setVf] = useState({ kind: 'MOBILE', mobile: '', aadhaar: '', otp: '' });
+  const [vr, setVr] = useState(null);
+  const [vbusy, setVbusy] = useState('');
+  const [verr, setVerr] = useState('');
+  // The lead's team table: Search · Role · Status · Profile status, sorted,
+  // paged 25 / 50 / 100 (hooks — set up before the loading returns below).
+  const teamLf = useListFilters(team, [
+    { key: 'q', type: 'search', placeholder: 'Search name or employee ID…', get: (e) => `${e.name || ''} ${e.employeeCode || ''}` },
+    { key: 'role', label: 'Role', primary: true, get: (e) => e.designation },
+    { key: 'status', label: 'Status', primary: true, get: (e) => e.employmentStatus },
+    { key: 'profile', label: 'Profile status', primary: true, allLabel: 'All profile statuses', get: (e) => (e.profileStatus ? statusLabel(e.profileStatus) : '') },
+  ], {
+    sorts: [
+      { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
+      { key: 'code', label: 'Employee ID', cmp: (a, b) => String(a.employeeCode || '').localeCompare(String(b.employeeCode || ''), undefined, { numeric: true }) },
+    ],
+  });
+  const teamPage = usePaged(teamLf.rows);
 
   function load() {
     api.get('/employees/me')
       .then((res) => {
         setEmployee(res.data);
-        const f = {};
-        Object.keys(emptyForm).forEach((k) => {
-          if (!res.data[k]) { f[k] = k === 'employmentExperience' ? 'Fresher' : ''; return; }
-          f[k] = k === 'dateOfBirth' ? String(res.data[k]).slice(0, 10) : res.data[k];
+        const f = formFromEmployee(res.data, SELF_FIELDS);
+        // Awaiting review, the form shows what they SUBMITTED, not the record
+        // as it stood before — that is the form they are being asked about.
+        (res.data.pendingChanges || []).forEach((c) => {
+          if (Object.prototype.hasOwnProperty.call(f, c.field)) f[c.field] = c.to ?? '';
         });
         setForm(f);
       })
@@ -51,12 +90,55 @@ export default function MyProfile() {
   }
   useEffect(load, []);
 
+  async function startVerify(e) {
+    e.preventDefault();
+    setVbusy('start'); setVerr(''); setVr(null);
+    try {
+      const res = await api.post('/employees/me/verify/start', {
+        kind: vf.kind, mobile: vf.mobile, aadhaar: vf.aadhaar,
+      });
+      setVr(res.data);
+      // The Aadhaar number has done its job. It is not kept in the form, in
+      // component state, or anywhere else on this machine.
+      setVf((f) => ({ ...f, aadhaar: '', otp: '' }));
+    } catch (err) {
+      setVerr(err.response?.data?.error || 'Could not start the verification.');
+    } finally { setVbusy(''); }
+  }
+
+  async function confirmVerify(e) {
+    e.preventDefault();
+    setVbusy('confirm'); setVerr('');
+    try {
+      const res = await api.post('/employees/me/verify/confirm', { otp: vf.otp });
+      setVr({ ...res.data, done: true });
+      setVf((f) => ({ ...f, otp: '' }));
+      load();
+    } catch (err) {
+      setVerr(err.response?.data?.error || 'Could not verify that code.');
+    } finally { setVbusy(''); }
+  }
+
   async function submit(e) {
     e.preventDefault();
     setMessage('');
+    // eslint-disable-next-line no-alert
+    if (!confirm('Submit your employee profile to HR? The form locks as soon as it is submitted — you can still view it, but further changes need HR to reopen it.')) return;
     try {
+      // DOCUMENTS ARE PART OF THIS FORM: the files picked in its Documents
+      // section go first, while the form is still open. If one fails, nothing
+      // is submitted — the form stays open with the reason and a Retry.
+      if (docsRef.current) {
+        const bad = docsRef.current.validate();
+        if (bad) { setMessage(bad); return; }
+        const up = await docsRef.current.uploadAll(employee.id);
+        if (up.failed) {
+          setMessage(`${up.failed} of ${up.total} document${up.total === 1 ? '' : 's'} could not be uploaded — see Documents above. Nothing was submitted yet.`);
+          return;
+        }
+      }
       await api.put('/employees/me', form);
-      setMessage('Submitted for HR review.');
+      setMessage('Submitted for HR review — your form is now locked.');
       load();
     } catch (err) {
       setMessage(err.response?.data?.error || 'Could not submit.');
@@ -93,11 +175,23 @@ export default function MyProfile() {
     <div>
       <div className="page-head">
         <div>
-          <h1>My Profile</h1>
+          <h1>My Employee Profile</h1>
           <div className="page-sub">{employee.name} · {employee.employeeCode} · {employee.department || 'No department yet'}</div>
         </div>
-        <span className={`status ${STATUS_BADGE[employee.profileStatus] || ''}`}>{statusLabel(employee.profileStatus)}</span>
+        <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <span className={`status ${STATUS_BADGE[employee.profileStatus] || ''}`}>{statusLabel(employee.profileStatus)}</span>
+          {/* hrms-24 §3 — your own summary; no export permission needed. */}
+          {employee.id && (
+            <ExportMenu url={`/insights/employee/${employee.id}/summary`} params={{ range: 'this_year' }} label="Export my summary" note="Current year · your own data" />
+          )}
+        </span>
       </div>
+      {/* hrms-24 §12 — HR reset this password; the owner changes it on Profile. */}
+      {user?.passwordStatus?.passwordResetRequired && (
+        <div className="notice amber" style={{ display: 'block' }}>
+          HR reset your password. <Link to="/admin/profile">Change it now</Link> — Profile → Change password.
+        </div>
+      )}
 
       {/* The same words the dashboard shows, from the same component — an
           employee cannot be told two different things about one profile. */}
@@ -106,7 +200,11 @@ export default function MyProfile() {
       {awaitingReview && (
         <div className="card section" style={{ borderColor: 'var(--warn)' }}>
           <h3>Submitted — awaiting HR review</h3>
-          <div className="small-muted">You submitted the following changes. You can't edit further until HR approves or sends them back.</div>
+          <div className="small-muted">
+            {employee.pendingChanges.length
+              ? 'You submitted the following changes. Your form is locked until HR approves or sends it back — the full form is below, read-only.'
+              : 'You confirmed your profile without changing any field. Your form is locked until HR approves or sends it back — the full form is below, read-only.'}
+          </div>
           {employee.pendingChanges.map((c, i) => (
             <div className="kv" key={i}><span className="k">{c.label}</span><span>{c.from || '—'} → {c.to}</span></div>
           ))}
@@ -180,97 +278,182 @@ export default function MyProfile() {
       )}
 
       <form className="card section" onSubmit={submit}>
-        <fieldset disabled={!editable} style={{ border: 'none', padding: 0, margin: 0 }}>
-          <h3>Personal Information</h3>
-          <div className="grid-2">
-            <label className="field"><span>Phone</span><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
-            <label className="field"><span>Email</span><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-            <label className="field"><span>Date of Birth</span><input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></label>
-            <label className="field">
-              <span>Gender</span>
-              <Combo value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
-                <option value="">Select</option><option>Male</option><option>Female</option><option>Other</option>
-              </Combo>
-            </label>
-            <label className="field">
-              <span>Blood Group</span>
-              <Combo value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}>
-                <option value="">Select</option>
-                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((b) => <option key={b}>{b}</option>)}
-              </Combo>
-            </label>
+        {!editable && (
+          <div className="notice" style={{ marginBottom: 12 }}>
+            🔒 {awaitingReview ? 'Submitted — this is the form you sent to HR.' : 'Your submitted form.'} It is read-only;
+            {' '}{awaitingReview ? 'HR will approve it or send it back to you.' : 'to change anything, request edit access above.'}
           </div>
+        )}
+        {/* The photo leads the form; uploading it is a document, so it works
+            whenever documents can be added. */}
+        <EmployeePhoto employeeId={employee.id} name={employee.name} />
+        <EmployeeProfileForm mode="self" form={form} setForm={setForm} employee={employee} readOnly={!editable} />
+        {/* The email in the form above, proved by a code sent to it. */}
+        <EmailVerify email={form.email} disabled={false} />
 
-          <h3 style={{ marginTop: 14 }}>Address</h3>
-          <div className="grid-2">
-            <label className="field">
-              <span>Address Type</span>
-              <Combo value={form.addressType} onChange={(e) => setForm({ ...form, addressType: e.target.value })}>
-                <option value="">Select type</option><option>Current</option><option>Permanent</option>
-              </Combo>
-            </label>
-            <label className="field"><span>Address Line 1</span><input value={form.addressLine1} onChange={(e) => setForm({ ...form, addressLine1: e.target.value })} /></label>
-            <label className="field"><span>Address Line 2</span><input value={form.addressLine2} onChange={(e) => setForm({ ...form, addressLine2: e.target.value })} /></label>
-            <label className="field"><span>City / Town</span><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></label>
-            <label className="field"><span>District</span><input value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value })} /></label>
-            <label className="field"><span>State / Province</span><input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></label>
-            <label className="field"><span>Country</span><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></label>
-            <label className="field"><span>Postal Code</span><input value={form.postalCode} onChange={(e) => setForm({ ...form, postalCode: e.target.value })} /></label>
+        {/* DOCUMENTS — a section OF this form (user, 2026-09-29), not a
+            separate one. While the form is open, the files picked here go up
+            when Submit is pressed. Once it is locked there is no Submit, so
+            each file gets its own Upload button (a document HR asks for can
+            still be added). Only a document they uploaded themselves can be
+            removed, and only while the form is open (routes/employees.js). */}
+        <EmployeeDocuments
+          ref={docsRef}
+          embedded
+          uploadOnSave={editable}
+          saveLabel="Submit"
+          employeeId={employee.id}
+          intro="Aadhaar, PAN, certificates and joining documents — as many as you need. HR sees them on your record."
+          lockedNote={editable ? null : 'Your form is locked. You can still add a document HR asks for; only HR can remove documents now.'}
+        />
+
+        {message && <div className="small-muted" style={{ marginTop: 8 }}>{message}</div>}
+        {editable && (
+          <div className="emp-form-foot">
+            <button className="btn btn-primary btn-sm" type="submit">Submit</button>
+            <span className="small-muted">
+              Fields you can&apos;t change are set by HR. Submit uploads your documents and sends the form — it then
+              locks and you can only view it.
+            </span>
           </div>
-
-          <h3 style={{ marginTop: 14 }}>Emergency Contact</h3>
-          <div className="grid-2">
-            <label className="field"><span>Name</span><input value={form.emergencyContactName} onChange={(e) => setForm({ ...form, emergencyContactName: e.target.value })} /></label>
-            <label className="field"><span>Relation</span><input value={form.emergencyContactRelation} onChange={(e) => setForm({ ...form, emergencyContactRelation: e.target.value })} /></label>
-            <label className="field"><span>Number</span><input value={form.emergencyContactPhone} onChange={(e) => setForm({ ...form, emergencyContactPhone: e.target.value })} /></label>
-          </div>
-
-          <h3 style={{ marginTop: 14 }}>Work Details</h3>
-          <div className="grid-2">
-            <label className="field">
-              <span>Branch</span>
-              <Combo creatable value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })}>
-                <option value="">Select branch</option><option>Bengaluru</option><option>Chennai</option><option>Hyderabad</option>
-              </Combo>
-            </label>
-            <label className="field"><span>Shift</span><input value={form.shift} onChange={(e) => setForm({ ...form, shift: e.target.value })} /></label>
-            <label className="field">
-              <span>Employment Type</span>
-              <Combo value={form.employmentExperience} onChange={(e) => setForm({ ...form, employmentExperience: e.target.value })}>
-                <option>Fresher</option><option>Experienced</option>
-              </Combo>
-            </label>
-            <label className="field"><span>Education details</span><input value={form.educationDetails} onChange={(e) => setForm({ ...form, educationDetails: e.target.value })} /></label>
-            <label className="field"><span>Skills & certifications</span><input value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} /></label>
-          </div>
-
-          <h3 style={{ marginTop: 14 }}>Bank & Statutory Details</h3>
-          <div className="small-muted" style={{ marginBottom: 8 }}>Restricted — shown on payslips.</div>
-          <div className="grid-2">
-            <label className="field"><span>Bank name</span><input value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} /></label>
-            <label className="field"><span>Account number</span><input value={form.bankAccountNumber} onChange={(e) => setForm({ ...form, bankAccountNumber: e.target.value })} /></label>
-            <label className="field"><span>IFSC code</span><input value={form.ifscCode} onChange={(e) => setForm({ ...form, ifscCode: e.target.value })} /></label>
-            <label className="field"><span>PAN number</span><input value={form.panNumber} onChange={(e) => setForm({ ...form, panNumber: e.target.value })} /></label>
-            <label className="field"><span>Aadhaar number</span><input value={form.aadhaarNumber} onChange={(e) => setForm({ ...form, aadhaarNumber: e.target.value })} /></label>
-            <label className="field"><span>UAN number</span><input value={form.uanNumber} onChange={(e) => setForm({ ...form, uanNumber: e.target.value })} /></label>
-            <label className="field"><span>PF number</span><input value={form.pfNumber} onChange={(e) => setForm({ ...form, pfNumber: e.target.value })} /></label>
-            <label className="field"><span>ESI number</span><input value={form.esiNumber} onChange={(e) => setForm({ ...form, esiNumber: e.target.value })} /></label>
-          </div>
-
-          {editable && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} type="submit">Submit for Review</button>}
-          {message && <span className="small-muted" style={{ marginLeft: 10 }}>{message}</span>}
-        </fieldset>
+        )}
       </form>
-      {!editable && <div className="small-muted" style={{ marginTop: -10, marginBottom: 16 }}>🔒 This form is locked and can't be edited right now.</div>}
 
-      <div className="card">
-        <h3 style={{ fontSize: 13, marginBottom: 8 }}>Read-only details (set by HR)</h3>
-        <div className="kv"><span className="k">Department</span><span>{employee.department || '—'}</span></div>
-        <div className="kv"><span className="k">Team</span><span>{employee.team || '—'}</span></div>
-        <div className="kv"><span className="k">Designation</span><span>{employee.designation || '—'}</span></div>
-        <div className="kv"><span className="k">Reporting Manager</span><span>{employee.reportingManager?.name || '—'}</span></div>
-        <div className="kv"><span className="k">Joining Date</span><span>{employee.dateOfJoining ? new Date(employee.dateOfJoining).toLocaleDateString() : '—'}</span></div>
-      </div>
+      {/* -------------------------------------------------------------------
+          IDENTITY VERIFICATION — the employee proving their own mobile and
+          Aadhaar.
+
+          Deliberately OUTSIDE the submit-for-review cycle: HR does not approve
+          whether somebody owns a phone, and a profile lock must not stop
+          somebody verifying a new number.
+
+          It is also deliberately blunt about what it cannot do today. A tick
+          that does not mean "UIDAI said yes" must not look like one, so there
+          are three states here and not two: Verified, Checked only, and Not
+          verified.
+          ------------------------------------------------------------------- */}
+      {employee.verification && (
+        <div className="card section">
+          <h3>Identity verification</h3>
+          <div className="small-muted" style={{ marginBottom: 12 }}>
+            Your Aadhaar number is used for the check and then discarded — only the last four
+            digits are kept. It is never stored in full, and never shown to HR.
+          </div>
+
+          <div className="grid-2" style={{ marginBottom: 4 }}>
+            <div className="kv">
+              <span className="k">Mobile</span>
+              <span>
+                {employee.verification.mobile.verified
+                  ? <span className="status approved">Verified · {employee.verification.mobile.number}</span>
+                  : <span className="status pending">Not verified</span>}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">Aadhaar</span>
+              <span>
+                {employee.verification.aadhaar.verified && (
+                  <span className="status approved">Verified · ••••{employee.verification.aadhaar.last4}</span>
+                )}
+                {!employee.verification.aadhaar.verified && employee.verification.aadhaar.last4 && (
+                  <span className="status hold">Checked only · ••••{employee.verification.aadhaar.last4}</span>
+                )}
+                {!employee.verification.aadhaar.verified && !employee.verification.aadhaar.last4 && (
+                  <span className="status pending">Not verified</span>
+                )}
+              </span>
+            </div>
+          </div>
+          {employee.verification.aadhaar.note && (
+            <div className="small-muted" style={{ marginBottom: 12 }}>{employee.verification.aadhaar.note}</div>
+          )}
+
+          {/* The channel is stated BEFORE the button, so nobody presses Send
+              and then waits for a code that was never going to arrive. */}
+          {employee.channels && !employee.channels.sms.deliverable && (
+            <div className="notice amber" style={{ marginBottom: 12 }}>
+              {employee.channels.sms.reason}
+              {' '}
+              A code cannot reach your phone until that is connected. Emailing it instead would
+              prove your mailbox, not your number, so this screen does not do that.
+            </div>
+          )}
+
+          {verr && <div className="error-text" style={{ marginBottom: 10 }}>{verr}</div>}
+
+          {(!vr || vr.done) ? (
+            <form onSubmit={startVerify}>
+              {vr && vr.done && (
+                <div className="notice" style={{ marginBottom: 10 }}>
+                  {vr.kind === 'MOBILE' ? 'Mobile verified.' : (vr.note || 'Done.')}
+                </div>
+              )}
+              <div className="grid-2">
+                <label className="field">
+                  <span>What do you want to verify?</span>
+                  <select value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value })}>
+                    <option value="MOBILE">Mobile number</option>
+                    <option value="AADHAAR">Aadhaar</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Mobile number</span>
+                  <input
+                    inputMode="numeric"
+                    maxLength={13}
+                    placeholder="10 digits"
+                    value={vf.mobile}
+                    onChange={(e) => setVf({ ...vf, mobile: e.target.value })}
+                  />
+                </label>
+              </div>
+              {vf.kind === 'AADHAAR' && (
+                <label className="field">
+                  <span>Aadhaar number</span>
+                  <input
+                    inputMode="numeric"
+                    maxLength={14}
+                    placeholder="12 digits"
+                    value={vf.aadhaar}
+                    onChange={(e) => setVf({ ...vf, aadhaar: e.target.value })}
+                  />
+                </label>
+              )}
+              <button className="btn btn-primary" type="submit" disabled={vbusy === 'start'}>
+                {vbusy === 'start' ? 'Sending…' : 'Send the code'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={confirmVerify}>
+              <div className="small-muted" style={{ marginBottom: 8 }}>
+                {vr.delivered
+                  ? `A ${vr.ttlMinutes}-minute code was ${vr.delivery}.`
+                  : `A ${vr.ttlMinutes}-minute code was generated for ${vr.mobile}, but could not be sent.`}
+              </div>
+              {vr.note && <div className="notice amber" style={{ marginBottom: 10 }}>{vr.note}</div>}
+              {vr.esignNote && <div className="notice amber" style={{ marginBottom: 10 }}>{vr.esignNote}</div>}
+              <label className="field">
+                <span>Verification code</span>
+                <input
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="6 digits"
+                  value={vf.otp}
+                  onChange={(e) => setVf({ ...vf, otp: e.target.value })}
+                />
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" type="submit" disabled={vf.otp.length < 6 || vbusy === 'confirm'}>
+                  {vbusy === 'confirm' ? 'Verifying…' : 'Verify'}
+                </button>
+                <button className="btn" type="button" onClick={() => { setVr(null); setVerr(''); }}>
+                  Start again
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
 
       {isTeamLead && (
         <div className="card section">
@@ -278,11 +461,12 @@ export default function MyProfile() {
             <h3 style={{ fontSize: 13 }}>{isDeptScoped ? `My Department — ${employee.department || 'Unassigned'}` : 'All Employees (cross-department oversight)'}</h3>
             <Link className="btn btn-sm" to="/employees">Open Employee Management</Link>
           </div>
+          {team.length > 0 && <ListFilterBar lf={teamLf} storageKey="my-team" noun="employees" />}
           <div className="tbl-wrap">
             <table>
               <thead><tr><th>Employee</th><th>Code</th><th>Designation</th><th>Status</th><th>Profile Status</th></tr></thead>
               <tbody>
-                {team.map((e) => (
+                {teamPage.slice.map((e) => (
                   <tr key={e.id} className="row-link">
                     <td><Link to={`/employees/${e.id}`}>{e.name}</Link></td>
                     <td>{e.employeeCode}</td>
@@ -291,10 +475,11 @@ export default function MyProfile() {
                     <td><span className={`status ${STATUS_BADGE[e.profileStatus] || ''}`}>{statusLabel(e.profileStatus)}</span></td>
                   </tr>
                 ))}
-                {team.length === 0 && <tr><td colSpan="5" className="small-muted">No department employees yet.</td></tr>}
+                {teamLf.rows.length === 0 && <tr><td colSpan="5" className="small-muted"><ListEmpty lf={teamLf} noun="employees" title="No department employees yet." /></td></tr>}
               </tbody>
             </table>
           </div>
+          {teamLf.rows.length > 0 && <Pager page={teamPage} noun="employees" />}
         </div>
       )}
     </div>

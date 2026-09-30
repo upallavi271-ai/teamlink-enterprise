@@ -2,13 +2,31 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
-  PanelPad, AssignRow, EmptyMini, TwoCol, QaRow,
-  NumHead, FeatureTiles, FeatureScreen, FeatureTable, Modal,
+  PanelPad, AssignRow, TwoCol, QaRow,
+  NumHead, FeatureTiles, FeatureScreen, FeatureTable,
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
+import PeopleFilterBar, { peopleMatches, textMatches } from '../../components/PeopleFilterBar.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
+import { ListEmpty } from '../../components/ui/ListFilters.jsx';
+import AudiencePicker, { DeliverVia, EMPTY_AUDIENCE, audienceReady } from '../../components/AudiencePicker.jsx';
+import {
+  ComposeModal, Field, AiAssist, CheckLine, useSubmit,
+} from '../../components/ComposeForm.jsx';
 
 const CATEGORIES = ['General', 'Policy', 'Event', 'Holiday'];
+// An announcement is not per employee and has no status, so its filters are
+// its own: title / text, category, the date posted and (More) who it was sent
+// to and whether it is pinned.
+const EMPTY_AN_FILTERS = { q: '', category: '', target: '', pinned: '', from: '', to: '' };
+const postedOf = (a) => a.date || a.createdAt;
+const AN_SORTS = [
+  ['pinned', 'Pinned first', null], // the server's order: pinned, then newest
+  ['new', 'Newest first', (a, b) => String(postedOf(b)).localeCompare(String(postedOf(a)))],
+  ['old', 'Oldest first', (a, b) => String(postedOf(a)).localeCompare(String(postedOf(b)))],
+  ['title', 'Title A–Z', (a, b) => String(a.title || '').localeCompare(String(b.title || ''))],
+];
 
 // The prototype's three Announcement feature tiles (AN_FEATURES, line 4428).
 export const AN_FEATURES = [
@@ -17,51 +35,41 @@ export const AN_FEATURES = [
   ['archive', 'Announcement Archive'],
 ];
 
-function NewAnnouncementModal({ departments, onClose, onSaved }) {
-  const [form, setForm] = useState({ title: '', body: '', category: 'General', target: 'All Employees', pinned: false });
-  const [error, setError] = useState('');
+// THE REFERENCE FORM. Every other Employee Services / Performance create form
+// follows this layout (components/ComposeForm.jsx): Title *, AI Assist, Body *,
+// Category, Send to (components/AudiencePicker.jsx — Everyone, one or MANY
+// departments, or named employees), Also deliver via, Pin to top, then
+// [Post Announcement] [Cancel].
+function NewAnnouncementModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', body: '', category: 'General', pinned: false });
+  const [audience, setAudience] = useState(EMPTY_AUDIENCE);
+  const [channels, setChannels] = useState([]);
+  const { busy, error, setError, run } = useSubmit();
 
   async function submit() {
-    setError('');
     if (!form.title.trim()) { setError('Enter a title.'); return; }
-    try {
-      await api.post('/announcements', { ...form, body: form.body || '—', date: new Date().toISOString().slice(0, 10) });
-      onSaved();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not post the announcement');
-    }
+    if (!form.body.trim()) { setError('Enter the announcement text.'); return; }
+    if (!audienceReady(audience)) { setError(audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one employee.'); return; }
+    const res = await run(() => api.post('/announcements', {
+      ...form, audience, channels, date: new Date().toISOString().slice(0, 10),
+    }), 'Could not post the announcement');
+    if (res) onSaved(res.data);
   }
 
   return (
-    <Modal
-      title="New Announcement"
-      onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit}>Send</button></>}
-    >
-      <div className="field"><label>Title</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-      <div className="field"><label>Body</label><textarea rows="3" value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} /></div>
-      <div className="grid-2">
-        <div className="field">
-          <label>Category</label>
-          <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-            {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-          </Combo>
-        </div>
-        <div className="field">
-          <label>Target</label>
-          <Combo value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })}>
-            <option>All Employees</option>
-            {departments.map((d) => <option key={d}>{d} Department</option>)}
-          </Combo>
-        </div>
-      </div>
-      <div className="field">
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 400 }}>
-          <input type="checkbox" style={{ width: 'auto' }} checked={form.pinned} onChange={(e) => setForm({ ...form, pinned: e.target.checked })} /> Pin to top
-        </label>
-      </div>
-      {error && <div className="error-text">{error}</div>}
-    </Modal>
+    <ComposeModal title="New Announcement" onClose={onClose} onSubmit={submit} submitLabel="Post Announcement" busy={busy} error={error} wide>
+      <Field label="Title" required><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+      <AiAssist kind="announcement" title={form.title} text={form.body} onText={(body) => setForm((f) => ({ ...f, body }))} />
+      <Field label="Body" required><textarea rows="5" value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} /></Field>
+      <Field label="Category">
+        <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+          {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+        </Combo>
+      </Field>
+      <AudiencePicker value={audience} onChange={setAudience} />
+      <DeliverVia value={channels} onChange={setChannels} />
+      <CheckLine checked={form.pinned} onChange={(pinned) => setForm({ ...form, pinned })}>Pin to top</CheckLine>
+    </ComposeModal>
   );
 }
 
@@ -74,20 +82,69 @@ export default function Announcements({ view, onOpen, onBack }) {
   // the screen is an administration screen AND these are writes.
   const isHR = hasHrmsAdmin(user) && canManageServices(user);
   const [announcements, setAnnouncements] = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [sent, setSent] = useState('');
+  const [nf, setNf] = useState(EMPTY_AN_FILTERS);
+  const [sort, setSort] = useState('pinned');
 
   function load() {
     api.get('/announcements').then((res) => setAnnouncements(res.data));
-    api.get('/admin/departments').then((res) => setDepartments(res.data.map((d) => d.name))).catch(() => setDepartments([]));
   }
   useEffect(load, []);
 
   async function togglePin(a) { await api.put(`/announcements/${a.id}/pin`); load(); }
 
   const newButton = isHR && <button className="btn btn-primary btn-sm" onClick={() => setModalOpen(true)}>+ New Announcement</button>;
+  const sortCmp = (AN_SORTS.find(([k]) => k === sort) || AN_SORTS[0])[2];
+  const filtered = announcements.filter((a) => textMatches(`${a.title} ${a.body || ''}`, nf.q)
+    && (!nf.category || (a.category || 'General') === nf.category)
+    && (!nf.target || (a.target || '') === nf.target)
+    && (!nf.pinned || (nf.pinned === 'Pinned' ? !!a.pinned : !a.pinned))
+    && peopleMatches(a, { from: nf.from, to: nf.to }, undefined, undefined, postedOf));
+  const shown = sortCmp ? [...filtered].sort(sortCmp) : filtered;
+  const page = usePaged(shown);
+  const categories = [...new Set([...CATEGORIES, ...announcements.map((a) => a.category).filter(Boolean)])];
+  const targets = [...new Set(announcements.map((a) => a.target).filter(Boolean))].sort();
+  const setN = (k, v) => setNf((f) => ({ ...f, [k]: v }));
+  const bar = (
+    <PeopleFilterBar
+      filters={nf} setFilters={setNf} people={false} search="Title or text" shown={shown.length} total={announcements.length}
+      dates="Posted on" labels={{ category: 'Category', target: 'Sent to', pinned: 'Pinned' }} moreKeys={['target', 'pinned']}
+      more={(
+        <>
+          <Combo value={nf.target} title="Sent to" onChange={(e) => setN('target', e.target.value)}>
+            <option value="">Sent to anyone</option>
+            {targets.map((t) => <option key={t}>{t}</option>)}
+          </Combo>
+          <Combo value={nf.pinned} title="Pinned" onChange={(e) => setN('pinned', e.target.value)}>
+            <option value="">Pinned or not</option>
+            <option>Pinned</option>
+            <option>Not pinned</option>
+          </Combo>
+        </>
+      )}
+    >
+      <Combo value={nf.category} title="Category" onChange={(e) => setN('category', e.target.value)}>
+        <option value="">All categories</option>
+        {categories.map((c) => <option key={c}>{c}</option>)}
+      </Combo>
+      <label className="lf-sort">
+        Sort
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          {AN_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </label>
+    </PeopleFilterBar>
+  );
+  const nfLike = { activeCount: Object.values(nf).filter(Boolean).length, clear: () => setNf(EMPTY_AN_FILTERS) };
+  const none = <ListEmpty lf={nfLike} noun="announcements" />;
+  const pager = <Pager page={page} noun="announcements" />;
+
   const modal = modalOpen && (
-    <NewAnnouncementModal departments={departments} onClose={() => setModalOpen(false)} onSaved={() => { setModalOpen(false); load(); }} />
+    <NewAnnouncementModal
+      onClose={() => setModalOpen(false)}
+      onSaved={(a) => { setModalOpen(false); setSent(`Posted to ${a.target || 'everyone'} — ${a.reached ?? 0} employee(s). ${a.deliveryText || ''}`); load(); }}
+    />
   );
 
   if (view === 'compose') {
@@ -95,7 +152,8 @@ export default function Announcements({ view, onOpen, onBack }) {
       <FeatureScreen title="Compose & Target Announcement" sub="Write an announcement and choose who receives it." onBack={onBack}>
         <PanelPad style={{ marginTop: 14 }}>
           {newButton}
-          <div className="cell-muted" style={{ fontSize: 12, marginTop: 10 }}>Targeting options: All Employees, or a single department.</div>
+          <div className="cell-muted" style={{ fontSize: 12, marginTop: 10 }}>Send to everyone, to one or several departments, or to individual employees — and optionally by Email, SMS or WhatsApp as well.</div>
+          {sent && <div className="notice" style={{ marginTop: 10 }}>{sent}</div>}
         </PanelPad>
         {modal}
       </FeatureScreen>
@@ -103,28 +161,31 @@ export default function Announcements({ view, onOpen, onBack }) {
   }
   if (view === 'delivery') {
     return (
-      <FeatureScreen title="Delivery Tracking" sub="Which channels each announcement went out on (simulated)." onBack={onBack}>
+      <FeatureScreen title="Delivery Tracking" sub="Who each announcement reached and what every channel actually did." onBack={onBack}>
+        {bar}
         <FeatureTable
           heads={['Announcement', 'Target', 'Delivery']}
-          empty="No announcements yet."
-          rows={announcements.map((a) => (
+          empty={none}
+          rows={page.slice.map((a) => (
             <tr key={a.id}>
               <td>{a.title}</td>
               <td className="cell-muted">{a.target || '—'}</td>
-              <td className="cell-muted">Email: Sent · WhatsApp: Sent</td>
+              <td className="cell-muted">{a.deliveryText || 'In-app notice board only (posted before delivery tracking).'}</td>
             </tr>
           ))}
         />
+        {pager}
       </FeatureScreen>
     );
   }
   if (view === 'archive') {
     return (
       <FeatureScreen title="Announcement Archive" sub="Every announcement ever posted." onBack={onBack}>
+        {bar}
         <FeatureTable
           heads={['Date', 'Title', 'Category', 'Pinned']}
-          empty="No announcements yet."
-          rows={announcements.map((a) => (
+          empty={none}
+          rows={page.slice.map((a) => (
             <tr key={a.id}>
               <td>{a.date || '—'}</td>
               <td>{a.title}</td>
@@ -133,6 +194,7 @@ export default function Announcements({ view, onOpen, onBack }) {
             </tr>
           ))}
         />
+        {pager}
       </FeatureScreen>
     );
   }
@@ -140,10 +202,12 @@ export default function Announcements({ view, onOpen, onBack }) {
   return (
     <div>
       <QaRow style={{ marginBottom: 14 }}>{newButton}</QaRow>
+      {sent && <div className="notice">{sent}</div>}
+      {bar}
       <TwoCol style={{ alignItems: 'start' }}>
         <PanelPad>
           <NumHead n={1} title="Notice Board" />
-          {announcements.length === 0 ? <EmptyMini>No announcements posted.</EmptyMini> : announcements.map((a) => (
+          {shown.length === 0 ? none : page.slice.map((a) => (
             <AssignRow key={a.id}>
               <span>
                 {a.pinned && '📌 '}<b>{a.title}</b><br />
@@ -155,6 +219,7 @@ export default function Announcements({ view, onOpen, onBack }) {
               </span>
             </AssignRow>
           ))}
+          {shown.length > 0 && pager}
         </PanelPad>
         <FeatureTiles features={AN_FEATURES} onOpen={onOpen} />
       </TwoCol>

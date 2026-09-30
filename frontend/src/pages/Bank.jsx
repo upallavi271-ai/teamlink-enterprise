@@ -4,6 +4,11 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import Modal from '../components/Modal';
 import Combo from '../components/Combo.jsx';
+import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
+import Pager, { usePaged } from '../components/Pager.jsx';
+import AccountsImport from '../components/AccountsImport.jsx';
+import MatchPanel from './bank/MatchPanel.jsx';
+import HandLoans from './bank/HandLoans.jsx';
 
 // Indian digit grouping with paise, as the accounting application prints it.
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
@@ -33,6 +38,26 @@ const STATE_CLASS = {
 // Group the reconciliation table by month, by the statement file it came from,
 // or see every line flat.
 const BANK_GROUPS = [['month', 'Month'], ['imp', 'Statement file'], ['none', 'Every line, flat']];
+
+// THE LIST FILTER STANDARD for statement lines (one account's lines and the
+// reconciliation table): Search, Type and Date range always on screen, the
+// line's state under More Filters, a Sort, and chips for what is on.
+const lineText = (t) => [t.description, t.reference, t.category, t.counterparty, t.clientName,
+  t.matchedInvoice?.invoiceNumber, t.read?.client, t.read?.party, t.read?.invoiceNumber].filter(Boolean).join(' ');
+const LINE_TYPES = [{ value: 'Credit', label: 'Deposits (money in)' }, { value: 'Debit', label: 'Withdrawals (money out)' }];
+const LINE_FIELDS = [
+  { key: 'q', type: 'search', placeholder: 'Search narration, reference, client, invoice…', get: lineText },
+  { key: 'type', label: 'Type', allLabel: 'All types', options: LINE_TYPES, get: (t) => t.type, primary: true },
+  { key: 'date', type: 'daterange', label: 'Date range', get: (t) => t.date, primary: true },
+  { key: 'state', label: 'Status', allLabel: 'All statuses', options: ['Unmatched', 'Matched', 'Reconciled', 'Ignored'], get: (t) => t.state },
+];
+const LINE_SORTS = [
+  { key: 'new', label: 'Newest first', cmp: (a, b) => String(b.date || '').localeCompare(String(a.date || '')) },
+  { key: 'old', label: 'Oldest first', cmp: (a, b) => String(a.date || '').localeCompare(String(b.date || '')) },
+  { key: 'amt', label: 'Amount high → low', cmp: (a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0) },
+];
+// The reconciliation table has its own State tabs, so its bar leaves State out.
+const RECON_FIELDS = LINE_FIELDS.filter((f) => f.key !== 'state');
 
 const gapColor = (g) => (g == null ? undefined : (Math.abs(g) < 1 ? 'var(--teal)' : 'var(--red)'));
 
@@ -175,6 +200,9 @@ export default function Bank() {
           per={per} setPer={setPer} page={page} setPage={setPage}
         />
       )}
+      {view === 'loans' && (
+        <HandLoans canManage={canManage} onBack={() => setView('overview')} onChanged={load} />
+      )}
       {view === 'recon' && (
         <Recon
           {...shared}
@@ -187,7 +215,7 @@ export default function Bank() {
 
       {canManage && dialog && (
         <Dialogs
-          dialog={dialog} setDialog={setDialog} {...shared}
+          dialog={dialog} setDialog={setDialog} setNote={setNote} {...shared}
         />
       )}
     </div>
@@ -224,6 +252,7 @@ function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call
         <h2 style={{ fontSize: 19 }}>Banking Overview</h2>
         <div className="qa-row">
           <button className="btn btn-sm" onClick={() => setView('recon')}>🧾 Reconciliation</button>
+          <button className="btn btn-sm" onClick={() => setView('loans')}>🤝 Hand loans</button>
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
           {canManage && <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add bank or credit card</button>}
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'rules' })}>⚙ Manage transaction rules</button>}
@@ -356,22 +385,26 @@ function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call
 
 function AccountView({
   account, accountId, transactions, setView, setDialog, act, call, busy,
-  tab, setTab, pill, setPill, per, setPer, page, setPage, position, canManage,
+  tab, setTab, pill, setPill, setPage, position, canManage,
 }) {
+  let list = transactions;
+  if (tab === 'un') list = list.filter((t) => t.state !== 'Reconciled' && !t.category && !t.categoryKind && !t.excluded);
+  else if (tab === 'ok') list = list.filter((t) => t.state === 'Reconciled' || t.category || t.categoryKind);
+  if (tab === 'un') {
+    if (pill === 'rec') list = list.filter((t) => t.read && t.read.kind !== 'none');
+    else if (pill === 'pos') list = list.filter(isPossible);
+    else if (pill === 'ex') list = transactions.filter((t) => t.excluded);
+  }
+  const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS });
+  const pg = usePaged(lf.rows, 50);
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
   const s = account.stat;
 
-  let list = transactions;
-  if (tab === 'un') list = list.filter((t) => t.state !== 'Reconciled' && !t.category && !t.excluded);
-  else if (tab === 'ok') list = list.filter((t) => t.state === 'Reconciled' || t.category);
-  if (tab === 'un') {
-    if (pill === 'rec') list = list.filter((t) => t.read && t.read.kind !== 'none');
-    else if (pill === 'ex') list = transactions.filter((t) => t.excluded);
-  }
-  const total = list.length;
-  const pages = Math.max(1, Math.ceil(total / per));
-  const p = Math.min(page, pages - 1);
-  const shown = list.slice(p * per, (p + 1) * per);
+  // Credits the narration points at an invoice for, but not clearly enough to
+  // post on their own (spec 3 part 3) — waiting for a person to confirm.
+  const possibleCount = transactions.filter((t) => !t.excluded && t.state !== 'Reconciled' && !t.category && !t.categoryKind && isPossible(t)).length;
+  const total = lf.rows.length;
+  const shown = pg.slice;
 
   return (
     <div>
@@ -388,6 +421,7 @@ function AccountView({
           {canManage && <button className="btn btn-sm" onClick={() => call('post', '/bank/quick-categorise', { bankAccountId: accountId }, (d) => `${d.filed} recognised debit(s) filed.`)}>⚡ Quick categorize</button>}
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Add transaction</button>}
           <button className="btn btn-sm" onClick={() => setView('recon')}>🧾 Reconciliation</button>
+          <button className="btn btn-sm" onClick={() => setView('loans')}>🤝 Hand loans</button>
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙</button>}
         </div>
       </div>
@@ -412,7 +446,7 @@ function AccountView({
 
       {tab === 'un' && (
         <div className="filter-row" style={{ alignItems: 'center' }}>
-          {[['all', 'All', s.unmatched], ['rec', 'Recognised', s.recognised], ['ex', 'Excluded', s.excluded]].map(([k, l, n]) => (
+          {[['all', 'All', s.unmatched], ['rec', 'Recognised', s.recognised], ['pos', 'Possible matches', possibleCount], ['ex', 'Excluded', s.excluded]].map(([k, l, n]) => (
             <button key={k} className={`btn btn-sm ${pill === k ? 'btn-primary' : ''}`} onClick={() => { setPill(k); setPage(0); }}>
               {l} ({n})
             </button>
@@ -422,6 +456,7 @@ function AccountView({
         </div>
       )}
 
+      <ListFilterBar lf={lf} storageKey="bank-lines" noun="lines" />
       <div className="tbl-wrap">
         <table>
           <thead>
@@ -450,20 +485,21 @@ function AccountView({
                 </td>
                 <td><Thinks txn={t} /></td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  {!canManage ? <span className="cell-muted">—</span> : (t.state === 'Reconciled' || t.category) ? (
+                  {!canManage ? <span className="cell-muted">—</span> : (t.state === 'Reconciled' || t.category || t.categoryKind) ? (
                     <>
-                      {t.category && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'cat' })}>✎ Edit</button>}{' '}
+                      {t.category && !t.createdBillId && !t.billLinks && t.state !== 'Reconciled' && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'cat' })}>✎ Edit</button>}{' '}
                       <button
                         className="btn btn-sm"
                         disabled={busy === `${t.id}:unmatch`}
-                        onClick={() => (t.category ? act(t.id, 'uncategorise') : act(t.id, 'unmatch'))}
+                        onClick={() => ((t.state !== 'Reconciled' && (t.category || t.categoryKind)) ? act(t.id, 'uncategorise') : act(t.id, 'unmatch'))}
                       >
                         Undo
                       </button>
                     </>
                   ) : (
                     <>
-                      <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'match' })}>Match / categorize</button>{' '}
+                      <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'match' })}>Match</button>{' '}
+                      <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'cat' })}>Categorise</button>{' '}
                       <button className="btn btn-sm" onClick={() => act(t.id, 'exclude', { excluded: !t.excluded })}>{t.excluded ? 'Bring back' : 'Exclude'}</button>
                     </>
                   )}
@@ -472,27 +508,16 @@ function AccountView({
             ))}
             {!shown.length && (
               <tr>
-                <td colSpan="6" className="empty">
-                  {s.lines ? 'Nothing in this list.' : 'No lines yet. Press Import statement and choose your bank’s CSV or Excel file.'}
+                <td colSpan="6" className={lf.activeCount ? undefined : 'empty'}>
+                  {lf.activeCount ? <ListEmpty lf={lf} noun="lines" />
+                    : (s.lines ? 'Nothing in this list.' : 'No lines yet. Press Import statement and choose your bank’s CSV or Excel file.')}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <div className="filter-row" style={{ alignItems: 'center' }}>
-        <span className="small-muted">Total {total} line(s)</span>
-        <span style={{ flex: 1 }} />
-        <label className="small-muted">
-          Per page{' '}
-          <Combo value={per} onChange={(e) => { setPer(Number(e.target.value)); setPage(0); }}>
-            {[50, 100, 200, 500].map((n) => <option key={n} value={n}>{n}</option>)}
-          </Combo>
-        </label>
-        <button className="btn btn-sm" disabled={p <= 0} onClick={() => setPage(p - 1)}>‹</button>
-        <span className="small-muted">{total ? p * per + 1 : 0} – {Math.min(total, (p + 1) * per)}</span>
-        <button className="btn btn-sm" disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>›</button>
-      </div>
+      {total > 0 && <Pager page={pg} noun="lines" />}
       <div className="small-muted" style={{ marginTop: 8 }}>
         Press a <b>deposit</b> or a <b>withdrawal</b> figure to open it — every match the app can see, and a form to file it by hand.
         {' '}<b>Exclude</b> leaves a line on file but out of the count, for a transfer you never want to categorise.
@@ -503,6 +528,9 @@ function AccountView({
     </div>
   );
 }
+
+const POSSIBLE_KINDS = ['possible', 'named', 'amount', 'many', 'client'];
+const isPossible = (t) => t.type === 'Credit' && t.read && (POSSIBLE_KINDS.includes(t.read.kind) || (t.read.kind === 'already' && !t.read.clear));
 
 // What the app thinks a line is, before anyone has said anything.
 function Thinks({ txn }) {
@@ -544,16 +572,19 @@ function Recon({
   clientNames, groups, marks, markById, imports, setView, setDialog, act, call, busy, picked, setPicked,
   state, setState, group, setGroup, openKeys, setOpenKeys, clientFilter, setClientFilter, canManage,
 }) {
+  const lf = useListFilters(transactions, RECON_FIELDS);
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
 
-  const stateRows = state === 'All' ? transactions : transactions.filter((t) => t.state === state);
+  // The State tab, then Search / Type / Date range on top of it.
+  const stateRows = state === 'All' ? lf.rows : lf.rows.filter((t) => t.state === state);
   const keep = new Set(stateRows.map((t) => t.id));
+  const narrowed = lf.activeCount > 0;
 
   const credits = transactions.filter((t) => t.type === 'Credit');
   const debits = transactions.filter((t) => t.type === 'Debit');
   const unposted = credits.filter((t) => t.state !== 'Reconciled');
   const named = unposted.filter((t) => t.read && (t.read.kind === 'sure' || t.read.kind === 'named'));
-  const recognisedDebits = debits.filter((t) => t.state !== 'Reconciled' && !t.category && t.read && t.read.category).length;
+  const recognisedDebits = debits.filter((t) => t.state !== 'Reconciled' && !t.category && !t.categoryKind && t.read && t.read.category).length;
   const readTotal = position ? Object.values(position.reading).reduce((s, n) => s + n, 0) : 0;
   const totIn = credits.reduce((s, t) => s + Number(t.amount || 0), 0);
   const totOut = debits.reduce((s, t) => s + Number(t.amount || 0), 0);
@@ -676,16 +707,19 @@ function Recon({
       ...g.rows.map((id) => ({ d: byId.get(id)?.date, t: byId.get(id) })),
       ...g.notes.map((id) => ({ d: markById.get(id)?.date, n: markById.get(id) })),
     ].filter((x) => x.t || x.n).sort((a, b) => String(b.d).localeCompare(String(a.d)));
-    body = merged.map((x) => (x.t ? lineRow(x.t, false) : noteRow(x.n, false)));
+    body = merged.map((x) => (x.t ? lineRow(x.t, false) : (narrowed ? null : noteRow(x.n, false))));
   } else {
     groups.forEach((g) => {
+      // Under a search / type / date filter, a group with no line left in it
+      // is left out rather than shown empty.
+      if (narrowed && !g.rows.some((id) => keep.has(id))) return;
       body.push(groupRow(g));
       if (!O[g.key]) return;
       const merged = [
         ...g.rows.map((id) => ({ d: byId.get(id)?.date, t: byId.get(id) })),
         ...g.notes.map((id) => ({ d: markById.get(id)?.date, n: markById.get(id) })),
       ].filter((x) => x.t || x.n).sort((a, b) => String(b.d).localeCompare(String(a.d)));
-      merged.forEach((x) => body.push(x.t ? lineRow(x.t, true) : noteRow(x.n, true)));
+      merged.forEach((x) => body.push(x.t ? lineRow(x.t, true) : (narrowed ? null : noteRow(x.n, true))));
     });
   }
   body = body.filter(Boolean);
@@ -734,6 +768,7 @@ function Recon({
         <span style={{ flex: 1 }} />
         {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
         {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Entry by hand</button>}
+        <button className="btn btn-sm" onClick={() => setView('loans')}>🤝 Hand loans</button>
         {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'mark' })}>✎ Note a balance</button>}
         {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙ Account details</button>}
         {canManage && <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add account</button>}
@@ -776,6 +811,7 @@ function Recon({
         </div>
       )}
 
+      <ListFilterBar lf={lf} storageKey="bank-recon" noun="lines" />
       <div className="tabbar">
         {STATES.map((s) => (
           <button key={s} className={`tab-btn ${state === s ? 'active' : ''}`} onClick={() => setState(s)}>
@@ -818,9 +854,9 @@ function Recon({
               </tr>
             </thead>
             <tbody>
-              {body.length ? body : (
+              {body.length ? body : (narrowed ? <tr><td colSpan="10"><ListEmpty lf={lf} noun="lines" /></td></tr> : (
                 <tr><td colSpan="10" className="empty">No lines in this period. Press <b>Import statement</b> and choose your bank&rsquo;s CSV or Excel file.</td></tr>
-              )}
+              ))}
             </tbody>
             {transactions.length > 0 && (
               <tfoot>
@@ -923,7 +959,8 @@ function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog, canM
   if (txn.type !== 'Credit') {
     return (
       <div className="qa-row">
-        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn, tab: 'cat' })}>Match / categorize</button>
+        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn, tab: 'match' })}>Match</button>
+        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn, tab: 'cat' })}>Categorise</button>
         <button className="btn btn-sm" disabled={waiting('ignore')} onClick={() => act(txn.id, 'ignore')}>Ignore</button>
       </div>
     );
@@ -941,7 +978,7 @@ function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog, canM
           title={multi
             ? `Settles ${r.plan.parts.map((p) => p.invoiceNumber).join(', ')} — oldest first`
             : `Posts ${money2(r.amount)} against ${r.invoiceNumber}`}
-          onClick={() => act(txn.id, 'post-to-client', { client: r.client })}
+          onClick={() => act(txn.id, 'post-to-client', { client: r.client, invoiceId: r.kind === 'sure' ? r.invoiceId : undefined })}
         >
           Post{multi ? ` all ${r.plan.parts.length}` : ''} to {String(r.client || '').split(' ')[0]}
         </button>
@@ -961,6 +998,7 @@ function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog, canM
       </Combo>
       <button className="btn btn-sm" disabled={!picked || waiting('match')} onClick={() => act(txn.id, 'match', { invoiceId: picked })}>Post</button>
       <button className="btn btn-sm" title="Every invoice this could be, and a form to file it by hand" onClick={() => setDialog({ kind: 'catz', txn, tab: 'match' })}>Match…</button>
+      <button className="btn btn-sm" title="File it by hand — other income, a hand loan or our own transfer" onClick={() => setDialog({ kind: 'catz', txn, tab: 'cat' })}>Categorise</button>
       <button className="btn btn-sm" disabled={waiting('ignore')} onClick={() => act(txn.id, 'ignore')}>Ignore</button>
     </div>
   );
@@ -1272,9 +1310,13 @@ function HowMatchCard({ position }) {
       </Step>
       <div className="notice">
         <span>
-          <b>What posts by itself.</b> Only <b>client named</b> — steps 2a and 2b — is posted automatically, and only while
-          auto-post is on; change it in the Import statement dialog. <b>Amount only</b>, <b>several match</b> and
-          {' '}<b>check invoice</b> always wait for you. Every posting can be undone from its own row.
+          <b>What posts by itself.</b> Only a <b>clear</b> match posts automatically, and only while auto-post is on (change it
+          in the Import statement dialog): the narration carries the <b>invoice number</b> (or the candidate billed) and the amount
+          fits inside what is pending, or it names the <b>client</b> and exactly one of their open invoices is for that amount, or
+          a receipt already recorded carries the same reference (the line is then linked as its proof — nothing is recorded
+          twice). The receipt is written exactly as Record Payment writes it, so the invoice moves to Settled or Partially paid.
+          {' '}<b>Possible match</b>, a client-named credit spread over several invoices (2b), <b>amount only</b>, <b>several
+          match</b> and <b>check invoice</b> always wait for you under <b>Possible matches</b>. Every posting can be undone from its own row.
         </span>
       </div>
       <div className="notice">
@@ -1292,142 +1334,25 @@ function HowMatchCard({ position }) {
 // Dialogs
 // ===========================================================================
 
-function Dialogs({ dialog, setDialog, accountId, accounts, call, load, rules, clientNames, act }) {
+function Dialogs({ dialog, setDialog, setNote, accountId, accounts, call, load, rules, clientNames }) {
   const close = () => setDialog(null);
-  if (dialog.kind === 'import') return <ImportDialog accountId={accountId} onClose={close} call={call} />;
+  if (dialog.kind === 'import') return <AccountsImport kind="bank" bankAccountId={accountId} onClose={close} onDone={load} />;
   if (dialog.kind === 'account') return <AccountDialog account={dialog.account} accounts={accounts} onClose={close} call={call} />;
   if (dialog.kind === 'entry') return <EntryDialog accountId={accountId} onClose={close} call={call} />;
   if (dialog.kind === 'mark') return <MarkDialog accountId={accountId} onClose={close} call={call} />;
   if (dialog.kind === 'rules') return <RulesDialog rules={rules} onClose={close} call={call} />;
-  if (dialog.kind === 'catz') return <CatzDialog txn={dialog.txn} startTab={dialog.tab} onClose={close} call={call} act={act} load={load} clientNames={clientNames} />;
+  if (dialog.kind === 'catz') {
+    return (
+      <MatchPanel
+        txn={dialog.txn}
+        startTab={dialog.tab}
+        clientNames={clientNames}
+        onClose={close}
+        onDone={(msg) => { close(); setNote(msg); load(); }}
+      />
+    );
+  }
   return null;
-}
-
-function ImportDialog({ accountId, onClose, call }) {
-  const [csv, setCsv] = useState('');
-  const [dedup, setDedup] = useState('Yes');
-  const [autoPost, setAutoPost] = useState('yes');
-  const [file, setFile] = useState('');
-  const [preview, setPreview] = useState(null);
-  const [err, setErr] = useState('');
-
-  async function doPreview(text) {
-    setErr('');
-    setPreview(null);
-    try {
-      const res = await api.post('/bank/preview', { csv: text ?? csv });
-      setPreview(res.data);
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Could not read it.');
-    }
-  }
-
-  function readFile(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setFile(f.name);
-    if (/\.xls$/i.test(f.name)) {
-      setErr('This is an old Excel file (.xls). Open it in Excel and use File → Save As to save it as Excel Workbook (.xlsx) or CSV, then choose that file here.');
-      return;
-    }
-    const fr = new FileReader();
-    fr.onload = () => {
-      const text = String(fr.result || '');
-      if (text.slice(0, 2) === 'PK') {
-        setErr('That is a spreadsheet, not a text file. Save it as CSV and choose it again.');
-        return;
-      }
-      setCsv(text);
-      doPreview(text);
-    };
-    fr.readAsText(f);
-  }
-
-  return (
-    <Modal
-      title="Import bank statement"
-      onClose={onClose}
-      footer={(
-        <>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn" onClick={() => doPreview()}>Preview</button>
-          <button
-            className="btn btn-primary"
-            disabled={!csv.trim()}
-            onClick={async () => {
-              const d = await call('post', '/bank/import', { csv, dedup, autoPost, file: file || 'pasted text', bankAccountId: accountId },
-                (r) => `${r.imported} line(s) imported${r.duplicates ? ` · ${r.duplicates} already there` : ''}${r.openingSetTo != null ? ` · opening balance set to ${money(r.openingSetTo)}` : ''}${r.autoPosted ? ` · ${r.autoPosted} credit(s) posted to clients` : ''}.`);
-              if (d) onClose();
-            }}
-          >
-            Import
-          </button>
-        </>
-      )}
-    >
-      <div className="field">
-        <label>Statement file — CSV or Excel (.xlsx)</label>
-        <input type="file" accept=".csv,.txt,.tsv,.xlsx" onChange={readFile} />
-        <div className="small-muted" style={{ marginTop: 4 }}>
-          Choose the file straight from net banking — <b>CSV</b> or <b>Excel (.xlsx)</b> both work. An old <b>.xls</b> cannot be
-          read: open it in Excel and save as .xlsx or CSV first.
-        </div>
-      </div>
-      <div className="field">
-        <label>…or paste the rows straight from the statement</label>
-        <textarea
-          rows={8}
-          style={{ width: '100%', fontFamily: 'monospace', fontSize: 11.5 }}
-          placeholder={'Date,Narration,Ref No,Withdrawal,Deposit,Balance\n29/07/2026,NEFT-GEETHANJALI COLLEGE,UTR12345,,192340.00,845210.00'}
-          value={csv}
-          onChange={(e) => setCsv(e.target.value)}
-        />
-      </div>
-      <div className="field">
-        <label>Skip lines already imported</label>
-        <Combo value={dedup} onChange={(e) => setDedup(e.target.value)}>
-          <option value="Yes">Yes — safest</option>
-          <option value="No">No — import everything</option>
-        </Combo>
-      </div>
-      <div className="field">
-        <label>Post the credits automatically</label>
-        <Combo value={autoPost} onChange={(e) => setAutoPost(e.target.value)}>
-          <option value="yes">Yes — post every matched credit as soon as it is read</option>
-          <option value="no">No — show me the matches, I will confirm each one</option>
-        </Combo>
-        <div className="small-muted" style={{ marginTop: 4 }}>
-          Only credits where the narration names a client who still owes money are posted. The oldest invoice is settled first,
-          anything extra is left alone, and every posting can be undone.
-        </div>
-      </div>
-      {err && <div className="notice amber"><span><b>Could not read it.</b> {err}</span></div>}
-      {preview ? (
-        <div className="notice">
-          <span>
-            <b>{preview.lines} line(s) read</b> — {preview.credits} credit(s) {money(preview.creditValue)} · {preview.debits} debit(s) {money(preview.debitValue)}
-            <br />{fmtD(preview.from)} to {fmtD(preview.to)}
-            {preview.skipped ? <><br /><span className="small-muted">{preview.skipped} line(s) skipped — no readable date.</span></> : null}
-            <div className="tbl-wrap" style={{ marginTop: 10 }}>
-              <table>
-                <thead><tr><th>Date</th><th>Narration</th><th className="num">Out</th><th className="num">In</th></tr></thead>
-                <tbody>
-                  {preview.sample.map((x, n) => (
-                    <tr key={n}>
-                      <td>{fmtD(x.date)}</td>
-                      <td className="small-muted">{String(x.description || '').slice(0, 60)}</td>
-                      <td className="num">{x.type === 'Debit' ? money(x.amount) : '—'}</td>
-                      <td className="num">{x.type === 'Credit' ? money(x.amount) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </span>
-        </div>
-      ) : (!err && <div className="notice"><span>Choose a file or paste the rows, then press <b>Preview</b>.</span></div>)}
-    </Modal>
-  );
 }
 
 function AccountDialog({ account, accounts, onClose, call }) {
@@ -1595,151 +1520,6 @@ function RulesDialog({ rules, onClose, call }) {
           </tbody>
         </table>
       </div>
-    </Modal>
-  );
-}
-
-// The two-tab categorisation panel: every match the app can see, and a form to
-// file the line by hand.
-function CatzDialog({ txn, startTab, onClose, call, act, load }) {
-  const [tab, setTab] = useState(startTab || 'match');
-  const [data, setData] = useState(null);
-  const [ticked, setTicked] = useState([]);
-  const [form, setForm] = useState({ kind: 'expense', category: '', vendor: '', party: '', match: '', gstRate: '' });
-
-  useEffect(() => {
-    api.get(`/bank/${txn.id}/candidates`).then((r) => {
-      setData(r.data);
-      const g = r.data.suggestion;
-      setForm((f) => ({
-        ...f,
-        kind: g?.kind === 'transfer' ? 'transfer' : g?.kind === 'hand' ? 'hand' : 'expense',
-        category: g?.category || '',
-        vendor: g?.vendor || '',
-        party: g?.party || '',
-        match: (r.data.words || [])[0] || '',
-      }));
-    });
-  }, [txn.id]);
-
-  const isCredit = txn.type === 'Credit';
-  const rows = data ? [...data.best.map((x) => ({ ...x, tag: 'best' })), ...data.maybe.map((x) => ({ ...x, tag: 'maybe' }))] : [];
-
-  return (
-    <Modal
-      title={`${isCredit ? 'Money in' : 'Money out'} · ${money2(txn.amount)}`}
-      note={`${fmtD(txn.date)} · ${String(txn.description || '').slice(0, 110)}${txn.reference ? ` · Ref ${txn.reference}` : ''}`}
-      size="wide"
-      onClose={onClose}
-      footer={tab === 'cat' ? (
-        <>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn" onClick={async () => { const d = await call('post', `/bank/${txn.id}/categorise`, { ...form }, () => 'Saved.'); if (d) onClose(); }}>Save</button>
-          <button className="btn btn-primary" onClick={async () => { const d = await call('post', `/bank/${txn.id}/categorise`, { ...form, remember: true }, (r) => (r.rule ? `Saved — every line carrying “${r.rule.match}” is filed under ${r.rule.category} from now on.` : 'Saved.')); if (d) onClose(); }}>Save &amp; remember this narration</button>
-        </>
-      ) : (
-        <>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button
-            className="btn btn-primary"
-            disabled={ticked.length !== 1}
-            onClick={async () => {
-              const d = isCredit
-                ? await act(txn.id, 'match', { invoiceId: ticked[0] })
-                : await call('post', `/bank/${txn.id}/categorise`, { kind: 'expense', category: (data.maybe.concat(data.best).find((x) => x.id === ticked[0]) || {}).category || '' }, () => 'Filed.');
-              if (d) { load(); onClose(); }
-            }}
-          >
-            Match the ticked one(s)
-          </button>
-        </>
-      )}
-    >
-      <div className="tabbar">
-        <button className={`tab-btn ${tab === 'match' ? 'active' : ''}`} onClick={() => setTab('match')}>Match transactions</button>
-        <button className={`tab-btn ${tab === 'cat' ? 'active' : ''}`} onClick={() => setTab('cat')}>Categorise manually</button>
-      </div>
-
-      {tab === 'match' ? (
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th />
-                <th>{isCredit ? 'Invoice' : 'Office bill'}</th>
-                <th>{isCredit ? 'Client' : 'Vendor'}</th>
-                <th>Date</th>
-                <th className="num">{isCredit ? 'Pending' : 'Net'}</th>
-                <th className="num">Difference</th>
-                <th>How close</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((o) => (
-                <tr key={o.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={ticked.includes(o.id)}
-                      onChange={(e) => setTicked(e.target.checked ? [...ticked, o.id] : ticked.filter((x) => x !== o.id))}
-                    />
-                  </td>
-                  <td><b>{isCredit ? o.invoiceNumber : o.category}</b></td>
-                  <td>{isCredit ? o.client : (o.vendor || '—')}</td>
-                  <td>{fmtD(isCredit ? o.invoiceDate : o.expenseDate)}</td>
-                  <td className="num">{money2(isCredit ? o.outstanding : o.net)}</td>
-                  <td className="num">{o.diff === 0 ? 'exact' : signedMoney(o.diff)}</td>
-                  <td>
-                    {o.tag === 'best'
-                      ? <span className="status priority-low">the amount matches</span>
-                      : <span className="status">worth a look</span>}
-                  </td>
-                </tr>
-              ))}
-              {!rows.length && (
-                <tr><td colSpan="7" className="empty">{isCredit ? 'No open invoice for this amount. Use Categorise manually.' : 'No office bill matches this amount. Use Categorise manually.'}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div>
-          {data?.read && (
-            <div className="notice">
-              <span><b>{data.read.tag}</b> — {data.read.why}</span>
-            </div>
-          )}
-          <div className="grid-2">
-            <div className="field">
-              <label>What is this</label>
-              <Combo value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
-                <option value="expense">An office bill</option>
-                <option value="hand">A hand loan — not an expense</option>
-                <option value="transfer">Our own transfer — not an expense</option>
-                <option value="other">Other income</option>
-              </Combo>
-            </div>
-            {(form.kind === 'expense' || form.kind === 'other') && (
-              <div className="field">
-                <label>File it under</label>
-                <input list="catz-cats" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Bank Fees and Charges" />
-                <datalist id="catz-cats">{(data?.categories || []).map((c) => <option key={c} value={c} />)}</datalist>
-              </div>
-            )}
-            {form.kind === 'expense' && (
-              <div className="field"><label>Vendor</label><input value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} /></div>
-            )}
-            {form.kind === 'hand' && (
-              <div className="field"><label>Who</label><input value={form.party} onChange={(e) => setForm({ ...form, party: e.target.value })} /></div>
-            )}
-            <div className="field">
-              <label>Remember this wording</label>
-              <input value={form.match} onChange={(e) => setForm({ ...form, match: e.target.value })} placeholder="the words to look for" />
-              <div className="small-muted" style={{ marginTop: 4 }}>Every future statement line carrying this text is filed the same way.</div>
-            </div>
-          </div>
-        </div>
-      )}
     </Modal>
   );
 }

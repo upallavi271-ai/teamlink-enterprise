@@ -7,7 +7,25 @@ import {
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
+import PeopleFilterBar, { peopleMatches, textMatches } from '../../components/PeopleFilterBar.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
+import { ListEmpty } from '../../components/ui/ListFilters.jsx';
+import AudiencePicker, { DeliverVia, EMPTY_AUDIENCE, audienceReady } from '../../components/AudiencePicker.jsx';
+import {
+  ComposeModal, Field, AiAssist, useSubmit,
+} from '../../components/ComposeForm.jsx';
 
+// A survey is not per employee: its filters are title, the department it was
+// published to (an untargeted survey reaches every department, so it stays in)
+// and its own status — Active or Closed (backend/src/routes/surveys.js).
+const SURVEY_STATUSES = ['Active', 'Closed'];
+const EMPTY_SURVEY_FILTERS = { q: '', department: '', status: '', from: '', to: '' };
+const SURVEY_SORTS = [
+  ['new', 'Newest first', (a, b) => String(b.createdAt).localeCompare(String(a.createdAt))],
+  ['old', 'Oldest first', (a, b) => String(a.createdAt).localeCompare(String(b.createdAt))],
+  ['responses', 'Most responses', (a, b) => (b.responses || []).length - (a.responses || []).length],
+  ['title', 'Title A–Z', (a, b) => String(a.title || '').localeCompare(String(b.title || ''))],
+];
 
 // The prototype's three Engagement Survey feature tiles (SV_FEATURES, line 4429).
 export const SV_FEATURES = [
@@ -34,57 +52,40 @@ function averages(survey) {
   });
 }
 
-function CreateSurveyModal({ departments, onClose, onSaved }) {
-  // `department` empty means publish to EVERY department, which is what an
-  // untargeted survey has always meant on the server.
-  const [form, setForm] = useState({ title: '', questions: '', department: '' });
-  const [error, setError] = useState('');
+// Follows the reference compose layout (components/ComposeForm.jsx). SEND TO
+// is the shared AudiencePicker: everyone, one or MANY departments, or named
+// employees. The server resolves it inside the creator's scope and refuses a
+// response from anybody it was not sent to.
+function CreateSurveyModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', questions: '' });
+  const [audience, setAudience] = useState(EMPTY_AUDIENCE);
+  const [channels, setChannels] = useState([]);
+  const { busy, error, setError, run } = useSubmit();
 
   async function submit() {
-    setError('');
     const questions = form.questions.split('\n').map((q) => q.trim()).filter(Boolean);
     if (!form.title.trim()) { setError('Enter a survey title.'); return; }
     if (!questions.length) { setError('Add at least one question.'); return; }
-    try {
-      await api.post('/surveys', {
-        title: form.title.trim(),
-        questions,
-        departments: form.department ? [form.department] : [],
-      });
-      onSaved();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not create the survey');
-    }
+    if (!audienceReady(audience)) { setError(audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one employee.'); return; }
+    const res = await run(() => api.post('/surveys', { title: form.title.trim(), questions, audience, channels }), 'Could not create the survey');
+    if (res) onSaved(res.data);
   }
 
   return (
-    <Modal
-      title="Create Survey"
-      onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit}>Publish</button></>}
-    >
-      <div className="field"><label>Title</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-      {/* DEPARTMENT-WISE PUBLISH. Nothing selected publishes to everybody;
-          choosing one publishes to that department only, and the server
-          refuses a response from anybody else rather than merely hiding it. */}
-      <div className="field">
-        <label>Publish to</label>
-        <Combo value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
-          <option value="">All departments</option>
-          {(departments || []).map((d) => <option key={d} value={d}>{d}</option>)}
-        </Combo>
-      </div>
-      <div className="field">
-        <label>Questions (one per line)</label>
+    <ComposeModal title="Create Survey" onClose={onClose} onSubmit={submit} submitLabel="Publish Survey" busy={busy} error={error} wide>
+      <Field label="Title" required><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+      <AiAssist kind="survey" title={form.title} text={form.questions} onText={(questions) => setForm((f) => ({ ...f, questions }))} />
+      <Field label="Questions (one per line)" required hint="Each line becomes one statement employees rate from 1 to 5.">
         <textarea
-          rows="4"
+          rows="5"
           placeholder={'I feel supported by my manager.\nI have the tools I need to do my job well.'}
           value={form.questions}
           onChange={(e) => setForm({ ...form, questions: e.target.value })}
         />
-      </div>
-      {error && <div className="error-text">{error}</div>}
-    </Modal>
+      </Field>
+      <AudiencePicker value={audience} onChange={setAudience} />
+      <DeliverVia value={channels} onChange={setChannels} />
+    </ComposeModal>
   );
 }
 
@@ -132,16 +133,18 @@ export default function Surveys({ view, onOpen, onBack }) {
   // gone on offering them every button on this screen. Both halves, because
   // the screen is an administration screen AND these are writes.
   const isHR = hasHrmsAdmin(user) && canManageServices(user);
+  // READ half: a lead reading the aggregate across departments gets the
+  // Department filter; an employee sees only what reached them, so not.
+  const seesOthers = hasHrmsAdmin(user);
   const [surveys, setSurveys] = useState([]);
+  const [sort, setSort] = useState('new');
   const [createOpen, setCreateOpen] = useState(false);
   const [responding, setResponding] = useState(null);
-  // The department master, for the publish dropdown. Same source Announcements
-  // targets from, so the two screens offer the same list.
-  const [departments, setDepartments] = useState([]);
+  const [sent, setSent] = useState('');
+  const [sf, setSf] = useState(EMPTY_SURVEY_FILTERS);
 
   function load() {
     api.get('/surveys').then((res) => setSurveys(res.data));
-    api.get('/admin/departments').then((res) => setDepartments(res.data.map((d) => d.name))).catch(() => setDepartments([]));
   }
   useEffect(load, []);
 
@@ -150,10 +153,35 @@ export default function Surveys({ view, onOpen, onBack }) {
     load();
   }
 
+  const shown = surveys.filter((s) => textMatches(`${s.title} ${(s.questions || []).join(' ')}`, sf.q)
+    && (!sf.department || !(s.departments || []).length || s.departments.includes(sf.department))
+    && (!sf.status || s.status === sf.status)
+    && peopleMatches(s, { from: sf.from, to: sf.to }, undefined, undefined, (r) => r.createdAt))
+    .sort((SURVEY_SORTS.find(([k]) => k === sort) || SURVEY_SORTS[0])[2]);
+  const page = usePaged(shown);
+  const surveyDepts = [...new Set(surveys.flatMap((s) => s.departments || []))].sort();
+  const bar = (
+    <PeopleFilterBar
+      filters={sf} setFilters={setSf} people={false} search="Survey title or question"
+      departments={seesOthers ? surveyDepts : undefined} statuses={SURVEY_STATUSES} shown={shown.length} total={surveys.length}
+      dates="Created on"
+    >
+      <label className="lf-sort">
+        Sort
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          {SURVEY_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </label>
+    </PeopleFilterBar>
+  );
+  const sfLike = { activeCount: Object.values(sf).filter(Boolean).length, clear: () => setSf(EMPTY_SURVEY_FILTERS) };
+  const none = <ListEmpty lf={sfLike} noun="surveys" />;
+  const pager = <Pager page={page} noun="surveys" />;
+
   const createButton = isHR && <button className="btn btn-primary btn-sm" onClick={() => setCreateOpen(true)}>+ Create Survey</button>;
   const modals = (
     <>
-      {createOpen && <CreateSurveyModal departments={departments} onClose={() => setCreateOpen(false)} onSaved={() => { setCreateOpen(false); load(); }} />}
+      {createOpen && <CreateSurveyModal onClose={() => setCreateOpen(false)} onSaved={(sv) => { setCreateOpen(false); setSent(`"${sv.title}" published to ${sv.label} — ${sv.reached} employee(s). ${sv.deliveryText || ''}`); load(); }} />}
       {responding && <RespondModal survey={responding} onClose={() => setResponding(null)} onSaved={() => { setResponding(null); load(); }} />}
     </>
   );
@@ -161,7 +189,7 @@ export default function Surveys({ view, onOpen, onBack }) {
   if (view === 'create') {
     return (
       <FeatureScreen title="Create Pulse Survey" sub="Short, recurring surveys that measure engagement over time." onBack={onBack}>
-        <PanelPad style={{ marginTop: 14 }}>{createButton || <div className="cell-muted" style={{ fontSize: 12 }}>Only HR can create a survey.</div>}</PanelPad>
+        <PanelPad style={{ marginTop: 14 }}>{createButton || <div className="cell-muted" style={{ fontSize: 12 }}>Only HR can create a survey.</div>}{sent && <div className="notice" style={{ marginTop: 10 }}>{sent}</div>}</PanelPad>
         {modals}
       </FeatureScreen>
     );
@@ -169,9 +197,10 @@ export default function Surveys({ view, onOpen, onBack }) {
   if (view === 'results') {
     return (
       <FeatureScreen title="Aggregated Results" sub="Average score per question — individual responses are never shown to managers." onBack={onBack}>
-        {surveys.length === 0 ? (
-          <PanelPad style={{ marginTop: 14 }}><EmptyMini>No surveys yet.</EmptyMini></PanelPad>
-        ) : surveys.map((s) => (
+        {bar}
+        {shown.length === 0 ? (
+          <PanelPad style={{ marginTop: 14 }}>{none}</PanelPad>
+        ) : page.slice.map((s) => (
           <Panel key={s.id} style={{ marginTop: 14 }}>
             <PanelHead title={<>{s.title} <span className="cell-muted" style={{ fontSize: 12 }}>({(s.responses || []).length} response(s))</span></>} />
             {(s.responses || []).length === 0 ? <EmptyMini>No responses yet.</EmptyMini> : averages(s).map((a) => (
@@ -183,16 +212,18 @@ export default function Surveys({ view, onOpen, onBack }) {
             ))}
           </Panel>
         ))}
+        {shown.length > 0 && pager}
       </FeatureScreen>
     );
   }
   if (view === 'history') {
     return (
       <FeatureScreen title="Survey History" sub="Every survey run, open or closed." onBack={onBack}>
+        {bar}
         <FeatureTable
           heads={['Survey', 'Questions', 'Responses', 'Status']}
-          empty="No surveys yet."
-          rows={surveys.map((s) => (
+          empty={none}
+          rows={page.slice.map((s) => (
             <tr key={s.id}>
               <td>{s.title}</td>
               <td className="cell-muted">{s.questions.length}</td>
@@ -201,6 +232,7 @@ export default function Surveys({ view, onOpen, onBack }) {
             </tr>
           ))}
         />
+        {pager}
       </FeatureScreen>
     );
   }
@@ -208,10 +240,12 @@ export default function Surveys({ view, onOpen, onBack }) {
   return (
     <div>
       <QaRow style={{ marginBottom: 14 }}>{createButton}</QaRow>
+      {sent && <div className="notice">{sent}</div>}
+      {bar}
       <TwoCol style={{ alignItems: 'start' }}>
         <PanelPad>
           <NumHead n={1} title="Surveys" />
-          {surveys.length === 0 ? <EmptyMini>No surveys created yet.</EmptyMini> : surveys.map((s) => (
+          {shown.length === 0 ? none : page.slice.map((s) => (
             <AssignRow key={s.id}>
               <span>
                 <b>{s.title}</b><br />
@@ -225,6 +259,7 @@ export default function Surveys({ view, onOpen, onBack }) {
               </span>
             </AssignRow>
           ))}
+          {shown.length > 0 && pager}
         </PanelPad>
         <FeatureTiles features={SV_FEATURES} onOpen={onOpen} />
       </TwoCol>

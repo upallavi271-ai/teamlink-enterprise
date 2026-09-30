@@ -15,16 +15,31 @@
 //   * the password the employee picks is never seen by HR, never logged and
 //     never echoed back by any endpoint here.
 //
-// The account is created with a random unguessable passwordHash, so the link
-// is the ONLY way in until the employee sets their own password. Nothing in
-// this file ever writes a password into a mail body.
+// TWO PATHS, AND WHICH ONE RUNS DEPENDS ON HR.
 //
-// SENDER IDENTITY — the acting HR user's own address
-// utils/candidateComms.js senderIdentity() already resolves "the Employee
-// record behind this login, and its email" for candidate messages. It is
-// reused verbatim here, so the sign-in mail leaves from the HR person who
-// pressed the button, with Reply-To pointing back at them (see utils/mailer.js
-// for the envelope shape and the SPF/DKIM caveat).
+//   HR left Password blank  ->  the account gets a random unguessable hash
+//                               and a single-use set-password link is the
+//                               ONLY way in. HR never learns the password.
+//                               This is the better path and the default.
+//
+//   HR typed a password     ->  a "Welcome to HRMS" mail carries the sign-in
+//                               address and that password, because HR asked
+//                               for exactly that. No set-password link is
+//                               minted, so there is still only one way in.
+//
+// The password in that mail is a real trade-off: it persists in the mailbox
+// and in anything it is forwarded to. The mail asks them to change it. It is
+// still never logged, never stored in clear and never echoed by an endpoint.
+//
+// SENDER IDENTITY — the company mailbox, with no display name
+// A CANDIDATE message goes out as the named recruiter handling them, and
+// utils/candidateComms.js senderIdentity() exists for that. An ACCOUNT mail
+// is different: the new joiner has never met the HR user who pressed the
+// button, and the mail is from the company. Sending it as that person put
+// their name in the From header of every welcome mail, which is what it was
+// doing. It now leaves from the configured From address with NO display name
+// at all — plain hr@tmlink.in — via sendMail's useEmployeeFrom:false and
+// fromName:''.
 //
 // DEGRADING HONESTLY
 // When no SMTP provider is configured, nothing pretends. sendCredentials()
@@ -37,7 +52,6 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
 const { sendMail, emailConfig } = require('./mailer');
-const { senderIdentity } = require('./candidateComms');
 
 const SET_PASSWORD_TTL_HOURS = Number(process.env.SET_PASSWORD_TTL_HOURS || 48);
 
@@ -84,6 +98,10 @@ async function redeemSetPasswordToken(token, password) {
     return { ok: false, code: 'weak', reason: 'Choose a password of at least 8 characters.' };
   }
   const user = await prisma.user.findFirst({ where: { setPasswordTokenHash: hashToken(token) } });
+  // The same strength rule as every other password path (utils/passwordPolicy.js).
+  // eslint-disable-next-line global-require
+  const weak = user && require('./passwordPolicy').strengthError(password, { email: user.email, name: user.name });
+  if (weak) return { ok: false, code: 'weak', reason: weak };
   if (!user) return { ok: false, code: 'invalid', reason: 'This link is not valid — it may already have been used.' };
   if (user.setPasswordUsedAt) return { ok: false, code: 'used', reason: 'This link has already been used.' };
   if (!user.setPasswordExpiresAt || user.setPasswordExpiresAt < new Date()) {
@@ -93,6 +111,9 @@ async function redeemSetPasswordToken(token, password) {
     where: { id: user.id },
     data: {
       passwordHash: await bcrypt.hash(String(password), 10),
+      // Password status (hrms-24 §12): set by its owner, nothing outstanding.
+      // eslint-disable-next-line global-require
+      ...require('./passwordPolicy').passwordEventData('link'),
       setPasswordUsedAt: new Date(),
       setPasswordTokenHash: null,
       setPasswordExpiresAt: null,
@@ -112,6 +133,43 @@ async function inspectSetPasswordToken(token) {
     return { ok: false, reason: 'This link has expired. Ask HR to send a new one.' };
   }
   return { ok: true, name: user.name, email: user.email, expiresAt: user.setPasswordExpiresAt };
+}
+
+// WELCOME TO HRMS — sent when HR set a password on the Add Employee form.
+//
+// This mail carries the password itself, which is what HR asked for: they
+// type the password, and the employee is told it. Worth being clear-eyed
+// about the trade — a password in a mailbox stays in that mailbox, and in
+// any mailbox it is forwarded to, so the message asks them to change it and
+// the password is never written to the audit log or echoed to the screen.
+//
+// When HR leaves the password blank there IS no password to send, and the
+// set-password link below is used instead. That is not a fallback; it is the
+// better of the two paths, and it stays the default.
+function welcomeBody({ employee, password, signInUrl, companyName }) {
+  return [
+    `Hi ${employee.name},`,
+    '',
+    `Welcome to ${companyName}. Your HRMS account is ready.`,
+    '',
+    `Sign in here : ${signInUrl}`,
+    `Email        : ${employee.email}`,
+    `Password     : ${password}`,
+    '',
+    `Your employee id is ${employee.employeeCode}`
+      + `${employee.designation ? `, designation ${employee.designation}` : ''}`
+      + `${employee.department ? `, department ${employee.department}` : ''}.`,
+    '',
+    'Please change this password after you sign in — open My Profile to do it.',
+    '',
+    'While you are there, complete the remaining details on your profile and submit '
+      + 'them for review. HR checks what you entered; once it is approved the profile '
+      + 'is locked, and you can request edit access later if something needs changing.',
+    '',
+    'If you did not expect this message, reply to it and tell us.',
+    '',
+    `— ${companyName} HR`,
+  ].join('\n');
 }
 
 function body({ employee, actingName, link, expiresAt, companyName }) {
@@ -145,7 +203,10 @@ function body({ employee, actingName, link, expiresAt, companyName }) {
 //   { sent: true,  status, link, expiresAt, providerRef }
 //   { sent: false, notConfigured: true, status, reason, link, expiresAt }
 //   { sent: false, status, reason, link?, expiresAt? }
-async function sendCredentials({ employee, userId, actingUser, req, companyName = 'TeamLink' }) {
+// `password` is the one HR typed on Add Employee, when they typed one. It is
+// passed straight through to the mail body and nowhere else — not logged, not
+// stored, not returned to the caller.
+async function sendCredentials({ employee, userId, actingUser, req, companyName = 'TeamLink', password = '' }) {
   if (!userId) {
     const status = 'No login — nothing to send';
     return { sent: false, status, reason: 'This employee has no login account yet.' };
@@ -156,34 +217,67 @@ async function sendCredentials({ employee, userId, actingUser, req, companyName 
     return { sent: false, status, reason: status };
   }
 
-  const { token, expiresAt } = await issueSetPasswordToken(userId);
-  const link = `${appBaseUrl(req)}/set-password/${token}`;
+  // A set-password link is a live credential. When HR has already set a
+  // password there is nothing for it to do, so none is minted — issuing one
+  // anyway would leave a second way into the account that nobody asked for.
+  const given = String(password || '').trim();
+  let link = null;
+  let expiresAt = null;
+  if (!given) {
+    const issued = await issueSetPasswordToken(userId);
+    expiresAt = issued.expiresAt;
+    link = `${appBaseUrl(req)}/set-password/${issued.token}`;
+  }
+
+  // RESERVED TEST ADDRESSES (RFC 2606 / 6761 — example.test, *.invalid …) are
+  // never handed to the mail server: they cannot be delivered, and fixtures use
+  // them. The link is handed back exactly as when no provider is configured.
+  // eslint-disable-next-line global-require
+  if (require('./audience').reservedTestAddress && require('./audience').reservedTestAddress(employee.email)) {
+    const status = `Not sent — ${employee.email} is a reserved test address, so it was not handed to the mail server.`;
+    await prisma.employee.update({ where: { id: employee.id }, data: { credentialsSentStatus: status, credentialsSentAt: null } }).catch(() => {});
+    return { sent: false, status, reason: status, link, expiresAt };
+  }
 
   const cfg = await emailConfig().catch(() => ({ configured: false, reason: 'The email channel could not be read.' }));
   if (!cfg.configured) {
-    const status = `Not sent — no email provider. ${cfg.reason || ''}`.trim();
+    // WHAT HR SHOULD DO ABOUT IT depends on which path we are on, so the
+    // message says. With a password there is no link to hand over — but HR
+    // typed that password and can pass it on themselves, which they will not
+    // think to do if the screen only says "not sent".
+    const status = given
+      ? `Not sent — no email provider. ${cfg.reason || ''} Give ${employee.name} the email address and password yourself.`.trim()
+      : `Not sent — no email provider. ${cfg.reason || ''}`.trim();
     await prisma.employee.update({ where: { id: employee.id }, data: { credentialsSentStatus: status, credentialsSentAt: null } });
-    // The link is handed back so HR can pass it on out of band. It is shown
-    // once, on the screen of the person who just created the employee.
+    // Where there IS a link it is handed back so HR can pass it on out of
+    // band. It is shown once, to the person who just created the employee.
     return { sent: false, notConfigured: true, status, reason: status, link, expiresAt };
   }
 
-  const sender = await senderIdentity(actingUser);
+  // AN ACCOUNT MAIL COMES FROM THE COMPANY, NOT FROM A COLLEAGUE.
+  //
+  // It used to go out as the acting HR user — header From "Nikhil Joshi"
+  // <nikhil@…> — because that is right for a CANDIDATE message, where a
+  // named recruiter is the point. It is wrong here: the new joiner has never
+  // met Nikhil, and the mail is from the company. So this one is sent from
+  // the configured mailbox with no display name at all — plain hr@tmlink.in.
   const result = await sendMail({
     to: employee.email,
-    subject: `${companyName} — your sign-in details`,
-    text: body({ employee, actingName: sender.senderName, link, expiresAt, companyName }),
-    senderEmail: sender.senderEmail,
-    senderName: sender.senderName,
+    subject: given ? `Welcome to ${companyName} HRMS` : `${companyName} — your sign-in details`,
+    text: given
+      ? welcomeBody({ employee, password: given, signInUrl: appBaseUrl(req), companyName })
+      : body({ employee, actingName: null, link, expiresAt, companyName }),
+    useEmployeeFrom: false,
+    fromName: '',
   });
 
   if (result.ok) {
-    const status = `Sent to ${employee.email}${sender.senderEmail ? ` from ${sender.senderEmail}` : ''}`;
+    const status = `Sent to ${employee.email}${given ? ' (welcome mail with password)' : ' (set-password link)'}`;
     await prisma.employee.update({
       where: { id: employee.id },
       data: { credentialsSentStatus: status, credentialsSentAt: new Date() },
     });
-    return { sent: true, status, providerRef: result.providerRef, expiresAt, senderEmail: sender.senderEmail };
+    return { sent: true, status, providerRef: result.providerRef, expiresAt };
   }
 
   const status = `Failed: ${result.error}`.slice(0, 480);

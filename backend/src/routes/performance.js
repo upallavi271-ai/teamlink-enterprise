@@ -29,7 +29,12 @@ router.use(requireAuth);
 
 
 router.get('/', async (req, res) => {
-  const where = { ...employeeRecordWhere(req.user) };
+  // Scope, OR being named on the recommendation's own chain.
+  const scoped = employeeRecordWhere(req.user);
+  const onMyChain = await chain.participantIds(WF_REWARD, req.user.id);
+  const where = Object.keys(scoped).length
+    ? { OR: onMyChain.length ? [scoped, { id: { in: onMyChain } }] : [scoped] }
+    : {};
   if (req.query.employeeId) where.employeeId = req.query.employeeId;
   const reviews = await prisma.performanceReview.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' } });
   res.json(await chain.decorate(WF_REWARD, reviews));

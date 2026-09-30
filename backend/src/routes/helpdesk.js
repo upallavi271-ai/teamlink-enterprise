@@ -192,7 +192,12 @@ router.patch('/:id/csat', async (req, res) => {
 // ---- Dashboard, reports & analytics ----
 
 router.get('/analytics', requirePerm(null, 'hrms', 'Employee Services', 'export'), async (req, res) => {
-  const tickets = await prisma.employeeRecord.findMany({ where: { type: 'HELPDESK' }, include: { employee: true } });
+  // hrms-24 §1 — ?range=…|from&to narrows to tickets RAISED inside the range;
+  // no range (or All Time) is every ticket on file, as before.
+  const period = require('../utils/dateRange').optionalFromQuery(req, res);
+  if (period === false) return;
+  const raised = period ? { createdAt: require('../utils/dateRange').dateTimeIn(period) } : {};
+  const tickets = await prisma.employeeRecord.findMany({ where: { type: 'HELPDESK', ...raised }, include: { employee: true } });
   const agents = await prisma.employee.findMany({ where: { id: { in: tickets.map((t) => t.assignedTo).filter(Boolean) } } });
   const nameOf = Object.fromEntries(agents.map((a) => [a.id, a.name]));
 
@@ -211,6 +216,7 @@ router.get('/analytics', requirePerm(null, 'hrms', 'Employee Services', 'export'
   });
 
   res.json({
+    period,
     kpis: {
       total: tickets.length,
       open: tickets.filter((t) => t.status === 'Open').length,

@@ -1,0 +1,15 @@
+/* Global search (spec §24). Scoped under .srch-page. */
+.srch-page .srch-summary { margin: 4px 0 12px; font-size: 13px; }
+.srch-page .srch-summary a { color: var(--navy); font-weight: 600; text-decoration: none; }
+.srch-page .srch-summary a:hover { text-decoration: underline; }
+.srch-page .srch-summary a.srch-zero { color: var(--ink-soft); font-weight: 400; }
+.srch-page .srch-dot { color: var(--ink-faint, #9aa3b2); }
+.srch-page .srch-n { color: var(--ink-soft); font-weight: 500; }
+.srch-page .srch-more { font-weight: 400; }
+.srch-page .srch-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.srch-page .srch-row:last-child { border-bottom: none; }
+.srch-page .srch-main { font-weight: 500; }
+.srch-page .srch-group { scroll-margin-top: 70px; }
+.srch-page .srch-hint { padding: 8px 2px; }
+.srch-page .srch-type { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--navy); background: var(--navy-tint, #eef3fb); border-radius: 4px; padding: 1px 6px; }
+.srch-page .srch-code { font-size: 11.5px; color: var(--ink-soft); font-family: var(--font-mono, monospace); }

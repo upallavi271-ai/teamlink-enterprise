@@ -1,14 +1,22 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
-const { requireAuth, requirePerm } = require('../middleware/auth');
+const { requireAuth, requirePerm, can: canPerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { strengthError, passwordEventData, passwordStatusOf } = require('../utils/passwordPolicy');
 const {
   ROLE_FEATURE_ACTIONS, ROLE_ACCESS_MODULES, CATALOG_ROLES, ROLE_SCOPE_DESC,
   PRODUCTS, PRODUCT_OF_MODULE, productKeyOf, NO_ROLE,
-  moduleById, sanitizeFeatures,
+  moduleById, sanitizeFeatures, featureInfoOf,
 } = require('../utils/roleAccess');
-const { mergeAccess, invalidateRoleAccess } = require('../utils/permissions');
+const {
+  mergeAccess, invalidateRoleAccess, accessFor, viewOnlyLocksFor,
+} = require('../utils/permissions');
+const {
+  MATRIX_ROWS, MATRIX_ACTIONS, SCOPE_LEVELS, SCOPE_LEVEL_LABEL, SCOPE_ALIAS, BEHAVES_LIKE_ATS,
+  cleanMatrix, productsOfMatrix, engineRowsFor, aiRowFor, matrixFromRole, listRoles, roleByCode, isKnownRole,
+  isAssignableRole, newRoleCode, insertRole, updateRole, holdersOf,
+} = require('../utils/roleRegistry');
 const { scopeDepartments: scopeDepartmentsRaw, accountsGlobal } = require('../utils/scope');
 
 // The department picker's scope. Same rule as everywhere else, with the one
@@ -40,6 +48,7 @@ const { invalidateDesignationMap, normaliseMapping } = require('../utils/identit
 const {
   ALL_ROLES, ATS_ROLES, productAccessOf, scopeLabelOf,
   designationRows, defaultProductAccessByRole,
+  productRolesForDesignation, syncLoginToEmployee,
 } = require('../utils/employeeAdmin');
 const {
   INTEGRATION_CATALOG, INTEGRATION_GROUPS, SYNC_ENTITIES, ORG_STRUCTURE_DEFAULT,
@@ -47,6 +56,7 @@ const {
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
 const { publicValuesFor, writeValues, recordEvent } = require('../utils/integrationStore');
+const bio = require('../utils/biometricDevice');
 const { secretsConfigured, ENV_VAR: SECRET_ENV_VAR, NO_KEY_MESSAGE } = require('../utils/secrets');
 const mailer = require('../utils/mailer');
 const mailWorker = require('../utils/mailWorker');
@@ -79,6 +89,24 @@ const USER_STATUSES = ['Active', 'Inactive', 'Suspended'];
 // designation grants.
 
 // Normalises the product / role / scope half of a Users-screen payload.
+// A product role must be a role on the registry (system or custom), and a
+// newly GIVEN custom role must be Active. An inactive custom role a login
+// already holds stays valid (it keeps working until reassigned).
+async function productRoleError(body, existing = null) {
+  const b = body || {};
+  const pr = b.productRoles || {};
+  const wanted = [['hrms', b.hrmsRole ?? pr.hrms], ['ats', b.atsRole ?? pr.ats], ['accounts', b.accountsRole ?? pr.accounts]];
+  for (const [product, code] of wanted) {
+    if (code === undefined || code === null || code === '' || code === NO_ROLE) continue;
+    const held = existing && existing[`${product}Role`] === code;
+    // eslint-disable-next-line no-await-in-loop
+    if (!(held ? await isKnownRole(code) : await isAssignableRole(code))) {
+      return `"${code}" is not an active role for ${product.toUpperCase()}.`;
+    }
+  }
+  return null;
+}
+
 function accessPatch(body) {
   const data = {};
   const p = body.products || {};
@@ -156,6 +184,8 @@ async function shapeUser(user) {
     status: user.status || 'Active',
     employeeId: emp ? emp.employeeCode : null,
     employeeRecordId: emp ? emp.id : null,
+    // The HR side of the person — an exited employee can still hold an Active login.
+    employmentStatus: emp ? emp.employmentStatus : null,
     department: emp?.department || user.atsDepartment || null,
     designation: emp?.designation || null,
     branch: user.branch || emp?.branch || emp?.location || null,
@@ -167,6 +197,9 @@ async function shapeUser(user) {
     assignedClients: [...new Set(clientNames)],
     assignedRequirements: requirements.length,
     lastLoginAt: user.lastLoginAt,
+    // Password Set / Changed · date / Reset Required, and Locked / Active —
+    // flags and dates only, never the password (hrms-24 §12).
+    passwordStatus: passwordStatusOf(user),
     createdAt: user.createdAt,
   };
 }
@@ -195,13 +228,41 @@ router.post('/users', requirePerm(null, 'administration', 'Users', 'create'), as
   if (!ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
   if (status && !USER_STATUSES.includes(status)) return res.status(400).json({ error: 'Unknown status' });
   if (role === 'CLIENT' && !clientId) return res.status(400).json({ error: 'A Client login must be tied to one client' });
+  { const bad = await productRoleError(req.body); if (bad) return res.status(400).json({ error: bad }); }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) return res.status(409).json({ error: 'That email already has a login' });
+  // ONE PERSON, ONE LOGIN — checked BEFORE anything is written. Case-
+  // insensitive, because "Kiran@x" and "kiran@x" are the same mailbox and
+  // SQLite's = is case-sensitive.
+  const norm = String(email).trim().toLowerCase();
+  const [sameLogin] = await prisma.$queryRaw`SELECT id FROM User WHERE lower(trim(email)) = ${norm} LIMIT 1`;
+  if (sameLogin) return res.status(409).json({ error: 'That email already has a login' });
+  let linkEmployee = null;
+  if (employeeId) {
+    linkEmployee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    if (!linkEmployee) return res.status(404).json({ error: 'Employee not found' });
+    if (linkEmployee.userId) return res.status(409).json({ error: 'That employee already has a login' });
+  }
+  // An EMPLOYEE record with this email is the same person. A second login for
+  // them (e.g. a separate "recruiter" account) is exactly what the one-user
+  // model forbids: give the ATS role to their existing login on this screen,
+  // or pick the employee here so this login is linked to them.
+  if (!['CLIENT', 'CANDIDATE'].includes(role)) {
+    const [emp] = await prisma.$queryRaw`SELECT id, userId, name, employeeCode FROM Employee WHERE lower(trim(email)) = ${norm} LIMIT 1`;
+    if (emp && emp.id !== employeeId) {
+      return res.status(409).json({
+        error: emp.userId
+          ? `${emp.name} (${emp.employeeCode}) already has a login. Add the ATS / Accounts role to that login instead of creating a second one.`
+          : `That email belongs to employee ${emp.name} (${emp.employeeCode}). Select that employee so the login is linked to them.`,
+      });
+    }
+  }
 
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({
     data: {
+      // The administrator typed this first password, so its owner must
+      // change it (hrms-24 §12).
+      ...passwordEventData('initial'),
       name, email, passwordHash, role, atsDepartment, clientId,
       branch, team, username: username || email, status: status || 'Active',
       ...accessPatch(req.body),
@@ -209,11 +270,9 @@ router.post('/users', requirePerm(null, 'administration', 'Users', 'create'), as
   });
 
   // Access is granted TO an existing employee — never a second identity.
-  if (employeeId) {
-    const emp = await prisma.employee.findUnique({ where: { id: employeeId } });
-    if (!emp) return res.status(404).json({ error: 'Employee not found' });
-    if (emp.userId) return res.status(409).json({ error: 'That employee already has a login' });
-    await prisma.employee.update({ where: { id: employeeId }, data: { userId: user.id } });
+  // (Validated above, before the login was created.)
+  if (linkEmployee) {
+    await prisma.employee.update({ where: { id: linkEmployee.id }, data: { userId: user.id } });
   }
 
   await logAudit({ userId: req.user.id, action: 'User created', entity: 'User', entityId: user.id, toValue: `${role} · ${user.status}` });
@@ -226,6 +285,7 @@ router.put('/users/:id', requirePerm(null, 'administration', 'Users', 'edit'), a
   if (status && !USER_STATUSES.includes(status)) return res.status(400).json({ error: 'Unknown status' });
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'User not found' });
+  { const bad = await productRoleError(req.body, existing); if (bad) return res.status(400).json({ error: bad }); }
 
   const user = await prisma.user.update({
     where: { id: req.params.id },
@@ -257,13 +317,24 @@ router.post('/users/:id/toggle-status', requirePerm(null, 'administration', 'Use
 
 router.post('/users/:id/reset-password', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
   const { password } = req.body;
-  if (!password || String(password).length < 6) return res.status(400).json({ error: 'A password of at least 6 characters is required' });
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'User not found' });
-  await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash: await bcrypt.hash(String(password), 10) } });
+  const weak = strengthError(password, { email: existing.email, name: existing.name });
+  if (weak) return res.status(400).json({ error: weak });
+  // The new hash is live at once; the owner must change it at their next
+  // sign-in (passwordResetRequired), any lock is lifted and any pending
+  // set-password link stops working.
+  await prisma.user.update({
+    where: { id: req.params.id },
+    data: {
+      passwordHash: await bcrypt.hash(String(password), 10),
+      ...passwordEventData('admin'),
+      setPasswordTokenHash: null, setPasswordExpiresAt: null,
+    },
+  });
   // The new password is never echoed back or logged.
-  await logAudit({ userId: req.user.id, action: `Password reset for ${existing.name}`, entity: 'User', entityId: existing.id, toValue: 'Reset' });
-  res.json({ ok: true });
+  await logAudit({ userId: req.user.id, action: `Password reset for ${existing.name}`, entity: 'User', entityId: existing.id, toValue: 'Reset — change required at next sign-in' });
+  res.json({ ok: true, passwordStatus: passwordStatusOf(await prisma.user.findUnique({ where: { id: existing.id } })) });
 });
 
 // ---- Add Employee and the email one-time code that gates it ----
@@ -342,8 +413,16 @@ router.get('/role-catalog', requirePerm(null, 'administration', 'Role Catalog', 
     prisma.roleAccess.findMany(),
   ]);
   const countFor = (role) => counts.find((c) => c.role === role)?._count._all || 0;
+  // ROLES ARE DATA: the system roles and every custom role (utils/roleRegistry.js).
+  const registry = await listRoles();
+  const customCounts = {};
+  for (const r of registry.filter((x) => !x.isSystem)) {
+    // eslint-disable-next-line no-await-in-loop
+    customCounts[r.code] = await holdersOf(r.code);
+  }
 
-  res.json(CATALOG_ROLES.map((role) => {
+  res.json(registry.map((reg) => {
+    const role = reg.code;
     const modules = ROLE_ACCESS_MODULES.map((m) => {
       const merged = mergeAccess(role, m.id, ...rowsFor(rows, role, m.id));
       return {
@@ -359,8 +438,16 @@ router.get('/role-catalog', requirePerm(null, 'administration', 'Role Catalog', 
     const enabled = modules.filter((m) => m.enabled);
     return {
       role,
-      users: countFor(role),
-      scope: ROLE_SCOPE_DESC[role] || '—',
+      name: reg.name,
+      isSystem: reg.isSystem,
+      status: reg.status,
+      description: reg.description,
+      scopeLevel: reg.scopeLevel,
+      behavesLike: reg.behavesLike,
+      permissions: reg.permissions,
+      grants: reg.products,
+      users: reg.isSystem ? countFor(role) : (customCounts[role] || 0),
+      scope: ROLE_SCOPE_DESC[role] || reg.scopeDesc || '—',
       // Which products this role reaches at all — the top level of
       // Product → Module → Feature → Action.
       products: PRODUCTS.map((p) => p.id).filter((p) => enabled.some((m) => m.product === p)),
@@ -382,15 +469,185 @@ router.get('/role-catalog/modules', requirePerm(null, 'administration', 'Role Ca
     actions: ROLE_FEATURE_ACTIONS,
     // PRODUCT → MODULE → FEATURE → ACTION, in that order, as data.
     products: PRODUCTS,
-    modules: ROLE_ACCESS_MODULES.map((m) => ({ ...m, product: productOf(m.id) })),
+    modules: ROLE_ACCESS_MODULES.map((m) => ({ ...m, product: productOf(m.id), featureInfo: featureInfoOf(m.id) })),
     productOfModule: PRODUCT_OF_MODULE,
   });
+});
+
+// ---- Roles as data (Role & Permission Management) ----
+//
+// "When Super Admin creates a role it must automatically become available
+// throughout the application. Do NOT hardcode the role dropdown." Every role
+// picker reads GET /admin/roles; Role Catalog adds custom roles with their own
+// permission matrix (deny by default). See utils/roleRegistry.js.
+const MANAGE_ROLES = [
+  requirePerm(null, 'administration', 'Role Catalog', 'configure'),
+  requirePerm(null, 'administration', 'Users', 'configure'),
+];
+
+// The role list for dropdowns. Any screen that assigns or filters by role
+// reads this: Employee Management (HR desk, leads), Users, Role Catalog.
+router.get('/roles', async (req, res) => {
+  const [em, users, catalog] = await Promise.all([
+    canPerm(req.user, null, 'hrms', 'Employee Management', 'view'),
+    canPerm(req.user, null, 'administration', 'Users', 'view'),
+    canPerm(req.user, null, 'administration', 'Role Catalog', 'view'),
+  ]);
+  if (!em && !users && !catalog) return res.status(403).json(DENIED_ROLES);
+  const all = await listRoles();
+  const list = req.query.all === '1' ? all : all.filter((r) => r.active || r.isSystem);
+  res.json(list.map((r) => ({
+    code: r.code, name: r.name, description: r.description, status: r.status, active: r.active,
+    isSystem: r.isSystem, external: r.external, scopeLevel: r.scopeLevel, products: r.products,
+  })));
+});
+const DENIED_ROLES = { error: "This action isn't included in your role's permissions" };
+
+// What the Add / Edit Role form needs.
+router.get('/role-catalog/meta', requirePerm(null, 'administration', 'Role Catalog', 'view'), async (req, res) => {
+  const [mayConfigure, mayUsers] = await Promise.all([
+    canPerm(req.user, null, 'administration', 'Role Catalog', 'configure'),
+    canPerm(req.user, null, 'administration', 'Users', 'configure'),
+  ]);
+  res.json({
+    rows: MATRIX_ROWS.map((r) => ({ id: r.id, label: r.label, product: r.product })),
+    actions: MATRIX_ACTIONS,
+    scopeLevels: SCOPE_LEVELS.map((id) => ({ id, label: SCOPE_LEVEL_LABEL[id], alias: SCOPE_ALIAS[id] })),
+    behavesLikeAts: BEHAVES_LIKE_ATS,
+    templates: (await listRoles()).filter((r) => !r.external && r.code !== 'SUPER_ADMIN').map((r) => ({ code: r.code, name: r.name })),
+    canManage: !!(mayConfigure && mayUsers),
+  });
+});
+
+// A role's current access as the simple matrix — the "starting template".
+router.get('/role-catalog/template/:role', requirePerm(null, 'administration', 'Role Catalog', 'view'), async (req, res) => {
+  const role = await roleByCode(req.params.role);
+  if (!role) return res.status(404).json({ error: 'Unknown role' });
+  res.json({ code: role.code, matrix: await matrixFromRole(role.code, accessFor), scopeLevel: role.scopeLevel });
+});
+
+function parseRoleBody(body, { creating }) {
+  const b = body || {};
+  const name = String(b.name || '').trim().replace(/\s+/g, ' ');
+  if (creating || b.name !== undefined) {
+    if (!name) return { error: 'Enter the role name.' };
+    if (name.length > 60) return { error: 'Keep the role name to 60 characters or fewer.' };
+  }
+  const status = b.status === undefined ? undefined : (b.status === 'Inactive' ? 'Inactive' : 'Active');
+  const scopeLevel = b.scopeLevel === undefined ? undefined : String(b.scopeLevel).toUpperCase();
+  if (scopeLevel !== undefined && !SCOPE_LEVELS.includes(scopeLevel)) return { error: 'Choose a data scope: Own records, Team, Department or All.' };
+  const behavesAts = b.behavesLike && b.behavesLike.ats ? String(b.behavesLike.ats).toUpperCase() : null;
+  if (behavesAts && !BEHAVES_LIKE_ATS.includes(behavesAts)) return { error: `"${b.behavesLike.ats}" is not an ATS role a custom role can behave like.` };
+  const permissions = b.permissions === undefined ? undefined : cleanMatrix(b.permissions);
+  if (permissions !== undefined) {
+    const products = productsOfMatrix(permissions);
+    if (!products.hrms && !products.ats && !products.accounts) {
+      return { error: 'Tick at least one permission in an HRMS, Recruitment, Clients or Accounts row — otherwise the role grants nothing an employee can use.' };
+    }
+  }
+  return {
+    data: {
+      ...(creating || b.name !== undefined ? { name } : {}),
+      ...(b.description !== undefined ? { description: String(b.description || '').trim().slice(0, 300) || null } : {}),
+      ...(status !== undefined ? { status } : {}),
+      ...(scopeLevel !== undefined ? { scopeLevel } : {}),
+      ...(b.behavesLike !== undefined ? { behavesLike: behavesAts ? { ats: behavesAts } : {} } : {}),
+      ...(permissions !== undefined ? { permissions, products: productsOfMatrix(permissions) } : {}),
+    },
+  };
+}
+
+// Write a role's matrix into the engine's RoleAccess rows. Every module the
+// matrix covers is rewritten (so un-ticking revokes); other modules
+// (Dashboard, Administration) are left to Role Catalog -> Edit Access.
+async function writeRoleMatrix(code, matrix) {
+  for (const row of engineRowsFor(matrix)) {
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.roleAccess.upsert({
+      where: { role_product_moduleId: { role: code, product: row.product, moduleId: row.moduleId } },
+      create: { role: code, product: row.product, moduleId: row.moduleId, moduleEnabled: row.moduleEnabled, features: JSON.stringify(row.features) },
+      update: { moduleEnabled: row.moduleEnabled, features: JSON.stringify(row.features) },
+    });
+  }
+  invalidateRoleAccess(code);
+}
+
+const matrixSummary = (m) => Object.entries(m || {}).map(([k, v]) => `${k}: ${v.join('/')}`).join('; ') || 'none';
+
+router.post('/role-catalog/roles', ...MANAGE_ROLES, async (req, res) => {
+  const parsed = parseRoleBody(req.body, { creating: true });
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const { data } = parsed;
+  if (!data.permissions) return res.status(400).json({ error: 'Tick the permissions this role grants.' });
+  const all = await listRoles();
+  if (all.some((r) => r.name.toLowerCase() === data.name.toLowerCase() || r.code.toLowerCase() === data.name.toLowerCase())) {
+    return res.status(409).json({ error: `A role called "${data.name}" already exists.` });
+  }
+  // Company-wide ATS / Accounts reach is Admin-like; only a Super Admin may
+  // hand that out.
+  if (data.scopeLevel === 'ALL' && req.user.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Only a Super Admin may create a role with company-wide (All) scope.' });
+  }
+  const code = await newRoleCode(data.name);
+  const role = await insertRole({ ...data, code, scopeLevel: data.scopeLevel || 'OWN', createdById: req.user.id });
+  await writeRoleMatrix(code, data.permissions);
+  // AI Assistant & Agent: a new custom role starts with the same defaults a
+  // system role has (utils/roleRegistry.js aiRowFor); Edit Access changes it.
+  const ai = aiRowFor(data.permissions);
+  await prisma.roleAccess.upsert({
+    where: { role_product_moduleId: { role: code, product: ai.product, moduleId: ai.moduleId } },
+    create: { role: code, product: ai.product, moduleId: ai.moduleId, moduleEnabled: ai.moduleEnabled, features: JSON.stringify(ai.features) },
+    update: {},
+  });
+  invalidateRoleAccess(code);
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Role created', entity: 'Role', entityId: code,
+    toValue: `${role.name} · ${role.status} · scope ${role.scopeLevel} · ${matrixSummary(role.permissions)}`,
+  });
+  res.status(201).json(role);
+});
+
+router.put('/role-catalog/roles/:code', ...MANAGE_ROLES, async (req, res) => {
+  const existing = await roleByCode(req.params.code);
+  if (!existing) return res.status(404).json({ error: 'Unknown role' });
+  if (existing.isSystem) {
+    return res.status(409).json({ error: 'A system role is edited on Edit Access; its name and status are fixed.' });
+  }
+  const parsed = parseRoleBody(req.body, { creating: false });
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const { data } = parsed;
+  if (data.name && data.name !== existing.name) {
+    const all = await listRoles();
+    if (all.some((r) => r.code !== existing.code && r.name.toLowerCase() === data.name.toLowerCase())) {
+      return res.status(409).json({ error: `A role called "${data.name}" already exists.` });
+    }
+  }
+  if (data.scopeLevel === 'ALL' && existing.scopeLevel !== 'ALL' && req.user.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Only a Super Admin may give a role company-wide (All) scope.' });
+  }
+  const role = await updateRole(existing.code, data);
+  if (data.permissions) await writeRoleMatrix(existing.code, data.permissions);
+  const holders = await holdersOf(existing.code);
+  const changes = [];
+  if (data.name && data.name !== existing.name) changes.push(`name ${existing.name} -> ${data.name}`);
+  if (data.status && data.status !== existing.status) changes.push(`status ${existing.status} -> ${data.status}`);
+  if (data.scopeLevel && data.scopeLevel !== existing.scopeLevel) changes.push(`scope ${existing.scopeLevel} -> ${data.scopeLevel}`);
+  if (data.permissions) changes.push(`permissions: ${matrixSummary(data.permissions)}`);
+  if (data.description !== undefined && data.description !== existing.description) changes.push('description');
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: data.status && data.status !== existing.status ? `Role ${data.status === 'Inactive' ? 'deactivated' : 'activated'}` : 'Role edited',
+    entity: 'Role', entityId: existing.code, fromValue: `${existing.name} · ${existing.status}`,
+    toValue: changes.join('; ') || 'No change',
+  });
+  // Holders keep working while it is inactive; the UI warns with this count.
+  res.json({ ...role, holders });
 });
 
 // One role's full matrix: every module, every feature, every action.
 router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Role Catalog', 'view'), async (req, res) => {
   const { role } = req.params;
-  if (!CATALOG_ROLES.includes(role)) return res.status(404).json({ error: 'Unknown role' });
+  if (!(await isKnownRole(role))) return res.status(404).json({ error: 'Unknown role' });
   const rows = await prisma.roleAccess.findMany({ where: { role } });
   res.json({
     role,
@@ -402,6 +659,11 @@ router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Ro
       label: m.label,
       product: productOf(m.id),
       featureNames: m.features,
+      // HRMS / Accounts modules: what each feature drives and whether an
+      // endpoint checks it by name (utils/roleAccess.js SPLIT_MODULES).
+      featureInfo: featureInfoOf(m.id),
+      // Manager / Assistant Manager: actions the server ignores (§3/§4).
+      locked: viewOnlyLocksFor(role, m.id),
       ...mergeAccess(role, m.id, ...rowsFor(rows, role, m.id)),
     })),
   });
@@ -427,7 +689,7 @@ async function upsertRoleAccess(role, moduleId, patch) {
 // Turn a whole module on or off for a role.
 router.put('/role-catalog/:role/modules/:moduleId', requirePerm(null, 'administration', 'Role Catalog', 'configure'), async (req, res) => {
   const { role, moduleId } = req.params;
-  if (!CATALOG_ROLES.includes(role)) return res.status(404).json({ error: 'Unknown role' });
+  if (!(await isKnownRole(role))) return res.status(404).json({ error: 'Unknown role' });
   const mod = moduleById(moduleId);
   if (!mod) return res.status(404).json({ error: 'Unknown module' });
   if (typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
@@ -444,7 +706,7 @@ router.put('/role-catalog/:role/modules/:moduleId', requirePerm(null, 'administr
 // Save one module's feature x action grid for a role.
 router.put('/role-catalog/:role/modules/:moduleId/features', requirePerm(null, 'administration', 'Role Catalog', 'configure'), async (req, res) => {
   const { role, moduleId } = req.params;
-  if (!CATALOG_ROLES.includes(role)) return res.status(404).json({ error: 'Unknown role' });
+  if (!(await isKnownRole(role))) return res.status(404).json({ error: 'Unknown role' });
   const mod = moduleById(moduleId);
   if (!mod) return res.status(404).json({ error: 'Unknown module' });
   if (!req.body.features || typeof req.body.features !== 'object') {
@@ -582,10 +844,65 @@ router.put('/company', requirePerm(null, 'administration', 'Company Setup', 'edi
 });
 
 // ---- Notifications ----
+// EACH PERSON SEES THEIR OWN. Every notification is addressed to a user
+// (utils/notify.js drops any without one); a row with no owner is not
+// "for everyone" — it is an orphan, and showing it to every login is how one
+// requirement's pipeline news reached people who have nothing to do with it.
+// Two modes on one path, so the header bell (NotificationBell.jsx) keeps its
+// bare array of the latest 30:
+//   no ?page          -> [notification]   (unchanged)
+//   ?page=N           -> { rows, total, page, pageSize, channels }  — the
+//                        Notifications screen: paged + filtered on the server
+//                        (q, channel, from/to ISO dates). Still the caller's
+//                        OWN rows only; filters can only narrow that.
+const isoDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+const dayAfter = (s) => new Date(new Date(`${s}T00:00:00.000Z`).getTime() + 86400000);
+function pageArgs(q, def = 25) {
+  const pageSize = Math.min(200, Math.max(1, parseInt(q.pageSize, 10) || def));
+  const page = Math.max(1, parseInt(q.page, 10) || 1);
+  return { page, pageSize, skip: (page - 1) * pageSize, take: pageSize };
+}
+function createdAtRange(q) {
+  const range = {};
+  if (isoDay(q.from)) range.gte = new Date(`${q.from}T00:00:00.000Z`);
+  if (isoDay(q.to)) range.lt = dayAfter(q.to);
+  return Object.keys(range).length ? range : null;
+}
+const shapeNotification = (n) => ({
+  ...n,
+  recipient: n.recipient || n.user?.name || 'Everyone',
+  channel: n.channel || 'In-App',
+  status: n.status || (n.read ? 'Read' : 'Delivered'),
+});
+
 router.get('/notifications', async (req, res) => {
+  if (req.query.page !== undefined) {
+    const own = { userId: req.user.id };
+    const and = [own];
+    const q = String(req.query.q || '').trim();
+    if (q) and.push({ OR: [{ title: { contains: q } }, { message: { contains: q } }, { recipient: { contains: q } }] });
+    const ch = String(req.query.channel || '');
+    // Rows written before the channel column existed are In-App.
+    if (ch) and.push(ch === 'In-App' ? { OR: [{ channel: 'In-App' }, { channel: null }] } : { channel: ch });
+    const range = createdAtRange(req.query);
+    if (range) and.push({ createdAt: range });
+    const where = { AND: and };
+    const { page, pageSize, skip, take } = pageArgs(req.query);
+    const [rows, total, chans, unread] = await Promise.all([
+      prisma.notification.findMany({
+        where, include: { user: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, skip, take,
+      }),
+      prisma.notification.count({ where }),
+      prisma.notification.groupBy({ by: ['channel'], where: own }),
+      prisma.notification.count({ where: { ...own, read: false } }),
+    ]);
+    const channels = [...new Set(chans.map((c) => c.channel || 'In-App'))].sort();
+    return res.json({ rows: rows.map(shapeNotification), total, page, pageSize, channels, unread });
+  }
   const notifications = await prisma.notification.findMany({
-    where: { OR: [{ userId: req.user.id }, { userId: null }] },
-    include: { user: true },
+    where: { userId: req.user.id },
+    // Name only — never the password hash (hrms-24 §12).
+    include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 30,
   });
@@ -605,7 +922,7 @@ router.patch('/notifications/:id/read', async (req, res) => {
   // utils/notify.js), so only their owner may mark one read. userId null is a
   // broadcast, readable by anyone.
   const existing = await prisma.notification.findUnique({ where: { id: req.params.id } });
-  if (!existing || (existing.userId && existing.userId !== req.user.id)) {
+  if (!existing || existing.userId !== req.user.id) {
     return res.status(404).json({ error: 'Notification not found' });
   }
   const notification = await prisma.notification.update({ where: { id: req.params.id }, data: { read: true } });
@@ -614,15 +931,75 @@ router.patch('/notifications/:id/read', async (req, res) => {
 
 router.post('/notifications/read-all', async (req, res) => {
   await prisma.notification.updateMany({
-    where: { read: false, OR: [{ userId: req.user.id }, { userId: null }] },
+    where: { read: false, userId: req.user.id },
     data: { read: true },
   });
   res.json({ ok: true });
 });
 
 // ---- Audit logs ----
+// Two modes on one path:
+//   no ?page    -> the latest 200 rows as a bare array (unchanged)
+//   ?page=N     -> { rows, total, page, pageSize, facets } — the Audit Logs
+//                  screen, paged and filtered on the server (4,000+ rows):
+//                  q (action / entity / record id / values / field / actor),
+//                  userId ('__system' = no user), action, entity,
+//                  approvalStatus, from / to (ISO dates), sort (new | old).
+//                  `facets` carries the option lists for the filter bar.
+const AUDIT_USER = { select: { id: true, name: true, email: true, role: true } };
 router.get('/audit', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res) => {
-  const logs = await prisma.auditLog.findMany({ include: { user: true }, orderBy: { createdAt: 'desc' }, take: 200 });
+  if (req.query.page !== undefined) {
+    const and = [];
+    const q = String(req.query.q || '').trim();
+    if (q) {
+      and.push({
+        OR: [
+          { action: { contains: q } }, { entity: { contains: q } }, { entityId: { contains: q } },
+          { fromValue: { contains: q } }, { toValue: { contains: q } }, { fieldLabel: { contains: q } },
+          { field: { contains: q } }, { reason: { contains: q } }, { actorName: { contains: q } },
+          { user: { is: { name: { contains: q } } } },
+        ],
+      });
+    }
+    const uid = String(req.query.userId || '');
+    if (uid) and.push({ userId: uid === '__system' ? null : uid });
+    if (req.query.action) and.push({ action: String(req.query.action) });
+    if (req.query.entity) and.push({ entity: String(req.query.entity) });
+    if (req.query.approvalStatus) and.push({ approvalStatus: String(req.query.approvalStatus) });
+    const range = createdAtRange(req.query);
+    if (range) and.push({ createdAt: range });
+    const where = and.length ? { AND: and } : {};
+    const { page, pageSize, skip, take } = pageArgs(req.query);
+    const orderBy = { createdAt: req.query.sort === 'old' ? 'asc' : 'desc' };
+    const [rows, total, byUser, byAction, byEntity, byApproval] = await Promise.all([
+      prisma.auditLog.findMany({ where, include: { user: AUDIT_USER }, orderBy, skip, take }),
+      prisma.auditLog.count({ where }),
+      prisma.auditLog.groupBy({ by: ['userId'] }),
+      prisma.auditLog.groupBy({ by: ['action'] }),
+      prisma.auditLog.groupBy({ by: ['entity'] }),
+      prisma.auditLog.groupBy({ by: ['approvalStatus'] }),
+    ]);
+    const ids = byUser.map((u) => u.userId).filter(Boolean);
+    const people = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : [];
+    const users = people.map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label));
+    if (byUser.some((u) => !u.userId)) users.push({ value: '__system', label: 'System' });
+    const sorted = (list, key) => list.map((r) => r[key]).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    return res.json({
+      rows,
+      total,
+      page,
+      pageSize,
+      facets: {
+        users,
+        actions: sorted(byAction, 'action'),
+        entities: sorted(byEntity, 'entity'),
+        approvalStatuses: sorted(byApproval, 'approvalStatus'),
+      },
+    });
+  }
+  // The actor's name and email only. `user: true` sent every actor's bcrypt
+  // hash and set-password token hash to the browser (hrms-24 §12 audit).
+  const logs = await prisma.auditLog.findMany({ include: { user: AUDIT_USER }, orderBy: { createdAt: 'desc' }, take: 200 });
   res.json(logs);
 });
 
@@ -809,6 +1186,13 @@ async function jobPortalStats() {
 router.get('/integrations', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const rows = await prisma.integration.findMany();
   const channels = INTEGRATION_CATALOG.map((c) => shapeIntegration(c, rows.find((r) => r.id === c.id)));
+  // Biometric: the state is the device's heartbeat, never the stored flag.
+  const bioChannel = channels.find((c) => c.id === 'biometric');
+  if (bioChannel) {
+    const device = await firstDevice();
+    bioChannel.state = device ? bio.deviceState(device).state : 'Not Connected';
+    bioChannel.device = shapeDevice(device);
+  }
   res.json({
     groups: INTEGRATION_GROUPS,
     channels,
@@ -839,9 +1223,45 @@ router.get('/integrations/job-portal', requirePerm(null, 'administration', 'Inte
   });
 });
 
+// The Sync Logs table, paged and filtered on the server (additive — the
+// job-portal payload above still carries its latest 50 as `syncLog`):
+//   GET /integrations/job-portal/logs?status=&entity=&q=&from=&to=&page=&pageSize=
+//   -> { rows: [{ id, date, createdAt, entity, status, reason }], total, page, pageSize, entities, statuses }
+router.get('/integrations/job-portal/logs', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  const and = [];
+  if (req.query.status) and.push({ status: String(req.query.status) });
+  if (req.query.entity) and.push({ entity: String(req.query.entity) });
+  const q = String(req.query.q || '').trim();
+  if (q) and.push({ OR: [{ reason: { contains: q } }, { recordRef: { contains: q } }, { entity: { contains: q } }] });
+  const range = createdAtRange(req.query);
+  if (range) and.push({ createdAt: range });
+  const where = and.length ? { AND: and } : {};
+  const { page, pageSize, skip, take } = pageArgs(req.query);
+  const [rows, total, ents, stats] = await Promise.all([
+    prisma.syncLog.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }),
+    prisma.syncLog.count({ where }),
+    prisma.syncLog.groupBy({ by: ['entity'] }),
+    prisma.syncLog.groupBy({ by: ['status'] }),
+  ]);
+  res.json({
+    rows: rows.map((l) => ({
+      id: l.id, date: new Date(l.createdAt).toLocaleString(), createdAt: l.createdAt,
+      entity: l.entity, status: l.status, reason: l.reason,
+    })),
+    total,
+    page,
+    pageSize,
+    entities: ents.map((e) => e.entity).filter(Boolean).sort(),
+    statuses: stats.map((e) => e.status).filter(Boolean).sort(),
+  });
+});
+
 // Sync — for the Job Portal this really re-counts what has come across from
 // the public careers site and writes a log row. No external API is called.
 router.post('/integrations/job-portal/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  // The real two-way sync with the Job Portal app first (utils/jobPortalBridge.js),
+  // then the counts below re-read what has come across.
+  const portal = await require('../utils/jobPortalBridge').fullSync({ actor: req.user.name });
   const stats = await jobPortalStats();
   const synced = stats.candidates + stats.applications;
   const row = await integrationRow('jobportal');
@@ -862,7 +1282,7 @@ router.post('/integrations/job-portal/sync', requirePerm(null, 'administration',
       synced, failed: stats.failed, entities: (SYNC_ENTITIES.jobportal || []).join(', '),
     });
   await logAudit({ userId: req.user.id, action: 'Integration sync', entity: 'Integration', entityId: 'jobportal', toValue: `${synced} synced / ${stats.failed} failed` });
-  res.json({ ok: true, synced, failed: stats.failed, previousState: row.state });
+  res.json({ ok: true, synced, failed: stats.failed, previousState: row.state, portal });
 });
 
 router.post('/integrations/job-portal/log/:id/retry', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
@@ -876,14 +1296,217 @@ router.post('/integrations/job-portal/log/:id/retry', requirePerm(null, 'adminis
 router.get('/integrations/:id/history', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
-  const events = await prisma.integrationEvent.findMany({ where: { integrationId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 25 });
+  // ?limit (additive, default 25, max 200) lets the History modal filter a longer run.
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const events = await prisma.integrationEvent.findMany({ where: { integrationId: req.params.id }, orderBy: { createdAt: 'desc' }, take: limit });
   res.json({
     channel: channel.name,
+    live: LIVE_CHANNELS.includes(channel.id),
     history: events.map((e) => ({
       at: new Date(e.createdAt).toLocaleString(), action: e.action, by: e.by,
       result: e.result, synced: e.synced, failed: e.failed, entities: e.entities,
     })),
   });
+});
+
+/* --------------------------------------------------------------------------
+   BIOMETRIC DEVICE — REAL. The eSSL unit pushes to /iclock (routes/iclock.js);
+   utils/biometricDevice.js holds the protocol. One device is configured here.
+   Its status is read from lastSeenAt (the device's heartbeat) — never stored
+   as "Connected" by pressing a button.
+   -------------------------------------------------------------------------- */
+async function firstDevice() {
+  return prisma.biometricDevice.findFirst({ orderBy: { createdAt: 'asc' } });
+}
+
+function shapeDevice(d) {
+  if (!d) return null;
+  const st = bio.deviceState(d);
+  const { model } = bio.splitVendor(d.vendor);
+  return {
+    id: d.id, vendor: d.vendor, model, protocol: d.protocol, serialNumber: d.serialNumber,
+    endpoint: d.endpoint, port: d.port, status: d.status,
+    state: st.state, connected: st.connected,
+    lastSeenAt: d.lastSeenAt, lastSeenIp: d.lastSeenIp, lastRequest: d.lastRequest,
+    info: bio.parseInfo(d.deviceInfo),
+    punchesReceived: d.punchesReceived, lastPunchAt: d.lastPunchAt,
+    heartbeatWindowSeconds: Math.round(bio.HEARTBEAT_FRESH_MS / 1000),
+    updatedAt: d.updatedAt,
+  };
+}
+
+// Save & Connect for the biometric channel: validates and stores the device.
+async function saveBiometric(req, res, channel) {
+  const v = req.body.values || {};
+  const vendor = String(v.Vendor || '').trim().slice(0, 120);
+  const serialNumber = String(v.Serial || '').trim();
+  const endpoint = String(v.Endpoint || '').trim();
+  const status = String(v.Status || 'Active').trim();
+  const errors = [];
+  if (!vendor) errors.push('Vendor is required.');
+  if (!/^[A-Za-z0-9-]{4,40}$/.test(serialNumber)) errors.push('Serial must be the device serial number (letters and digits, e.g. NFZ8250204996).');
+  let url = null;
+  try { url = new URL(endpoint); } catch { url = null; }
+  if (!url || !/^https?:$/.test(url.protocol)) errors.push('Endpoint must be a full http:// or https:// address, e.g. http://72.61.233.104:8080/iclock.');
+  else if (!/\/iclock\/?$/i.test(url.pathname)) errors.push('Endpoint must end in /iclock — that is the path the device calls.');
+  if (!bio.DEVICE_STATUSES.includes(status)) errors.push(`Status must be one of: ${bio.DEVICE_STATUSES.join(', ')}.`);
+  if (errors.length) return res.status(400).json({ error: errors.join(' ') });
+
+  const before = await firstDevice();
+  const data = {
+    vendor, protocol: bio.splitVendor(vendor).protocol, serialNumber,
+    endpoint: endpoint.replace(/\/+$/, ''), port: bio.portOf(endpoint), status, updatedById: req.user.id,
+  };
+  let device;
+  if (before) {
+    // A different serial is a different device: its heartbeat starts over.
+    const reset = before.serialNumber !== serialNumber ? { lastSeenAt: null, lastSeenIp: null, lastRequest: null, deviceInfo: null, attlogStamp: null } : {};
+    device = await prisma.biometricDevice.update({ where: { id: before.id }, data: { ...data, ...reset } });
+  } else {
+    device = await prisma.biometricDevice.create({ data: { ...data, createdById: req.user.id } });
+  }
+  const written = await writeValues(channel.id, { Vendor: vendor, Serial: serialNumber, Endpoint: data.endpoint, Status: status });
+  const st = bio.deviceState(device);
+  await integrationRow(channel.id);
+  const row = await prisma.integration.update({
+    where: { id: channel.id },
+    data: { values: JSON.stringify(written.values), enabled: status === 'Active', connected: st.connected, state: st.state, connectedAt: new Date(), error: null },
+  });
+  await recordEvent(channel.id, { action: 'Connected', by: req.user.name, result: `Device ${serialNumber} saved — ${st.state}` });
+  await logAudit({
+    userId: req.user.id, action: 'Biometric device configured', entity: 'BiometricDevice', entityId: device.id,
+    fromValue: before ? `${before.vendor} · ${before.serialNumber} · ${before.endpoint} · ${before.status}` : null,
+    toValue: `${device.vendor} · ${device.serialNumber} · ${device.endpoint} · ${device.status}`,
+  });
+  return res.json({ ...shapeIntegration(channel, row), state: st.state, device: shapeDevice(device) });
+}
+
+async function setBiometricStatus(req, res, channel, status) {
+  const device = await firstDevice();
+  if (!device) return res.status(400).json({ error: 'Add the device first — open Configure for Biometric / Attendance Device.' });
+  const next = await prisma.biometricDevice.update({ where: { id: device.id }, data: { status, updatedById: req.user.id } });
+  const st = bio.deviceState(next);
+  await integrationRow(channel.id);
+  const row = await prisma.integration.update({ where: { id: channel.id }, data: { enabled: status === 'Active', connected: st.connected, state: st.state } });
+  await recordEvent(channel.id, { action: status === 'Active' ? 'Connected' : 'Disconnected', by: req.user.name, result: `Device ${status} — ${st.state}` });
+  await logAudit({ userId: req.user.id, action: `Biometric device ${status === 'Active' ? 'activated' : 'deactivated'}`, entity: 'BiometricDevice', entityId: device.id, fromValue: device.status, toValue: status });
+  return res.json({ ...shapeIntegration(channel, row), state: st.state, device: shapeDevice(next) });
+}
+
+// Device users whose PIN is EXACTLY an employee's code (e.g. PIN "TL473" and
+// employee TL473) where neither side is linked yet. Only an exact, case-
+// sensitive match is offered — nothing is guessed from names.
+async function codeMatches(device) {
+  if (!device) return [];
+  const [users, linked] = await Promise.all([
+    prisma.biometricDeviceUser.findMany({ where: { deviceSerial: device.serialNumber } }),
+    prisma.employee.findMany({ where: { biometricPin: { not: null } }, select: { biometricPin: true } }),
+  ]);
+  const linkedPins = new Set(linked.map((e) => e.biometricPin));
+  const open = users.filter((u) => !linkedPins.has(u.pin));
+  if (!open.length) return [];
+  const employees = await prisma.employee.findMany({
+    where: { employeeCode: { in: open.map((u) => u.pin) }, biometricPin: null },
+    select: { id: true, name: true, employeeCode: true, department: true },
+  });
+  const byCode = new Map(employees.map((e) => [e.employeeCode, e]));
+  return open
+    .filter((u) => byCode.has(u.pin))
+    .map((u) => {
+      const e = byCode.get(u.pin);
+      return { pin: u.pin, deviceName: u.name, employeeId: e.id, employeeName: e.name, employeeCode: e.employeeCode, department: e.department };
+    })
+    .sort((a, b) => a.pin.localeCompare(b.pin));
+}
+
+// The device card: live status, what came in, and PINs still waiting for an employee.
+router.get('/integrations/biometric/status', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  const device = await firstDevice();
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const [unmapped, users, mapped, recent, todayCount, total] = await Promise.all([
+    prisma.biometricPunchLog.groupBy({ by: ['pin'], where: { employeeId: null }, _count: { _all: true }, _max: { punchAt: true } }),
+    prisma.biometricDeviceUser.findMany(),
+    prisma.employee.findMany({ where: { biometricPin: { not: null } }, select: { id: true, name: true, employeeCode: true, department: true, biometricPin: true }, orderBy: { name: 'asc' } }),
+    prisma.biometricPunchLog.findMany({ orderBy: [{ punchAt: 'desc' }], take: 15 }),
+    prisma.biometricPunchLog.count({ where: { punchAt: { startsWith: todayStr } } }),
+    prisma.biometricPunchLog.count(),
+  ]);
+  const nameOfPin = new Map(users.map((u) => [u.pin, u.name]));
+  const empById = new Map(mapped.map((e) => [e.id, e]));
+  const matches = await codeMatches(device);
+  const matchOfPin = new Map(matches.map((m) => [m.pin, m]));
+  const waitingOfPin = new Map(unmapped.map((u) => [u.pin, u._count._all]));
+  res.json({
+    device: shapeDevice(device),
+    counts: { today: todayCount, total, unmappedPins: unmapped.length },
+    unmapped: unmapped
+      .map((u) => ({
+        pin: u.pin, deviceName: nameOfPin.get(u.pin) || null, punches: u._count._all, lastPunchAt: u._max.punchAt,
+        suggestedEmployeeId: matchOfPin.has(u.pin) ? matchOfPin.get(u.pin).employeeId : null,
+      }))
+      .sort((a, b) => String(b.lastPunchAt).localeCompare(String(a.lastPunchAt))),
+    codeMatches: matches.map((m) => ({ ...m, waitingPunches: waitingOfPin.get(m.pin) || 0 })),
+    mapped: mapped.map((e) => ({ ...e, deviceName: nameOfPin.get(e.biometricPin) || null })),
+    recent: recent.map((l) => {
+      const e = l.employeeId ? empById.get(l.employeeId) : null;
+      return { pin: l.pin, punchAt: l.punchAt, statusCode: l.statusCode, verifyCode: l.verifyCode, employee: e ? `${e.name} (${e.employeeCode})` : null, deviceName: nameOfPin.get(l.pin) || null };
+    }),
+    unknownDevices: bio.listUnknown(),
+    userQuery: device ? bio.commandStatus(device.serialNumber) : null,
+    deviceUsers: device ? users.filter((u) => u.deviceSerial === device.serialNumber).length : 0,
+  });
+});
+
+// Ask the device for its full user list; it goes out on the next heartbeat.
+router.post('/integrations/biometric/fetch-users', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const device = await firstDevice();
+  if (!device) return res.status(400).json({ error: 'Add the device first.' });
+  const cmd = bio.queueUserQuery(device.serialNumber);
+  await recordEvent('biometric', { action: 'Fetch users', by: req.user.name, result: `Queued — goes to the device on its next heartbeat (command ${cmd.id})` });
+  return res.json({ ok: true, command: bio.commandStatus(device.serialNumber) });
+});
+
+// Link every exact code match in one go (the list shown on the card). Each is
+// re-checked here, so a PIN linked in the meantime is skipped, not doubled.
+router.post('/integrations/biometric/link-matches', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const device = await firstDevice();
+  const matches = await codeMatches(device);
+  let linked = 0;
+  let applied = 0;
+  for (const m of matches) {
+    // eslint-disable-next-line no-await-in-loop
+    const taken = await prisma.employee.findFirst({ where: { biometricPin: m.pin }, select: { id: true } });
+    if (taken) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.employee.update({ where: { id: m.employeeId }, data: { biometricPin: m.pin } });
+    // eslint-disable-next-line no-await-in-loop
+    applied += await bio.applyPin(m.pin, m.employeeId);
+    linked += 1;
+  }
+  await logAudit({ userId: req.user.id, action: 'Biometric PINs linked by employee code', entity: 'BiometricDevice', entityId: device ? device.id : null, toValue: `${linked} linked, ${applied} waiting punch(es) applied` });
+  return res.json({ ok: true, linked, applied });
+});
+
+// Map a device PIN to an employee (or clear it). Waiting punches are applied.
+router.put('/integrations/biometric/map', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const pin = String(req.body.pin || '').trim();
+  const employeeId = req.body.employeeId ? String(req.body.employeeId) : null;
+  if (!/^[A-Za-z0-9]{1,24}$/.test(pin)) return res.status(400).json({ error: 'PIN must be the device user ID (letters and digits).' });
+  if (!employeeId) {
+    const holders = await prisma.employee.findMany({ where: { biometricPin: pin }, select: { id: true, name: true } });
+    await prisma.employee.updateMany({ where: { biometricPin: pin }, data: { biometricPin: null } });
+    await logAudit({ userId: req.user.id, action: 'Biometric PIN unmapped', entity: 'Employee', entityId: holders.map((h) => h.id).join(',') || null, fromValue: pin });
+    return res.json({ ok: true, unmapped: holders.length });
+  }
+  const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true, biometricPin: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  const other = await prisma.employee.findFirst({ where: { biometricPin: pin, NOT: { id: employeeId } }, select: { name: true } });
+  if (other) return res.status(409).json({ error: `PIN ${pin} is already mapped to ${other.name}. Clear that first.` });
+  await prisma.employee.update({ where: { id: employeeId }, data: { biometricPin: pin } });
+  const applied = await bio.applyPin(pin, employeeId);
+  await logAudit({ userId: req.user.id, action: 'Biometric PIN mapped', entity: 'Employee', entityId: employeeId, fromValue: employee.biometricPin, toValue: `${pin} (${applied} waiting punch(es) applied)` });
+  return res.json({ ok: true, applied });
 });
 
 // Save & Connect.
@@ -897,6 +1520,7 @@ router.get('/integrations/:id/history', requirePerm(null, 'administration', 'Int
 router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  if (channel.id === 'biometric') return saveBiometric(req, res, channel);
   let written;
   try {
     written = await writeValues(channel.id, req.body.values || {});
@@ -926,6 +1550,11 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
     mailWorker.kick();
   }
   if (channel.id === 'ai-claude') aiAgent.resetClient();
+  if (channel.id === 'sms' || channel.id === 'whatsapp') {
+    // Stage-change texts recorded in the last day can go out now.
+    await mailWorker.requeueHeldMessages(channel.id === 'sms' ? 'SMS' : 'WhatsApp');
+    mailWorker.kick();
+  }
   await recordEvent(channel.id, {
  action: 'Connected', by: req.user.name,
       result: live ? 'Credentials saved (encrypted at rest)' : 'OK (Demo)',
@@ -1025,9 +1654,38 @@ router.post('/integrations/ai-claude/test-message', requirePerm(null, 'administr
   return res.json(result);
 });
 
-router.post('/integrations/:id/connect', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+/* --------------------------------------------------------------------------
+   SMS / WHATSAPP — real channels. Status for the screen, and "send one test
+   message to this number" (the administrator types their own number).
+   -------------------------------------------------------------------------- */
+router.get('/integrations/messaging/status', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  // eslint-disable-next-line global-require
+  res.json(await require('../utils/messaging').channelStatus());
+});
+
+router.post('/integrations/:id/test-message', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res, next) => {
+  if (!['sms', 'whatsapp'].includes(req.params.id)) return next();
+  const to = String(req.body.to || '').trim();
+  if (!to) return res.status(400).json({ error: 'Enter the mobile number to send the test to.' });
+  const channel = req.params.id === 'sms' ? 'SMS' : 'WhatsApp';
+  const text = `TeamLink test message from Administration → Integrations (${req.user.name}). If you received this, ${channel} works.`;
+  // eslint-disable-next-line global-require
+  const result = await require('../utils/messaging').send(channel, { to, kind: 'bulk', text, vars: [text] });
+  const summary = result.ok ? `Test ${channel} accepted by the provider (${result.providerRef || 'no ref'})` : `${result.outcome} — ${result.error}`;
+  await recordEvent(req.params.id, { action: 'Test Message', by: req.user.name, result: summary.slice(0, 480) });
+  await prisma.integration.update({
+    where: { id: req.params.id },
+    data: { lastTest: new Date(), lastTestResult: summary.slice(0, 480), error: result.ok ? null : String(result.error || '').slice(0, 480) },
+  }).catch(() => {});
+  await logAudit({ userId: req.user.id, action: `${channel} test message`, entity: 'Integration', entityId: req.params.id, toValue: result.outcome });
+  if (!result.ok) return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, notConfigured: !!result.notConfigured });
+  return res.json({ ok: true, outcome: result.outcome, providerRef: result.providerRef || null });
+});
+
+router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  if (channel.id === 'biometric') return setBiometricStatus(req, res, channel, 'Active');
   const row = await integrationRow(channel.id);
   let values = {};
   try { values = row.values ? JSON.parse(row.values) : {}; } catch { values = {}; }
@@ -1038,7 +1696,7 @@ router.post('/integrations/:id/connect', requirePerm(null, 'administration', 'In
     where: { id: channel.id },
     data: { state: 'Connected', connected: true, enabled: true, connectedAt: new Date(), error: null },
   });
-  await recordEvent(channel.id, { action: 'Connected', by: req.user.name, result: 'OK (Demo)' });
+  await recordEvent(channel.id, { action: 'Connected', by: req.user.name, result: LIVE_CHANNELS.includes(channel.id) ? 'Reconnected with the stored credentials' : 'OK (Demo)' });
   await logAudit({ userId: req.user.id, action: 'Integration connected (demo)', entity: 'Integration', entityId: channel.id, fromValue: row.state, toValue: 'Connected' });
   res.json(shapeIntegration(channel, next));
 });
@@ -1046,6 +1704,7 @@ router.post('/integrations/:id/connect', requirePerm(null, 'administration', 'In
 router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  if (channel.id === 'biometric') return setBiometricStatus(req, res, channel, 'Inactive');
   const row = await integrationRow(channel.id);
   const next = await prisma.integration.update({ where: { id: channel.id }, data: { state: 'Not Connected', connected: false } });
   // A live channel really stops: the cached connection is dropped and anything
@@ -1060,6 +1719,21 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
 router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  // Biometric: the device calls us, so the test is its last heartbeat.
+  if (channel.id === 'biometric') {
+    const device = await firstDevice();
+    const st = bio.deviceState(device);
+    let result;
+    if (!device) result = 'No device saved — open Configure.';
+    else if (st.state === 'Connected') result = `Connected — last heartbeat ${Math.round(st.ageMs / 1000)}s ago${device.lastSeenIp ? ` from ${device.lastSeenIp}` : ''}`;
+    else if (st.state === 'Waiting for device') result = `No heartbeat yet — device ${device.serialNumber} has not called ${device.endpoint}`;
+    else if (st.state === 'Offline') result = `Offline — last heartbeat ${new Date(device.lastSeenAt).toLocaleString()}`;
+    else result = 'Inactive — the device is switched off in TeamLink';
+    await integrationRow(channel.id);
+    const nextRow = await prisma.integration.update({ where: { id: channel.id }, data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), connected: st.connected, state: st.state } });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    return res.json({ ...shapeIntegration(channel, nextRow), state: st.state, result, device: shapeDevice(device) });
+  }
   const row = await integrationRow(channel.id);
   if (row.state !== 'Connected') {
     await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: 'Failed — not connected' });
@@ -1106,6 +1780,40 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }
 
+  // SMS / WhatsApp are real now (utils/smsGateway.js, utils/whatsappCloud.js):
+  // the test is an authenticated read at the provider that sends nothing.
+  if (channel.id === 'sms' || channel.id === 'whatsapp') {
+    // eslint-disable-next-line global-require
+    const probe = await (channel.id === 'sms' ? require('../utils/smsGateway') : require('../utils/whatsappCloud')).testConnection();
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: {
+        lastTest: new Date(), lastTestResult: probe.result.slice(0, 480),
+        error: probe.ok ? null : probe.result.slice(0, 480),
+        ...(probe.ok ? {} : { state: 'Reconnect Required' }),
+      },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: probe.result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
+  }
+
+  // The TeamLink Job Portal is a real app of our own: test that it answers.
+  if (channel.id === 'jobportal') {
+    const probe = await require('../utils/jobPortalBridge').ping();
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: {
+        lastTest: new Date(), lastTestResult: probe.result.slice(0, 480),
+        error: probe.ok ? null : probe.result.slice(0, 480),
+        ...(probe.ok ? {} : { state: 'Reconnect Required' }),
+      },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: probe.result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
+  }
+
   if (channel.id === 'ai-claude') {
     const probe = await aiAgent.testConnection();
     const result = probe.ok ? `Model ${probe.model} answered` : `Failed — ${probe.error}`;
@@ -1142,6 +1850,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
 router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  if (channel.id === 'biometric') return res.status(400).json({ error: 'The device pushes its punches to TeamLink by itself — there is nothing to pull.' });
   const row = await integrationRow(channel.id);
   if (row.state !== 'Connected') return res.status(409).json({ error: `${channel.name} is not connected — connect it first.` });
 

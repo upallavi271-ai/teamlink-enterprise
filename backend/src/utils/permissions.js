@@ -39,6 +39,7 @@ const prisma = require('../db');
 const {
   ROLE_ACCESS_MODULES, ROLE_FEATURE_ACTIONS, moduleById,
   PRODUCT_OF_MODULE, PRODUCTS, productKeyOf, NO_ROLE,
+  LEGACY_MODULES, LEGACY_INDEX, sourceOf, isLegacyModule, legacyParentOf, expandModuleIds,
 } = require('./roleAccess');
 
 // The three products a role can be held in. Everything else is core.
@@ -146,6 +147,16 @@ const SET = {
   RAISE: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'ASSISTANT_MANAGER'],
   // routes/requirements.js MATCHING_ROLES — never a client
   MATCHING: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'ASSISTANT_MANAGER', 'RECRUITER', 'BDE'],
+  // WHO SEES CLIENTS. The client list, client details, agreements and
+  // commercial terms are the BDE team's and management's — Super Admin,
+  // Admin, Manager, Assistant Manager, BDE — and nobody else's. TLs,
+  // recruiters, HR and employees work requirements and candidates; raising a
+  // requirement picks its client from a names-only list
+  // (GET /requirements/client-options), never the client record.
+  // UPDATED by the clients role spec (2026-09-29): this is still the FULL
+  // client desk; a TL now gets a limited read-only view and Accounts a
+  // billing view (DEFAULT_RULES clients block). A Recruiter still gets none.
+  CLIENT_DESK: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'BDE'],
   // --- Job Portal ---------------------------------------------------------
   // Who may OPEN the internal Job Portal workspace. Identical to MATCHING: an
   // ATS working role is what grants portal reach. An Accountant, an HRMS-only
@@ -162,7 +173,15 @@ const SET = {
   // Assistant Manager and STL read the same way, so the three of them get view
   // and nothing more by default. Role Catalog can widen any of them, which is
   // what "unless explicitly granted" means in an app with a real matrix.
-  PORTAL_ACT: ['SUPER_ADMIN', 'ADMIN', 'TL', 'RECRUITER', 'BDE'],
+  // JOBS / REQUIREMENTS ROLE SPEC (2026-09-29) §2: Job Portal is ✅ for Admin,
+  // BDE and TL, 👁 for Management and 👁 (own jobs) for a Recruiter — so a
+  // Recruiter no longer publishes or syncs. A Recruiter still does Recruiter
+  // Review → Send to ATS on the applications (PORTAL_INTAKE below).
+  PORTAL_ACT: ['SUPER_ADMIN', 'ADMIN', 'TL', 'BDE'],
+  PORTAL_INTAKE: ['SUPER_ADMIN', 'ADMIN', 'TL', 'RECRUITER', 'BDE'],
+  // §3 Export: Admin ✅ · Mgmt ✅ · BDE own · TL team · Accounts ✅ ·
+  // Recruiter ❌. (STL keeps the export it had.)
+  REQ_EXPORT: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE', 'ACCOUNTANT'],
   // Everyone who works inside TeamLink (no external logins).
   STAFF: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'],
   EVERYONE: ALL_ROLES,
@@ -172,14 +191,22 @@ const SET = {
 const DEFAULT_MODULES = {
   SUPER_ADMIN: ROLE_ACCESS_MODULES.map((m) => m.id),
   ADMIN: ROLE_ACCESS_MODULES.map((m) => m.id),
-  MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'accounts', 'reports'],
+  // NO `accounts` (access matrix 2026-09-25 §4): Accounts is NOT automatic
+  // for a Manager. Grant it per login (Users -> Accounts role Accountant) or
+  // per role (Role Catalog -> Manager -> Accounts, which then picks up the
+  // view-only rule for MANAGER in DEFAULT_RULES below).
+  MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   ASSISTANT_MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
-  STL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
+  STL: ['dashboard', 'requirements', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // `reports` is in both of these because DEFAULT_RULES below already grants a
   // TL and a BDE the ATS and Job Portal reports (view, and export for a TL) —
   // the module list was the only thing withholding them, which made the grant
   // unreachable and, until routes/reports.js was guarded, made the endpoint
   // answer anyway. Listing it here is what those two rules always meant.
+  // `clients` (clients role spec 2026-09-29 §2): a TL gets a LIMITED,
+  // read-only Clients view — only the clients their team's requirements are
+  // for, contact NAMES only, no commercial terms (DEFAULT_RULES below +
+  // utils/scope.js clientWhere + utils/clientRedact.js).
   TL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // HR (§6) — HRMS AND NOTHING ELSE.
   //
@@ -199,10 +226,15 @@ const DEFAULT_MODULES = {
   // HR — HRMS + ATS + Job Portal per the product table. What HR can DO in
   // ATS is still the matrix's business; this only says the modules are
   // reachable.
-  HR: ['dashboard', 'hrms', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'reports'],
+  // The user's rule: HR in ATS = Internal Hiring only. requirements /
+  // candidates / interviews stay reachable because utils/scope.js pins HR to
+  // the INTERNAL openings and their candidates; Recruiter & BDE is not HR's.
+  HR: ['dashboard', 'hrms', 'requirements', 'candidates', 'interviews', 'reports'],
   // A recruiter reads the client directory (their requirements name a client)
   // but cannot create or edit one — see DEFAULT_RULES.
-  RECRUITER: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'recruiterbde', 'hrms'],
+  // `reports` — a recruiter's OWN ATS reports (§8 / §14). The data is cut to
+  // their assigned requirements by utils/scope.js, never company-wide.
+  RECRUITER: ['dashboard', 'requirements', 'candidates', 'interviews', 'recruiterbde', 'hrms', 'reports'],
   BDE: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // A client reaches the `clients` module only to read and e-sign their OWN
   // company record — utils/scope.js pins it to their clientId.
@@ -214,17 +246,38 @@ const DEFAULT_MODULES = {
   // four self-service features and SET.ACCOUNTS already grants payroll, so
   // the endpoints answered 200 while the sidebar had no way in. An
   // accountant applies for their own leave like anybody else.
-  ACCOUNTANT: ['dashboard', 'accounts', 'reports', 'hrms'],
+  // + `requirements` / `clients` (role specs 2026-09-29): an Accounts login
+  // that is given ATS (Users -> ATS role "Accountant") reads, read-only, the
+  // requirements that have JOINED candidates and the clients it bills — the
+  // billing view. No Job Portal, no candidates, no pipeline actions.
+  ACCOUNTANT: ['dashboard', 'accounts', 'reports', 'hrms', 'requirements', 'clients'],
   // EMPLOYEE — HRMS + ATS + Job Portal per the product table. With no ATS
   // ROLE they reach the modules and see nothing in them, because
   // utils/scope.js gives an ATS-roleless login no requirements, no
   // candidates and no clients. Being made a Recruiter on Users is what
   // fills them, on the SAME login.
-  EMPLOYEE: ['dashboard', 'hrms', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'reports'],
+  EMPLOYEE: ['dashboard', 'hrms', 'requirements', 'candidates', 'recruiterbde', 'interviews', 'reports'],
   // A candidate reaches their own profile, applications and interviews. Scope
   // (utils/scope.js) pins every one of those to their own candidate row.
   CANDIDATE: ['dashboard', 'candidates', 'interviews'],
 };
+// HRMS / ACCOUNTS ARE MODULE BY MODULE NOW (utils/roleAccess.js
+// SPLIT_MODULES). The lists above keep the old area names because that is
+// what they were decided as; 'hrms' here means every HRMS module and
+// 'accounts' every Accounts module — exactly the reach the one old module gave.
+Object.keys(DEFAULT_MODULES).forEach((r) => { DEFAULT_MODULES[r] = expandModuleIds(DEFAULT_MODULES[r]); });
+// AI ASSISTANT & AGENT is every internal role's (the user, 2026-09-29: "all
+// employees can use the AI agent and assistant, but features/actions per
+// their role permissions"). Outside logins (Client, Candidate) never get it.
+// Super Admin / Admin already list every module.
+SET.STAFF.forEach((r) => {
+  if (DEFAULT_MODULES[r] && !DEFAULT_MODULES[r].includes('ai')) DEFAULT_MODULES[r].push('ai');
+});
+// Which products a role reaches by default — for the AI "Answers from …"
+// grants, which follow the products a role already has and never add one.
+const PRODUCT_MODULE_IDS = { hrms: [], ats: [], accounts: [] };
+Object.entries(PRODUCT_OF_MODULE).forEach(([m, p]) => { if (PRODUCT_MODULE_IDS[p] && !isLegacyModule(m)) PRODUCT_MODULE_IDS[p].push(m); });
+const rolesReaching = (product) => SET.STAFF.filter((r) => (DEFAULT_MODULES[r] || []).some((m) => PRODUCT_MODULE_IDS[product].includes(m)));
 
 // ---------------------------------------------------------------------------
 // DEFAULT_RULES — the capability table.
@@ -253,24 +306,39 @@ const DEFAULT_RULES = [
     module: 'requirements',
     features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline'],
     actions: ['view'],
-    roles: [...SET.MATCHING, ...SET.HR_ATS_VIEW, 'CLIENT'],
+    // NOT 'CLIENT' (review #3 access audit): a client's surface is the portal
+    // (routes/portal.js, /job-portal/client — the 'Client Job Portal' feature
+    // below), never the internal requirement list / detail / matching, which
+    // carry every application and staff names.
+    roles: [...SET.MATCHING, ...SET.HR_ATS_VIEW],
   },
   // requireRole(...MATCHING_ROLES) on /:id/matching-candidates
   { module: 'requirements', features: ['Matching Candidates'], actions: ['view'], roles: SET.MATCHING },
-  // requireRole(...RAISE_ROLES) on POST /, PUT /:id, activate, toggle-status, generate-jd
-  { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: SET.RAISE },
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['edit', 'approve'], roles: SET.RAISE },
+  // ---- JOBS / REQUIREMENTS ROLE SPEC (2026-09-29) ------------------------
+  //   §3 Add Requirement  Admin ✅ · BDE ✅ · TL ⚠️ optional (kept, as it was)
+  //                       · Mgmt ❌ (view-only pass) · Recruiter ❌ · Accounts ❌
+  //   §7 Assign TL / Recruiter  TL ✅ · BDE ✅ · Admin ✅
+  //   §7 Close / Reopen / Delete  BDE ✅ close only (routes/requirements.js
+  //      narrows `approve` for a BDE to Close) · Admin ✅ · TL ❌ · Recruiter ❌
+  //   §6 Recruiter = View Candidates / Add Candidate — no requirement edits.
+  //   §1 Accounts = read-only, requirements with joined candidates only.
+  { module: 'requirements', features: ['Requirement List', 'Requirement Detail', 'Requirement Pipeline'], actions: ['view'], roles: ['ACCOUNTANT'] },
+  { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: [...SET.RAISE, 'BDE'] },
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['edit'], roles: [...SET.RAISE, 'BDE'] },
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['approve'], roles: [...SET.RAISE.filter((r) => r !== 'TL'), 'BDE'] },
   // ASSIGN is its own action: the assignment chain (TL -> Recruiter(s) -> BDE)
   // is what drives scope, so handing it out is a lead's decision, not a
   // side-effect of being able to edit. A BDE assigns the client side of it.
   { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE, 'BDE'] },
-  // A recruiter EDITS the requirements they are assigned — routes/requirements.js
-  // narrows this to records they are actually named on (VIEW != EDIT).
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['edit'], roles: ['RECRUITER'] },
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['export'], roles: SET.MATCHING },
-  { module: 'requirements', features: ['Job Posting'], actions: ['create', 'edit'], roles: SET.RAISE },
-  { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: SET.MATCHING },
+  // DELETE (§6 / §7 Admin only). routes/requirements.js refuses it (409)
+  // while the requirement carries any candidate or invoice.
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['delete'], roles: SET.ADMIN },
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['export'], roles: SET.REQ_EXPORT },
+  { module: 'requirements', features: ['Job Posting'], actions: ['create', 'edit'], roles: [...SET.RAISE, 'BDE'] },
+  { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: SET.REQ_EXPORT },
   { module: 'requirements', features: ['Requirement Pipeline'], actions: ['view'], roles: SET.MATCHING },
+  // §3 Import / Template: Admin ✅ · BDE ✅ · everyone else ❌.
+  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'BDE'] },
 
   // --- ATS: Jobs / Requirements -> Job Portal ---------------------------
   // THE ACCESS MATRIX, expressed once, here. Nothing in a route handler or a
@@ -300,8 +368,9 @@ const DEFAULT_RULES = [
   // are not the same thing and are not granted as one.
   { module: 'requirements', features: ['Job Portal Workspace'], actions: ['edit', 'configure'], roles: SET.PORTAL_ACT },
   { module: 'requirements', features: ['Job Portal Workspace'], actions: ['export'], roles: SET.RAISE },
-  // `create` on Job Portal Applications is Import to ATS.
-  { module: 'requirements', features: ['Job Portal Applications'], actions: ['create'], roles: SET.PORTAL_ACT },
+  // `create` on Job Portal Applications is Import / Send to ATS — the
+  // recruiter's own step in the intake flow, so it keeps PORTAL_INTAKE.
+  { module: 'requirements', features: ['Job Portal Applications'], actions: ['create'], roles: SET.PORTAL_INTAKE },
   // The client-facing portal view. A CLIENT holds this and NOT the two
   // features above, which is the whole of "a client never sees the internal
   // posting/sync workspace" — it is a permission, not a hidden button.
@@ -316,22 +385,44 @@ const DEFAULT_RULES = [
   { module: 'requirements', features: ['Client Job Portal'], actions: ['edit'], roles: ['CLIENT'] },
 
   // --- ATS: Clients ------------------------------------------------------
-  { module: 'clients', features: '*', actions: ['view'], roles: [...SET.MATCHING, 'CLIENT'] },
-  // requireRole('SUPER_ADMIN','ADMIN') on POST / and PUT /:id
-  { module: 'clients', features: ['Add Client'], actions: ['create'], roles: SET.ADMIN },
-  { module: 'clients', features: ['Client Detail'], actions: ['edit'], roles: SET.ADMIN },
-  // requireRole(...AGREEMENT_EDIT_ROLES) — generate / send / resend / activate
-  { module: 'clients', features: ['Agreement Lifecycle'], actions: ['create', 'edit'], roles: SET.ADMIN },
+  // A CLIENT no longer reads the internal client record (commercial terms,
+  // fees, owners): its own company is on the portal and its agreement on
+  // /agreement/:clientId (routes/agreementSeal.js), which decide for themselves.
+  // ---- CLIENTS ROLE SPEC (2026-09-29) -------------------------------------
+  //   §2 menu   Admin, Mgmt, BDE ✅ · TL 👁 limited · Accounts 👁 billing ·
+  //             Recruiter ❌ (no Client List view at all -> /clients 403)
+  //   §3        Add Client Admin + BDE · Import Admin (BDE optional: off) ·
+  //             Export Admin, Mgmt, BDE own, Accounts · Merge Duplicates Admin
+  //   §5 / §6   Agreements + fee / guarantee / payment terms: Admin, Mgmt,
+  //             BDE (own), Accounts — never a TL or a Recruiter
+  // What each of those roles may SEE of a record (contact names only for a
+  // TL, the billing contact for Accounts, invoice status only for a BDE) is
+  // utils/clientRedact.js; WHICH clients is utils/scope.js clientWhere().
+  { module: 'clients', features: '*', actions: ['view'], roles: SET.CLIENT_DESK },
+  { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements'], actions: ['view'], roles: ['TL'] },
+  { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements', 'Agreement Lifecycle', 'Commercial Terms'], actions: ['view'], roles: ['ACCOUNTANT'] },
+  // A BDE has FULL access to their OWN clients (scope keeps it to them).
+  { module: 'clients', features: ['Add Client'], actions: ['create'], roles: [...SET.ADMIN, 'BDE'] },
+  { module: 'clients', features: ['Client Detail'], actions: ['edit'], roles: [...SET.ADMIN, 'BDE'] },
+  // Client delete: Admin only, and routes/clients.js refuses it (409) while
+  // the client has active requirements.
+  { module: 'clients', features: ['Client Detail'], actions: ['delete'], roles: SET.ADMIN },
+  // generate / send / resend / activate — Admin, and a BDE on their own client
+  { module: 'clients', features: ['Agreement Lifecycle'], actions: ['create', 'edit'], roles: [...SET.ADMIN, 'BDE'] },
   // requireRole('CLIENT','SUPER_ADMIN','ADMIN') — the client confirms/e-signs
   { module: 'clients', features: ['Agreement Lifecycle'], actions: ['approve'], roles: ['SUPER_ADMIN', 'ADMIN', 'CLIENT'] },
-  { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: SET.ADMIN },
-  // ASSIGN on a client = setting its Account Manager / BDE owner. EXPORT is
-  // the client directory download. Both separate from EDIT, per VIEW != EDIT.
+  { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: [...SET.ADMIN, 'BDE'] },
+  // ASSIGN on a client = its portal invite / account manager (a BDE invites
+  // their own client). Re-assigning the OWNER BDE itself is Admin only
+  // (routes/clients.js PUT refuses a bdeOwner change from anyone not global).
   { module: 'clients', features: ['Client Detail'], actions: ['assign'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
-  { module: 'clients', features: ['Client List'], actions: ['export'], roles: SET.MATCHING },
+  { module: 'clients', features: ['Client List'], actions: ['export'], roles: [...SET.CLIENT_DESK, 'ACCOUNTANT'] },
+  // Import clients / agreement updates, and Merge Duplicates: Admin only.
+  { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: SET.ADMIN },
 
   // --- ATS: Candidates & Pipeline ---------------------------------------
-  { module: 'candidates', features: '*', actions: ['view'], roles: [...SET.PIPELINE, 'CLIENT', 'CANDIDATE'] },
+  // No CLIENT / CANDIDATE: outside logins use /api/portal (review #3 access audit).
+  { module: 'candidates', features: '*', actions: ['view'], roles: SET.PIPELINE },
   // requireRole(...RECRUITING_ROLES) on POST / and PUT /:id
   { module: 'candidates', features: ['Add Candidate'], actions: ['create'], roles: SET.RECRUITING },
   { module: 'candidates', features: ['Candidate Master'], actions: ['edit'], roles: SET.RECRUITING },
@@ -350,7 +441,9 @@ const DEFAULT_RULES = [
   // Viewing is wide (and then cut down by utils/scope.js: a client sees only
   // their own company's interviews, offers and joinings; a candidate only
   // their own). Acting is the pipeline's.
-  { module: 'interviews', features: '*', actions: ['view'], roles: [...SET.MATCHING, 'CLIENT', 'CANDIDATE'] },
+  // No CLIENT / CANDIDATE: the calendar carries AI results and internal panel
+  // feedback. A client decides on the portal; its Client Feedback grant stays.
+  { module: 'interviews', features: '*', actions: ['view'], roles: SET.MATCHING },
   { module: 'interviews', features: ['Schedule Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
   { module: 'interviews', features: ['AI Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
   // INTERNAL interview feedback — the panel's own record. A client never
@@ -363,7 +456,22 @@ const DEFAULT_RULES = [
   { module: 'interviews', features: ['Offers', 'Joining'], actions: ['approve', 'export'], roles: SET.RAISE },
   // Internal Hiring ends in an HRMS employee record, so it is a lead's
   // action, not a recruiter's — and it never touches a client placement.
-  { module: 'interviews', features: ['Internal Hiring'], actions: ['create', 'edit', 'approve'], roles: SET.RAISE },
+  // HR runs internal hiring (the user's rule: HR's ATS is Internal Hiring).
+  { module: 'interviews', features: ['Internal Hiring'], actions: ['create', 'edit', 'approve'], roles: [...SET.RAISE, ...SET.HR_ATS_VIEW] },
+
+  // --- ATS: EXPORT ON EVERY MODULE (hrms-25, routes/atsIo.js) -------------
+  // "ATS lo prathi module lo export & import buttons vundali." Export is a
+  // READ of the screen's own scoped rows, so it goes to the ATS working roles
+  // that already VIEW these screens — a recruiter's file is their own work, a
+  // TL's their team's (utils/scope.js). The features that already carried an
+  // export grant keep it; these are the ones that had none. Client-module
+  // data stays with the client desk (Client List / export above).
+  { module: 'recruiterbde', features: ['Team View', 'Recruiter Workload', 'BDE Workload', 'Pending Actions'], actions: ['export'], roles: SET.MATCHING },
+  { module: 'interviews', features: ['Calendar View', 'Interview Feedback', 'Offers', 'Joining', 'Internal Hiring'], actions: ['export'], roles: SET.MATCHING },
+  { module: 'candidates', features: ['Applications'], actions: ['export'], roles: SET.MATCHING },
+  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['export'], roles: SET.MATCHING },
+  { module: 'requirements', features: ['Client Job Portal'], actions: ['export'], roles: ['CLIENT'] },
+  { module: 'dashboard', features: ['KPI Overview'], actions: ['export'], roles: SET.MATCHING },
 
   // --- HRMS --------------------------------------------------------------
   // Every employee reaches HRMS SELF-SERVICE: their own attendance, leave,
@@ -400,6 +508,13 @@ const DEFAULT_RULES = [
   { module: 'hrms', features: ['Attendance & Time'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Performance & Development'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
+  // ASSIGNING TRAINING (LMS course assignment) is a lead's job, not only an
+  // author's. `assign` is not a WRITE_ACTION, so the §3/§4 pass leaves it with
+  // a Manager / Assistant Manager — who may then assign courses to the people
+  // in their scope without being able to create or edit one. A TL's is
+  // stripped by the §11 pass, but a TL reaches assignment through the
+  // `create` TL_AUTHORED keeps (routes/lms.js canAssign).
+  { module: 'hrms', features: ['Performance & Development'], actions: ['assign'], roles: SET.HR },
   { module: 'hrms', features: ['Employee Services'], actions: ['create', 'edit', 'approve', 'delete', 'export'], roles: SET.HR },
   // EMPLOYEE MANAGEMENT — the split the access matrix (§15) implies.
   //
@@ -434,6 +549,15 @@ const DEFAULT_RULES = [
   { module: 'hrms', features: ['Employee Management'], actions: ['create', 'export', 'approve'], roles: SET.HR_DESK },
   // requireRole(...PAYROLL_ROLES) — payroll structures, runs, F&F, reports.
   { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'create', 'edit', 'approve', 'export'], roles: SET.ACCOUNTS },
+  // PAYSLIPS (the user's rule, 2026-09-25): "an employee sees only their own
+  // payslips; HR/Accounts/Admin in scope; Manager / Assistant Manager may view
+  // but not generate or edit". HR sets CTCs and runs payroll (no `approve`:
+  // marking a run paid and settling F&F stay with Accounts). A Manager and an
+  // Assistant Manager get view + export — the view-only pass would strip any
+  // write action anyway — and routes/payroll.js payslipReach() reads `export`
+  // as "may read payslips inside my scope", which an Employee/TL never hold.
+  { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'create', 'edit', 'export'], roles: ['HR'] },
+  { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'export'], roles: ['MANAGER', 'ASSISTANT_MANAGER'] },
   // requireRole('SUPER_ADMIN','ADMIN') — attendance policy, payroll policy &
   // CTC settings, leave policy (POLICY_ROLES), leave balances.
   { module: 'hrms', features: ['Attendance & Time'], actions: ['configure'], roles: SET.ADMIN },
@@ -443,10 +567,19 @@ const DEFAULT_RULES = [
   // --- HR oversight in ATS (product table: HRMS + ATS + Job Portal) ------
   // VIEW ONLY, on purpose. Every create / edit / approve rule above keeps its
   // own role set, so HR reads the recruitment picture and changes none of it.
-  { module: 'clients', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
   { module: 'candidates', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
   { module: 'interviews', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
-  { module: 'recruiterbde', features: '*', actions: ['view'], roles: SET.HR_ATS_VIEW },
+  // ...EXCEPT INTERNAL HIRING, WHICH HR RUNS (the actual workflow, 2026-09-29:
+  // Internal requirement → HR sourcing → Job Portal screening → Send to ATS →
+  // HR Review → Dept Head / TL → Interview → Feedback → Selected → Offer →
+  // Joining → HRMS). These grants act only where utils/scope.js lets HR reach
+  // — TeamLink's INTERNAL openings — so HR still changes nothing on a client
+  // placement. Stage ownership (STAGE_OWNERS above) still applies on top.
+  { module: 'candidates', features: ['Add Candidate'], actions: ['create'], roles: SET.HR_ATS_VIEW },
+  { module: 'candidates', features: ['Candidate Master', 'Resume & Scores', 'Rejection & Hold'], actions: ['edit'], roles: SET.HR_ATS_VIEW },
+  { module: 'candidates', features: ['Applications', 'Pipeline Stages'], actions: ['create', 'edit'], roles: SET.HR_ATS_VIEW },
+  { module: 'interviews', features: ['Schedule Interview', 'AI Interview', 'Interview Feedback', 'Offers', 'Joining'], actions: ['create', 'edit'], roles: SET.HR_ATS_VIEW },
+  { module: 'requirements', features: ['Job Portal Applications'], actions: ['create'], roles: SET.HR_ATS_VIEW },
 
   // --- An employee's ATS: the Job Portal, and nothing else ---------------
   // THE ATS MODULES ARE VISIBLE TO AN EMPLOYEE (product table: HRMS + ATS +
@@ -464,7 +597,6 @@ const DEFAULT_RULES = [
   // the same screens fill the moment that person is made a Recruiter on
   // Administration -> Users, on the SAME login.
   { module: 'requirements', features: ['Requirement List', 'Job Portal Workspace'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
-  { module: 'clients', features: ['Client List'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
   { module: 'candidates', features: ['Candidate List'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
   { module: 'recruiterbde', features: ['Team View'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
   { module: 'interviews', features: ['Calendar View'], actions: ['view'], roles: SET.EMPLOYEE_PORTAL },
@@ -472,7 +604,11 @@ const DEFAULT_RULES = [
   // --- Accounts ----------------------------------------------------------
   // requireRole(...ACCOUNTS_ROLES) — invoices, bank (router-level), office
   // (router-level).
-  { module: 'accounts', features: '*', actions: ['view'], roles: [...SET.ACCOUNTS, 'MANAGER'] },
+  { module: 'accounts', features: '*', actions: ['view'], roles: SET.ACCOUNTS },
+  // A Manager reads Accounts — but NOT Office & Expenses, which carries the
+  // business's GSTIN, PAN and bank account and is Super Admin, Admin and
+  // Accounts only (routes/office.js refuses everyone else as well).
+  { module: 'accounts', features: ['Accounts Dashboard', 'Invoices', 'Bank & Reconciliation', 'Payments'], actions: ['view'], roles: ['MANAGER'] },
   { module: 'accounts', features: '*', actions: ['create', 'edit', 'delete', 'approve', 'export'], roles: SET.ACCOUNTS },
   { module: 'accounts', features: ['Invoices'], actions: ['view'], roles: ['CLIENT'] },
   { module: 'accounts', features: '*', actions: ['configure'], roles: SET.ADMIN },
@@ -482,7 +618,11 @@ const DEFAULT_RULES = [
   // ATS reports, and a recruiting lead does not get the accounts ledger.
   { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['view'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE'] },
   { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE', 'TL'] },
-  { module: 'reports', features: ['Accounts Reports'], actions: ['view', 'export'], roles: [...SET.ACCOUNTS, 'MANAGER'] },
+  // RECRUITER: view only, and only their own data (scope.js requirementWhere /
+  // applicationWhere RECRUITER branch). No export by default.
+  { module: 'reports', features: ['ATS Reports'], actions: ['view'], roles: ['RECRUITER'] },
+  // Accounts Reports follow Accounts: not automatic for a Manager (§4).
+  { module: 'reports', features: ['Accounts Reports'], actions: ['view', 'export'], roles: SET.ACCOUNTS },
   // HRMS Reports follow the same rule: they belong to HRMS, so the people who
   // administer HRMS records get them and nobody else does. This is the report
   // surface §6 gives HR, and it is the reason HR holds the `reports` module
@@ -505,7 +645,39 @@ const DEFAULT_RULES = [
   { module: 'administration', features: ['Departments & Teams'], actions: ['view'], roles: SET.ADMIN },
   // Notifications and Profile are everyone's.
   { module: 'administration', features: ['Notifications'], actions: ['view', 'edit'], roles: SET.EVERYONE },
+
+  // --- AI Assistant & Agent (core) --------------------------------------
+  // Every internal role may ask, speak and use the suggested prompts.
+  { module: 'ai', features: ['Ask the Assistant', 'Voice Input', 'Suggested Prompts'], actions: ['view'], roles: SET.STAFF },
+  // Answers from a product's data only for a role that reaches that product
+  // (and aiAccessFor() still asks the LOGIN's own product role on top).
+  { module: 'ai', features: ['Answers from HRMS Data'], actions: ['view'], roles: rolesReaching('hrms') },
+  { module: 'ai', features: ['Answers from ATS Data'], actions: ['view'], roles: rolesReaching('ats') },
+  { module: 'ai', features: ['Answers from Accounts Data'], actions: ['view'], roles: rolesReaching('accounts') },
+  // The agent acting: create / edit for every internal working role (each
+  // tool still re-checks the role's own permission for the real action).
+  // Approve = run without the confirm step — Admin only by default (Super
+  // Admin is global). Manager / Assistant Manager are view-only: the §3/§4
+  // pass below strips create / edit / approve from them whatever is granted.
+  { module: 'ai', features: ['Agent Actions'], actions: ['create', 'edit'], roles: ['ADMIN', 'STL', 'TL', 'HR', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'] },
+  { module: 'ai', features: ['Agent Actions'], actions: ['approve'], roles: ['ADMIN'] },
 ];
+
+// THE RULES ABOVE ARE WRITTEN AGAINST THE OLD AREAS ('hrms' / 'Attendance &
+// Time' …) on purpose: that is how every one of them was decided and audited.
+// Each is expanded here onto every split-module feature that INHERITS the old
+// area (roleAccess.js `src`), so a new feature starts with exactly the grant
+// its area had — the engine only ever reads EFFECTIVE_RULES.
+function expandRule(rule) {
+  if (!isLegacyModule(rule.module)) return [rule];
+  const names = rule.features === '*' ? LEGACY_MODULES[rule.module].features : rule.features;
+  const byModule = {};
+  names.forEach((name) => (LEGACY_INDEX[rule.module][name] || []).forEach(([m, feature]) => {
+    (byModule[m] = byModule[m] || []).push(feature);
+  }));
+  return Object.entries(byModule).map(([m, features]) => ({ ...rule, module: m, features }));
+}
+const EFFECTIVE_RULES = DEFAULT_RULES.flatMap(expandRule);
 
 // Super Admin / Admin: global. Admin still loses the SUPER-only capabilities
 // above, which are listed explicitly rather than blanket-granted.
@@ -593,7 +765,7 @@ function defaultAccessForRole(role, moduleId) {
     return { moduleEnabled: true, features };
   }
 
-  DEFAULT_RULES.forEach((rule) => {
+  EFFECTIVE_RULES.forEach((rule) => {
     if (rule.module !== moduleId) return;
     if (!rule.roles.includes(role)) return;
     const targets = rule.features === '*' ? names : rule.features.filter((f) => names.includes(f));
@@ -619,16 +791,20 @@ function defaultAccessForRole(role, moduleId) {
   // record; create, edit, delete and configure are still stripped everywhere,
   // and the approval engine still refuses anybody whose turn it is not.
   if (VIEW_ONLY_ROLES.includes(role)) {
-    names.forEach((f) => WRITE_ACTIONS.forEach((a) => {
-      if (a === 'approve' && APPROVAL_CHAIN_FEATURES.includes(f)) return;
-      features[f][a] = false;
+    // EXACTLY what can() allows them (viewOnlyAllows): view / export, approve
+    // on the approval chain, LMS assignment. `assign` elsewhere used to
+    // survive HERE while can() refused it, so the matrix /auth/me sends drew
+    // Assign buttons for a Manager that the API then 403'd (review #3 access
+    // audit). One rule now, in both places.
+    names.forEach((f) => ROLE_FEATURE_ACTIONS.forEach((a) => {
+      if (!viewOnlyAllows(f, a, moduleId)) features[f][a] = false;
     }));
   }
 
   // §11 — the TL pass. HRMS only, and `approve` / `view` / `export` survive.
-  if (moduleId === 'hrms' && HRMS_VIEW_ONLY_ROLES.includes(role)) {
+  if (PRODUCT_OF_MODULE[moduleId] === 'hrms' && HRMS_VIEW_ONLY_ROLES.includes(role)) {
     names.forEach((f) => {
-      const keep = TL_AUTHORED[f] || [];
+      const keep = TL_AUTHORED[sourceOf(moduleId, f) || f] || [];
       HRMS_STRIPPED_ACTIONS.forEach((a) => {
         if (!keep.includes(a)) features[f][a] = false;
       });
@@ -693,7 +869,35 @@ function invalidateRoleAccess(role) {
 
 // accessFor(role, moduleId, product) — the stored matrix for ONE role on ONE
 // module, in ONE product. `product` defaults to the module's own product key.
+// The legacy area modules ('hrms' / 'accounts') answered from the split
+// modules: an old feature holds an action when ANY feature inheriting it does
+// (in an enabled module), and the area is enabled when any of its modules is.
+function legacyView(legacyId, accessOf) {
+  const features = {};
+  LEGACY_MODULES[legacyId].features.forEach((name) => {
+    features[name] = emptyActions(false);
+    (LEGACY_INDEX[legacyId][name] || []).forEach(([m, f]) => {
+      const acc = accessOf(m);
+      if (!acc || !acc.moduleEnabled) return;
+      ROLE_FEATURE_ACTIONS.forEach((a) => {
+        if (acc.features && acc.features[f] && acc.features[f][a]) features[name][a] = true;
+      });
+    });
+  });
+  const moduleEnabled = ROLE_ACCESS_MODULES.some((m) => legacyParentOf(m.id) === legacyId && (accessOf(m.id) || {}).moduleEnabled);
+  return { moduleEnabled, features };
+}
+
 async function accessFor(role, moduleId, product) {
+  if (isLegacyModule(moduleId)) {
+    const key = product || productKeyOf(moduleId);
+    const got = {};
+    for (const m of ROLE_ACCESS_MODULES.filter((x) => legacyParentOf(x.id) === moduleId)) {
+      // eslint-disable-next-line no-await-in-loop
+      got[m.id] = await accessFor(role, m.id, key);
+    }
+    return legacyView(moduleId, (m) => got[m]);
+  }
   const now = Date.now();
   let entry = cache.get(role);
   if (!entry || now - entry.at > CACHE_MS) {
@@ -729,15 +933,69 @@ async function accessFor(role, moduleId, product) {
 // `user` is the resolved identity (see utils/identity.js) as carried on req.user.
 // `record` is optional; when given, data scope and ownership are applied too.
 // ---------------------------------------------------------------------------
+// Manager / Assistant Manager READ everything in their scope, and ACT only
+// where the user said so (2026-09-25, second decision): they approve on the
+// approval chain (leave, regularization, resignation … — the chain features)
+// and they assign LMS courses (Performance & Development / assign). Nothing
+// else — no create, edit, delete or configure.
+const VIEW_ONLY_ACTIONS = ['view', 'export'];
+const EXTERNAL_LOGIN_ROLES = ['CLIENT', 'CANDIDATE'];
+const EXTERNAL_ATS_FEATURES = ['Client Job Portal', 'Client Feedback', 'Agreement Lifecycle'];
+function isExternalLogin(user) {
+  if (!user) return false;
+  const sr = user.scopeRoles || {};
+  return [user.role, user.atsRole, sr.ats].some((r) => EXTERNAL_LOGIN_ROLES.includes(r));
+}
+// `moduleId` lets a split HRMS feature answer as the area it inherits
+// (roleAccess.js sourceOf): Leave Approvals is on the approval chain because
+// Leave & Holidays is, LMS keeps the assign exception because Performance &
+// Development has it.
+function viewOnlyAllows(featureName, action, moduleId) {
+  const feature = (moduleId && sourceOf(moduleId, featureName)) || featureName;
+  if (VIEW_ONLY_ACTIONS.includes(action)) return true;
+  if (action === 'approve' && APPROVAL_CHAIN_FEATURES.includes(feature)) return true;
+  if (action === 'assign' && feature === 'Performance & Development') return true;
+  return false;
+}
+
+const REPORT_FEATURE_PRODUCT = { 'ATS Reports': 'ats', 'Job Portal Reports': 'ats', 'Accounts Reports': 'accounts' };
+
 async function can(user, product, moduleId, feature, action, record = undefined) {
   // 1. user identity
   if (!user || !user.id) return false;
   if (user.status && user.status !== 'Active') return false;
 
+  // 1a. LEGACY AREA NAMES. 'hrms' / 'accounts' are no longer modules of their
+  //     own (roleAccess.js SPLIT_MODULES); an old guard such as
+  //     ('hrms', 'Attendance & Time', 'approve') asks "does this login hold
+  //     approve on ANY feature that inherits Attendance & Time?" — the same
+  //     question it always asked of the one old feature.
+  if (isLegacyModule(moduleId)) {
+    const targets = LEGACY_INDEX[moduleId][feature] || [];
+    for (const [m, f] of targets) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await can(user, product, m, f, action, record)) return true;
+    }
+    return false;
+  }
+
   // 2. ACTIVE PRODUCT
   const owningProduct = product || PRODUCT_OF_MODULE[moduleId] || null;
   const isProduct = ROLE_PRODUCTS.includes(owningProduct);
   if (isProduct && !(user.products || {})[owningProduct]) return false;
+  // 2a. Reports is a core module, but its ATS / Job Portal / Accounts reports
+  //     belong to a product (user, 2026-09-29: an R&D employee must not reach
+  //     ATS or Job Portal reports whatever their HRMS role grants).
+  if (moduleId === 'reports' && REPORT_FEATURE_PRODUCT[feature]
+    && !(user.products || {})[REPORT_FEATURE_PRODUCT[feature]]) return false;
+
+  // 2b. OUTSIDE LOGINS AND ATS (review #3 access audit). A Client or a
+  //     Candidate is never a user of the internal ATS: whatever Role Catalog
+  //     says, the only ATS features they may hold are their own portal's —
+  //     the client-facing Job Portal, their own Client Feedback and their own
+  //     agreement confirmation. Their screens are /api/portal/* and
+  //     /api/job-portal/client*, which check these features.
+  if (owningProduct === 'ats' && isExternalLogin(user) && !EXTERNAL_ATS_FEATURES.includes(feature)) return false;
 
   // 3. PRODUCT ROLE — the role for THIS product, never the account-level one.
   //    accountsRole = None means Accounts is refused however senior the
@@ -749,6 +1007,13 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   const key = isProduct ? owningProduct : '*';
   let granted = false;
   for (const role of roles) {
+    // MANAGER AND ASSISTANT MANAGER ARE VIEW-ONLY — every department, nothing
+    // changed (the user's rule, 2026-09-25). They may look and download
+    // (view / export); create, edit, approve, assign, delete and configure are
+    // refused whatever a rule or Role Catalog says. Their own self-service
+    // (own leave, own check-in, own profile) never goes through can(), so it
+    // still works.
+    if (VIEW_ONLY_ROLES.includes(role) && !viewOnlyAllows(feature, action, moduleId)) continue;
     // eslint-disable-next-line no-await-in-loop
     const access = await accessFor(role, moduleId, key);
     if (access.moduleEnabled && access.features[feature] && access.features[feature][action]) {
@@ -761,7 +1026,9 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   // 6/7. data scope and record ownership
   if (record !== undefined && record !== null) {
     const { recordInScope } = require('./scope');
-    if (!recordInScope(user, moduleId, record)) return false;
+    // A split module scopes as the area it came from ('accounts' pins a
+    // client's own invoices).
+    if (!recordInScope(user, legacyParentOf(moduleId) || moduleId, record)) return false;
   }
   return true;
 }
@@ -792,18 +1059,25 @@ async function can(user, product, moduleId, feature, action, record = undefined)
 //
 // The 20 keys and their order match STAGE_CODES + EXTRA_STAGE_CODES in
 // backend/src/utils/atsVocab.js. Labels are never derived from these codes.
+// HR (2026-09-29, the actual workflow): HR OWNS INTERNAL HIRING — HR Review,
+// forwarding to the Dept Head / TL, the interview, feedback, offer, joining
+// and the HRMS hand-off. HR is on the stages below for that reason only:
+// utils/scope.js pins HR to INTERNAL requirements, so these entries never
+// reach a client placement. HR is deliberately NOT on SELECTED (the Dept Head
+// / TL decides) and routes/applications.js lets only the Dept Head / TL (TL,
+// STL) approve an internal candidate out of TL Review.
 const STAGE_OWNERS = {
-  NEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  AI_INTERVIEW_REQUIRED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  AI_INTERVIEW_SCHEDULED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  AI_INTERVIEW_COMPLETED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  RECRUITER_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  RECRUITER_APPROVED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  NEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  AI_INTERVIEW_REQUIRED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  AI_INTERVIEW_SCHEDULED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  AI_INTERVIEW_COMPLETED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  RECRUITER_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  RECRUITER_APPROVED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
   // STAGE_OWNERS[X] is "who may move a candidate INTO X", and a button's owner
   // is STAGE_OWNERS[to]. So the RECRUITER is here — forwarding into TL review is
   // their move — and is deliberately absent from WITH_BDE below, which is what
   // stops them approving their own candidate straight past the TL.
-  TL_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  TL_REVIEW: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
   // NEITHER THE RECRUITER NOR THE BDE moves a candidate into the BDE queue —
   // the TL's Approve is what puts it there (§23). The BDE still ACTS at this
   // stage: their button is Share with Client, whose target SHARED_WITH_CLIENT
@@ -813,15 +1087,15 @@ const STAGE_OWNERS = {
   SHARED_WITH_CLIENT: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   CLIENT_REVIEW: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   CLIENT_SHORTLISTED: ['CLIENT', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  INTERVIEW_SCHEDULED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  INTERVIEW_COMPLETED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  INTERVIEW_SCHEDULED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  INTERVIEW_COMPLETED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
   SELECTED: ['CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  OFFER: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  OFFER_ACCEPTED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  JOINED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  HIRED: ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  REJECTED: ['RECRUITER', 'BDE', 'CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  HOLD: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
+  OFFER: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  OFFER_ACCEPTED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  JOINED: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  HIRED: ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  REJECTED: ['RECRUITER', 'BDE', 'CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  HOLD: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
 };
 
 // The named buttons §17 asks for, per CURRENT stage. `to` is the target stage,
@@ -851,6 +1125,19 @@ const STAGE_WORKFLOW_ACTIONS = {
   ],
 };
 
+// STAGE OWNERSHIP FOR A CUSTOM ATS ROLE resolves against the system role it
+// behaves like (req.user.scopeRoles.ats, see utils/roleRegistry.js); for a
+// system role that alias is the role itself. An alias of ADMIN (scope ALL)
+// owns every stage, as Admin does. Ownership only — the access half is still
+// the custom role's own matrix via can().
+function stageRoleOf(user) {
+  const alias = user && user.scopeRoles && user.scopeRoles.ats;
+  return alias && alias !== NO_ROLE ? alias : roleForProduct(user, 'ats');
+}
+function stageGlobal(user) {
+  return rolesFor(user, null).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r)) || stageRoleOf(user) === 'ADMIN';
+}
+
 // Which target stages this login may move a candidate to. Access half first,
 // ownership half second — a login that fails the access half gets an empty
 // list, not a shorter one.
@@ -858,8 +1145,8 @@ async function allowedStagesFor(user) {
   const mayAct = await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
   if (!mayAct) return [];
   // Super Admin / Admin own every stage, as they always have.
-  const global = rolesFor(user, null).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r));
-  const atsRole = roleForProduct(user, 'ats');
+  const global = stageGlobal(user);
+  const atsRole = stageRoleOf(user);
   return Object.keys(STAGE_OWNERS)
     .filter((stage) => global || STAGE_OWNERS[stage].includes(atsRole));
 }
@@ -871,8 +1158,8 @@ async function canMoveToStage(user, stage) {
   if (!await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit')) {
     return { status: 403, body: { error: "This action isn't included in your role's permissions" } };
   }
-  const global = rolesFor(user, null).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r));
-  if (!global && !STAGE_OWNERS[stage].includes(roleForProduct(user, 'ats'))) {
+  const global = stageGlobal(user);
+  if (!global && !STAGE_OWNERS[stage].includes(stageRoleOf(user))) {
     return { status: 403, body: { error: "Moving to this stage isn't included in your role's permissions" } };
   }
   return null;
@@ -913,6 +1200,67 @@ function requireProduct(product) {
   };
 }
 
+// Express guard for INTERNAL surfaces that are not tied to one ATS feature
+// (the ATS dashboard and its alerts, the people filters): an outside login
+// (Client / Candidate) is refused — its screens are /api/portal/*.
+function requireInternal(req, res, next) {
+  if (isExternalLogin(req.user)) return res.status(403).json({ error: 'This area is not part of your access' });
+  return next();
+}
+
+// ---------------------------------------------------------------------------
+// AI ASSISTANT & AGENT — the one reader of the `ai` module.
+//
+// aiAccessFor(user) -> {
+//   ask, voice, prompts,
+//   answers:      { hrms, ats, accounts },   // may answer from that product's data
+//   agentActions: { create, edit, approve }, // approve = no confirm step
+// }
+// An EXTRA gate, never a widening: an "Answers from <product>" grant counts
+// only while the login actually holds a role in that product, and whatever
+// the assistant reads or the agent does is still checked by the ordinary
+// can() / scope rules of that screen. Outside logins (Client / Candidate) get
+// nothing, whatever a catalog row says.
+// ---------------------------------------------------------------------------
+async function aiAccessFor(user) {
+  const none = {
+    ask: false, voice: false, prompts: false,
+    answers: { hrms: false, ats: false, accounts: false },
+    agentActions: { create: false, edit: false, approve: false },
+  };
+  if (!user || !user.id || isExternalLogin(user)) return none;
+  const ai = (feature, action = 'view') => can(user, null, 'ai', feature, action);
+  const [ask, voice, prompts, hrms, ats, accounts, create, edit, approve] = await Promise.all([
+    ai('Ask the Assistant'), ai('Voice Input'), ai('Suggested Prompts'),
+    ai('Answers from HRMS Data'), ai('Answers from ATS Data'), ai('Answers from Accounts Data'),
+    ai('Agent Actions', 'create'), ai('Agent Actions', 'edit'), ai('Agent Actions', 'approve'),
+  ]);
+  return {
+    ask, voice, prompts,
+    answers: {
+      hrms: hrms && !!roleForProduct(user, 'hrms'),
+      ats: ats && !!roleForProduct(user, 'ats'),
+      accounts: accounts && !!roleForProduct(user, 'accounts'),
+    },
+    agentActions: { create, edit, approve },
+  };
+}
+
+// Role Catalog: the actions the server IGNORES for a view-only role (§3/§4),
+// per feature of one module — can() and effectiveMatrix() drop them whatever
+// is ticked, so the catalog greys them. null for every other role.
+function viewOnlyLocksFor(role, moduleId) {
+  if (!VIEW_ONLY_ROLES.includes(role)) return null;
+  const mod = moduleById(moduleId);
+  if (!mod) return null;
+  const out = {};
+  mod.features.forEach((f) => {
+    const locked = ROLE_FEATURE_ACTIONS.filter((a) => !viewOnlyAllows(f, a, moduleId));
+    if (locked.length) out[f] = locked;
+  });
+  return out;
+}
+
 // The whole matrix for one role, in one product — what the Role Catalog reads.
 async function accessMatrix(role, product) {
   const out = {};
@@ -920,6 +1268,7 @@ async function accessMatrix(role, product) {
     // eslint-disable-next-line no-await-in-loop
     out[m.id] = await accessFor(role, m.id, product);
   }
+  Object.keys(LEGACY_MODULES).forEach((id) => { out[id] = legacyView(id, (m) => out[m]); });
   return out;
 }
 
@@ -943,9 +1292,29 @@ async function effectiveMatrix(user) {
     const roles = rolesFor(user, isProduct ? owning : null);
     const key = isProduct ? owning : '*';
     // eslint-disable-next-line no-await-in-loop
-    const list = await Promise.all(roles.map((r) => accessFor(r, m.id, key)));
+    // The same two clamps can() applies, so a button is drawn exactly when the
+    // API would accept it: view-only Manager / Asst Manager (whatever a stored
+    // Role Catalog row says) and outside logins in ATS (review #3 access audit).
+    const external = owning === 'ats' && isExternalLogin(user);
+    const list = await Promise.all(roles.map(async (r) => {
+      const acc = await accessFor(r, m.id, key);
+      if (!VIEW_ONLY_ROLES.includes(r) && !external) return acc;
+      const features = {};
+      Object.entries(acc.features || {}).forEach(([f, actions]) => {
+        features[f] = {};
+        Object.entries(actions).forEach(([a, v]) => {
+          features[f][a] = !!v
+            && (!VIEW_ONLY_ROLES.includes(r) || viewOnlyAllows(f, a, m.id))
+            && (!external || EXTERNAL_ATS_FEATURES.includes(f));
+        });
+      });
+      return { ...acc, features };
+    }));
     out[m.id] = list.length ? unionAccess(m.id, list) : defaultAccessForRole(NO_SUCH_ROLE, m.id);
   }
+  // The legacy `hrms` / `accounts` entries, so every screen and sidebar
+  // entry that reads the old area names keeps its exact answer.
+  Object.keys(LEGACY_MODULES).forEach((id) => { out[id] = legacyView(id, (m) => out[m]); });
   return out;
 }
 
@@ -954,6 +1323,7 @@ module.exports = {
   ROLE_PRODUCTS,
   DEFAULT_MODULES,
   DEFAULT_RULES,
+  EFFECTIVE_RULES,
   SET,
   NO_ROLE,
   roleForProduct,
@@ -962,6 +1332,8 @@ module.exports = {
   can,
   requirePerm,
   requireProduct,
+  requireInternal,
+  isExternalLogin,
   accessFor,
   accessMatrix,
   effectiveMatrix,
@@ -973,5 +1345,13 @@ module.exports = {
   STAGE_WORKFLOW_ACTIONS,
   allowedStagesFor,
   canMoveToStage,
+  // Super Admin / Admin (or an ADMIN-alias custom role) — exempt from the
+  // stage-chain rule in routes/applications.js, as from stage ownership.
+  stageGlobal,
+  // The ATS role stage ownership resolves against (custom roles -> their alias).
+  stageRoleOf,
   DENIED,
+  // AI Assistant & Agent gate (see aiAccessFor above).
+  aiAccessFor,
+  viewOnlyLocksFor,
 };

@@ -1,0 +1,27 @@
+/* Employee Management → TL-wise (scoped under .emp-tlwise). */
+.emp-tlwise .emp-tlwise-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.emp-tlwise .emp-tlwise-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.emp-tlwise .emp-tlwise-chip {
+  display: inline-flex; gap: 4px; align-items: center; font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink-soft);
+}
+.emp-tlwise .emp-tlwise-chip b { color: var(--ink); }
+.emp-tlwise .emp-tlwise-chip.ok { background: var(--teal-tint); border-color: transparent; }
+.emp-tlwise .emp-tlwise-chip.warn { background: var(--amber-tint); border-color: transparent; }
+.emp-tlwise .emp-tlwise-chip.muted { background: var(--paper); }
+.emp-tlwise .emp-tlwise-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.emp-tlwise .emp-tlwise-actions input { width: 220px; max-width: 100%; }
+.emp-tlwise .emp-tlwise-note { margin-bottom: 8px; }
+.emp-tlwise .num { text-align: right; white-space: nowrap; }
+.emp-tlwise .emp-tlwise-row { cursor: pointer; }
+.emp-tlwise .emp-tlwise-row:hover td { background: var(--navy-tint, rgba(30, 64, 175, .05)); }
+.emp-tlwise .emp-tlwise-row.open td { background: var(--paper); }
+.emp-tlwise .emp-tlwise-toggle {
+  border: 1px solid var(--line); background: var(--paper-raised); border-radius: 6px; width: 24px; height: 22px;
+  line-height: 18px; padding: 0; cursor: pointer; color: var(--navy, inherit); font-size: 12px;
+}
+.emp-tlwise .emp-tlwise-members > td { background: var(--paper); padding-top: 4px; padding-bottom: 10px; }
+.emp-tlwise .emp-tlwise-members table { width: 100%; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; }
+/* The nested member header must not stick over the outer one. */
+.emp-tlwise .emp-tlwise-members thead th { position: static; font-size: 11px; }
+.emp-tlwise tfoot td { font-weight: 600; background: var(--paper); border-top: 2px solid var(--line); }

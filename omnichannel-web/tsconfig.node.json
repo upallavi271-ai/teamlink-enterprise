@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    // vite.config.ts is a Node script: it imports "node:path" and reads
+    // process.env. Without this it inherits whatever @types/* happen to be
+    // installed (React/DOM), which do not declare __dirname or process.
+    // Requires the @types/node devDependency to be installed.
+    "types": ["node"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts"]
+}

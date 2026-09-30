@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import api from '../api';
+import sharedGet from '../utils/sharedGet';
 import { useAuth } from '../context/AuthContext.jsx';
 import { stageLabel } from '../atsVocab';
 import { can, canModule, isClientUser, workRoleLabel } from '../permissions';
 import { REPORTS_ITEMS, visibleItems } from '../nav';
+import DateRangePicker, { useDateRange, rangeParams, resolveRange } from '../components/DateRangePicker.jsx';
+import InsightsPanel from '../components/charts/InsightsPanel.jsx';
+import Reminders from './office/Reminders.jsx';
+import { canViewOffice } from './office/approval.jsx';
+import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
+import Pager, { usePaged } from '../components/Pager.jsx';
+import DeskBoard from '../components/dashboard/DeskBoard.jsx';
 
 // ---------------------------------------------------------------------------
 // THE OVERALL DASHBOARD (§18).
@@ -59,6 +67,13 @@ import { REPORTS_ITEMS, visibleItems } from '../nav';
 // AND IT IS ROWS, NOT A KPI WALL: compact "label · figure" rows that link into
 // the list the figure was counted from, plus an action list where there is an
 // action — the shape the ATS home already uses.
+//
+// THE DATE RANGE in the header (remembered per login in localStorage) is
+// passed to every endpoint above that has a dated answer: attendance for the
+// range, interviews and joinings in it, and the ATS rows /dashboard/ats labels
+// "— <period>". Queues, headcount, pending approvals and the Accounts balances
+// are the position right now and are labelled "(now)" / "(all time)"; the
+// Accounts Dashboard keeps its own financial-period picker for those.
 // ---------------------------------------------------------------------------
 
 const STAGE_BADGE = {
@@ -101,7 +116,7 @@ function Panel({ title, right, children }) {
   );
 }
 
-function PageHead({ user, extra }) {
+function PageHead({ user, extra, range, setRange }) {
   const name = String(user?.name || '').replace(/\(.*\)/, '').trim();
   return (
     <div className="page-head">
@@ -111,15 +126,37 @@ function PageHead({ user, extra }) {
           Welcome back, {name} · {workRoleLabel(user)}{extra || ''}
         </div>
       </div>
+      {range && (
+        <div className="filter-row" style={{ marginBottom: 0 }}>
+          <DateRangePicker value={range} onChange={setRange} period={resolveRange(range)} />
+        </div>
+      )}
     </div>
   );
 }
 
 // The queue as an action list: one row per item, each carrying the single move
 // that advances it. Straight from /api/dashboard/ats.
-function ActionList({ rows, navigate }) {
+// The dashboard shows the first 8; "Show all" opens the whole (filtered) list
+// with paging. Filters: Search · Stage · Due · Next action (the standard).
+const PREVIEW = 8;
+function ActionList({ rows: all, navigate }) {
   const today = new Date().toISOString().slice(0, 10);
+  const [expanded, setExpanded] = useState(false);
+  const dueOf = (r) => (!r.due ? 'none' : r.overdue ? 'overdue' : r.due === today ? 'today' : 'upcoming');
+  const lf = useListFilters(all, [
+    { key: 'q', type: 'search', placeholder: 'Search candidate or requirement…', minWidth: 200,
+      get: (r) => `${r.candidate || ''} ${r.requirement || ''} ${r.client || ''}` },
+    { key: 'stage', label: 'Stage', allLabel: 'All stages', primary: true, get: (r) => r.stageLabel },
+    { key: 'due', label: 'Due', allLabel: 'Any due date', primary: true, get: dueOf,
+      options: [{ value: 'overdue', label: 'Overdue' }, { value: 'today', label: 'Due today' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'none', label: 'No due date' }] },
+    { key: 'next', label: 'Next action', allLabel: 'All next actions', get: (r) => r.nextAction },
+  ]);
+  const page = usePaged(lf.rows);
+  const rows = expanded ? page.slice : lf.rows.slice(0, PREVIEW);
   return (
+    <>
+      {all.length > 0 && <div style={{ padding: '8px 12px 0' }}><ListFilterBar lf={lf} storageKey="dash-action-list" noun="items" /></div>}
     <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
       <table>
         <thead>
@@ -143,16 +180,28 @@ function ActionList({ rows, navigate }) {
               </td>
             </tr>
           ))}
-          {rows.length === 0 && (
+          {all.length === 0 && (
             <tr>
               <td colSpan="5" className="small-muted" style={{ padding: 16 }}>
                 Nothing is waiting on you — every item in your scope has moved on.
               </td>
             </tr>
           )}
+          {all.length > 0 && lf.rows.length === 0 && (
+            <tr><td colSpan="5"><ListEmpty lf={lf} noun="items" /></td></tr>
+          )}
         </tbody>
       </table>
     </div>
+      {expanded && <Pager page={page} noun="items" />}
+      {lf.rows.length > PREVIEW && (
+        <div style={{ padding: '6px 12px 10px' }}>
+          <button type="button" className="link-btn" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? 'Show fewer' : `Show all ${lf.rows.length} →`}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -163,7 +212,9 @@ export default function Dashboard() {
   // A client is outside this company: their dashboard is their own company's
   // pipeline and nothing else — never an internal product block, even where
   // their login carries a product flag for the portal screens.
-  if (isClientUser(user)) return <ClientDashboard user={user} />;
+  // User notes #4 — an outside login's home IS its portal.
+  if (isClientUser(user)) return <Navigate to="/client-portal" replace />;
+  if (user && user.role === 'CANDIDATE') return <Navigate to="/my-applications" replace />;
   return <ProductDashboard user={user} />;
 }
 
@@ -190,51 +241,66 @@ function ProductDashboard({ user }) {
 
   const hasAccounts = canModule(user, 'accounts') && can(user, 'accounts', 'accounts', 'Invoices', 'view');
   const seesBank = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
+  // Reminders (bills and payments due) — the due dates Office & Expenses
+  // keeps, for the logins that can open that page (GET /office-expenses/due-dates
+  // refuses everyone else).
+  const seesOffice = canViewOffice(user);
 
   const reportLinks = visibleItems(user, REPORTS_ITEMS);
+  const adminHome = !!user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) && can(user, null, 'administration', 'Users', 'view');
 
   const [ats, setAts] = useState(null);      // /dashboard/ats
   const [core, setCore] = useState(null);    // /dashboard
   const [hrms, setHrms] = useState(null);    // the scoped HRMS lists
   const [acc, setAcc] = useState(null);      // /dashboard/accounts
-  const [loading, setLoading] = useState(true);
+  // Which reads are still out. Each part of the page draws as soon as its
+  // own answer lands, so one slow read (the ATS aggregates, historically)
+  // no longer holds the whole dashboard on "Loading…".
+  const [pending, setPending] = useState({ ats: true, core: true, hrms: true, acc: true });
+  const [range, setRange] = useDateRange('tl_dash_range_home');
+  const period = resolveRange(range);
 
   useEffect(() => {
     let alive = true;
-    const today = new Date().toISOString().slice(0, 10);
-    const month = today.slice(0, 7);
+    const dated = rangeParams(range);
+    // One day keeps the old ?date= read; a range asks for every mark inside it.
+    const attendanceParams = period.days === 1 ? { date: period.from } : { from: period.from, to: period.to };
     // Every request is caught. One refusal, or one slow table, must not take
     // the whole dashboard down — and an unhandled rejection here has history.
-    const get = (url, params) => api.get(url, params ? { params } : undefined)
+    const get = (url, params) => sharedGet(url, params)
       .then((r) => r.data).catch(() => null);
     const none = Promise.resolve(null);
 
-    Promise.all([
-      atsQueues ? get('/dashboard/ats') : none,
-      hasAts ? get('/dashboard') : none,
-      hasHrms
+    // The dated reads start empty for a new range, so a figure from the old
+    // range is never shown under the new range's labels.
+    setAts(null); setCore(null); setHrms(null);
+    setPending({ ats: true, core: true, hrms: true, acc: true });
+    const land = (key, set) => (value) => {
+      if (!alive) return;
+      set(value);
+      setPending((p) => ({ ...p, [key]: false }));
+    };
+
+    (atsQueues ? get('/dashboard/ats', dated) : none).then(land('ats', setAts));
+    (hasAts ? get('/dashboard', dated) : none).then(land('core', setCore));
+    (hasHrms
         ? Promise.all([
           seesTeam ? get('/employees') : none,
-          seesAttendance ? get('/attendance', { date: today }) : none,
+          seesAttendance ? get('/attendance', attendanceParams) : none,
           seesLeave ? get('/leave') : none,
-          seesPayroll ? get('/payroll', { month }) : none,
+          // hrms-24 §1 — the leave and payroll rows follow the range too,
+          // counted on the server (routes/insights.js), not in the browser.
+          seesPayroll ? get('/insights/payroll', dated) : none,
           seesServices ? get('/helpdesk') : none,
-        ]).then(([employees, attendance, leave, payslips, tickets]) => ({
-          employees, attendance, leave, payslips, tickets,
+          seesLeave ? get('/insights/leave', dated) : none,
+        ]).then(([employees, attendance, leave, payroll, tickets, leaveInRange]) => ({
+          employees, attendance, leave, payroll, tickets, leaveInRange,
         }))
-        : none,
-      hasAccounts ? get('/dashboard/accounts') : none,
-    ])
-      .then(([a, c, h, ac]) => {
-        if (!alive) return;
-        setAts(a); setCore(c); setHrms(h); setAcc(ac); setLoading(false);
-      })
-      .catch(() => { if (alive) setLoading(false); });
+        : none).then(land('hrms', setHrms));
+    (hasAccounts ? get('/dashboard/accounts') : none).then(land('acc', setAcc));
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user && user.id, user && user.workspace]);
-
-  if (loading) return <div className="small-muted">Loading dashboard…</div>;
+  }, [user && user.id, user && user.workspace, range.range, range.from, range.to]);
 
   const departments = String(user?.atsScopeDepartments || user?.department || '')
     .split(',').map((d) => d.trim()).filter(Boolean);
@@ -243,10 +309,15 @@ function ProductDashboard({ user }) {
   // --- HRMS figures, all from the scoped lists above ----------------------
   const leave = (hrms && hrms.leave) || [];
   const attendance = (hrms && hrms.attendance) || [];
-  const payslips = (hrms && hrms.payslips) || [];
+  // A tile's value from an /insights payload, or null (drawn as —) when the
+  // read failed.
+  const tileOf = (d, key) => (d && d.tiles ? ((d.tiles.find((t) => t.key === key) || {}).value ?? null) : null);
   const tickets = (hrms && hrms.tickets) || [];
+  // Over a range this is marks, not people: present on 20 days counts 20.
   const present = attendance.filter((a) => ['Present', 'Late'].includes(a.status)).length;
   const myToday = attendance[0] ? attendance[0].status : 'Not marked';
+  const oneDay = period.days === 1;
+  const inP = (label) => `${label} — ${period.name}`;
   const leavePending = leave.filter((l) => l.status === 'Pending').length;
   const ticketsOpen = tickets.filter((t) => !['Resolved', 'Closed'].includes(t.status)).length;
 
@@ -254,7 +325,8 @@ function ProductDashboard({ user }) {
   const stage = (code) => ((core && core.pipelineByStage) || [])
     .find((s) => s.stage === code)?.count || 0;
   const selected = stage('SELECTED') + stage('OFFER') + stage('OFFER_ACCEPTED');
-  const joined = core ? core.hiringOutcomes : null;
+  // Joinings dated inside the range (/api/dashboard `inPeriod`).
+  const joined = core && core.inPeriod ? core.inPeriod.joined : null;
   // The role-shaped rows /dashboard/ats already writes ("My Requirements",
   // "My Team Candidates", "Department Requirements"…). Selected and Joined are
   // appended only where that set does not already carry them.
@@ -265,7 +337,11 @@ function ProductDashboard({ user }) {
 
   return (
     <>
-      <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} />
+      <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} range={range} setRange={setRange} />
+
+      {/* Super Admin / Admin home (dashboard spec 2026-09-29 §6): users, sync
+          and duplicate health, audit, approvals — GET /dashboard/admin-desk. */}
+      {adminHome && <DeskBoard url="/dashboard/admin-desk" title="Administration" sub="Not date-filtered · every number opens its list" />}
 
       {scoped && (
         <div className="notice">
@@ -281,11 +357,11 @@ function ProductDashboard({ user }) {
           title="HRMS"
           right={!seesTeam ? 'My own records'
             : scoped ? (departments.length > 1 ? 'Your departments' : 'Your department')
-              : 'Today'}
+              : period.name}
         >
           {seesTeam && (
             <Row
-              label="Employees"
+              label="Employees (now)"
               value={hrms.employees ? hrms.employees.length : null}
               sub={hrms.employees
                 ? `${hrms.employees.filter((e) => e.employmentStatus === 'Active').length} active`
@@ -295,25 +371,35 @@ function ProductDashboard({ user }) {
           )}
           {seesAttendance && (
             <Row
-              label="Attendance"
-              value={seesTeam ? present : myToday}
-              sub={seesTeam ? 'marked present today' : 'today'}
+              label={inP('Attendance')}
+              value={seesTeam || !oneDay ? present : myToday}
+              sub={seesTeam
+                ? (oneDay ? 'marked present' : 'present marks across the range')
+                : (oneDay ? null : 'days present')}
               to="/attendance"
             />
           )}
           {seesLeave && (
             <Row
-              label="Leave"
+              label="Leave (now)"
               value={leavePending}
               sub={seesTeam ? 'awaiting a decision' : 'requests pending'}
               to="/leave"
             />
           )}
+          {seesLeave && (
+            <Row
+              label={inP('Leave requests')}
+              value={tileOf(hrms.leaveInRange, 'total')}
+              sub={hrms.leaveInRange ? `${tileOf(hrms.leaveInRange, 'approved')} approved · ${tileOf(hrms.leaveInRange, 'days')} day(s)` : null}
+              to="/leave"
+            />
+          )}
           {seesPayroll && (
-            <Row label="Payroll" value={payslips.length} sub="payslips this month" to="/payroll" />
+            <Row label={inP('Payroll')} value={tileOf(hrms.payroll, 'payslips')} sub="payslips for months in the range" to="/payroll" />
           )}
           {!seesTeam && seesServices && (
-            <Row label="Employee Services" value={ticketsOpen} sub="open requests" to="/employee-services" />
+            <Row label="Employee Services (now)" value={ticketsOpen} sub="open requests" to="/employee-services" />
           )}
         </Panel>
       )}
@@ -325,13 +411,16 @@ function ProductDashboard({ user }) {
           right={ats && ats.scope && ats.scope.global ? 'All departments' : null}
         >
           {atsRows.map((w) => <Row key={w.label} label={w.label} value={w.value} to={w.to} />)}
-          {!carries('selected') && (
-            <Row label="Selected" value={selected} to="/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED" />
+          {(pending.ats || pending.core) && atsRows.length === 0 && (
+            <div className="small-muted" style={{ padding: '8px 0' }}>Loading…</div>
           )}
-          {!carries('joining') && !carries('joined') && (
-            <Row label="Joined" value={joined} to="/candidates?stage=JOINED,HIRED" />
+          {!pending.core && !carries('selected') && (
+            <Row label="Selected (now)" value={selected} to="/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED" />
           )}
-          {atsRows.length === 0 && !core && (
+          {!pending.core && !carries('joining') && !carries('joined') && (
+            <Row label={inP('Joined')} value={joined} to="/candidates?stage=JOINED,HIRED" />
+          )}
+          {atsRows.length === 0 && !core && !pending.ats && !pending.core && (
             <div className="empty-mini">Your ATS figures could not be read just now.</div>
           )}
         </Panel>
@@ -340,7 +429,7 @@ function ProductDashboard({ user }) {
       {/* The ATS queues, and then what to do about them. */}
       {atsQueues && ats && (
         <>
-          <Panel title="Pending actions" right={String(ats.pendingTotal)}>
+          <Panel title="Pending actions (now)" right={String(ats.pendingTotal)}>
             {ats.pendingActions.length === 0 && (
               <div className="empty-mini">No queues are assigned to your role.</div>
             )}
@@ -350,28 +439,30 @@ function ProductDashboard({ user }) {
           </Panel>
 
           <Panel
-            title="What needs an action"
+            title="What needs an action (now)"
             right={`${ats.queue.length} item${ats.queue.length === 1 ? '' : 's'}`}
           >
-            <ActionList rows={ats.queue.slice(0, 8)} navigate={navigate} />
+            <ActionList rows={ats.queue} navigate={navigate} />
           </Panel>
         </>
       )}
 
       {/* --- Accounts --------------------------------------------------- */}
       {hasAccounts && acc && (
-        <Panel title="Accounts">
-          <Row label="Invoices" value={acc.invoices} sub={`${acc.pending} pending`} to="/invoices" />
-          <Row label="Payments" value={rupees(acc.received)} sub="received" to="/invoices" />
-          <Row label="Outstanding" value={rupees(acc.outstanding)} sub={`${acc.overdue} overdue`} to="/invoices" />
+        // The ledger's standing position — not narrowed by the date range; the
+        // Accounts Dashboard has its own financial-period picker for that.
+        <Panel title="Accounts" right="Not date-filtered">
+          <Row label="Invoices (all time)" value={acc.invoices} sub={`${acc.pending} pending`} to="/invoices" />
+          <Row label="Payments (all time)" value={rupees(acc.received)} sub="received" to="/invoices" />
+          <Row label="Outstanding (now)" value={rupees(acc.outstanding)} sub={`${acc.overdue} overdue`} to="/invoices" />
           {seesBank && (
-            <Row label="Reconciliation" value={acc.unreconciled} sub="transactions unmatched" to="/bank" />
+            <Row label="Reconciliation (now)" value={acc.unreconciled} sub="transactions unmatched" to="/bank" />
           )}
         </Panel>
       )}
 
       {hasAccounts && acc && (acc.needsAttention || []).length > 0 && (
-        <Panel title="Invoices needing attention" right={String(acc.needsAttention.length)}>
+        <Panel title="Invoices needing attention (now)" right={String(acc.needsAttention.length)}>
           <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
             <table>
               <thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Status</th></tr></thead>
@@ -390,6 +481,18 @@ function ProductDashboard({ user }) {
             </table>
           </div>
         </Panel>
+      )}
+
+      {seesOffice && <Reminders />}
+
+      {/* --- Charts (hrms-24 §9): the same range, the viewer's own scope -- */}
+      {((hasHrms && seesAttendance) || hasAts) && (
+        <>
+          <div className="section-label">{`Charts — ${period.name}`}</div>
+          {hasHrms && seesAttendance && <InsightsPanel module="attendance" range={range} tiles={false} only={['att-status', 'att-trend']} />}
+          {hasHrms && seesLeave && <InsightsPanel module="leave" range={range} tiles={false} only={['leave-status', 'leave-type']} />}
+          {hasAts && <InsightsPanel module="ats" range={range} tiles={false} only={['ats-funnel', 'ats-trend']} />}
+        </>
       )}
 
       {/* --- Reports ---------------------------------------------------- */}
@@ -418,15 +521,27 @@ function ClientDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [apps, setApps] = useState([]);
+  const [range, setRange] = useDateRange('tl_dash_range_home');
+  const [expanded, setExpanded] = useState(false);
+  const mineAwaiting = apps.filter((a) => a.requirement?.clientId === user?.clientId
+    && ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage));
+  const lf = useListFilters(mineAwaiting, [
+    { key: 'q', type: 'search', placeholder: 'Search candidate or requirement…',
+      get: (a) => `${a.candidate?.name || ''} ${a.requirement?.title || ''}` },
+    { key: 'req', label: 'Requirement', allLabel: 'All requirements', primary: true, get: (a) => a.requirement?.title },
+    { key: 'stage', label: 'Stage', allLabel: 'All stages', primary: true, get: (a) => stageLabel(a.stage) },
+  ]);
+  const awaitingPage = usePaged(lf.rows);
   useEffect(() => {
     let alive = true;
     Promise.all([
-      api.get('/dashboard').then((r) => r.data).catch(() => ({})),
+      api.get('/dashboard', { params: rangeParams(range) }).then((r) => r.data).catch(() => ({})),
       api.get('/applications').then((r) => r.data).catch(() => []),
     ]).then(([s, a]) => { if (alive) { setStats(s); setApps(a || []); } });
     return () => { alive = false; };
-  }, []);
+  }, [range]);
   if (!stats) return <div className="small-muted">Loading dashboard…</div>;
+  const period = resolveRange(range);
 
   const mine = apps.filter((a) => a.requirement?.clientId === user?.clientId);
   const awaiting = mine.filter((a) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage));
@@ -434,20 +549,21 @@ function ClientDashboard({ user }) {
 
   return (
     <>
-      <PageHead user={user} />
+      <PageHead user={user} range={range} setRange={setRange} />
       <Panel title="My company" right="Your requirements only">
-        <Row label="Open requirements" value={stats.openRequirements} to="/requirements" />
-        <Row label="Awaiting your review" value={stats.clientReview} to="/candidates" />
-        <Row label="Shortlisted" value={stage('CLIENT_SHORTLISTED')} to="/candidates" />
-        <Row label="Interviews scheduled" value={stats.interviewsUpcoming} to="/ats/calendar" />
-        <Row label="Selected" value={stage('SELECTED') + stage('JOINED')} to="/candidates" />
+        <Row label="Open requirements (now)" value={stats.openRequirements} to="/requirements" />
+        <Row label="Awaiting your review (now)" value={stats.clientReview} to="/candidates" />
+        <Row label="Shortlisted (now)" value={stage('CLIENT_SHORTLISTED')} to="/candidates" />
+        <Row label={`Interviews — ${period.name}`} value={stats.inPeriod ? stats.inPeriod.interviews : null} to="/ats/calendar" />
+        <Row label="Selected (now)" value={stage('SELECTED') + stage('JOINED')} to="/candidates" />
       </Panel>
-      <Panel title="Candidates awaiting your review" right={String(awaiting.length)}>
+      <Panel title="Candidates awaiting your review (now)" right={String(awaiting.length)}>
+        {awaiting.length > 0 && <div style={{ padding: '8px 12px 0' }}><ListFilterBar lf={lf} storageKey="dash-client-awaiting" noun="candidates" /></div>}
         <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
           <table>
             <thead><tr><th>Candidate</th><th>Requirement</th><th>Stage</th></tr></thead>
             <tbody>
-              {awaiting.slice(0, 8).map((a) => (
+              {(expanded ? awaitingPage.slice : lf.rows.slice(0, PREVIEW)).map((a) => (
                 <tr key={a.id} className="row-link" onClick={() => navigate(`/candidates/${a.candidateId}`)}>
                   <td>{a.candidate?.name}</td>
                   <td>{a.requirement?.title}</td>
@@ -457,9 +573,20 @@ function ClientDashboard({ user }) {
               {awaiting.length === 0 && (
                 <tr><td colSpan="3" className="small-muted" style={{ padding: 16 }}>Nothing pending.</td></tr>
               )}
+              {awaiting.length > 0 && lf.rows.length === 0 && (
+                <tr><td colSpan="3"><ListEmpty lf={lf} noun="candidates" /></td></tr>
+              )}
             </tbody>
           </table>
         </div>
+        {expanded && <Pager page={awaitingPage} noun="candidates" />}
+        {lf.rows.length > PREVIEW && (
+          <div style={{ padding: '6px 12px 10px' }}>
+            <button type="button" className="link-btn" onClick={() => setExpanded((v) => !v)}>
+              {expanded ? 'Show fewer' : `Show all ${lf.rows.length} →`}
+            </button>
+          </div>
+        )}
       </Panel>
     </>
   );

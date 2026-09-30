@@ -1,0 +1,61 @@
+/* View-only LMS material viewers (MaterialViewer.jsx). Scoped under .lms-*. */
+.lms-secure {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.lms-secure .lms-video {
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+  border-radius: 8px;
+  display: block;
+}
+.lms-doc {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.lms-pdf-host {
+  max-height: 72vh;
+  overflow: auto;
+  padding: 12px;
+  background: #eef0f3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.lms-pdf-page {
+  display: block;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  max-width: 100%;
+  -webkit-user-drag: none;
+}
+.lms-img {
+  max-width: 100%;
+  display: block;
+  margin: 0 auto;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+/* Printing the page leaves the material out. */
+@media print {
+  .lms-secure { display: none !important; }
+}
+
+/* The learner's LMS dashboard and assessment (Lms.jsx / LearnCourse.jsx). */
+.lms-dash td { vertical-align: middle; }
+.lms-dash .lms-sub { font-size: 11px; color: var(--muted, #6b7280); }
+.lms-pbar { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+.lms-assess-timer {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.lms-assess-timer.low { color: #b42318; border-color: #f04438; }
+.lms-rules { margin: 6px 0 10px 18px; font-size: 12.5px; line-height: 1.7; }

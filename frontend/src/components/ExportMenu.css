@@ -1,0 +1,14 @@
+/* ExportMenu — one Export button, Excel / CSV / PDF. Scoped under .xm. */
+.xm{position:relative;display:inline-flex;align-items:center;gap:8px}
+.xm-menu{position:absolute;top:calc(100% + 4px);z-index:40;min-width:170px;display:flex;flex-direction:column;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-md);padding:4px}
+.xm-right .xm-menu{right:0}
+.xm-left .xm-menu{left:0}
+.xm-item{background:none;border:0;text-align:left;padding:7px 10px;border-radius:6px;font-size:13px;color:var(--ink);cursor:pointer}
+.xm-item:hover,.xm-item:focus-visible{background:var(--line-soft);outline:none}
+.xm-note{font-size:11px;color:var(--ink-soft);padding:6px 10px 4px;border-top:1px solid var(--line-soft);margin-top:2px}
+.xm-msg{font-size:12px;display:inline-flex;align-items:center;gap:6px;max-width:320px}
+.xm-msg.ok{color:var(--teal)}
+.xm-msg.bad{color:var(--red)}
+.xm-x{background:none;border:0;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+@media(max-width:640px){.xm{flex-wrap:wrap}.xm-msg{max-width:100%}}

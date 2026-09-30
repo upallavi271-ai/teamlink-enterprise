@@ -1,0 +1,31 @@
+/* Voice input + clarify chips for the AI panel. Everything scoped under
+   .ai-voice / .ai-mic / .ai-clarify so nothing else changes. */
+.ai-mic{min-width:34px;padding-left:8px;padding-right:8px}
+.ai-mic.ai-mic-on{background:var(--red, #c0392b);border-color:var(--red, #c0392b);color:#fff}
+.ai-voice{padding:0 12px 8px;background:var(--paper-raised);font-size:11px;line-height:1.45}
+.ai-voice-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ai-voice-lang select{font-size:11px;padding:2px 4px;border-radius:6px;border:1px solid var(--line);
+  background:var(--paper);color:var(--ink)}
+.ai-voice-tts{border:1px solid var(--line);background:var(--paper);color:var(--ink-soft);border-radius:12px;
+  padding:2px 8px;font-size:11px;cursor:pointer}
+.ai-voice-tts.on{border-color:var(--navy);color:var(--navy);background:var(--navy-tint)}
+.ai-voice-state{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;
+  border-radius:6px;padding:5px 8px}
+.ai-voice-listening{justify-content:flex-start;background:var(--navy-tint);color:var(--navy);font-weight:500}
+.ai-voice-pending{background:var(--amber-tint, #fff4d6);color:var(--ink)}
+.ai-voice-error{background:var(--paper);border:1px solid var(--red, #c0392b);color:var(--red, #c0392b)}
+.ai-voice-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red, #c0392b);
+  flex:none;animation:ai-voice-pulse 1.1s ease-in-out infinite}
+@keyframes ai-voice-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.75)}}
+@media (prefers-reduced-motion: reduce){.ai-voice-dot{animation:none}}
+.ai-voice-privacy{margin-top:5px;color:var(--ink-faint, var(--ink-soft));font-size:10.5px}
+.ai-voice .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* "Which did you mean?" quick replies under a clarifying question. */
+.ai-clarify{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;white-space:normal}
+.ai-clarify-chip{border:1px solid var(--navy);background:var(--paper-raised);color:var(--navy);border-radius:14px;
+  padding:4px 10px;font-size:11.5px;line-height:1.3;text-align:left;cursor:pointer}
+.ai-clarify-chip:hover{background:var(--navy-tint)}
+.ai-clarify-chip:disabled{opacity:.55;cursor:not-allowed}
+.ai-heard{display:block;margin-top:4px;font-size:10.5px;color:var(--ink-soft);white-space:normal}
+.ai-heard-low{color:var(--amber, #b7791f)}

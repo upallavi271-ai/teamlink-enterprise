@@ -1,0 +1,21 @@
+/* DateRangePicker — From → To → Apply, always visible (hrms-24 §1).
+   Scoped under .drp; sits inside any .filter-row. */
+.drp{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.drp-box{display:inline-flex;align-items:center;gap:6px}
+.drp-lab{font-size:11.5px;font-weight:600;color:var(--ink-soft)}
+.drp .drp-text{width:108px;font-variant-numeric:tabular-nums}
+.drp-cal{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:30px;height:32px;border:1px solid var(--line);border-radius:7px;background:var(--paper-raised);
+  color:var(--ink-soft);cursor:pointer;padding:0}
+.drp-cal:hover{color:var(--ink);border-color:var(--ink-faint)}
+.drp-cal:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+/* The browser's own date picker, anchored under the button and invisible —
+   opened with showPicker(). */
+.drp-native{position:absolute;inset:0;opacity:0;pointer-events:none;width:100%;height:100%;border:0;padding:0}
+.drp-arrow{color:var(--ink-faint);font-size:13px}
+.drp-note{margin:0;font-size:12px;white-space:nowrap}
+@media(max-width:640px){
+  .drp{width:100%}
+  .drp .drp-text{width:96px}
+  .drp-arrow{display:none}
+}

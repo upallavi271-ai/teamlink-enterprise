@@ -30,7 +30,7 @@
 // nav is not a second permission system, and hiding an item is never the
 // control; the API still refuses the request.
 // ---------------------------------------------------------------------------
-import { can, canModule } from './permissions';
+import { can, canModule, productRole } from './permissions';
 
 export const SECTION_LABEL = {
   dashboard: 'Dashboard', hrms: 'HRMS', ats: 'ATS',
@@ -88,7 +88,7 @@ export function mayRenderSection(user, pathname) {
   if (!isExternalUser(user)) return true;
   if (ALWAYS_OPEN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return true;
   const products = user?.products || {};
-  switch (sectionOf(pathname)) {
+  switch (sectionOf(pathname, user)) {
     case 'hrms': return !!products.hrms;
     case 'accounts': return !!products.accounts;
     case 'ats': return !!products.ats;
@@ -128,12 +128,24 @@ export const SECTION_ICON = {
 
 export const HRMS_ITEMS = [
   leaf('📊', '/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
+  // THE EMPLOYEE'S OWN RECORD — their complete employee form and documents
+  // (pages/hrms/MyProfile.jsx). It was reachable only from banners and the
+  // dashboard button, so an employee with nothing pending had no way back to
+  // it. Every HRMS login is somebody's employee record, so it needs no
+  // permission beyond holding HRMS; the API resolves the record from the
+  // login and never from a parameter. Super Admin / Admin logins are service
+  // accounts with no employee record behind them, so `unless` keeps a
+  // dead-end entry out of their sidebar (Administration -> Profile still
+  // links here for the rare admin who does have one).
+  leaf('🪪', '/my-profile', 'My Employee Profile', null, 'hrms', [['administration', 'Users', 'view']]),
   // "Employees in assigned department" / "Team employees" (§15). The SAME
   // screen and the SAME scoped endpoint as Administration -> Employee
   // Management; only the entry point differs, and `unless` keeps Super Admin
   // and Admin from seeing it listed twice (they get the Administration one).
   leaf('👤', '/employees', 'Employees', [['hrms', 'Employee Management', 'view']], null,
     [['administration', 'Users', 'view']]),
+  // Positions & Seat History moved to Administration -> Positions & Seat History
+  // (/admin/positions?tab=history); /hrms/seat-history redirects there.
   leaf('🕐', '/attendance', 'Attendance & Time', [['hrms', 'Attendance & Time', 'view']]),
   leaf('🏖️', '/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('💵', '/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
@@ -150,20 +162,43 @@ export const HRMS_ITEMS = [
 export const ATS_ITEMS = [
   leaf('📊', '/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'),
   leaf('💼', '/requirements', 'Jobs / Requirements', [['requirements', 'Requirement List', 'view']]),
-  // NO "Job Portal" ENTRY HERE, DELIBERATELY. The Job Portal is not a
-  // top-level ATS module; it is a workspace INSIDE Jobs / Requirements —
-  //   Jobs / Requirements → Job Portal → Publish → Sync → Applications
-  //   → Import to ATS → Candidate Pipeline
-  // — so it is reached from the Clients · Requirements · Agreements · Job
-  // Portal tab strip (components/ClientModuleTabs.jsx), which is what "inside
-  // Jobs / Requirements" means in this navigation. That strip picks the
-  // internal workspace or the client-facing view from the SAME permission
-  // matrix the API enforces, so the ATS sidebar stays flat, exactly as the
-  // reference prototype has it.
+  // NO "Job Portal" ENTRY HERE, DELIBERATELY (the user, 2026-09-29). The Job
+  // Portal is candidate INTAKE, not a module and not a Requirements tab:
+  //   Candidates & Pipeline → Job Portal Candidates → Send to ATS → Pipeline
+  // Publishing stays on each requirement ("Posted on"), and the portal sync
+  // status / logs live under Administration → Integrations → Job Portal.
+  // Jobs / Requirements itself has no tab strip any more.
+  // CLIENTS IS IN ONE PLACE — HERE (clients role spec 2026-09-29). It is no
+  // longer a tab of Jobs / Requirements. Admin, Management and BDE ("My
+  // Clients") ✅; a TL 👁 (their team's clients, limited); Accounts 👁 (the
+  // billing view); a Recruiter never — they hold no Client List view, so the
+  // entry is hidden and GET /api/clients answers 403.
   leaf('🏢', '/clients', 'Clients', [['clients', 'Client List', 'view']]),
   leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
-  leaf('🧑‍💼', '/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
+  leaf('🎯', '/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
   leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
+  // NO "Reports" ENTRY HERE (the user, 2026-09-29: "Move the ATS Reports into
+  // the overall Reports module"). ATS Reports is listed once, in the Reports
+  // group beside Job Portal Reports and Accounts Reports — same page, same
+  // permission (reports / ATS Reports / view), so everyone who reached it
+  // from ATS reaches it from Reports.
+  // NO "Internal Hiring" ENTRY (the user's rule, 2026-09-29: "In ATS, Internal
+  // Hiring must NOT be a separate module"). Internal hiring runs INSIDE the
+  // normal modules: Jobs / Requirements has a Client | Internal split
+  // (/requirements?type=internal), Candidates & Pipeline the same filter, and
+  // an internal application's pipeline reads HR Review → Dept Head / TL →
+  // Interview → Feedback → Selected → Offer → Joining → HRMS. The old
+  // /ats/internal-hiring URL redirects to /requirements?type=internal. HR's
+  // ATS menu is therefore Dashboard · Jobs / Requirements · Candidates &
+  // Pipeline · Interview Calendar, all server-scoped to internal openings.
+];
+
+// Review #3 §1 — nothing below is a menu entry, anywhere: they are tabs,
+// stages, filters or action views INSIDE the seven pages above, still routed
+// (a bookmark or a link from a page keeps working) but never listed.
+export const UNLISTED_ATS_VIEWS = [
+  'Screening', 'Follow-ups', 'Offers', 'Rejected', 'Joining', 'Applications', 'Sourcing',
+  'Candidate Review', 'Client Review',
 ];
 
 export const ACCOUNTS_ITEMS = [
@@ -171,6 +206,10 @@ export const ACCOUNTS_ITEMS = [
   leaf('🏢', '/office', 'Office / Business', [['accounts', 'Office & Expenses', 'view']]),
   leaf('🧾', '/invoices', 'Invoices', [['accounts', 'Invoices', 'view']]),
   leaf('🏦', '/bank', 'Bank & Reconciliation', [['accounts', 'Bank & Reconciliation', 'view']]),
+  // SPEC B: the payroll journal, the ledger and the payroll reconciliation.
+  leaf('📒', '/accounts/journal', 'Journal & Ledger', [['accounts', 'Journal & Ledger', 'view']]),
+  // Signed client agreements, read-only for the accounts desk (routes/agreementSeal.js).
+  leaf('📝', '/accounts/agreements', 'Client Agreements', [['accounts', 'Invoices', 'view']], 'accounts'),
 ];
 
 // ADMINISTRATION — §15, exactly.
@@ -199,9 +238,11 @@ export const ACCOUNTS_ITEMS = [
 export const ADMIN_ITEMS = [
   leaf('🏢', '/admin/company', 'Company Setup', [['administration', 'Company Setup', 'view']]),
   leaf('🗂️', '/admin/departments', 'Departments & Teams', [['administration', 'Departments & Teams', 'view']]),
-  leaf('💺', '/admin/positions', 'Positions', [['administration', 'Departments & Teams', 'view']]),
+  leaf('💺', '/admin/positions', 'Positions & Seat History', [['administration', 'Departments & Teams', 'view']]),
   leaf('👥', '/employees', 'Employee Management', [['administration', 'Users', 'view']]),
   leaf('👤', '/admin/users', 'Users', [['administration', 'Users', 'view']]),
+  // Super Admin only, and not while already viewing as (components/ViewAs.jsx).
+  { ...leaf('👁', '/admin/view-as', 'View as', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.viewAs },
   leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
   leaf('🔌', '/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
   leaf('🏗️', '/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
@@ -211,15 +252,23 @@ export const ADMIN_ITEMS = [
 ];
 
 export const REPORTS_ITEMS = [
-  leaf('🎯', '/reports/ats', 'ATS Reports', [['reports', 'ATS Reports', 'view']]),
-  leaf('🌐', '/reports/job-portal', 'Job Portal Reports', [['reports', 'Job Portal Reports', 'view']]),
-  leaf('💰', '/reports/accounts', 'Accounts Reports', [['reports', 'Accounts Reports', 'view']]),
+  // ONE entry for all of ATS Reports: the eleven reports (Recruitment,
+  // Requirements, … SLA & Aging) are tabs inside the page, never sidebar
+  // entries of their own.
+  // ATS Reports lives HERE and only here (2026-09-29 — moved out of the ATS
+  // menu into the overall Reports module).
+  // Product-gated (user, 2026-09-29): an R&D employee or anyone without ATS
+  // must not see ATS / Job Portal reports, whatever their HRMS role grants.
+  leaf('🎯', '/reports/ats', 'ATS Reports', [['reports', 'ATS Reports', 'view']], 'ats'),
+  leaf('🌐', '/reports/job-portal', 'Job Portal Reports', [['reports', 'Job Portal Reports', 'view']], 'ats'),
+  leaf('💰', '/reports/accounts', 'Accounts Reports', [['reports', 'Accounts Reports', 'view']], 'accounts'),
 ];
 
 function leafVisible(user, item) {
   if (item.product && !(user?.products || {})[item.product]) return false;
   const held = ([m, f, a]) => (f ? can(user, null, m, f, a) : canModule(user, m));
   if (item.unless && item.unless.every(held)) return false;
+  if (item.when && !item.when(user)) return false;
   if (!item.perms) return true;                       // Notifications, Profile
   return item.perms.every(held);
 }
@@ -235,6 +284,58 @@ export function visibleItems(user, items) {
     .filter(Boolean);
 }
 
+// Review #2 §13 — a Recruiter (and a BDE — both see only their own row) does
+// NOT get the Recruiter & BDE management page: the same entry reads "My Work"
+// and the route shows their own work summary (pages/ats/Team.jsx). The
+// server scopes /ats/team to them either way.
+// The ATS role whose SCOPE this login has (a custom role borrows a system
+// role's scope — identity.js scopeRoles), falling back to the product role.
+export function atsRoleOf(user) {
+  return (user && user.scopeRoles && user.scopeRoles.ats) || productRole(user, 'ats');
+}
+
+// Review #3 §15 / §28 — "My Work everywhere". SAME routes, SAME permissions;
+// only the words change, so a recruiter reads the menu as their own work:
+//   Recruiter  My Work · My Requirements · My Candidates · My Workload ·
+//              My Interviews · Reports
+//   BDE        My Work · Jobs / Requirements · My Clients · Candidates &
+//              Pipeline · My Workload · Interview Calendar · Reports
+//   TL         My Team (dashboard) · … · Team Workload (Recruiter & BDE) — one
+//              "My Team" entry, not two with the same name
+// Manager / Asst Manager / STL / Super Admin keep the module names.
+const ROLE_LABELS = {
+  RECRUITER: {
+    '/ats/dashboard': 'My Work', '/requirements': 'My Requirements', '/candidates': 'My Candidates',
+    '/ats/team': 'My Workload', '/ats/calendar': 'My Interviews',
+  },
+  BDE: { '/ats/dashboard': 'My Work', '/clients': 'My Clients', '/ats/team': 'My Workload' },
+  // The module keeps its name "Recruiter & BDE" for a TL (user spec
+  // 2026-09-29) — TL review / workload lives inside it as filters.
+  TL: { '/ats/dashboard': 'My Team' },
+};
+const ROLE_ICONS = { '/ats/team': { RECRUITER: '🗂️', BDE: '🗂️' } };
+// User notes #4 — a Client or a Candidate login gets ONE entry: its own
+// portal (pages/portal/*). The internal ATS screens stay reachable only by
+// typing their address, and the API still scopes every one of them.
+const PORTAL_ITEMS = {
+  CLIENT: [leaf('🏢', '/client-portal', 'My Portal', [['requirements', 'Client Job Portal', 'view']])],
+  CANDIDATE: [leaf('🗂️', '/my-applications', 'My Applications', [['candidates', 'Candidate List', 'view']])],
+};
+// ACCOUNTS IN ATS is a billing view and nothing else (role specs 2026-09-29):
+// Jobs / Requirements (the requirements with joined candidates) and Clients
+// (the billing view). No ATS dashboard, candidates, team or calendar entry.
+const ACCOUNTS_ATS_PATHS = ['/requirements', '/clients'];
+export function atsItemsFor(user) {
+  const role = atsRoleOf(user);
+  if (PORTAL_ITEMS[role]) return PORTAL_ITEMS[role];
+  if (role === 'ACCOUNTANT') return ATS_ITEMS.filter((i) => ACCOUNTS_ATS_PATHS.includes(i.to));
+  const labels = ROLE_LABELS[role];
+  if (!labels) return ATS_ITEMS;
+  return ATS_ITEMS.map((i) => (labels[i.to]
+    ? { ...i, label: labels[i.to], ...((ROLE_ICONS[i.to] || {})[role] ? { icon: ROLE_ICONS[i.to][role] } : {}) }
+    : i));
+}
+
 // Group render order is the prototype's: HRMS, ATS, Accounts, Reports,
 // Administration. Which groups and which items appear is decided entirely by
 // the permission matrix.
@@ -247,7 +348,7 @@ export function groupsForUser(user) {
   // Labels come from sectionLabel(), so an external login can never be shown
   // an internal product name in the sidebar.
   add('hrms', sectionLabel('hrms', user), HRMS_ITEMS);
-  add('ats', sectionLabel('ats', user), ATS_ITEMS);
+  add('ats', sectionLabel('ats', user), atsItemsFor(user));
   add('accounts', sectionLabel('accounts', user), ACCOUNTS_ITEMS);
   add('reports', sectionLabel('reports', user), REPORTS_ITEMS);
   add('admin', sectionLabel('admin', user), ADMIN_ITEMS);
@@ -273,12 +374,31 @@ const SECTION_OF_PATH = [
   // HRMS section keeps a TL's sidebar from opening an Administration group
   // they hold nothing else in.
   [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile|employees)/, 'hrms'],
-  [/^\/(ats|requirements|clients|candidates|client-portal)/, 'ats'],
+  [/^\/(ats|requirements|clients|candidates|client-portal|agreements)/, 'ats'],
+  // ATS Reports is in the Reports group (2026-09-29) — /reports/* below.
   [/^\/(accounts|invoices|bank|office)/, 'accounts'],
   [/^\/reports/, 'reports'],
   [/^\/admin/, 'admin'],
 ];
-export function sectionOf(pathname) {
+// THE EMPLOYEE LIST BELONGS TO WHICHEVER ENTRY THE USER ACTUALLY HAS.
+//
+// Both HRMS -> Employees and Administration -> Employee Management point at
+// /employees, and the two are never both visible: the HRMS leaf carries
+// `unless: administration/Users/view`, so anyone holding that permission sees
+// only the Administration entry. That permission is therefore exactly the
+// test for which section the screen is being opened from. Without it the
+// table above sent every visitor to HRMS, so an admin clicking Employee
+// Management watched the sidebar jump to HRMS and the Administration group
+// collapse under them.
+//
+// `user` is optional: with no user the table answers, which is the old
+// behaviour, so every existing caller keeps working.
+const isEmployeePath = (p) => p === '/employees' || p.startsWith('/employees/');
+
+export function sectionOf(pathname, user) {
+  if (user && isEmployeePath(pathname)) {
+    return can(user, null, 'administration', 'Users', 'view') ? 'admin' : 'hrms';
+  }
   const hit = SECTION_OF_PATH.find(([re]) => re.test(pathname));
   return hit ? hit[1] : 'dashboard';
 }

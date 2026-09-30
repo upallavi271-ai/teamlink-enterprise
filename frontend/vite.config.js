@@ -17,6 +17,7 @@ import react from '@vitejs/plugin-react';
 // frontend/src/App.jsx carries a belt-and-braces redirect for production
 // static hosts that behave the same way.
 const JOB_PORTAL_FILE = '/job-portal/index.html';
+const OMNICHANNEL_FILE = '/omnichannel/index.html';
 
 function jobPortalRoute() {
   return {
@@ -24,8 +25,15 @@ function jobPortalRoute() {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const [path, query] = (req.url || '').split('?');
-        if (path === '/job-portal' || path === '/job-portal/') {
-          req.url = JOB_PORTAL_FILE + (query ? `?${query}` : '');
+        // /job-portal is no longer rewritten to the old single-file portal:
+        // it falls through to the SPA, whose JobPortalRedirect forwards to the
+        // new Job Portal app (JOB_PORTAL_URL, default http://localhost:4323).
+        void JOB_PORTAL_FILE;
+        // OMNICHANNEL (Green Start, omnichannel-web/ built into
+        // public/omnichannel/). It routes on the PATH (/omnichannel/app/…), so
+        // every page that is not a real file gets its index.html.
+        if (path === '/omnichannel' || (path.startsWith('/omnichannel/') && !/\.[a-z0-9]+$/i.test(path))) {
+          req.url = OMNICHANNEL_FILE + (query ? `?${query}` : '');
         }
         next();
       });

@@ -168,11 +168,13 @@ async function parseMultipart(req, { maxBytes = MAX_BYTES } = {}) {
 
 // Validates and writes the file. Returns the columns to persist on the row.
 // Throws an Error whose `.code` names the reason, so the route can phrase it.
-function store(file) {
+// `maxBytes` lets a caller with a larger stated limit (the bank panel's bill,
+// 8 MB) raise the cap for its own upload; everything else keeps MAX_BYTES.
+function store(file, { maxBytes = MAX_BYTES } = {}) {
   if (!file || !file.data || !file.data.length) {
     throw Object.assign(new Error('NO_FILE'), { code: 'NO_FILE' });
   }
-  if (file.data.length > MAX_BYTES) {
+  if (file.data.length > maxBytes) {
     throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
   }
   const ext = ALLOWED[file.contentType];

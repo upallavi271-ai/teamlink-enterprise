@@ -1,43 +1,67 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import api from '../api';
 
 // ---------------------------------------------------------------------------
-// TeamLink Job Portal — the stable entry point.
+// TeamLink Job Portal — the stable entry point, and where its URL comes from.
 //
-// The portal is the customer's own self-contained single-file app, shipped
-// verbatim as a static asset at frontend/public/job-portal/index.html and
-// served at /job-portal/. It is NOT a React page: it has its own shell, its
-// own hash router (#/jobs, #/candidate/home, #/recruiter/jobs, …) and keeps
-// its state in localStorage under tl_job_portal_state_v1.
+// REPLACED (Sep 2026). The portal is no longer the single-file localStorage
+// app that used to be served at /job-portal/. It is its own application
+// (job-portal-app/: Express + PostgreSQL) on its own origin, and it is really
+// connected to this ATS: published requirements are jobs there, and an
+// application made there arrives here as a candidate at NEW (backend
+// utils/jobPortalBridge.js).
 //
-// This component exists only so that /job-portal (no trailing slash) and
-// /careers always land on it, even when the request has fallen through to the
-// SPA history fallback — which is what a plain static host does in production.
-// In dev the Vite plugin in vite.config.js redirects first and this never
-// renders. index.html is targeted rather than the directory so there is no way
-// to bounce between the fallback and this component.
+// Its address is configuration, not code: JOB_PORTAL_URL in backend/.env
+// (default http://localhost:4323), served by GET /api/public/job-portal/config.
+// useJobPortalUrl() is what the sidebar link, the Job Portal workspace and the
+// requirement page read, so moving the portal to its production domain is one
+// setting.
 //
-// Deliberately a hard document navigation (not react-router): the portal is a
-// whole separate document, not a route inside this SPA.
-//
-// TWO IDENTITIES, NOT ONE — and this page says so rather than implying
-// otherwise. The portal keeps its own accounts (recruiter@teamlink.com and
-// friends) in localStorage under tl_job_portal_state_v1. They are not this
-// app's users, there is no SSO between them, and an application submitted
-// inside the portal never reaches this database. The DB-backed candidate flow
-// — /careers/classic, POST /api/public/jobs/:id/apply, /careers/my-applications
-// — is the one that does, and it is the authoritative one for a signed-in
-// TeamLink candidate. See the note rendered below.
+// /job-portal and /careers land here and forward to it. The classic careers
+// pages (/careers/classic, /careers/:id?src=…, /careers/my-applications) and
+// the jobs.xml / jobs.feed feeds are untouched: links already shared keep
+// working until they are retired.
 // ---------------------------------------------------------------------------
-export const JOB_PORTAL_URL = '/job-portal/';
-const JOB_PORTAL_FILE = '/job-portal/index.html';
+export const DEFAULT_JOB_PORTAL_URL = 'http://localhost:4323';
+
+let cached = null;
+let pending = null;
+
+export function loadJobPortalUrl() {
+  if (cached) return Promise.resolve(cached);
+  if (!pending) {
+    pending = api.get('/public/job-portal/config')
+      .then((res) => {
+        cached = String((res.data && res.data.url) || DEFAULT_JOB_PORTAL_URL).replace(/\/+$/, '');
+        return cached;
+      })
+      .catch(() => { pending = null; return DEFAULT_JOB_PORTAL_URL; });
+  }
+  return pending;
+}
+
+export function useJobPortalUrl() {
+  const [url, setUrl] = useState(cached || DEFAULT_JOB_PORTAL_URL);
+  useEffect(() => {
+    let live = true;
+    loadJobPortalUrl().then((u) => { if (live) setUrl(u); });
+    return () => { live = false; };
+  }, []);
+  return url;
+}
+
+// A requirement's own page on the portal. The job there is keyed
+// tl_<requirement id>; ?src= is recorded by the portal as the application's
+// source and comes back here as firstSource (Shine, Naukri, LinkedIn …).
+export function jobPortalJobUrl(base, requirementId, src) {
+  return `${base}/${src ? `?src=${encodeURIComponent(src)}` : ''}#/job/tl_${requirementId}`;
+}
 
 export default function JobPortalRedirect() {
+  const url = useJobPortalUrl();
   useEffect(() => {
-    // From /careers, aim at the pretty directory URL. From /job-portal itself
-    // that would risk bouncing back here on a host that does not resolve the
-    // directory, so go straight at the file.
-    const onPortalPath = window.location.pathname.replace(/\/+$/, '') === '/job-portal';
-    window.location.replace(onPortalPath ? JOB_PORTAL_FILE : JOB_PORTAL_URL);
+    // Hard navigation: the portal is another application, not a route here.
+    loadJobPortalUrl().then((u) => window.location.replace(`${u}/`));
   }, []);
 
   return (
@@ -45,13 +69,7 @@ export default function JobPortalRedirect() {
       <main className="careers-content">
         <div className="small-muted">Opening the TeamLink Job Portal…</div>
         <p className="small-muted">
-          If nothing happens, <a href={JOB_PORTAL_FILE}>open the Job Portal</a>.
-        </p>
-        <p className="small-muted">
-          The Job Portal keeps its own accounts. Signing in there is separate from your TeamLink login, and an
-          application made there does not reach a TeamLink recruiter. To apply through TeamLink itself, use the{' '}
-          <a href="/careers/classic">TeamLink careers list</a> and track it under{' '}
-          <a href="/careers/my-applications">My Applications</a>.
+          If nothing happens, <a href={`${url}/`}>open the Job Portal</a>.
         </p>
       </main>
     </div>

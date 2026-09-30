@@ -1,12 +1,8 @@
 // ---------------------------------------------------------------------------
 // Export writers — CSV, Excel (.xlsx) and PDF, from one rows-and-headers shape.
 //
-// WHY NO LIBRARY
-// The backend's dependency list is deliberately small and this box builds
-// offline. An .xlsx is a ZIP of five small XML parts and a PDF is a plain
-// text container, so both are written here with nothing but Node's own zlib
-// and Buffer. Everything produced opens in Excel, LibreOffice, Numbers and
-// any PDF reader.
+// Excel files are written with SheetJS (already a dependency), which Excel
+// opens cleanly. The PDF is a plain text container written here by hand.
 //
 // These functions are FORMAT ONLY. They know nothing about employees,
 // permissions or scope: the caller has already applied the data scope and the
@@ -15,7 +11,7 @@
 // second format quietly skipping it.
 // ---------------------------------------------------------------------------
 
-const zlib = require('zlib');
+const XLSX = require('xlsx');
 
 // --- CSV (RFC 4180) --------------------------------------------------------
 // A field is quoted when it holds a comma, a quote or a newline, and an
@@ -33,172 +29,56 @@ function toCsv(headers, rows) {
 
 // --- XLSX ------------------------------------------------------------------
 
-function xmlEscape(value) {
-  if (value === null || value === undefined) return '';
-  return String(value)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
-    // Control characters are illegal in XML 1.0 and make Excel refuse the
-    // file. Filtered by CODE POINT rather than a regex literal, so this
-    // source file stays plain ASCII.
-    .split('').filter((ch) => {
-      const c = ch.charCodeAt(0);
-      return c === 9 || c === 10 || c === 13 || c >= 32;
-    }).join('');
+// Strip characters XML 1.0 forbids (Excel refuses them), by code point.
+function cleanText(value) {
+  return String(value).split('').filter((ch) => {
+    const c = ch.charCodeAt(0);
+    return c === 9 || c === 10 || c === 13 || c >= 32;
+  }).join('');
 }
 
-// A1, B1 … Z1, AA1 …
-function colRef(index) {
-  let n = index;
-  let ref = '';
-  do {
-    ref = String.fromCharCode(65 + (n % 26)) + ref;
-    n = Math.floor(n / 26) - 1;
-  } while (n >= 0);
-  return ref;
+// Numbers stay numbers so Excel can sum them; long digit strings (phones,
+// account numbers, Aadhaar last-4 with leading zeros) stay text.
+function cellValue(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  const s = cleanText(value);
+  if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(s) && s.length < 10) return Number(s);
+  return s.length > 32000 ? s.slice(0, 32000) : s;
 }
 
-// Numbers are written as numbers so Excel can sum them; everything else goes
-// out as an inline string, which avoids a shared-string table entirely.
-function cellXml(value, rowIndex, colIndex) {
-  const ref = `${colRef(colIndex)}${rowIndex}`;
-  if (value === null || value === undefined || value === '') return `<c r="${ref}"/>`;
-  const s = String(value);
-  if (/^-?\d+(\.\d+)?$/.test(s) && s.length < 15) return `<c r="${ref}"><v>${s}</v></c>`;
-  return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(s)}</t></is></c>`;
-}
-
-function sheetXml(headers, rows) {
-  const out = [];
-  out.push('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
-  out.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
-  // Give every column a sane width so the first thing HR sees is not ####.
-  out.push('<cols>');
-  headers.forEach((h, i) => {
-    const longest = rows.reduce((m, r) => Math.max(m, String(r[i] === undefined || r[i] === null ? '' : r[i]).length), String(h).length);
-    out.push(`<col min="${i + 1}" max="${i + 1}" width="${Math.min(46, Math.max(10, longest + 2))}" customWidth="1"/>`);
+// A workbook of one or more sheets: [{ name, headers, rows }]. Sheet names
+// are cleaned of the characters Excel forbids, cut to 31, and made unique.
+function toXlsxBook(sheets) {
+  const used = new Set();
+  const named = (sheets && sheets.length ? sheets : [{ name: 'Sheet1', headers: [], rows: [] }]).map((sh, i) => {
+    const base = String(sh.name || `Sheet${i + 1}`).replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || `Sheet${i + 1}`;
+    let name = base;
+    for (let n = 2; used.has(name.toLowerCase()); n += 1) name = `${base.slice(0, 27)} (${n})`;
+    used.add(name.toLowerCase());
+    return { ...sh, name };
   });
-  out.push('</cols>');
-  out.push('<sheetData>');
-  out.push(`<row r="1">${headers.map((h, i) => cellXml(h, 1, i)).join('')}</row>`);
-  rows.forEach((r, ri) => {
-    out.push(`<row r="${ri + 2}">${headers.map((_, ci) => cellXml(r[ci], ri + 2, ci)).join('')}</row>`);
+  // Written with SheetJS: the hand-rolled XML above produced parts Excel
+  // rejected (it opened as "[Repaired]" with an empty sheet).
+  const wb = XLSX.utils.book_new();
+  named.forEach((sh) => {
+    const headers = sh.headers || [];
+    const aoa = [headers.map((h) => cleanText(h)), ...(sh.rows || []).map((r) => headers.map((_, ci) => cellValue(r[ci])))];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = headers.map((h, i) => {
+      const longest = (sh.rows || []).reduce((m, r) => Math.max(m, String(r[i] === undefined || r[i] === null ? '' : r[i]).length), String(h).length);
+      return { wch: Math.min(46, Math.max(10, longest + 2)) };
+    });
+    if (headers.length) ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: headers.length - 1 } }) };
+    XLSX.utils.book_append_sheet(wb, ws, sh.name);
   });
-  out.push('</sheetData>');
-  // Freeze the header row.
-  out.push('<sheetViews/>');
-  out.push('</worksheet>');
-  return out.join('');
-}
-
-// --- A minimal ZIP container (deflate) -------------------------------------
-// Enough of PKZIP for a .xlsx: local headers, central directory, end record.
-// No zip64, no encryption, no directory entries — none of which an xlsx needs.
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c;
-  }
-  return t;
-})();
-
-function crc32(buf) {
-  let c = -1;
-  for (let i = 0; i < buf.length; i += 1) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
-}
-
-function zip(files) {
-  const chunks = [];
-  const central = [];
-  let offset = 0;
-  files.forEach(({ name, data }) => {
-    const nameBuf = Buffer.from(name, 'utf8');
-    const raw = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
-    const deflated = zlib.deflateRawSync(raw, { level: 9 });
-    const crc = crc32(raw);
-
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4); // version needed
-    local.writeUInt16LE(0, 6); // flags
-    local.writeUInt16LE(8, 8); // deflate
-    local.writeUInt16LE(0, 10); // time
-    local.writeUInt16LE(0x21, 12); // date (1980-01-01-ish; Excel does not care)
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(deflated.length, 18);
-    local.writeUInt32LE(raw.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    local.writeUInt16LE(0, 28);
-    chunks.push(local, nameBuf, deflated);
-
-    const cd = Buffer.alloc(46);
-    cd.writeUInt32LE(0x02014b50, 0);
-    cd.writeUInt16LE(20, 4);
-    cd.writeUInt16LE(20, 6);
-    cd.writeUInt16LE(0, 8);
-    cd.writeUInt16LE(8, 10);
-    cd.writeUInt16LE(0, 12);
-    cd.writeUInt16LE(0x21, 14);
-    cd.writeUInt32LE(crc, 16);
-    cd.writeUInt32LE(deflated.length, 20);
-    cd.writeUInt32LE(raw.length, 24);
-    cd.writeUInt16LE(nameBuf.length, 28);
-    cd.writeUInt32LE(0, 38); // external attrs
-    cd.writeUInt32LE(offset, 42);
-    central.push(Buffer.concat([cd, nameBuf]));
-
-    offset += local.length + nameBuf.length + deflated.length;
-  });
-
-  const centralBuf = Buffer.concat(central);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(files.length, 8);
-  end.writeUInt16LE(files.length, 10);
-  end.writeUInt32LE(centralBuf.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...chunks, centralBuf, end]);
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true });
 }
 
 function toXlsx(headers, rows, sheetName = 'Employees') {
-  const safeSheet = xmlEscape(String(sheetName).replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Sheet1');
-  return zip([
-    {
-      name: '[Content_Types].xml',
-      data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        + '<Default Extension="xml" ContentType="application/xml"/>'
-        + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-        + '</Types>',
-    },
-    {
-      name: '_rels/.rels',
-      data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
-        + '</Relationships>',
-    },
-    {
-      name: 'xl/workbook.xml',
-      data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-        + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        + `<sheets><sheet name="${safeSheet}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
-    },
-    {
-      name: 'xl/_rels/workbook.xml.rels',
-      data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-        + '</Relationships>',
-    },
-    { name: 'xl/worksheets/sheet1.xml', data: sheetXml(headers, rows) },
-  ]);
+  return toXlsxBook([{ name: sheetName, headers, rows }]);
 }
 
 // --- PDF -------------------------------------------------------------------
@@ -317,4 +197,4 @@ function toPdf(headers, rows, { title = 'Employees', subtitle = '' } = {}) {
   return Buffer.from(pdf, 'latin1');
 }
 
-module.exports = { csvCell, toCsv, toXlsx, toPdf };
+module.exports = { csvCell, toCsv, toXlsx, toXlsxBook, toPdf };

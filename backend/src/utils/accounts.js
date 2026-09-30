@@ -30,6 +30,29 @@ function deriveInvoiceStatus(invoice, today = new Date()) {
   return 'Pending';
 }
 
+// A RECEIPT AGAINST AN INVOICE — the one rule for what it does to the
+// invoice, shared by Record Payment (routes/invoices.js POST /:id/payments)
+// and the Payments sheet of the data import, so the two cannot drift.
+//
+// receiptProblem() says why a receipt of `amount` may not be recorded (or
+// null); invoiceAfterReceipt() is the invoice's new receivedAmount / status /
+// paidDate once it is.
+function receiptProblem(invoice, amount) {
+  if (invoice.status === 'Cancelled') return 'This invoice is cancelled';
+  if (!(amount > 0)) return 'A positive amount is required';
+  const outstanding = invoiceOutstanding(invoice);
+  if (amount > outstanding + SETTLED_TOLERANCE) {
+    return `That is more than the ₹${outstanding.toLocaleString('en-IN')} still outstanding on this invoice`;
+  }
+  return null;
+}
+
+function invoiceAfterReceipt(invoice, amount, date) {
+  const receivedAmount = ROUND(Number(invoice.receivedAmount || 0) + amount);
+  const status = deriveInvoiceStatus({ ...invoice, receivedAmount });
+  return { receivedAmount, status, paidDate: status === 'Paid' ? date : invoice.paidDate };
+}
+
 function toIsoDate(d) {
   const dt = d instanceof Date ? d : new Date(d);
   if (Number.isNaN(dt.getTime())) return '';
@@ -441,6 +464,8 @@ module.exports = {
   invoiceTotal,
   invoiceOutstanding,
   deriveInvoiceStatus,
+  receiptProblem,
+  invoiceAfterReceipt,
   dueDateFor,
   termDays,
   toIsoDate,

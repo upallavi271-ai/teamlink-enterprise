@@ -24,10 +24,28 @@ const PRODUCT_OF_MODULE = {
   candidates: 'ats',
   recruiterbde: 'ats',
   interviews: 'ats',
+  // HRMS and Accounts module by module (backend utils/roleAccess.js
+  // SPLIT_MODULES). 'hrms' / 'accounts' stay as the legacy area names: the
+  // server sends them as a virtual entry (any feature inheriting the old area)
+  // so every can(user, 'hrms', 'hrms', 'Leave & Holidays', …) keeps its answer.
   hrms: 'hrms',
+  hrms_dashboard: 'hrms',
+  hrms_attendance: 'hrms',
+  hrms_leave: 'hrms',
+  hrms_payroll: 'hrms',
+  hrms_performance: 'hrms',
+  hrms_services: 'hrms',
+  hrms_employees: 'hrms',
   accounts: 'accounts',
+  accounts_dashboard: 'accounts',
+  accounts_office: 'accounts',
+  accounts_invoices: 'accounts',
+  accounts_bank: 'accounts',
+  accounts_payments: 'accounts',
+  accounts_journal: 'accounts',
   reports: null,
   administration: null,
+  ai: null,
 };
 
 // can(user, product, module, feature, action) — the same signature as the

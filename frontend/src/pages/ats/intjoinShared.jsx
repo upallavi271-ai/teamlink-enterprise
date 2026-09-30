@@ -5,6 +5,13 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Combo from '../../components/Combo.jsx';
+import PeopleFilter, { useAtsWorkers, personOptions } from '../../components/PeopleFilter.jsx';
+import HierarchyFilter, { toParams, hierarchyChips, useHierarchy } from '../../components/HierarchyFilter.jsx';
+import MoreFilters from '../../components/ui/MoreFilters.jsx';
+import FilterChips from '../../components/FilterChips.jsx';
+import { ListEmpty } from '../../components/ui/ListFilters.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { can } from '../../permissions';
 
 export const fmtDate = (iso) => (iso
   ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -40,7 +47,9 @@ export const INTJOIN_TABS = [
   { to: '/ats/interview-feedback', label: 'Interview Feedback' },
   { to: '/ats/offers', label: 'Offers' },
   { to: '/ats/joining', label: 'Joining' },
-  { to: '/ats/internal-hiring', label: 'Internal Hiring' },
+  // No "Internal Hiring" tab: internal hiring is not a separate module (the
+  // user's rule, 2026-09-29) — internal hires are on Offers / Joining with a
+  // hiring-type chip, and Create HRMS Employee is on Joining and Candidate 360.
 ];
 
 // Where those workspaces are reached from instead: the candidate record.
@@ -54,7 +63,7 @@ export const WORKFLOW_WORKSPACES = [
 
 // One loader + one action runner, so every screen fails the same way.
 export function useWorkspace(url) {
-  const [data, setData] = useState({ rows: [], filterOptions: {} });
+  const [data, setData] = useState({ rows: [], filterOptions: {}, loading: true });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -62,7 +71,7 @@ export function useWorkspace(url) {
   function load() {
     api.get(url)
       .then((res) => setData(res.data))
-      .catch((err) => setError(err.response?.data?.error || 'Could not load this workspace.'));
+      .catch((err) => { setData((d) => ({ ...d, loading: false })); setError(err.response?.data?.error || 'Could not load this workspace.'); });
   }
   useEffect(load, [url]);
 
@@ -111,50 +120,199 @@ export function Panel({ title, subtitle, children, onClose }) {
 export function HiringTypeChip({ value }) {
   const internal = value === 'TeamLink Internal Hire';
   return (
-    <span className={'status ' + (internal ? 'interview' : 'offer')} title={internal
-      ? 'TeamLink Internal Hire: Selected → Internal Offer → Accepted → Hired → HRMS employee. Never invoiced.'
-      : 'Client Placement: Selected → Offer → Joined Client → Accounts → Invoice → Receivable. Never an HRMS employee.'}
+    // §30 — the hiring type is information, not a state: blue for both.
+    // §35 — the two flows, spelled the same way on every screen.
+    <span className="status new" title={internal
+      ? 'TeamLink Internal Hire: Selected → Offer → Offer Accepted → Joined → Hired → HRMS employee. Never invoiced.'
+      : 'Client Placement: Selected → Client Joining → Accounts (invoice → receivable). No offer stage; never an HRMS employee.'}
     >
       {internal ? 'Internal Hire' : 'Client Placement'}
     </span>
   );
 }
 
-// The shared filter set for Interviews & Joining: Department, Client,
-// Requirement, Candidate, Recruiter, TL, BDE, Hiring Type + a date range.
+// The shared filter set for Interviews & Joining (user notes #1 / #11, review
+// #3 §10 / §14 / §21 / §22) — the list standard:
+//   always visible  Search · Department → Section → Recruiter (HierarchyFilter,
+//                   levels the login can't use are hidden) · Status · Hiring type
+//   More Filters ▾  TL · Client (client desk only) · Requirement · Candidate ·
+//                   BDE · Date range
+//   then the active filters as chips, Clear All, a Sort and "N of M".
+// recruiter / tl / bde hold "id:<userId>" or "name:<name>" (current AND former
+// people); recruiter may also be "seat:<CODE>" (a Recruiter Code). Whose work a
+// row is, is decided by the server (usePersonApplicationIds).
 export const EMPTY_INTJOIN_FILTERS = {
-  q: '', department: '', client: '', requirement: '', candidate: '',
-  recruiter: '', tl: '', bde: '', hiringType: '', from: '', to: '',
+  q: '', department: '', section: '', client: '', requirement: '', candidate: '',
+  recruiter: '', positionCode: '', tl: '', bde: '', hiringType: '', status: '', from: '', to: '', sort: '',
 };
 
-export function IntJoinFilters({ filters, setFilter, opts, onClear, count, children }) {
-  const sel = (key, blank, list) => (
-    <Combo value={filters[key]} onChange={(e) => setFilter({ [key]: e.target.value })}>
+const hierOf = (f) => ({
+  department: f.department || '', section: f.section || '', tl: f.tl || '', recruiter: f.recruiter || '',
+});
+
+// The person / seat query for the chosen hierarchy + BDE, in the parameter
+// names GET /ats/workers/applications takes. {} = no person filter.
+function personParams(filters, data) {
+  const p = toParams(hierOf(filters), data || undefined);
+  const out = {};
+  if (p.tl) out.tl = p.tl;
+  if (p.recruiter) out.recruiter = p.recruiter;
+  if (p.positionCode || filters.positionCode) out.positionCode = p.positionCode || filters.positionCode;
+  if (filters.bde) out.bde = filters.bde;
+  return out;
+}
+
+// The application ids attributed to the chosen Recruiter / TL / BDE / seat /
+// section (GET /ats/workers/applications — the attribution ATS Reports counts
+// with), or null when no person filter is set. Pass it to matchesShared().
+export function usePersonApplicationIds(filters) {
+  const tree = useHierarchy();
+  const params = personParams(filters, tree.data);
+  const key = JSON.stringify(params);
+  const [ids, setIds] = useState(null);
+  useEffect(() => {
+    if (!Object.keys(params).length) { setIds(null); return undefined; }
+    let live = true;
+    api.get('/ats/workers/applications', { params })
+      .then((res) => { if (live) setIds(new Set(res.data.ids || [])); })
+      .catch(() => { if (live) setIds(new Set()); });
+    return () => { live = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return ids;
+}
+
+const MORE_KEYS = ['tl', 'client', 'requirement', 'candidate', 'bde', 'from', 'to'];
+const FILTER_KEYS = ['q', 'department', 'section', 'recruiter', 'positionCode', 'status', 'hiringType', ...MORE_KEYS];
+export const intJoinActive = (filters) => FILTER_KEYS.filter((k) => filters[k]).length;
+
+// Sort: the server's order (most recently updated first) by default, or the
+// screen's own date either way, or candidate A–Z.
+export function intJoinSorts(dateLabel = 'Date') {
+  return [
+    { key: '', label: 'Recently updated' },
+    { key: 'dateDesc', label: `${dateLabel} — newest first` },
+    { key: 'dateAsc', label: `${dateLabel} — oldest first` },
+    { key: 'name', label: 'Candidate A–Z' },
+  ];
+}
+export function sortIntJoin(rows, sort, getDate) {
+  if (!sort) return rows;
+  const out = [...rows];
+  if (sort === 'name') return out.sort((a, b) => String(a.candidate?.name || '').localeCompare(String(b.candidate?.name || '')));
+  const t = (r) => { const v = getDate ? getDate(r) : null; const n = v ? new Date(v).getTime() : NaN; return Number.isNaN(n) ? null : n; };
+  return out.sort((a, b) => {
+    const x = t(a); const y = t(b);
+    if (x === null && y === null) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return sort === 'dateAsc' ? x - y : y - x;
+  });
+}
+
+// "No X match these filters — Clear filters" / "No X yet."
+export function IntJoinEmpty({ filters, onClear, noun, title, hint, loading }) {
+  // Still fetching: say so, rather than an empty-state that reads as "none".
+  if (loading) return <div className="small-muted" style={{ padding: 16 }}>Loading {noun}…</div>;
+  return <ListEmpty lf={{ activeCount: intJoinActive(filters), clear: onClear }} noun={noun} title={title} hint={hint} />;
+}
+
+const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
+
+export function IntJoinFilters({
+  filters, setFilter, opts, onClear, count, total, noun = 'rows', storageKey = 'intjoin',
+  statuses, statusLabel = 'Status', statusAll = 'All statuses', dateLabel = 'Date range', noClient = false, noHiringType = false, children,
+}) {
+  const { user } = useAuth();
+  const clientDesk = can(user, null, 'clients', 'Client List', 'view');
+  const tree = useHierarchy();
+  const workers = useAtsWorkers();
+  const h = hierOf(filters);
+  const setHier = (next) => setFilter({
+    department: next.department || '', section: next.section || '', tl: next.tl || '', recruiter: next.recruiter || '', positionCode: '',
+  });
+  const sel = (key, blank, list, title) => (
+    <Combo value={filters[key]} title={title} onChange={(e) => setFilter({ [key]: e.target.value })}>
       <option value="">{blank}</option>
       {(list || []).map((v) => <option key={v}>{v}</option>)}
     </Combo>
   );
+  const statusOpt = (statuses || []).find((s) => s.value === filters.status);
+  const bdeLabel = filters.bde
+    ? ((personOptions(workers, 'BDE').find((o) => o.value === filters.bde) || {}).label
+      || (filters.bde.startsWith('name:') ? filters.bde.slice(5) : 'Selected BDE'))
+    : '';
+  const dates = filters.from && filters.to ? `${dmy(filters.from)} → ${dmy(filters.to)}`
+    : filters.from ? `from ${dmy(filters.from)}` : filters.to ? `to ${dmy(filters.to)}` : '';
+  const active = intJoinActive(filters);
+  const chips = [
+    { key: 'q', label: 'Search', value: filters.q, onRemove: () => setFilter({ q: '' }) },
+    ...hierarchyChips(h, tree.data, setHier),
+    { key: 'positionCode', label: 'Recruiter Code', value: filters.positionCode, onRemove: () => setFilter({ positionCode: '' }) },
+    { key: 'status', label: statusLabel, value: statusOpt ? statusOpt.label : filters.status, onRemove: () => setFilter({ status: '' }) },
+    { key: 'hiringType', label: 'Hiring type', value: filters.hiringType, onRemove: () => setFilter({ hiringType: '' }) },
+    { key: 'client', label: 'Client', value: filters.client, onRemove: () => setFilter({ client: '' }) },
+    { key: 'requirement', label: 'Requirement', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
+    { key: 'candidate', label: 'Candidate', value: filters.candidate, onRemove: () => setFilter({ candidate: '' }) },
+    { key: 'bde', label: 'BDE', value: bdeLabel, onRemove: () => setFilter({ bde: '' }) },
+    { key: 'dates', label: dateLabel, value: dates, onRemove: () => setFilter({ from: '', to: '' }) },
+  ];
+  const sorts = intJoinSorts(dateLabel.replace(/ range$/i, ''));
   return (
-    <div className="filter-row" style={{ flexWrap: 'wrap' }}>
-      <input
-        type="text"
-        placeholder="Search candidate, requirement…"
-        value={filters.q}
-        onChange={(e) => setFilter({ q: e.target.value })}
-      />
-      {sel('department', 'All departments', opts.departments)}
-      {sel('client', 'All clients', opts.clients)}
-      {sel('requirement', 'All requirements', opts.requirements)}
-      {sel('candidate', 'All candidates', opts.candidates)}
-      {sel('recruiter', 'All recruiters', opts.recruiters)}
-      {sel('tl', 'All TLs', opts.tls)}
-      {sel('bde', 'All BDEs', opts.bdes)}
-      {sel('hiringType', 'All hiring types', opts.hiringTypes)}
-      {children}
-      <label className="small-muted">From <input type="date" value={filters.from} onChange={(e) => setFilter({ from: e.target.value })} /></label>
-      <label className="small-muted">To <input type="date" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} /></label>
-      <button className="btn btn-sm" onClick={onClear}>Clear</button>
-      <span className="small-muted">{count} row(s)</span>
+    <div className="lf">
+      <MoreFilters
+        storageKey={storageKey}
+        activeMore={MORE_KEYS.filter((k) => filters[k]).length - (filters.from && filters.to ? 1 : 0)}
+        onClearAll={active ? onClear : undefined}
+        primary={(
+          <>
+            <input
+              type="search"
+              placeholder="Search candidate or requirement…"
+              value={filters.q}
+              onChange={(e) => setFilter({ q: e.target.value })}
+              style={{ minWidth: 220 }}
+              aria-label="Search"
+            />
+            <HierarchyFilter value={h} onChange={setHier} show={{ tl: false }} />
+            {statuses && statuses.length > 0 && (
+              <Combo value={filters.status} title={statusLabel} onChange={(e) => setFilter({ status: e.target.value })}>
+                <option value="">{statusAll}</option>
+                {statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </Combo>
+            )}
+            {!noHiringType && sel('hiringType', 'All hiring types', opts.hiringTypes, 'Hiring type')}
+            {children}
+          </>
+        )}
+        extra={(
+          <>
+            <label className="lf-sort">
+              Sort
+              <select value={filters.sort || ''} onChange={(e) => setFilter({ sort: e.target.value })}>
+                {sorts.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+              </select>
+            </label>
+            <span className="small-muted lf-count">
+              {active && total != null
+                ? `${Number(count).toLocaleString('en-IN')} of ${Number(total).toLocaleString('en-IN')} ${noun}`
+                : `${Number(count).toLocaleString('en-IN')} ${noun}`}
+            </span>
+          </>
+        )}
+      >
+        <HierarchyFilter value={h} onChange={setHier} show={{ department: false, section: false, recruiter: false }} />
+        {!noClient && clientDesk && sel('client', 'All clients', opts.clients, 'Client')}
+        {sel('requirement', 'All requirements', opts.requirements, 'Requirement')}
+        {sel('candidate', 'All candidates', opts.candidates, 'Candidate')}
+        <PeopleFilter role="BDE" department={filters.department} value={filters.bde} onChange={(v) => setFilter({ bde: v })} />
+        <span className="lf-dates" title={dateLabel}>
+          <span className="lf-dates-lbl">{dateLabel}</span>
+          <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => setFilter({ from: e.target.value })} aria-label={`${dateLabel} from`} />
+          <span aria-hidden="true">→</span>
+          <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => setFilter({ to: e.target.value })} aria-label={`${dateLabel} to`} />
+        </span>
+      </MoreFilters>
+      <FilterChips filters={chips} onClearAll={active ? onClear : undefined} />
     </div>
   );
 }
@@ -170,17 +328,16 @@ export function inRange(value, from, to) {
   return true;
 }
 
-export function matchesShared(row, filters, dateValue) {
+export function matchesShared(row, filters, dateValue, personIds = null) {
   const q = (filters.q || '').trim().toLowerCase();
   if (filters.department && row.requirement.department !== filters.department) return false;
   if (filters.client && row.requirement.client?.name !== filters.client) return false;
   if (filters.requirement && row.requirement.title !== filters.requirement) return false;
   if (filters.candidate && row.candidate.name !== filters.candidate) return false;
-  if (filters.recruiter && row.requirement.recruiter?.name !== filters.recruiter) return false;
-  if (filters.tl && row.requirement.tl !== filters.tl) return false;
-  if (filters.bde && row.requirement.bde?.name !== filters.bde) return false;
+  // Recruiter / Position / TL / BDE: the server's answer (usePersonApplicationIds).
+  if (personIds && !personIds.has(row.id)) return false;
   if (filters.hiringType && row.hiringType !== filters.hiringType) return false;
   if (!inRange(dateValue, filters.from, filters.to)) return false;
-  if (q && !`${row.candidate.name} ${row.requirement.title}`.toLowerCase().includes(q)) return false;
+  if (q && !`${row.candidate.name} ${row.candidate.email || ''} ${row.requirement.title} ${row.requirement.client?.name || ''} ${row.interviewCode || ''}`.toLowerCase().includes(q)) return false;
   return true;
 }

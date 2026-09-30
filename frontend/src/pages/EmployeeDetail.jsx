@@ -1,18 +1,32 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin, canEditEmployees } from '../permissions';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
+import EmployeeProfileForm from '../components/EmployeeProfileForm.jsx';
+import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
+import ExportMenu from '../components/ExportMenu.jsx';
 
 
 const EDIT_FIELDS = [
+  // `position` is a seat CODE, not a column on Employee — the server turns it
+  // into a PositionAssignment. It is here because the admin edits it on this
+  // form; it is NOT on the employee's own SELF_SERVICE_FIELDS, so PUT /me
+  // ignores it however it is sent.
+  'position',
   'name', 'email', 'phone', 'department', 'team', 'designation', 'location', 'employmentStatus', 'employeeType',
   'emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation', 'addressType',
   'addressLine1', 'addressLine2', 'city', 'district', 'state', 'country', 'postalCode', 'bloodGroup',
   'branch', 'shift', 'employmentExperience', 'educationDetails', 'skills',
   'bankName', 'bankAccountNumber', 'ifscCode', 'panNumber', 'aadhaarNumber', 'uanNumber', 'pfNumber', 'esiNumber',
+  // On the employee's own form, so on HR's too — it is ONE form now
+  // (components/EmployeeProfileForm.jsx).
+  'dateOfBirth', 'gender',
+  // THE FULL EDIT FORM (2026-09-29): the Add form / record fields the profile
+  // used to show read-only.
+  'dateOfJoining', 'tl', 'stl', 'reportingManagerId',
 ];
 
 export default function EmployeeDetail() {
@@ -25,6 +39,14 @@ export default function EmployeeDetail() {
   // (§3, §4) and hold the view; they must not be handed the buttons.
   const isHR = hasHrmsAdmin(user) && canEditEmployees(user);
   const isAdmin = hasAdminAccess(user);
+  const canEditCode = user?.role === 'SUPER_ADMIN';
+  // Edit is Employee Management EDIT (HR / Admin / Super Admin, a scoped STL);
+  // Manager and Assistant Manager are view-only and never see it. The server
+  // re-checks the permission and the scope on save.
+  const canEdit = canEditEmployees(user);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [hrOptions, setHrOptions] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [employee, setEmployee] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
@@ -43,6 +65,9 @@ export default function EmployeeDetail() {
   const [config, setConfig] = useState(null);
   const [history, setHistory] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  // The Documents section inside the Edit form; Save changes uploads its files.
+  const docsRef = useRef(null);
+  const [pendingDocs, setPendingDocs] = useState(0);
 
   function load() {
     api.get(`/employees/${id}`).then((res) => setEmployee(res.data));
@@ -57,15 +82,69 @@ export default function EmployeeDetail() {
   function startEdit() {
     const f = {};
     EDIT_FIELDS.forEach((k) => { f[k] = employee[k] || ''; });
+    if (f.dateOfBirth) f.dateOfBirth = String(f.dateOfBirth).slice(0, 10);
+    if (f.dateOfJoining) f.dateOfJoining = String(f.dateOfJoining).slice(0, 10);
+    // Aadhaar: only the last four are on file; the box stays empty (= unchanged).
+    f.aadhaarNumber = '';
+    f.roleCode = '';
+    if (canEditCode) f.employeeCode = employee.employeeCode || '';
     setForm(f);
     setEditing(true);
+    setError(''); setNotice('');
+    // The live lists the full form offers: reporting managers and roles in the
+    // caller's scope (Employee Management options), statuses / types / branches
+    // from the masters. A role added in Role Catalog appears here by itself.
+    Promise.all([
+      api.get('/employees/management/options').then((r) => r.data).catch(() => ({})),
+      api.get('/masters').then((r) => r.data).catch(() => ({})),
+    ]).then(([o, m]) => setHrOptions({
+      reportingManagers: o.reportingManagers || [],
+      roles: (m.roles && m.roles.length ? m.roles : o.roleCatalog) || [],
+      empTypes: m.employmentTypes || o.empTypes || [],
+      statuses: m.employmentStatuses || [],
+      branches: m.branches || [],
+      hasLogin: !!employee.userId,
+    }));
   }
+
+  // ?edit=1 (the Edit button on Employee Management) opens the full form at once.
+  useEffect(() => {
+    if (employee && canEdit && searchParams.get('edit') === '1' && !editing) {
+      startEdit();
+      const next = new URLSearchParams(searchParams); next.delete('edit'); setSearchParams(next, { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee, canEdit]);
 
   async function saveEdit(e) {
     e.preventDefault();
-    await api.put(`/employees/${id}`, form);
-    setEditing(false);
-    load();
+    setError(''); setNotice(''); setSaving(true);
+    try {
+      const { roleCode, employeeCode, ...body } = form;
+      if (!body.aadhaarNumber) delete body.aadhaarNumber;
+      // Employee ID first, through the checked endpoint (unique, audited); if it
+      // is refused (e.g. already taken) nothing else is saved.
+      const newCode = String(employeeCode || '').trim();
+      if (canEditCode && newCode && newCode !== employee.employeeCode) {
+        await api.put(`/employees/management/${id}/code`, { employeeCode: newCode, reason: 'Changed from the full Edit form' });
+      }
+      const res = await api.put(`/employees/${id}`, body);
+      if (roleCode) await api.put(`/employees/management/${id}/roles`, { roleCode });
+      // DOCUMENTS ARE PART OF THIS FORM: files picked in its Documents section
+      // go up once the fields have saved. A failed file keeps the form open
+      // with its reason and a Retry; the field changes are already saved.
+      const up = docsRef.current ? await docsRef.current.uploadAll(id) : { total: 0, failed: 0 };
+      const saved = res.data?.designationWarning || 'Saved — every changed field is recorded in the history (old → new).';
+      if (up.failed) {
+        setError(`Changes saved, but ${up.failed} of ${up.total} document${up.total === 1 ? '' : 's'} could not be uploaded — see Documents below (Retry, or Save changes again).`);
+      } else {
+        setEditing(false);
+        setNotice(up.total ? `${saved} ${up.total} document${up.total === 1 ? '' : 's'} uploaded.` : saved);
+      }
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The changes could not be saved.');
+    } finally { setSaving(false); }
   }
 
   async function toggleOnboarding(index) {
@@ -175,7 +254,16 @@ export default function EmployeeDetail() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className={`status ${employee.employmentStatus === 'Active' ? 'priority-low' : ['Exited', 'Relieved'].includes(employee.employmentStatus) ? 'priority-high' : ''}`}>{employee.employmentStatus}</span>
           <span className={`status ${STATUS_BADGE[employee.profileStatus] || ''}`}>{statusLabel(employee.profileStatus)}</span>
-          {isAdmin && !editing && <button className="btn btn-sm" onClick={startEdit}>Edit</button>}
+          {/* hrms-24 §3 — this person's summary (profile, attendance, leave,
+              learning, assets, payslips for the current year). The server
+              checks Employee Management export + scope, or that it is you. */}
+          <ExportMenu
+            url={`/insights/employee/${employee.id}/summary`}
+            params={{ range: 'this_year' }}
+            label="Export summary"
+            note="Current year · Excel, CSV or PDF"
+          />
+          {canEdit && !editing && <button className="btn btn-sm btn-primary" onClick={startEdit}>Edit</button>}
           {isAdmin && <button className="btn btn-sm" onClick={togglePause}>{employee.employmentStatus === 'On Probation' ? 'Resume' : 'Pause'}</button>}
           {/* Grant Edit Access is the considered version of this button: a
               window, a section and a reason, all recorded. Lock stays as the
@@ -280,6 +368,11 @@ export default function EmployeeDetail() {
                     <td><b>{c.to}</b></td>
                   </tr>
                 ))}
+                {employee.pendingChanges.length === 0 && (
+                  <tr><td colSpan="3" className="small-muted">
+                    No field changes — they confirmed the record as it stands. Check their documents below.
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -357,106 +450,120 @@ export default function EmployeeDetail() {
 
       {editing ? (
         <form className="card section" onSubmit={saveEdit}>
-          <h3>Personal Information</h3>
-          <div className="grid-2">
-            <label className="field"><span>Full name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-            <label className="field"><span>Phone</span><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
-            <label className="field"><span>Email</span><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-            <label className="field">
-              <span>Blood Group</span>
-              <Combo value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}>
-                <option value="">Select</option>
-                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((b) => <option key={b}>{b}</option>)}
-              </Combo>
-            </label>
-          </div>
-
-          <h3 style={{ marginTop: 14 }}>Address</h3>
-          <div className="grid-2">
-            <label className="field">
-              <span>Address Type</span>
-              <Combo value={form.addressType} onChange={(e) => setForm({ ...form, addressType: e.target.value })}>
-                <option value="">Select type</option><option>Current</option><option>Permanent</option>
-              </Combo>
-            </label>
-            <label className="field"><span>Address Line 1</span><input value={form.addressLine1} onChange={(e) => setForm({ ...form, addressLine1: e.target.value })} /></label>
-            <label className="field"><span>Address Line 2</span><input value={form.addressLine2} onChange={(e) => setForm({ ...form, addressLine2: e.target.value })} /></label>
-            <label className="field"><span>City / Town</span><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></label>
-            <label className="field"><span>District</span><input value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value })} /></label>
-            <label className="field"><span>State / Province</span><input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></label>
-            <label className="field"><span>Country</span><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></label>
-            <label className="field"><span>Postal Code</span><input value={form.postalCode} onChange={(e) => setForm({ ...form, postalCode: e.target.value })} /></label>
-          </div>
-
-          <h3 style={{ marginTop: 14 }}>Emergency Contact</h3>
-          <div className="grid-2">
-            <label className="field"><span>Name</span><input value={form.emergencyContactName} onChange={(e) => setForm({ ...form, emergencyContactName: e.target.value })} /></label>
-            <label className="field"><span>Relation</span><input value={form.emergencyContactRelation} onChange={(e) => setForm({ ...form, emergencyContactRelation: e.target.value })} /></label>
-            <label className="field"><span>Number</span><input value={form.emergencyContactPhone} onChange={(e) => setForm({ ...form, emergencyContactPhone: e.target.value })} /></label>
-          </div>
-
-          <h3 style={{ marginTop: 14 }}>Employment Details</h3>
-          <div className="grid-2">
-            <label className="field">
-              <span>Department (use Transfer to change)</span>
-              <input value={form.department} disabled />
-            </label>
-            {formTeams.length > 0 && (
-              <label className="field">
-                <span>Team</span>
-                <Combo creatable value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })}>
-                  <option value="">No team</option>
-                  {formTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-                </Combo>
-              </label>
+          {/* THE SAME FORM THE EMPLOYEE FILLS IN — components/EmployeeProfileForm.jsx.
+              HR writes every field; department, seat and team keep their own
+              controls (below) because a change there moves the login and the seat. */}
+          <EmployeeProfileForm
+            mode="hr"
+            form={form}
+            setForm={setForm}
+            employee={employee}
+            isAdmin={isAdmin}
+            canEditCode={canEditCode}
+            hrOptions={hrOptions}
+            documents={(
+              <EmployeeDocuments
+                ref={docsRef}
+                embedded
+                uploadOnSave
+                employeeId={employee.id}
+                onChange={setPendingDocs}
+                intro="Several files per type is fine. The employee sees these on their own profile too."
+              />
             )}
-            <label className="field">
-              <span>Branch</span>
-              <Combo creatable value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })}>
-                <option value="">Select branch</option><option>Bengaluru</option><option>Chennai</option><option>Hyderabad</option>
-              </Combo>
-            </label>
-            <label className="field"><span>Designation</span><input value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} /></label>
-            <label className="field"><span>Location</span><input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></label>
-            <label className="field"><span>Shift</span><input value={form.shift} onChange={(e) => setForm({ ...form, shift: e.target.value })} /></label>
-            {isAdmin && (
-              <label className="field">
-                <span>Status</span>
-                <Combo value={form.employmentStatus} onChange={(e) => setForm({ ...form, employmentStatus: e.target.value })}>
-                  {['Active', 'On Probation', 'Notice Period', 'Exit Process', 'Relieved', 'Exited'].map((s) => <option key={s}>{s}</option>)}
-                </Combo>
-              </label>
+            hrEmployment={(
+              <>
+                {/* DEPARTMENT IS EDITABLE HERE.
+                    It used to be a greyed-out box captioned "use Transfer to
+                    change", which told you where to go rather than letting you do
+                    it. The server now does everything Transfer does when this
+                    changes: the login's ATS scope follows, the team is cleared
+                    (a team belongs to a department), and a seat from the old
+                    department is vacated — its tenure closed, not deleted.
+
+                    Transfer still exists, and is still the right button for a
+                    reorganisation: it takes a REASON and records it. This is for
+                    a correction. */}
+                <label className="field">
+                  <span>Department</span>
+                  <Combo
+                    creatable
+                    value={form.department}
+                    onChange={(e) => setForm({
+                      // Team and seat both belong to the old department, so both
+                      // are cleared the moment it changes — otherwise the form
+                      // would post a Medical employee into an Education seat.
+                      ...form, department: e.target.value, team: '', position: '',
+                    })}
+                  >
+                    <option value="">Select department</option>
+                    {depts.map((d) => <option key={d.id || d.name} value={d.name}>{d.name}</option>)}
+                  </Combo>
+                  {form.department !== employee.department && (
+                    <span className="small-muted">
+                      Moving from {employee.department || '—'} to {form.department || '—'}. Their ATS scope
+                      moves with them, their team is cleared, and a seat in {employee.department || 'the old department'} is vacated.
+                    </span>
+                  )}
+                </label>
+                {/* THE SEAT. Department, designation and position are the three
+                    fields an employee may never set for themselves — so this is
+                    where an admin sets them, on the record, rather than on a
+                    separate Positions screen.
+
+                    Only this department's seats are offered, and a seat somebody
+                    else holds is listed and labelled rather than hidden: a missing
+                    code reads as "no such seat", which is a different fact. The
+                    server refuses a taken one either way. Creatable — typing a new
+                    code makes the seat on save. */}
+                <label className="field">
+                  <span>Position <i style={{ fontWeight: 400 }}>(the seat, not the person)</i></span>
+                  <Combo
+                    creatable
+                    // The seats listed came from the SAVED department. Once the
+                    // department picker has been changed they are the wrong
+                    // department's seats, and offering them would invite exactly
+                    // the mistake this field exists to prevent. Save first.
+                    disabled={form.department !== employee.department}
+                    value={form.position}
+                    onChange={(e) => setForm({ ...form, position: e.target.value })}
+                  >
+                    <option value="">No seat</option>
+                    {(employee.positionOptions || []).map((r) => (
+                      <option key={r.code} value={r.code}>
+                        {r.code}
+                        {r.name ? ` · ${r.name}` : ''}
+                        {r.holder ? ` · held by ${r.holder}` : ''}
+                      </option>
+                    ))}
+                  </Combo>
+                  {form.department !== employee.department && (
+                    <span className="small-muted">
+                      Save the department change first — then this will list {form.department || 'the new department'}&apos;s seats.
+                    </span>
+                  )}
+                </label>
+                {formTeams.length > 0 && (
+                  <label className="field">
+                    <span>Team</span>
+                    <Combo creatable value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })}>
+                      <option value="">No team</option>
+                      {formTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
+                    </Combo>
+                  </label>
+                )}
+              </>
             )}
-          </div>
+          />
 
-          <h3 style={{ marginTop: 14 }}>Bank & Statutory Details</h3>
-          <div className="small-muted" style={{ marginBottom: 8 }}>Restricted — shown on payslips.</div>
-          <div className="grid-2">
-            <label className="field"><span>Bank name</span><input value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} /></label>
-            <label className="field"><span>Account number</span><input value={form.bankAccountNumber} onChange={(e) => setForm({ ...form, bankAccountNumber: e.target.value })} /></label>
-            <label className="field"><span>IFSC code</span><input value={form.ifscCode} onChange={(e) => setForm({ ...form, ifscCode: e.target.value })} /></label>
-            <label className="field"><span>PAN number</span><input value={form.panNumber} onChange={(e) => setForm({ ...form, panNumber: e.target.value })} /></label>
-            <label className="field"><span>Aadhaar number</span><input value={form.aadhaarNumber} onChange={(e) => setForm({ ...form, aadhaarNumber: e.target.value })} /></label>
-            <label className="field"><span>UAN number</span><input value={form.uanNumber} onChange={(e) => setForm({ ...form, uanNumber: e.target.value })} /></label>
-            <label className="field"><span>PF number</span><input value={form.pfNumber} onChange={(e) => setForm({ ...form, pfNumber: e.target.value })} /></label>
-            <label className="field"><span>ESI number</span><input value={form.esiNumber} onChange={(e) => setForm({ ...form, esiNumber: e.target.value })} /></label>
-          </div>
-
-          <h3 style={{ marginTop: 14 }}>Education & Work Experience</h3>
-          <div className="grid-2">
-            <label className="field">
-              <span>Employment Type</span>
-              <Combo value={form.employmentExperience} onChange={(e) => setForm({ ...form, employmentExperience: e.target.value })}>
-                <option>Fresher</option><option>Experienced</option>
-              </Combo>
-            </label>
-            <label className="field"><span>Education details</span><input value={form.educationDetails} onChange={(e) => setForm({ ...form, educationDetails: e.target.value })} /></label>
-            <label className="field"><span>Skills & certifications</span><input value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} /></label>
-          </div>
-
-          <div style={{ marginTop: 14 }}>
-            <button className="btn btn-primary btn-sm" type="submit">Save changes</button>{' '}
+          {/* Save / Cancel close the WHOLE form — fields and documents — and
+              stay in reach at the bottom of the view while it scrolls. */}
+          <div className="emp-form-foot">
+            <button className="btn btn-primary btn-sm" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
             <button className="btn btn-sm" type="button" onClick={() => setEditing(false)}>Cancel</button>
+            {pendingDocs > 0 && (
+              <span className="small-muted">{pendingDocs} document{pendingDocs === 1 ? '' : 's'} will upload when you save.</span>
+            )}
           </div>
         </form>
       ) : (
@@ -498,6 +605,18 @@ export default function EmployeeDetail() {
             <div className="kv"><span className="k">Skills</span><span>{employee.skills || '—'}</span></div>
           </div>
         </div>
+      )}
+
+      {/* DOCUMENTS on the record VIEW, for every role that can open it. While
+          editing they are a section INSIDE the Edit form above instead. The
+          component asks the server what this caller may do: HR uploads and
+          deletes, a view-only Manager / Assistant Manager views and downloads,
+          and a role the server refuses (403) sees no section at all. */}
+      {!editing && (
+        <EmployeeDocuments
+          employeeId={employee.id}
+          intro="Upload as many as needed — several of one type is fine. The employee sees these on their own profile too."
+        />
       )}
 
       <div className="card section">

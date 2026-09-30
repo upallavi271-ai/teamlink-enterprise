@@ -515,6 +515,230 @@ const READ_TOOLS = [
       };
     },
   },
+
+  // -------------------------------------------------------------------------
+  // HRMS AT ORG LEVEL, not just "mine".
+  //
+  // Everything above this point answers an HR question about the SIGNED-IN
+  // PERSON — my attendance, my leave, my payslips. That made the assistant
+  // useful in the ATS and nearly useless in HRMS: an HR lead asking "who is
+  // absent today" or "how many people are on notice" got nothing, because no
+  // tool could see past their own row.
+  //
+  // These four look at the people the user is ALLOWED to see. That set is
+  // employeeWhere(user) — the same fragment the employee lists use — so an
+  // Employee still sees exactly themselves, a TL their team, HR the company.
+  // Nothing here takes an employee id: the scope decides the set, not the
+  // caller, so none of them can be steered onto somebody else's record.
+  // -------------------------------------------------------------------------
+  {
+    name: 'headcount_summary',
+    description: 'How many people there are, broken down by department and by employment status (Active, Notice Period, Relieved). Use for "how many employees do we have", "how many are on notice", "headcount by department", "how many left this year".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        department: { type: 'string', description: 'Optional: limit to one department.' },
+      },
+      additionalProperties: false,
+    },
+    async run(user, input) {
+      if (!await can(user, 'hrms', 'hrms', 'Employee Management', 'view')
+        && !await can(user, 'hrms', 'hrms', 'Employee Services', 'view')) {
+        return DENIED('see headcount');
+      }
+      const where = { ...employeeWhere(user) };
+      if (input.department) where.department = input.department;
+      const rows = await prisma.employee.findMany({
+        where,
+        select: { department: true, employmentStatus: true, designation: true },
+      });
+      const tally = (key) => {
+        const m = {};
+        rows.forEach((r) => { const k = r[key] || '(none)'; m[k] = (m[k] || 0) + 1; });
+        return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+      };
+      return {
+        total: rows.length,
+        byStatus: tally('employmentStatus'),
+        byDepartment: tally('department'),
+        byDesignation: tally('designation'),
+      };
+    },
+  },
+
+  {
+    name: 'attendance_on_date',
+    description: 'Who was present, absent or on half day on a given date, for the employees this user may see. Defaults to today. Use for "who is absent today", "attendance yesterday", "was X in on 12 August".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'YYYY-MM-DD. Defaults to today.' },
+        status: { type: 'string', description: 'Optional: Present, Absent or Half Day.' },
+      },
+      additionalProperties: false,
+    },
+    async run(user, input) {
+      if (!await can(user, 'hrms', 'hrms', 'Attendance & Time', 'view')) {
+        return DENIED("see other people's attendance");
+      }
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(input.date || ''))
+        ? input.date
+        : new Date().toISOString().slice(0, 10);
+      // Scope first: the employee ids this user may see, then their rows for
+      // that day. Filtering afterwards would read everybody's attendance and
+      // then hide it, which is not the same thing.
+      const visible = await prisma.employee.findMany({
+        where: employeeWhere(user),
+        select: { id: true, name: true, employeeCode: true, department: true },
+      });
+      const ids = visible.map((e) => e.id);
+      if (!ids.length) return { date, total: 0, records: [], note: 'No employees are within your access.' };
+      const byId = new Map(visible.map((e) => [e.id, e]));
+      const rows = await prisma.attendance.findMany({
+        where: { employeeId: { in: ids }, date, ...(input.status ? { status: input.status } : {}) },
+        select: { employeeId: true, status: true, checkIn: true, checkOut: true },
+      });
+      const counts = {};
+      rows.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+      return {
+        date,
+        employeesInScope: ids.length,
+        // A day with no rows is not a day everybody was absent — it is a
+        // weekend, a holiday, or a day nobody marked. Say which.
+        recorded: rows.length,
+        noRecord: ids.length - rows.length,
+        counts,
+        records: rows.slice(0, LIMIT).map((r) => ({
+          name: byId.get(r.employeeId)?.name,
+          employeeCode: byId.get(r.employeeId)?.employeeCode,
+          department: byId.get(r.employeeId)?.department,
+          status: r.status,
+          checkIn: r.checkIn || null,
+          checkOut: r.checkOut || null,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'who_is_on_leave',
+    description: 'Leave requests overlapping a date range, for the employees this user may see — who is off, when, what type, and whether it is approved. Use for "who is on leave this week", "is anyone off on Friday", "pending leave requests".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'YYYY-MM-DD. Defaults to today.' },
+        to: { type: 'string', description: 'YYYY-MM-DD. Defaults to the from date.' },
+        status: { type: 'string', description: 'Optional: Pending, Approved, Rejected or Cancelled.' },
+      },
+      additionalProperties: false,
+    },
+    async run(user, input) {
+      if (!await can(user, 'hrms', 'hrms', 'Leave & Holidays', 'view')) {
+        return DENIED("see other people's leave");
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const from = /^\d{4}-\d{2}-\d{2}$/.test(String(input.from || '')) ? input.from : today;
+      const to = /^\d{4}-\d{2}-\d{2}$/.test(String(input.to || '')) ? input.to : from;
+      const visible = await prisma.employee.findMany({
+        where: employeeWhere(user),
+        select: { id: true, name: true, employeeCode: true, department: true },
+      });
+      const ids = visible.map((e) => e.id);
+      if (!ids.length) return { from, to, requests: [], note: 'No employees are within your access.' };
+      const byId = new Map(visible.map((e) => [e.id, e]));
+      // Overlap, not containment: a leave that starts before the window and
+      // ends inside it still means that person is off.
+      const rows = await prisma.leaveRequest.findMany({
+        where: {
+          employeeId: { in: ids },
+          fromDate: { lte: to },
+          toDate: { gte: from },
+          ...(input.status ? { status: input.status } : {}),
+        },
+        orderBy: { fromDate: 'asc' },
+        take: LIMIT,
+      });
+      return {
+        from,
+        to,
+        total: rows.length,
+        requests: rows.map((r) => ({
+          name: byId.get(r.employeeId)?.name,
+          employeeCode: byId.get(r.employeeId)?.employeeCode,
+          department: byId.get(r.employeeId)?.department,
+          type: r.type,
+          fromDate: r.fromDate,
+          toDate: r.toDate,
+          days: r.days,
+          status: r.status,
+          reason: r.reason ? String(r.reason).slice(0, 160) : null,
+          decidedBy: r.decidedBy || null,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'hr_pending_approvals',
+    description: 'What is sitting on the HR desk waiting for a decision: profiles submitted for review, leave requests still Pending, and profile edit-access requests. Use for "what is waiting for me", "any pending approvals", "whose profile needs reviewing".',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+    async run(user) {
+      const mayEmployees = await can(user, 'hrms', 'hrms', 'Employee Management', 'view');
+      const mayLeave = await can(user, 'hrms', 'hrms', 'Leave & Holidays', 'view');
+      if (!mayEmployees && !mayLeave) return DENIED('see pending HR approvals');
+
+      const where = employeeWhere(user);
+      const out = { profilesAwaitingReview: [], leaveAwaitingDecision: [], editAccessRequests: [] };
+
+      if (mayEmployees) {
+        const submitted = await prisma.employee.findMany({
+          where: { ...where, pendingChanges: { not: null } },
+          select: { name: true, employeeCode: true, department: true, pendingChanges: true },
+          take: LIMIT,
+        });
+        out.profilesAwaitingReview = submitted.map((e) => {
+          let fields = 0;
+          try { fields = JSON.parse(e.pendingChanges).length; } catch { fields = 0; }
+          return {
+            name: e.name, employeeCode: e.employeeCode, department: e.department, fieldsChanged: fields,
+          };
+        });
+        const unlock = await prisma.employee.findMany({
+          where: { ...where, unlockRequestStatus: 'Pending' },
+          select: { name: true, employeeCode: true, unlockRequestReason: true },
+          take: LIMIT,
+        });
+        out.editAccessRequests = unlock.map((e) => ({
+          name: e.name, employeeCode: e.employeeCode, reason: e.unlockRequestReason || null,
+        }));
+      }
+
+      if (mayLeave) {
+        const visible = await prisma.employee.findMany({ where, select: { id: true, name: true, employeeCode: true } });
+        const byId = new Map(visible.map((e) => [e.id, e]));
+        const pending = await prisma.leaveRequest.findMany({
+          where: { employeeId: { in: visible.map((e) => e.id) }, status: 'Pending' },
+          orderBy: { fromDate: 'asc' },
+          take: LIMIT,
+        });
+        out.leaveAwaitingDecision = pending.map((r) => ({
+          name: byId.get(r.employeeId)?.name,
+          employeeCode: byId.get(r.employeeId)?.employeeCode,
+          type: r.type,
+          fromDate: r.fromDate,
+          toDate: r.toDate,
+          days: r.days,
+        }));
+      }
+
+      out.totals = {
+        profiles: out.profilesAwaitingReview.length,
+        leave: out.leaveAwaitingDecision.length,
+        editAccess: out.editAccessRequests.length,
+      };
+      return out;
+    },
+  },
 ];
 
 module.exports = { READ_TOOLS };

@@ -143,8 +143,9 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
     return prisma.employee.findUnique({ where: { id: application.hrmsEmployeeId } });
   }
 
-  const count = await prisma.employee.count();
-  const employeeCode = `EMP-${String(count + 1).padStart(4, '0')}`;
+  // The next TL<nnn> — the same series Add Employee issues (utils/employeeCode.js).
+  // eslint-disable-next-line global-require
+  const employeeCode = await require('./employeeCode').nextEmployeeCode();
   const employee = await prisma.employee.create({
     data: {
       employeeCode,
@@ -208,7 +209,81 @@ async function onApplicationJoined({ application, existing, userId }) {
   return invoice;
 }
 
+// ---------------------------------------------------------------------------
+// SELECTED DOES NOT LEAD TO ONE PLACE. IT BRANCHES.
+//
+// The pipeline runs SELECTED -> OFFER -> OFFER_ACCEPTED -> JOINED for every
+// application, and for a CLIENT PLACEMENT that is wrong. TeamLink does not
+// extend an offer to somebody it is placing at Orbit — Orbit does. The offer
+// stages are an INTERNAL HIRE concept, and running a client placement through
+// them produces a pipeline that says TeamLink offered a job it never offered.
+//
+//   SELECTED
+//      |
+//      +-- Client Placement --> JOINED --> invoice --> payment --> bank
+//      |                        (the client confirms the joining)
+//      |
+//      +-- Internal Hire ----> OFFER --> OFFER_ACCEPTED --> JOINED
+//                              (we make the offer, so these stages are real)
+//                                                            --> HRMS employee
+//
+// The END of the branch was already right: onApplicationJoined() raises an
+// invoice for a placement and creates an HRMS employee for an internal hire,
+// and has done since it was written. What was missing is the MIDDLE — nothing
+// stopped a client placement being walked through OFFER first.
+//
+// Returns null when the move is fine, or a sentence saying why it is not.
+// ---------------------------------------------------------------------------
+const OFFER_STAGES = ['OFFER', 'OFFER_ACCEPTED'];
+// THE ACTUAL WORKFLOW (2026-09-29) supersedes the branch drawn above in one
+// respect: a CLIENT placement also goes Selected → Offer → Offer Accepted →
+// Joining. The offer is the client's; the recruiter RECORDS it (with the CTC
+// the placement fee is worked out on). So the offer stages are no longer
+// refused for a client placement. What stays true: only a client placement
+// is invoiced, only an internal hire reaches HRMS, and an internal hire has
+// no BDE / client steps at all.
+const CLIENT_ONLY_STAGES = ['WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'];
+
+function stageAllowedForHiringType(toStage, application, requirement) {
+  const internal = isInternalHire(application, requirement);
+  if (internal && CLIENT_ONLY_STAGES.includes(toStage)) {
+    return 'This is a TeamLink internal hire — there is no BDE review or client submission. '
+      + 'After HR Review and the Dept Head / TL approval the candidate goes to Interview.';
+  }
+  // §35 — HIRED is the internal-hire end state (it hands over to HRMS). A
+  // client placement ends at Joined, which hands over to Accounts.
+  if (!internal && toStage === 'HIRED') {
+    return 'Hired is for TeamLink internal hires (it creates the HRMS employee). A client placement '
+      + 'ends at Joined — the client confirms the joining and Accounts raises the invoice.';
+  }
+  return null;
+}
+
+// The named moves available FROM a stage, for this kind of hire. The UI draws
+// buttons from this, so a recruiter never sees a button the server will
+// refuse — which is the only honest way to offer one.
+function nextActionsFor(stage, application, requirement) {
+  const internal = isInternalHire(application, requirement);
+  if (stage !== 'SELECTED') return null;
+  return internal
+    ? [
+      { id: 'extend_offer', label: 'Extend Offer', to: 'OFFER' },
+      { id: 'hold', label: 'Hold', to: 'HOLD' },
+      { id: 'reject', label: 'Reject', to: 'REJECTED' },
+    ]
+    : [
+      // The client's offer, recorded (Offers → Record Offer, with the CTC).
+      { id: 'record_offer', label: 'Record Offer', to: 'OFFER' },
+      { id: 'hold', label: 'Hold', to: 'HOLD' },
+      { id: 'reject', label: 'Reject', to: 'REJECTED' },
+    ];
+}
+
 module.exports = {
+  OFFER_STAGES,
+  CLIENT_ONLY_STAGES,
+  stageAllowedForHiringType,
+  nextActionsFor,
   CLIENT_PLACEMENT,
   INTERNAL_HIRE,
   HIRING_TYPES,

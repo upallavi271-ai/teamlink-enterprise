@@ -1,0 +1,87 @@
+/* Clients role spec (2026-09-29) — module strip, health badge, mini stats,
+   row actions, expiry alert, the 3-step Add Client form and the Client 360
+   extras. Everything is scoped under .clrole-* so nothing leaks; colours are
+   the existing TeamLink tokens (blue / white look). */
+
+.clrole-switch { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+
+/* --- View selector + alert ------------------------------------------------ */
+.clrole-viewbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.clrole-viewbar .clrole-view { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.clrole-viewbar .clrole-view button {
+  border: 0; background: var(--paper-raised); padding: 5px 12px; font: inherit; font-size: 12.5px; color: var(--ink-soft); cursor: pointer;
+}
+.clrole-viewbar .clrole-view button + button { border-left: 1px solid var(--line); }
+.clrole-viewbar .clrole-view button.on { background: var(--navy); color: #fff; }
+.clrole-alert {
+  display: flex; align-items: center; gap: 10px; border: 1px solid #f0c36d; background: #fffaf0; color: #8a5300;
+  border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
+}
+.clrole-alert .btn { margin-left: auto; }
+
+/* --- Health badge (§8.1) --------------------------------------------------- */
+.clrole-health { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+.clrole-health::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.clrole-health.active { background: var(--green-tint); color: var(--green); }
+.clrole-health.quiet { background: var(--amber-tint); color: var(--amber); }
+.clrole-health.dormant { background: var(--red-tint); color: var(--red); }
+
+/* --- Mini stats under the client name (§8.2) ------------------------------- */
+.clrole-mini { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 3px; font-size: 11px; color: var(--ink-soft); font-weight: 400; }
+.clrole-mini b { color: var(--navy); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* --- Row actions (§7 / §8.5) ----------------------------------------------- */
+.clrel-table td.clrole-act { white-space: nowrap; min-width: 150px; }
+.clrole-actions { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.clrole-actions .btn { white-space: nowrap; }
+.clrole-quick {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--paper-raised); color: var(--navy);
+  font-size: 12px; cursor: pointer; text-decoration: none;
+}
+.clrole-quick:hover { border-color: var(--blue); background: var(--blue-tint); }
+.clrole-more { position: relative; }
+.clrole-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 180px; background: var(--paper-raised);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(20, 30, 50, .14); padding: 4px;
+}
+.clrole-menu button {
+  display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; font: inherit; font-size: 12.5px;
+  color: var(--ink); border-radius: 6px; cursor: pointer;
+}
+.clrole-menu button:hover { background: var(--line-soft); }
+.clrole-menu button.danger { color: var(--red); }
+
+.clrole-money { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.clrole-money.bad { color: var(--red); font-weight: 600; }
+
+/* --- Add Client — one form, three steps (§9) ------------------------------- */
+.clrole-steps { display: flex; gap: 0; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.clrole-step {
+  flex: 1; display: flex; align-items: center; gap: 8px; padding: 9px 12px; font-size: 12.5px; color: var(--ink-soft);
+  background: var(--paper-raised); border: 0; font-family: inherit; cursor: pointer; text-align: left;
+}
+.clrole-step + .clrole-step { border-left: 1px solid var(--line); }
+.clrole-step .n {
+  width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--line-soft); color: var(--ink-soft); font-weight: 700; font-size: 12px; flex-shrink: 0;
+}
+.clrole-step.on { color: var(--navy); font-weight: 600; background: var(--blue-tint); }
+.clrole-step.on .n, .clrole-step.done .n { background: var(--navy); color: #fff; }
+.clrole-contact { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 2px; margin-bottom: 10px; }
+.clrole-contact-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
+.clrole-contact-head .btn { margin-left: auto; }
+.clrole-hint { font-size: 11.5px; color: var(--ink-soft); margin: -4px 0 10px; }
+.clrole-locked { font-size: 11px; color: var(--ink-soft); }
+
+/* --- Client 360 extras ------------------------------------------------------ */
+.clrole-contacts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.clrole-contacts .card { margin: 0; }
+.clrole-contacts .role { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .03em; }
+.clrole-contacts .who { font-weight: 600; font-size: 14px; color: var(--ink); margin: 2px 0 6px; }
+.clrole-contacts a { color: var(--blue); text-decoration: none; }
+.clrole-note { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+.clrole-note textarea { flex: 1; min-height: 38px; }
+.clrole-denied { max-width: 560px; }
+.clrole-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; cursor: pointer; }
+.clrole-check input { width: auto; margin: 0; }

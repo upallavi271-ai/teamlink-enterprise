@@ -1,67 +1,80 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
-import { canModule, canSeePortalWorkspace, canSeeClientPortal } from '../permissions';
+import { can, canSeeClientPortal } from '../permissions';
+import './jobs/jobs.css';
 
 // ---------------------------------------------------------------------------
-// Clients and Requirements used to be two top-level screens. They are ONE
-// module now, with four tabs:
+// THE JOBS WORKSPACE STRIP (ATS review #3 §4):
 //
-//     Clients · Requirements · Agreements · Job Portal
+//   Requirements | Clients | Agreements | Job Portal
 //
-// The tab bar lives here so all four screens show the identical strip and a
-// click moves between real routes (each tab is bookmarkable and each still
-// answers on its own URL, which is what the nav links to).
+// One flat row, role-aware — each tab is drawn only for a login that may open
+// it (hide, don't disable):
+//   Requirements  the requirements module
+//   Clients       the client desk only (SA / Admin / Manager / Asst Manager /
+//                 BDE — clients/Client List/view). Everyone else works with
+//                 the client's NAME on the requirement and never gets a tab.
+//   Agreements    the client desk too (it is every client's agreement)
+//   Job Portal    the portal workspace, or a client login's own portal
 //
-// The ATS sidebar is flat again, matching the reference prototype, so this
-// strip is what keeps Agreements reachable — it is not listed in the nav.
+// Routes: /requirements, /clients, /agreements (+ /ats/agreements),
+// /requirements/job-portal, /client-portal.
 // ---------------------------------------------------------------------------
 // The PUBLIC portal's own URL — a separate document, not a route in this SPA.
-// The "Job Portal" TAB no longer points here: the tab is the internal
-// workspace, and opening the public portal is a distinct, clearly-labelled
-// action (see JobPortalWorkspace.jsx). They were conflated before, which made
-// one link look like two different things.
 export const JOB_PORTAL_PATH = '/job-portal/';
 
-const TABS = [
-  { key: 'clients', label: 'Clients', to: '/clients', module: 'clients' },
-  { key: 'requirements', label: 'Requirements', to: '/requirements', module: 'requirements' },
-  { key: 'agreements', label: 'Agreements', to: '/agreements', module: 'clients' },
-];
-
-// Which Job Portal tab this user gets — and whether they get one at all — is
-// the permission matrix's answer, not a role test. Staff with the workspace
-// feature go to the internal workspace; a client goes to the client-facing
-// view; anyone holding neither sees no tab.
-function portalTab(user) {
-  if (canSeePortalWorkspace(user)) {
-    return { key: 'jobportal', label: 'Job Portal', to: '/requirements/job-portal' };
-  }
-  if (canSeeClientPortal(user)) {
-    return { key: 'jobportal', label: 'Job Portal', to: '/client-portal' };
-  }
+// Which Job Portal entry this user gets — and whether they get one at all — is
+// the permission matrix's answer, not a role test.
+function portalItem(user) {
+  // The internal Job Portal is candidate intake now (Candidates & Pipeline → Job Portal Candidates), not a tab here.
+  if (canSeeClientPortal(user)) return { key: 'jobportal', label: 'Job Portal', to: '/client-portal', hint: 'Your openings on the job portal' };
   return null;
+}
+
+// ROLE SPECS 2026-09-29: Jobs / Requirements has NO tab strip any more and
+// Clients is its own ATS menu entry. What is left here is the Clients
+// module's own pair — Clients | Agreements — for a page that still renders
+// this component. Agreements is sensitive (fee %, guarantee, terms): only a
+// login holding Agreement Lifecycle view (Admin, Mgmt, BDE, Accounts) gets
+// the tab; a TL does not, and a Recruiter has no Clients module at all.
+export function jobsTabs(user) {
+  const desk = can(user, null, 'clients', 'Client List', 'view');
+  const agreements = can(user, null, 'clients', 'Agreement Lifecycle', 'view');
+  return [
+    desk && { key: 'clients', label: 'Clients', to: '/clients', hint: 'One record per client' },
+    desk && agreements && { key: 'agreements', label: 'Agreements', to: '/agreements', hint: 'Agreement pipeline across your clients' },
+    portalItem(user),
+  ].filter(Boolean);
 }
 
 export default function ClientModuleTabs({ active }) {
   const { user } = useAuth();
   const { pathname } = useLocation();
-  const tabs = [...TABS.filter((t) => canModule(user, t.module)), portalTab(user)].filter(Boolean);
-  // Longest match first, so /requirements/job-portal beats /requirements.
-  const byLength = [...tabs].sort((a, b) => b.to.length - a.to.length);
-  const current = active || byLength.find((t) => pathname.startsWith(t.to))?.key || 'clients';
+  const tabs = jobsTabs(user);
+  if (tabs.length < 2 && !tabs.some((t) => t.key === 'jobportal')) return null;
+
+  const current = active
+    || (pathname.startsWith('/requirements/job-portal') || pathname.startsWith('/client-portal') ? 'jobportal'
+      : pathname.includes('agreements') ? 'agreements'
+        : pathname.startsWith('/clients') ? 'clients' : 'requirements');
 
   return (
-    <div className="tabs" style={{ marginBottom: 16 }}>
-      {tabs.map((t) => (
-        <Link
-          key={t.key}
-          to={t.to}
-          className={`tab${current === t.key ? ' active' : ''}`}
-          style={{ textDecoration: 'none' }}
-        >
-          {t.label}
-        </Link>
-      ))}
+    <div className="jobsws-switch">
+      <div className="tabs" style={{ marginBottom: 0 }} role="tablist" aria-label="Jobs workspace">
+        {tabs.map((t) => (
+          <Link
+            key={t.key}
+            to={t.to}
+            role="tab"
+            aria-selected={current === t.key}
+            title={t.hint}
+            className={`tab${current === t.key ? ' active' : ''}`}
+            style={{ textDecoration: 'none' }}
+          >
+            {t.label}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

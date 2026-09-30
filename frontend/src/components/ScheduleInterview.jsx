@@ -69,6 +69,11 @@ export default function ScheduleInterview({ onClose, onScheduled }) {
         interviewMode: form.interviewMode || undefined,
         interviewMeetingLink: form.interviewMeetingLink || undefined,
       });
+      // Review #2 §16 — the chosen type (Recruiter / TL / Client Interview) is
+      // recorded on the interview; the stage endpoint only stamps a default.
+      if (form.interviewType) {
+        await api.patch(`/ats/interviews/${applicationId}/type`, { interviewType: form.interviewType }).catch(() => {});
+      }
       onScheduled();
     } catch (err) {
       setError(err.response?.data?.error || 'That interview could not be scheduled.');

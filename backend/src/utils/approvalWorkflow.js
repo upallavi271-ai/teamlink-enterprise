@@ -4,7 +4,7 @@
 // One chain, one set of step states, one set of transitions — shared by every
 // approval a record can climb:
 //
-//   Employee → TL → STL → Manager → Asst Manager → Admin → Super Admin
+//   Employee → TL → STL → HR → Asst Manager → Manager → Super Admin
 //
 // LEAVE is wired to it today. Employee requests, ATS approvals, requirement
 // approvals and Accounts approvals are the SAME shape, so adopting one means
@@ -28,6 +28,7 @@
 const prisma = require('./../db');
 const { can } = require('./permissions');
 const { employeeInScope } = require('./scope');
+const { logAudit } = require('./audit');
 
 // --- The chain -------------------------------------------------------------
 // ONE ordered ladder. `seq` is stored on every step so the order a request
@@ -35,25 +36,28 @@ const { employeeInScope } = require('./scope');
 // list that may since have changed.
 // THE APPROVAL LADDER, IN THE ORDER IT MUST BE CLIMBED.
 //
-//   EMPLOYEE -> TL -> STL -> ASSISTANT MANAGER -> MANAGER -> HR -> SUPER ADMIN
+//   EMPLOYEE -> TL -> STL -> HR -> ASSISTANT MANAGER -> MANAGER -> SUPER ADMIN
 //
-// Two things changed from the first version of this list and both matter:
-// ASSISTANT MANAGER now sits BELOW Manager (it read Manager first), and HR
-// replaces ADMIN as the level above Manager — an approval chain is a line
-// management chain, and the HR desk is the last word before the Super Admin.
+// The user's order (2026-09-25, binding): HR sits directly above the STL, the
+// Assistant Manager and the Manager follow HR, and the Super Admin is last.
+//
+// ONLY NEW REQUESTS USE A NEW ORDER. Every step stores its own `seq`, and
+// loadSteps() / activateNext() walk a request's steps by that stored seq — so
+// a request raised under the previous order (… STL -> AM -> Manager -> HR …)
+// finishes on the steps it was raised with. Nothing re-orders a live chain.
 //
 // A TL's own request starts at STL, and an STL's at Assistant Manager, and so
 // on: nobody approves their own request. That is not a special case in this
 // list — buildChain() puts the applicant in `used` and every level resolving
 // to that same person is skipped with a reason.
 const LEVELS = [
-  { level: 'EMPLOYEE', label: 'Employee', seq: 1, applicant: true },
-  { level: 'TL', label: 'TL', seq: 2 },
-  { level: 'STL', label: 'STL', seq: 3 },
-  { level: 'ASSISTANT_MANAGER', label: 'Assistant Manager', seq: 4 },
-  { level: 'MANAGER', label: 'Manager', seq: 5 },
-  { level: 'HR', label: 'HR', seq: 6 },
-  { level: 'SUPER_ADMIN', label: 'Super Admin', seq: 7 },
+  { level: 'EMPLOYEE', label: 'Employee', short: 'Employee', seq: 1, applicant: true },
+  { level: 'TL', label: 'TL', short: 'TL', seq: 2 },
+  { level: 'STL', label: 'STL', short: 'STL', seq: 3 },
+  { level: 'HR', label: 'HR', short: 'HR', seq: 4 },
+  { level: 'ASSISTANT_MANAGER', label: 'Assistant Manager', short: 'AM', seq: 5 },
+  { level: 'MANAGER', label: 'Manager', short: 'Manager', seq: 6 },
+  { level: 'SUPER_ADMIN', label: 'Super Admin', short: 'SA', seq: 7 },
 ];
 
 // Steps written before HR replaced ADMIN still say ADMIN. Labelling it here
@@ -78,6 +82,13 @@ const MODE_VISIBILITY = 'visibility';
 const MODES = [MODE_REQUIRED, MODE_VISIBILITY];
 
 // --- Step states -----------------------------------------------------------
+// Levels that see a request but never approve it (Manager / Assistant
+// Manager are view-only everywhere — the user's rule, 2026-09-25).
+// Empty since the user's second decision (2026-09-25): Manager and Assistant
+// Manager approve again. Kept as the switch should a level ever become
+// see-only.
+const VIEW_ONLY_LEVELS = [];
+
 const ST = {
   APPLIED: 'Applied', // the employee's own row — the ✓ at the top
   PENDING: 'Pending', // ● the current owner
@@ -103,12 +114,13 @@ const named = (v) => (v && v !== 'NONE' ? v : null);
 //           → else a TL in the same department
 //   STL     Employee.stl → else an STL whose department or configured scope
 //           covers this employee's department
-//   Manager / Asst Manager
-//           a login holding that role whose configured scope departments
-//           (User.atsScopeDepartments — the same column utils/scope.js reads)
-//           cover this employee's department, or who sits in it
-//   Admin / Super Admin
-//           the company-level logins, which are global by definition
+//   HR      an HR in this employee's department → else one whose configured
+//           scope covers it → else any HR (HR is company-wide in HRMS)
+//   Asst Manager / Manager
+//           the holder in (or scoped to) this employee's department → else
+//           any holder, since both roles see every department
+//   Super Admin
+//           the company-level login, global by definition
 //
 // WHERE A LEVEL HAS NOBODY, THE STEP IS SKIPPED AND SAYS SO. A chain must
 // never dead-end because an employee's department has no Assistant Manager.
@@ -153,8 +165,15 @@ function pick(list, predicates) {
 }
 
 // The seven resolved people (or nulls) for one applicant.
+// TEMPORARY / TEST ACCOUNTS NEVER APPROVE A REAL PERSON'S REQUEST. A ZZTEST /
+// example.test login (test and demo data) is left out of a real applicant's
+// chain; a test applicant may still be routed to test approvers.
+const isTempAccount = (...vals) => vals.some((v) => /zztest|example\.test/i.test(String(v || '')));
+
 async function resolveChain(employee) {
-  const all = await candidateApprovers();
+  const tempApplicant = isTempAccount(employee.name, employee.employeeCode, employee.email);
+  const all = (await candidateApprovers())
+    .filter((e) => tempApplicant || !isTempAccount(e.name, e.employeeCode, e.user && e.user.name, e.user && e.user.email));
   const dept = employee.department || null;
   const team = employee.team || null;
   // Never your own approver.
@@ -179,24 +198,37 @@ async function resolveChain(employee) {
   const stl = pick(stls, [sameName(employee.stl)])
     || pick(stls, [(e) => e.department === dept, (e) => covers(e)]);
 
-  // DEPARTMENT ISOLATION REACHES THE CHAIN TOO. A Manager whose configured
-  // scope does not cover this employee's department is not this employee's
-  // manager, and the level is SKIPPED rather than filled with the wrong
-  // person — which is exactly what an Assistant Manager scoped to IT and
-  // Manufacturing gets on a Medical employee's leave.
-  const manager = pick(byRole('MANAGER'), [(e) => covers(e)]);
-  const asstManager = pick(byRole('ASSISTANT_MANAGER'), [(e) => covers(e)]);
-  // Admin and Super Admin are company-level by definition — the account-level
-  // role decides, exactly as GLOBAL_SCOPE_ROLES does in utils/scope.js.
-  // THE HR DESK. hrmsRoleOf() reads the HRMS role, which is where HR lives —
-  // the same test utils/scope.js hrmsGlobal() uses. Company-wide by
-  // definition, so no department test applies.
-  const hr = pick(byRole('HR'), [() => true]);
-  const superAdmin = others.find((e) => e.user.role === 'SUPER_ADMIN') || null;
+  // MANAGER / ASSISTANT MANAGER SEE EVERY DEPARTMENT (the user's rule,
+  // 2026-09-25; utils/scope.js CONFIGURABLE_GLOBAL_ROLES). The one whose
+  // department or configured scope covers this employee is preferred; failing
+  // that, any active holder of the level is still this employee's AM /
+  // Manager, because their reach is company-wide. Only when nobody holds the
+  // level at all is the step SKIPPED.
+  const manager = pick(byRole('MANAGER'), [(e) => e.department === dept, (e) => covers(e), () => true]);
+  const asstManager = pick(byRole('ASSISTANT_MANAGER'), [(e) => e.department === dept, (e) => covers(e), () => true]);
+  // THE DEPARTMENT'S HR. hrmsRoleOf() reads the HRMS role, which is where HR
+  // lives — the same test utils/scope.js hrmsGlobal() uses. The HR who sits in
+  // (or is scoped to) this employee's department is preferred; HR is
+  // company-wide in HRMS, so any HR is the fallback.
+  const hr = pick(byRole('HR'), [(e) => e.department === dept, (e) => covers(e), () => true]);
+  // Super Admin is company-level by definition — the account-level role
+  // decides, exactly as GLOBAL_SCOPE_ROLES does in utils/scope.js.
+  // A Super Admin is a SYSTEM ACCOUNT (utils/systemAccounts.js) and need not
+  // have an Employee record at all — it is still the final approver, so a
+  // login-only Super Admin fills the rung when no linked one exists.
+  let superAdmin = others.find((e) => e.user.role === 'SUPER_ADMIN') || null;
+  if (!superAdmin) {
+    const u = (await prisma.user.findMany({
+      where: { role: 'SUPER_ADMIN', status: 'Active', NOT: { id: employee.userId || '__none__' } },
+      select: { id: true, name: true, email: true, role: true, hrmsRole: true, atsScopeDepartments: true, atsScopeTeams: true, status: true, hrmsAccess: true },
+      orderBy: { createdAt: 'asc' },
+    })).find((x) => tempApplicant || !isTempAccount(x.name, x.email)) || null;
+    if (u) superAdmin = { id: null, name: u.name, department: null, user: u };
+  }
 
   return {
-    TL: tl, STL: stl, ASSISTANT_MANAGER: asstManager, MANAGER: manager,
-    HR: hr, SUPER_ADMIN: superAdmin,
+    TL: tl, STL: stl, HR: hr, ASSISTANT_MANAGER: asstManager, MANAGER: manager,
+    SUPER_ADMIN: superAdmin,
   };
 }
 
@@ -321,12 +353,20 @@ async function start({ workflow, recordId, employee, applicantUserId, applicantN
       data.push({
         ...base,
         status: ST.SKIPPED,
-        note: `Skipped — the request was raised by ${applicantName || employee.name}, who is ${applicantLevel.label}`,
+        note: l.seq === startAboveSeq
+          ? `Skipped — the requester (${applicantName || employee.name}) is the ${applicantLevel.label}; nobody approves their own request`
+          : `Skipped — below the requester's own level (${applicantLevel.label})`,
       });
       return;
     }
     if (c.active === false) {
       data.push({ ...base, status: ST.SKIPPED, note: `${l.label} is switched off for this workflow` });
+      return;
+    }
+    // MANAGER AND ASSISTANT MANAGER ARE VIEW-ONLY (permissions.js can()): they
+    // see the request, they never gate it — so the request goes on to HR.
+    if (VIEW_ONLY_LEVELS.includes(l.level)) {
+      data.push({ ...base, status: person ? ST.VISIBILITY : ST.SKIPPED, note: `${l.label} is view-only — sees it, does not approve` });
       return;
     }
     if (!person) {
@@ -405,7 +445,59 @@ function viewStep(step, now) {
     actedByName: step.actedByName,
     note: step.note,
     slaHours: step.slaHours,
+    short: l.short || l.label,
+    direct: !!step.direct,
     ...age,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// REQUEST TRACKING — the facts every screen shows for a request (spec item 2):
+// Submitted By / At, Current Approver, Approval Level, Previous Approvers,
+// Status, Approved/Rejected By and At, Remarks, the Direct Super Admin flag,
+// and the chain as one line: "Employee → TL ✓ → STL ✓ → HR ⏳ → AM → …".
+// Skipped rungs are left out of the line (each carries its reason in `steps`).
+// ---------------------------------------------------------------------------
+const CHAIN_MARK = { Approved: ' ✓', Rejected: ' ✗', Pending: ' ⏳' };
+const isoOf = (d) => (d ? new Date(d).toISOString() : null);
+
+function trackOf(steps) {
+  const applied = steps.find((s) => s.status === ST.APPLIED) || null;
+  const current = steps.find((s) => s.status === ST.PENDING) || null;
+  const state = stateOf(steps);
+  const approved = steps.filter((s) => s.status === ST.APPROVED);
+  const finalStep = state === 'Rejected'
+    ? steps.find((s) => s.status === ST.REJECTED)
+    : (state === 'Approved' ? approved[approved.length - 1] || null : null);
+  const directStep = steps.find((s) => s.direct) || null;
+  const gating = steps.filter((s) => s.mode === MODE_REQUIRED && s.status !== ST.SKIPPED);
+  const labelOf = (s) => (LEVEL_BY_ID[s.level] || {}).label || LEGACY_LEVEL_LABELS[s.level] || s.level;
+  const shortOf = (s) => (LEVEL_BY_ID[s.level] || {}).short || labelOf(s);
+  return {
+    submittedBy: applied ? (applied.actedByName || applied.approverName) : null,
+    submittedAt: applied ? isoOf(applied.actedAt || applied.createdAt) : null,
+    currentApprover: current ? current.approverName : null,
+    approvalLevel: current ? labelOf(current) : null,
+    approvalLevelNo: current ? gating.findIndex((s) => s.id === current.id) + 1 : null,
+    approvalLevelCount: gating.length,
+    decision: finalStep ? finalStep.status : null,
+    decidedBy: finalStep ? (finalStep.actedByName || finalStep.approverName) : null,
+    decidedByLevel: finalStep ? labelOf(finalStep) : null,
+    decidedAt: finalStep ? isoOf(finalStep.actedAt) : null,
+    remarks: finalStep ? finalStep.note || null : null,
+    direct: !!directStep,
+    directLabel: directStep ? DIRECT_LABEL : null,
+    chainText: steps
+      .filter((s) => s.status !== ST.SKIPPED)
+      .map((s) => `${shortOf(s)}${CHAIN_MARK[s.status] || ''}`)
+      .join(' → '),
+    chain: steps.map((s) => ({
+      level: s.level,
+      short: shortOf(s),
+      status: s.status,
+      name: s.actedByName || s.approverName || null,
+      direct: !!s.direct,
+    })),
   };
 }
 
@@ -445,6 +537,11 @@ async function view(workflowId, recordId, user, { canAct = false } = {}) {
     // assumes a background job is chasing these.
     ageComputedAt: new Date(now).toISOString(),
     canAct,
+    // The Super Admin's direct approve / reject is offered whenever the
+    // request is still open and it is not already their own turn (their own
+    // turn is an ordinary `canAct`). act() makes the same test.
+    canDirect: !!(current && isSuperAdmin(user) && current.approverUserId !== (user && user.id)),
+    ...trackOf(steps),
     steps: steps.map((s) => viewStep(s, now)),
   };
 }
@@ -466,6 +563,7 @@ function summarize(steps, now = Date.now()) {
     approvedCount: steps.filter((s) => s.status === ST.APPROVED).length,
     requiredCount: steps.filter((s) => s.mode === MODE_REQUIRED).length,
     ...age,
+    ...trackOf(steps),
   };
 }
 
@@ -540,6 +638,86 @@ const DENY = {
 };
 
 // ---------------------------------------------------------------------------
+// SUPER ADMIN DIRECT DECISION.
+//
+// A Super Admin (account-level role, or HRMS role) may decide any request at
+// any step. What is written:
+//   - the SUPER_ADMIN step carries the decision: the SA's name, the date and
+//     time, Approved/Rejected, the remarks, and direct = true ("Direct Super
+//     Admin Approval");
+//   - every step still Pending or Waiting becomes "Skipped — decided directly
+//     by Super Admin";
+//   - the request is COMPLETE, so the calling router applies exactly the side
+//     effects of a normal final approval / rejection (leave balance, the
+//     attendance correction, the resignation's notice period, …).
+// ---------------------------------------------------------------------------
+const DIRECT_LABEL = 'Direct Super Admin Approval';
+const DIRECT_SKIP_NOTE = 'Skipped — decided directly by Super Admin';
+
+function isSuperAdmin(user) {
+  if (!user) return false;
+  return user.role === 'SUPER_ADMIN' || named(user.hrmsRole) === 'SUPER_ADMIN';
+}
+
+async function decideDirect(workflowId, recordId, steps, current, user, { decision, note }) {
+  const now = new Date();
+  const actor = user.name || user.email || 'Super Admin';
+  const saStep = steps.find((s) => s.level === 'SUPER_ADMIN') || null;
+  const bypassed = steps.filter((s) => [ST.PENDING, ST.WAITING].includes(s.status) && (!saStep || s.id !== saStep.id));
+  if (bypassed.length) {
+    await prisma.approvalStep.updateMany({
+      where: { id: { in: bypassed.map((s) => s.id) } },
+      data: { status: ST.SKIPPED, note: `${DIRECT_SKIP_NOTE} (${actor})` },
+    });
+  }
+  const decided = {
+    status: decision === 'Approved' ? ST.APPROVED : ST.REJECTED,
+    mode: MODE_REQUIRED,
+    approverUserId: user.id,
+    approverName: actor,
+    actedAt: now,
+    actedByUserId: user.id,
+    actedByName: actor,
+    note: note || null,
+    direct: true,
+  };
+  if (saStep) {
+    await prisma.approvalStep.update({
+      where: { id: saStep.id },
+      data: { ...decided, activatedAt: saStep.activatedAt || now },
+    });
+  } else {
+    // A chain laid down without a Super Admin rung (should not happen with
+    // the current ladder, but a very old chain may lack one): add it.
+    const top = steps.reduce((m, s) => Math.max(m, s.seq), 0);
+    await prisma.approvalStep.create({
+      data: { workflow: workflowId, recordId, level: 'SUPER_ADMIN', seq: Math.max(top + 1, LEVEL_BY_ID.SUPER_ADMIN.seq), activatedAt: now, ...decided },
+    });
+  }
+  try {
+    await logAudit({
+      userId: user.id,
+      actorName: actor,
+      action: `${DIRECT_LABEL}: ${(WORKFLOWS[workflowId] || {}).label || workflowId} ${decision === 'Approved' ? 'approved' : 'rejected'}`,
+      entity: 'ApprovalStep',
+      entityId: recordId,
+      fromValue: current.level,
+      toValue: decision,
+    });
+  } catch (err) {
+    console.error('[approvalWorkflow] direct-decision audit failed', err.message);
+  }
+  return {
+    complete: true,
+    outcome: decision === 'Approved' ? 'Approved' : 'Rejected',
+    level: 'SUPER_ADMIN',
+    fromLevel: current.level,
+    nextLevel: null,
+    direct: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // ACT — the only transition. Approving OUT OF TURN IS REFUSED HERE, by the
 // API, and not merely hidden in the browser.
 // ---------------------------------------------------------------------------
@@ -567,6 +745,15 @@ async function act(workflowId, recordId, user, { decision, note }) {
   // The override still EXISTS and is still read — it is what lets an
   // administrator act on a request they are not personally on, once it has
   // reached their level — but it no longer buys a turn that has not arrived.
+  //
+  // THE ONE EXCEPTION IS THE SUPER ADMIN (the user's decision, 2026-09-25):
+  // a Super Admin may approve or reject any request DIRECTLY, from whatever
+  // step it is on, without waiting for the levels below. It is recorded as a
+  // "Direct Super Admin Approval" — see decideDirect() — never disguised as a
+  // normal turn.
+  if (!isOwner && isSuperAdmin(user)) {
+    return decideDirect(workflowId, recordId, steps, current, user, { decision, note });
+  }
   if (!isOwner) {
     // The out-of-turn refusal. A login further UP the chain gets told where
     // the request actually sits rather than a flat "denied".
@@ -700,6 +887,7 @@ const WORKFLOWS = {
 };
 
 module.exports = {
+  VIEW_ONLY_LEVELS,
   LEVELS,
   APPROVAL_LEVELS,
   LEVEL_BY_ID,
@@ -724,4 +912,8 @@ module.exports = {
   isParticipant,
   canSee,
   permissionFor,
+  isSuperAdmin,
+  trackOf,
+  DIRECT_LABEL,
+  DIRECT_SKIP_NOTE,
 };

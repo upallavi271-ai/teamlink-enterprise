@@ -1,0 +1,14 @@
+/* Role Catalog — the "Screen visibility" marker on HRMS / Accounts features
+   that no endpoint checks by name (backend utils/roleAccess.js `api: false`). */
+.rc-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: #fff4e0;
+  color: #9a5b00;
+  border: 1px solid #f3d9a6;
+  vertical-align: middle;
+  white-space: nowrap;
+}

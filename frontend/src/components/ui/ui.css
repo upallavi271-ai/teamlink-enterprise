@@ -1,0 +1,22 @@
+/* Shared UI pieces — StatusChip, MoreFilters, EmptyState (ATS review #3). */
+
+.st-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap;border:1px solid transparent}
+.st-blue{background:var(--blue-tint);color:var(--blue);border-color:color-mix(in srgb,var(--blue) 25%,transparent)}
+.st-amber{background:var(--amber-tint);color:var(--amber);border-color:color-mix(in srgb,var(--amber) 25%,transparent)}
+.st-green{background:var(--teal-tint);color:var(--teal);border-color:color-mix(in srgb,var(--teal) 25%,transparent)}
+.st-red{background:var(--red-tint);color:var(--red);border-color:color-mix(in srgb,var(--red) 25%,transparent)}
+.st-grey{background:var(--line-soft);color:var(--ink-soft);border-color:var(--line)}
+
+.mf{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.mf-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.mf-toggle,.mf-clear{border:1px solid var(--line);background:var(--card,#fff);color:var(--ink);border-radius:8px;padding:6px 12px;font-size:13px}
+.mf-toggle.on{border-color:var(--brand);color:var(--brand-ink);background:var(--brand-tint)}
+.mf-clear{border-color:transparent;background:transparent;color:var(--brand-ink);text-decoration:underline}
+.mf-panel{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+
+.empty-st{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;padding:32px 16px;color:var(--ink-soft)}
+.empty-st.compact{padding:16px 12px}
+.empty-st-icon{font-size:26px;line-height:1}
+.empty-st-title{font-weight:600;color:var(--ink);font-size:14.5px}
+.empty-st-hint{font-size:13px;max-width:420px}
+.empty-st-action{margin-top:8px}

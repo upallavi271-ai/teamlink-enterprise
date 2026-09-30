@@ -6,6 +6,10 @@ const { requireAuth } = require('../middleware/auth');
 const { resolveIdentity, tokenPayload } = require('../utils/identity');
 const { effectiveMatrix, allowedStagesFor, STAGE_WORKFLOW_ACTIONS } = require('../utils/permissions');
 const { departmentsOf, scopeOf, hrmsGlobal, scopeLabel } = require('../utils/scope');
+const { logAudit } = require('../utils/audit');
+const {
+  strengthError, passwordEventData, isLocked, passwordStatusOf, MAX_FAILED_LOGINS, LOCK_MINUTES,
+} = require('../utils/passwordPolicy');
 
 // Everything the browser needs to render this login: the identity, the
 // EFFECTIVE permission matrix (every module resolved against ITS product's
@@ -34,9 +38,20 @@ async function sessionPayload(identity) {
     effectiveMatrix(identity),
     allowedStagesFor(identity),
   ]);
+  // The login's own password status (hrms-24 §12) — flags and dates only.
+  const pw = await prisma.user.findUnique({
+    where: { id: identity.id },
+    select: {
+      passwordChangedAt: true, passwordResetRequired: true, failedLoginCount: true, lockedUntil: true,
+      status: true, lastLoginAt: true, setPasswordTokenHash: true, setPasswordUsedAt: true, setPasswordExpiresAt: true,
+    },
+  }).catch(() => null);
+  const passwordStatus = passwordStatusOf(pw);
+  if (passwordStatus) { delete passwordStatus.failedLoginCount; delete passwordStatus.resetLinkExpiresAt; }
   return {
     ...identity,
     access,
+    passwordStatus,
     workflow: { allowedStages, stageActions: STAGE_WORKFLOW_ACTIONS },
     // WHAT THIS LOGIN MAY FILTER BY, computed by utils/scope.js — the same
     // helper that decides what the lists actually return.
@@ -54,6 +69,9 @@ async function sessionPayload(identity) {
       // "Scope: Medical Department", "Scope: All Company". One computed
       // answer, so no two screens can word it differently.
       label: scopeLabel(identity),
+      // Review #3 §27 — the ATS reading (HR = Internal Hiring, not All
+      // Employees) for the header's scope indicator on ATS routes.
+      atsLabel: scopeLabel(identity, 'ats'),
       departments: scopeDepartmentOptions(identity),
       teams: scopeOf(identity).teams && scopeOf(identity).teams.length ? scopeOf(identity).teams : null,
     },
@@ -75,8 +93,32 @@ router.post('/login', async (req, res) => {
     || await prisma.user.findUnique({ where: { email } });
   if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
+  // LOCKOUT (hrms-24 §12). A locked login is refused before the password is
+  // even compared, so guessing during the lock learns nothing.
+  if (isLocked(user)) {
+    return res.status(423).json({
+      error: `This login is locked after too many failed sign-ins. Try again after ${new Date(user.lockedUntil).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}, or ask HR to reset your password.`,
+    });
+  }
+
   const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
+  if (!ok) {
+    const failed = (user.failedLoginCount || 0) + 1;
+    const lock = failed >= MAX_FAILED_LOGINS;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: lock
+        ? { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCK_MINUTES * 60000) }
+        : { failedLoginCount: failed },
+    });
+    if (lock) {
+      await logAudit({
+        userId: user.id, action: `Login locked after ${MAX_FAILED_LOGINS} failed sign-ins`, entity: 'User', entityId: user.id,
+        toValue: `Locked ${LOCK_MINUTES} min`,
+      });
+    }
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
 
   // A login an admin has disabled on the Users screen is really disabled.
   if (user.status && user.status !== 'Active') {
@@ -91,8 +133,9 @@ router.post('/login', async (req, res) => {
     return res.status(403).json({ error: 'This login has no access yet — ask an administrator to grant it' });
   }
 
-  // Stamps the Users screen's "Last Login" column.
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  // Stamps the Users screen's "Last Login" column, and clears the failed
+  // sign-in counter.
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), failedLoginCount: 0, lockedUntil: null } });
 
   const token = jwt.sign(tokenPayload(identity), process.env.JWT_SECRET, { expiresIn: '8h' });
   res.json({ token, user: await sessionPayload(identity) });
@@ -101,15 +144,75 @@ router.post('/login', async (req, res) => {
 // The resolved identity plus the permission matrix the frontend renders its
 // nav and its action buttons from — the SAME matrix the server enforces.
 router.get('/me', requireAuth, async (req, res) => {
-  res.json(await sessionPayload(req.user));
+  const payload = await sessionPayload(req.user);
+  // Super Admin "View as" (utils/viewAs.js): the target's normal payload,
+  // plus who is really looking and when the read-only session ends.
+  if (req.viewAs) {
+    payload.viewAs = { byName: req.viewAs.byName, readOnly: true, expiresAt: req.viewAs.expiresAt };
+  }
+  res.json(payload);
+});
+
+// SELF-SERVICE PASSWORD CHANGE (hrms-24 §12). The current password is always
+// asked for — a session left open on a shared machine must not be enough to
+// take the account over — then the strength rule, then bcrypt. The new hash
+// is live immediately: the next sign-in uses it. The audit row records THAT
+// it changed, never the value.
+async function changeOwnPassword(req, currentPassword, newPassword) {
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user) return { status: 404, error: 'Account not found' };
+  if (isLocked(user)) return { status: 423, error: 'This login is locked after too many failed attempts. Try again later.' };
+  if (!currentPassword || !newPassword) return { status: 400, error: 'Enter your current password and the new one.' };
+  if (!(await bcrypt.compare(String(currentPassword), user.passwordHash))) {
+    // Wrong current passwords count toward the same lockout as sign-in.
+    const failed = (user.failedLoginCount || 0) + 1;
+    const lock = failed >= MAX_FAILED_LOGINS;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: lock ? { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCK_MINUTES * 60000) } : { failedLoginCount: failed },
+    });
+    await logAudit({ userId: user.id, action: 'Password change refused — wrong current password', entity: 'User', entityId: user.id });
+    return { status: 400, field: 'currentPassword', error: 'Your current password is not correct.' };
+  }
+  const weak = strengthError(newPassword, { email: user.email, name: user.name });
+  if (weak) return { status: 400, field: 'newPassword', error: weak };
+  if (await bcrypt.compare(String(newPassword), user.passwordHash)) {
+    return { status: 400, field: 'newPassword', error: 'Choose a password different from your current one.' };
+  }
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: await bcrypt.hash(String(newPassword), 10),
+      ...passwordEventData('self'),
+      // A pending set-password link is a second way in; a new password burns it.
+      setPasswordTokenHash: null, setPasswordExpiresAt: null,
+    },
+  });
+  await logAudit({ userId: user.id, action: 'Password changed (self-service)', entity: 'User', entityId: user.id, toValue: 'Changed' });
+  return { status: 200 };
+}
+
+router.post('/change-password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body || {};
+  if (confirmPassword !== undefined && confirmPassword !== newPassword) {
+    return res.status(400).json({ field: 'confirmPassword', error: 'The two new passwords do not match.' });
+  }
+  const out = await changeOwnPassword(req, currentPassword, newPassword);
+  if (out.status !== 200) return res.status(out.status).json({ field: out.field, error: out.error });
+  return res.json({ ok: true, message: 'Password changed. Use the new password the next time you sign in.' });
 });
 
 router.put('/me', requireAuth, async (req, res) => {
-  const { name, password } = req.body;
+  const { name, password, currentPassword } = req.body;
   const data = {};
   if (name) data.name = name;
-  if (password) data.passwordHash = await bcrypt.hash(password, 10);
-  await prisma.user.update({ where: { id: req.user.id }, data });
+  // A password change here goes through the same checks as /change-password;
+  // it used to be hashed and saved with no current password at all.
+  if (password) {
+    const out = await changeOwnPassword(req, currentPassword, password);
+    if (out.status !== 200) return res.status(out.status).json({ field: out.field, error: out.error });
+  }
+  if (Object.keys(data).length) await prisma.user.update({ where: { id: req.user.id }, data });
   const identity = await resolveIdentity(req.user.id);
   res.json(identity);
 });

@@ -290,6 +290,82 @@ function shapeEmployeeMgmtRow(e) {
     // "No login" is the prototype's own wording for an employee with no account.
     loginStatus: u ? (u.status || 'Active') : 'No login',
     lastLogin: u && u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : null,
+    // hrms-24 §12 — Password Set / Changed · date / Reset Required and
+    // Locked / Active. Flags and dates only; the password never leaves bcrypt.
+    // eslint-disable-next-line global-require
+    passwordStatus: u ? require('./passwordPolicy').passwordStatusOf(u) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// TL-WISE — Employee Management grouped by team lead.
+//
+// The TL is the Employee.tl column (the TL on the Add Employee form / Assign
+// Roles), falling back to the reporting manager where no TL is recorded.
+// `members` are the employees being counted (already scoped and filtered by
+// the caller); `directory` is the caller's scoped employee list, used only to
+// put the TL's own ID, designation and department beside their name. Status
+// buckets use the same five-status fold as every HRMS filter (utils/hrStatus.js),
+// so Active + Notice Period + Relieved + Other = team size, and the team sizes
+// add up to the number of members.
+// ---------------------------------------------------------------------------
+const tlKey = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const NO_TL = 'No TL assigned';
+
+function tlWiseGroups(members, directory = []) {
+  // eslint-disable-next-line global-require
+  const { hrStatusOf } = require('./hrStatus');
+  const dir = new Map();
+  directory.forEach((e) => { if (!dir.has(tlKey(e.name))) dir.set(tlKey(e.name), e); });
+  const groups = new Map();
+  members.forEach((e) => {
+    const tlName = String(e.tl || (e.reportingManager && e.reportingManager.name) || '').replace(/\s+/g, ' ').trim();
+    const key = tlKey(tlName) || '';
+    if (!groups.has(key)) groups.set(key, { key, tl: tlName || NO_TL, members: [] });
+    const status = hrStatusOf(e.employmentStatus || 'Active', e.user ? (e.user.status || 'Active') : 'No login');
+    groups.get(key).members.push({
+      id: e.id,
+      employeeCode: e.employeeCode,
+      name: e.name,
+      designation: e.designation || null,
+      department: e.department || null,
+      employmentStatus: e.employmentStatus || 'Active',
+      hrStatus: status,
+      dateOfJoining: e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : null,
+    });
+  });
+  const out = [...groups.values()].map((g) => {
+    const lead = g.key ? dir.get(g.key) : null;
+    const count = (s) => g.members.filter((m) => m.hrStatus === s).length;
+    const deptTally = {};
+    g.members.forEach((m) => { if (m.department) deptTally[m.department] = (deptTally[m.department] || 0) + 1; });
+    const topDept = Object.entries(deptTally).sort((a, b) => b[1] - a[1])[0];
+    const active = count('Active');
+    const notice = count('Notice Period');
+    const relieved = count('Exit');
+    return {
+      key: g.key || '__none__',
+      tl: g.tl,
+      tlEmployeeCode: lead ? lead.employeeCode : null,
+      tlDesignation: lead ? lead.designation || null : null,
+      department: (lead && lead.department) || (topDept ? topDept[0] : null),
+      departments: Object.keys(deptTally).sort(),
+      teamSize: g.members.length,
+      active,
+      notice,
+      relieved,
+      other: g.members.length - active - notice - relieved,
+      members: g.members.sort((a, b) => (a.hrStatus === b.hrStatus ? 0 : a.hrStatus === 'Active' ? -1 : b.hrStatus === 'Active' ? 1 : 0)
+        || a.name.localeCompare(b.name)),
+    };
+  }).sort((a, b) => (a.key === '__none__') - (b.key === '__none__') || b.active - a.active || b.teamSize - a.teamSize || a.tl.localeCompare(b.tl));
+  const sum = (k) => out.reduce((n, g) => n + g[k], 0);
+  return {
+    groups: out,
+    totals: {
+      teams: out.filter((g) => g.key !== '__none__').length,
+      teamSize: sum('teamSize'), active: sum('active'), notice: sum('notice'), relieved: sum('relieved'), other: sum('other'),
+    },
   };
 }
 
@@ -321,7 +397,113 @@ async function liveVerification(email) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// LIST EXTRAS — photo, document count and last working date for every row of
+// Employee Management, in three reads for the whole list (never one per row).
+// ---------------------------------------------------------------------------
+// The resignation statuses that mean "has resigned, not yet gone" — mirrors
+// routes/resignations.js (PENDING + SERVING).
+const OPEN_RESIGNATION = ['Pending', 'Notice Period', 'Accepted'];
+async function employeeListExtras(employeeIds) {
+  const ids = employeeIds && employeeIds.length ? employeeIds : ['__none__'];
+  const [docs, resignations] = await Promise.all([
+    prisma.employeeDocument.findMany({
+      where: { employeeId: { in: ids } },
+      select: { id: true, employeeId: true, docType: true, uploadedAt: true },
+      orderBy: { uploadedAt: 'desc' },
+    }),
+    prisma.employeeRecord.findMany({
+      where: { type: 'RESIGNATION', employeeId: { in: ids }, status: { in: OPEN_RESIGNATION } },
+      select: { id: true, employeeId: true, date: true, status: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+    }),
+  ]);
+  const details = resignations.length
+    ? await prisma.resignationDetail.findMany({ where: { recordId: { in: resignations.map((r) => r.id) } } })
+    : [];
+  const detailOf = new Map(details.map((d) => [d.recordId, d]));
+  const out = new Map();
+  const get = (id) => {
+    if (!out.has(id)) out.set(id, { photoDocId: null, docCount: 0, lastWorkingDate: null, lastWorkingDateSource: null });
+    return out.get(id);
+  };
+  docs.forEach((d) => {
+    const x = get(d.employeeId);
+    x.docCount += 1;
+    if (d.docType === 'Photo' && !x.photoDocId) x.photoDocId = d.id; // newest first
+  });
+  resignations.forEach((r) => {
+    const x = get(r.employeeId);
+    if (x.lastWorkingDate) return; // newest open resignation wins
+    const d = detailOf.get(r.id);
+    const lwd = r.date || (d && (d.approvedLastWorkingDate || d.requestedLastWorkingDate)) || null;
+    if (!lwd) return;
+    x.lastWorkingDate = lwd;
+    x.lastWorkingDateSource = d && d.approvedLastWorkingDate ? 'Resignation (approved)'
+      : d ? 'Resignation (requested)' : 'Recorded by HR';
+    x.resignationId = r.id;
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// TRANSFER HISTORY — seat changes plus department / team / reporting changes,
+// read from what the app already records: PositionAssignment tenures (the
+// `seats` timeline from routes/employees.js seatTimelines()) and the audit
+// rows written by Edit (Department changed / Position changed), Transfer,
+// the re-department and Education imports, and field-level updates.
+// ---------------------------------------------------------------------------
+const LEAD_DESIGNATIONS = ['TL', 'STL', 'Assistant Manager', 'Manager', 'Team Lead', 'Senior Team Lead'];
+const LEAD_ROLES = ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'];
+function isLead(employee) {
+  const u = employee && employee.user;
+  if (LEAD_DESIGNATIONS.some((d) => d.toLowerCase() === String(employee.designation || '').trim().toLowerCase())) return true;
+  return !!(u && [u.role, u.hrmsRole, u.atsRole].some((r) => LEAD_ROLES.includes(r)));
+}
+const TRANSFER_FIELDS = {
+  department: 'Department', team: 'Team', tl: 'TL', stl: 'STL', reportingManagerId: 'Reporting manager',
+  reportingManager: 'Reporting manager', designation: 'Designation', position: 'Position',
+};
+function parseJson(s) { try { return JSON.parse(s); } catch { return null; } }
+function transferHistoryOf(auditRows, seats) {
+  const out = [];
+  (seats || []).forEach((t) => {
+    out.push({
+      date: t.from, kind: 'Seat', from: t.tookOverFrom ? `${t.code} (from ${t.tookOverFrom.name})` : null,
+      to: t.code + (t.department ? ` · ${t.department}` : ''),
+      detail: `${t.from} – ${t.current ? 'today' : t.to}${t.handedTo ? ` · handed to ${t.handedTo.name}` : ''}`,
+      by: null, current: !!t.current,
+    });
+  });
+  (auditRows || []).forEach((a) => {
+    const by = a.actorName || (a.user && a.user.name) || 'System';
+    const date = new Date(a.createdAt).toISOString();
+    const act = String(a.action || '');
+    if (act === 'Department changed' || act.startsWith('Employee transferred') || act.startsWith('Re-departmented')) {
+      const why = /\((.*)\)$/.exec(act);
+      out.push({ date, kind: 'Department', from: a.fromValue || null, to: a.toValue || null, detail: why ? why[1] : (a.reason || null), by });
+    } else if (act === 'Position changed' || act.startsWith('Vacated seat')) {
+      out.push({ date, kind: 'Position', from: a.fromValue || null, to: a.toValue || null, detail: a.reason || null, by });
+    } else if (act.startsWith('Employee updated (') && a.fromValue && a.toValue) {
+      const f = parseJson(a.fromValue) || {}; const t = parseJson(a.toValue) || {};
+      Object.keys(t).forEach((k) => {
+        if (!TRANSFER_FIELDS[k] || (f[k] || '') === (t[k] || '')) return;
+        out.push({ date, kind: TRANSFER_FIELDS[k], from: f[k] || null, to: t[k] || null, detail: a.reason || null, by });
+      });
+    } else if (act === 'Reporting manager set') {
+      out.push({ date, kind: 'Reporting manager', from: a.fromValue || null, to: a.toValue || null, detail: null, by });
+    } else if (a.field && TRANSFER_FIELDS[a.field] && (a.fromValue || '') !== (a.toValue || '')) {
+      out.push({ date, kind: TRANSFER_FIELDS[a.field], from: a.fromValue || null, to: a.toValue || null, detail: a.reason || null, by });
+    }
+  });
+  return out.sort((x, y) => String(y.date).localeCompare(String(x.date)));
+}
+
 module.exports = {
+  employeeListExtras,
+  transferHistoryOf,
+  isLead,
+  OPEN_RESIGNATION,
   productRolesForDesignation,
   ALL_ROLES,
   ATS_ROLES,
@@ -337,6 +519,7 @@ module.exports = {
   fmtDate,
   EMP_MGMT_INCLUDE,
   shapeEmployeeMgmtRow,
+  tlWiseGroups,
   OTP_TTL_MINUTES,
   OTP_MAX_ATTEMPTS,
   OTP_PURPOSE,

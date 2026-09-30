@@ -1,0 +1,24 @@
+/* Candidate 360 header + tabs (components/Candidate360Tabs.jsx). Scoped under .c360t-* */
+.c360t-head{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,.9fr) minmax(0,1.4fr);gap:10px;margin:0 0 10px}
+.c360t-cell{background:#f6f9fd;border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:8px 12px;min-width:0;display:flex;flex-direction:column;gap:3px}
+.c360t-next{background:#f3f8fe;border-color:#b9d7f5}
+.c360t-k{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft,#5b6478)}
+.c360t-v{font-size:13.5px;color:var(--ink,#1b2437);overflow-wrap:anywhere}
+.c360t-sub{font-size:12px;font-weight:400;color:var(--ink-soft,#5b6478)}
+.c360t-note{font-size:11.5px;color:#9a6400}
+.c360t-link{font-size:11.5px;align-self:flex-start}
+.c360t-tabs{flex-wrap:wrap;margin-bottom:10px}
+.c360t-tabs .tab{display:inline-flex;align-items:center;gap:6px}
+.c360t-n{font-size:10.5px;font-weight:700;background:#e3ecf8;color:var(--brand,#0a6fc2);border-radius:9px;padding:0 6px;line-height:16px}
+.c360t-card{border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--paper-raised,#fff)}
+.c360t-label{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft,#5b6478);margin-bottom:6px}
+.c360t-row{display:flex;gap:10px;font-size:12.5px;padding:5px 0;border-bottom:1px dashed var(--line,#e3e8f0)}
+.c360t-row:last-child{border-bottom:0}
+.c360t-when{flex:0 0 138px;color:var(--ink-soft,#5b6478);font-size:12px}
+.c360t-kv{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:3px 0}
+.c360t-kv>span:first-child{color:var(--ink-soft,#5b6478)}
+.c360t-kv>*:last-child{text-align:right;overflow-wrap:anywhere}
+.c360t-table{width:100%;font-size:12.5px}
+.c360t-table tr.is-selected td{background:#eef5fd}
+.c360t-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 14px;align-items:start}
+@media (max-width:900px){.c360t-head{grid-template-columns:1fr}.c360t-grid{grid-template-columns:1fr}.c360t-when{flex-basis:100px}}

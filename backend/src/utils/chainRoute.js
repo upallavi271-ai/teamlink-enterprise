@@ -148,4 +148,10 @@ async function decorate(wf, rows, idOf = (r) => r.id) {
   return rows.map((r) => ({ ...r, workflow: summaries[idOf(r)] || null }));
 }
 
-module.exports = { raise, ensure, decide, mayTouch, decorate, hasChain, OUT_OF_SCOPE };
+// The records of this workflow that name `userId` on their chain — the
+// chain-membership half of list visibility. Best-effort: [] on failure.
+async function participantIds(wf, userId) {
+  return quietly('participants', () => workflow.recordIdsForParticipant(wf, userId), []);
+}
+
+module.exports = { raise, ensure, decide, mayTouch, decorate, hasChain, participantIds, OUT_OF_SCOPE };

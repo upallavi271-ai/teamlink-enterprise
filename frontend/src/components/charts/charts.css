@@ -1,0 +1,120 @@
+/* ---------------------------------------------------------------------------
+   TeamLink dashboard charts (hrms-24 §9) — scoped under .tlc.
+
+   PALETTE. The app's own four series hues (styles.css --c1..--c4), which pass
+   every check of the dataviz validator on the adjacent pairlist against the
+   white card surface:
+     light  #0a74bd #c2410c #7f56d9 #15803d  on #ffffff — CVD ΔE ≥ 23.9,
+            normal-vision ΔE ≥ 29.0, all ≥ 3:1 contrast.
+     dark   #3d8fd6 #e0662e #9a7de6 #2f9e57  on #1a1a19 — CVD ΔE ≥ 20.1,
+            normal-vision ΔE ≥ 26.0, all ≥ 3:1 contrast.
+   Four series and no fifth: anything past four (and any series named
+   "Other") is the grey Other bucket. Colour follows the SERIES, never its
+   rank, and a legend always names every series.
+
+   DARK MODE. The app has no dark theme today, so the dark steps apply only
+   when the root says so (data-theme="dark", or data-theme="system" with a dark
+   OS setting). Keying them to the OS alone would put dark-surface colours on
+   the app's white cards.
+   ------------------------------------------------------------------------- */
+.tlc{
+  --tlc-s1:#0a74bd; --tlc-s2:#c2410c; --tlc-s3:#7f56d9; --tlc-s4:#15803d;
+  --tlc-other:#8a97a8;
+  --tlc-surface:var(--paper-raised,#ffffff);
+  --tlc-ink:var(--ink,#22333B); --tlc-ink2:var(--ink-soft,#56666E); --tlc-muted:var(--ink-faint,#64767D);
+  --tlc-grid:#e8edeb; --tlc-axis:#c9d2cf; --tlc-track:rgba(16,24,40,.05);
+  --tlc-line:var(--line,#dde5e2);
+}
+:root[data-theme="dark"] .tlc{
+  --tlc-s1:#3d8fd6; --tlc-s2:#e0662e; --tlc-s3:#9a7de6; --tlc-s4:#2f9e57;
+  --tlc-other:#7d8894; --tlc-surface:#1a1a19; --tlc-ink:#ffffff; --tlc-ink2:#c3c2b7; --tlc-muted:#898781;
+  --tlc-grid:#2c2c2a; --tlc-axis:#383835; --tlc-track:rgba(255,255,255,.05); --tlc-line:rgba(255,255,255,.1);
+}
+@media (prefers-color-scheme: dark){
+  :root[data-theme="system"] .tlc{
+    --tlc-s1:#3d8fd6; --tlc-s2:#e0662e; --tlc-s3:#9a7de6; --tlc-s4:#2f9e57;
+    --tlc-other:#7d8894; --tlc-surface:#1a1a19; --tlc-ink:#ffffff; --tlc-ink2:#c3c2b7; --tlc-muted:#898781;
+    --tlc-grid:#2c2c2a; --tlc-axis:#383835; --tlc-track:rgba(255,255,255,.05); --tlc-line:rgba(255,255,255,.1);
+  }
+}
+
+/* Series fills and strokes, by fixed slot. */
+.tlc .f1{background:var(--tlc-s1)} .tlc .f2{background:var(--tlc-s2)}
+.tlc .f3{background:var(--tlc-s3)} .tlc .f4{background:var(--tlc-s4)}
+.tlc .fo{background:var(--tlc-other)}
+.tlc .k1{stroke:var(--tlc-s1);fill:var(--tlc-s1)} .tlc .k2{stroke:var(--tlc-s2);fill:var(--tlc-s2)}
+.tlc .k3{stroke:var(--tlc-s3);fill:var(--tlc-s3)} .tlc .k4{stroke:var(--tlc-s4);fill:var(--tlc-s4)}
+.tlc .ko{stroke:var(--tlc-other);fill:var(--tlc-other)}
+
+/* --- The card ------------------------------------------------------------ */
+.tlc.tlc-card{position:relative;background:var(--tlc-surface);border:1px solid var(--tlc-line);
+  border-radius:var(--radius,10px);box-shadow:var(--shadow-sm);padding:14px 16px 16px;min-width:0}
+.tlc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
+.tlc-head h3{font-family:inherit;font-size:13.5px;font-weight:600;margin:0;color:var(--tlc-ink)}
+.tlc-sub{font-size:11.5px;color:var(--tlc-muted);margin-top:2px}
+.tlc-toggle{border:1px solid var(--tlc-line);background:transparent;color:var(--tlc-ink2);border-radius:6px;
+  font-size:11.5px;padding:3px 8px;cursor:pointer;white-space:nowrap}
+.tlc-toggle:hover{color:var(--tlc-ink);border-color:var(--tlc-axis)}
+.tlc-empty{padding:26px 10px;text-align:center;color:var(--tlc-ink2);font-size:12.5px}
+.tlc-busy{opacity:.55;transition:opacity .15s}
+
+/* --- Legend: a swatch that mirrors the mark ------------------------------- */
+.tlc-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 10px;font-size:11.5px;color:var(--tlc-ink2)}
+.tlc-legend span{display:inline-flex;align-items:center;gap:6px}
+.tlc-legend i{display:inline-block;width:10px;height:10px;border-radius:2px}
+.tlc-legend i.line{width:14px;height:2px;border-radius:1px}
+
+/* --- Horizontal bars ------------------------------------------------------ */
+.tlc-bars{display:flex;flex-direction:column;gap:8px}
+.tlc-bar{display:grid;grid-template-columns:minmax(70px,140px) 1fr auto;gap:10px;align-items:center;
+  font-size:12.5px;padding:2px 0;border-radius:4px;outline:none;cursor:default}
+.tlc-bar .lab{color:var(--tlc-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlc-bar .trk{height:14px;background:var(--tlc-track);border-radius:0 4px 4px 0;position:relative}
+/* 4px rounded data-end, square at the baseline; 14px thick (cap is 24). */
+.tlc-bar .bar{height:100%;border-radius:0 4px 4px 0;transition:width .25s ease,filter .1s}
+.tlc-bar .val{font-variant-numeric:tabular-nums;font-weight:600;color:var(--tlc-ink);min-width:40px;text-align:right}
+.tlc-bar:hover .bar,.tlc-bar:focus-visible .bar,.tlc-stack .seg:hover,.tlc-stack .seg:focus-visible{filter:brightness(1.15) saturate(1.05)}
+.tlc-bar:focus-visible{box-shadow:0 0 0 2px var(--tlc-axis)}
+
+/* --- Stacked bars: 2px of surface between segments ------------------------ */
+.tlc-stack .trk{display:flex;gap:2px;background:transparent}
+.tlc-stack .seg{height:100%;outline:none}
+.tlc-stack .seg:last-child{border-radius:0 4px 4px 0}
+.tlc-stack .seg:focus-visible{box-shadow:0 0 0 2px var(--tlc-ink)}
+
+/* --- Line chart ----------------------------------------------------------- */
+.tlc-plot{position:relative;width:100%}
+.tlc-plot svg{display:block;width:100%;overflow:visible}
+.tlc-plot svg:focus-visible{outline:2px solid var(--tlc-axis);outline-offset:2px;border-radius:4px}
+.tlc-grid line{stroke:var(--tlc-grid);stroke-width:1}
+.tlc-base{stroke:var(--tlc-axis);stroke-width:1}
+.tlc-tick{font-size:10.5px;fill:var(--tlc-muted);font-variant-numeric:tabular-nums}
+.tlc-line{fill:none !important;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.tlc-dot{stroke:var(--tlc-surface) !important;stroke-width:2}
+.tlc-endlab{font-size:11px;font-weight:600;fill:var(--tlc-ink);font-variant-numeric:tabular-nums}
+.tlc-cross{stroke:var(--tlc-axis);stroke-width:1}
+
+/* --- Tooltip: value leads, name follows; line keys ----------------------- */
+.tlc-tip{position:absolute;z-index:5;pointer-events:none;background:var(--tlc-surface);color:var(--tlc-ink);
+  border:1px solid var(--tlc-line);border-radius:8px;box-shadow:var(--shadow-md,0 8px 24px rgba(0,0,0,.12));
+  padding:7px 10px;font-size:11.5px;min-width:110px;max-width:240px;transform:translate(-50%,calc(-100% - 10px))}
+.tlc-tip .t{color:var(--tlc-muted);margin-bottom:3px}
+.tlc-tip .r{display:flex;align-items:center;gap:7px;line-height:1.55}
+.tlc-tip .r b{font-variant-numeric:tabular-nums;font-size:12.5px}
+.tlc-tip .r i{display:inline-block;width:12px;height:2px;border-radius:1px}
+.tlc-tip .r span{color:var(--tlc-ink2)}
+
+/* --- Table view ------------------------------------------------------------ */
+.tlc-table{width:100%;border-collapse:collapse;font-size:12px}
+.tlc-table th,.tlc-table td{padding:5px 8px;border-bottom:1px solid var(--tlc-grid);text-align:left;color:var(--tlc-ink)}
+.tlc-table th{font-size:11px;color:var(--tlc-ink2);font-weight:600}
+.tlc-table .num{text-align:right;font-variant-numeric:tabular-nums}
+.tlc-tablewrap{max-height:280px;overflow:auto}
+
+/* --- Layout: tiles + a grid of cards --------------------------------------- */
+.tlc-grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin:0 0 16px;align-items:start}
+@media(max-width:700px){.tlc-grid2{grid-template-columns:1fr}}
+.tlc-panel{margin-bottom:16px}
+.tlc-panel .tlc-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.tlc-panel .tlc-scope{font-size:11.5px;color:var(--ink-soft);margin:-4px 0 10px}
+.tlc-panel .tlc-err{margin:0 0 10px}

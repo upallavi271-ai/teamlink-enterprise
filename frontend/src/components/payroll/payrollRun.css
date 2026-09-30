@@ -1,0 +1,43 @@
+/* Payroll records board (SPEC B) and the Accounts Journal & Ledger screen.
+   Scoped under .prb / .jl so the shared styles.css is untouched. */
+.prb-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 18px 0; }
+.prb-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.prb-chip.zero { opacity: .55; }
+.prb-tot { margin-left: auto; font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.prb-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 18px 12px; border-bottom: 1px solid var(--line-soft); }
+.prb-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--ink-soft); }
+.prb-check input { width: auto; }
+.prb-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+.prb-msg { font-size: 12.5px; padding: 8px 18px; background: var(--brand-tint, #e6efeb); border-bottom: 1px solid var(--line-soft); line-height: 1.5; }
+.prb-table td, .prb-table th { white-space: nowrap; }
+.prb-table input[type="checkbox"], .prb input[type="checkbox"] { width: auto; }
+.prb-detail .prb-kv { display: grid; grid-template-columns: 170px 1fr; gap: 6px 14px; font-size: 13px; }
+.prb-detail .prb-kv > span { color: var(--ink-soft); }
+.prb-detail .prb-kv > b { font-weight: 600; }
+.prb-journal { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 6px; }
+.prb-journal th, .prb-journal td { padding: 5px 8px; border-bottom: 1px solid var(--line-soft); text-align: left; }
+.prb-journal td:nth-child(2), .prb-journal td:nth-child(3), .prb-journal th:nth-child(2), .prb-journal th:nth-child(3) { text-align: right; font-variant-numeric: tabular-nums; }
+.prb-journal tr.tot td { font-weight: 700; border-top: 1px solid var(--line); }
+.prb-hist { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
+/* Structure editor: version + other deductions row (Payroll.jsx StructureEditor). */
+.prb-grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 14px; }
+.prb-grid4 .field { margin: 0; }
+@media (max-width: 800px) { .prb-grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .prb-grid4 { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .prb-detail .prb-kv { grid-template-columns: 1fr; } .prb-tot { margin-left: 0; } }
+
+/* ---- Accounts: Journal & Ledger ---- */
+.jl-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 18px; }
+.jl-filters input, .jl-filters select { width: auto; min-width: 140px; }
+.jl-lines { width: 100%; border-collapse: collapse; font-size: 12.5px; background: var(--paper, #fafaf7); }
+.jl-lines td { padding: 4px 10px; border-bottom: 1px dashed var(--line-soft); }
+.jl-lines td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.jl-num { text-align: right; font-variant-numeric: tabular-nums; }
+.jl-flag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 8px; margin-right: 4px; background: var(--red-tint); color: var(--red); }
+.jl-ok { color: var(--teal); font-weight: 700; }
+.jl-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; padding: 12px 18px; }
+.jl-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.jl-card .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.jl-card .l { font-size: 11.5px; color: var(--ink-soft); }
+.jl-card.bad { border-color: var(--red); }
+.jl-card.good { border-color: var(--teal); }

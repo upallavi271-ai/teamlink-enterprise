@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
+import { Link } from 'react-router-dom';
+import ListFilterBar, { useListFilters } from '../../components/ui/ListFilters.jsx';
 
 // Organization Structure — the prototype's adminOrgStructureView() (line
 // 10486). The approval & escalation chain requests travel down: leave,
@@ -54,6 +56,24 @@ export default function OrgStructure() {
     const ok = await run(() => api.post('/admin/org-structure', adding), 'Role added to the approval chain.');
     if (ok) setAdding(null);
   }
+
+  // THE FILTER STANDARD for Departments, Branches & Teams (one bar over the
+  // three lists): Search · Type · Department. The approval chain above is an
+  // ordered, drag-to-reorder list of a handful of levels, so it is not
+  // filtered — hiding a level would make the drag order ambiguous.
+  const places = useMemo(() => (data ? [
+    ...data.departments.map((d) => ({ kind: 'Department', key: `d${d.id}`, name: d.name, sub: d.parent ? `Under ${d.parent}` : 'Top-level', dept: d.name })),
+    ...data.branches.map((b) => ({ kind: 'Branch', key: `b${b.name}`, name: b.name, sub: b.location || '—', dept: '' })),
+    ...data.teams.map((t) => ({ kind: 'Team', key: `t${t.id}`, name: t.name, sub: t.department || '—', dept: t.department || '' })),
+  ] : []), [data]);
+  const lf = useListFilters(places, [
+    { key: 'q', type: 'search', placeholder: 'Search department, branch or team…', get: (p) => `${p.name} ${p.sub}` },
+    { key: 'kind', label: 'Type', allLabel: 'All types', primary: true, get: (p) => p.kind, options: ['Department', 'Branch', 'Team'] },
+    { key: 'dept', label: 'Department', allLabel: 'All departments', primary: true, get: (p) => p.dept },
+  ]);
+  const shown = (kind) => lf.rows.filter((p) => p.kind === kind);
+  const filtering = lf.activeCount > 0;
+  const none = (label) => (filtering ? `No ${label} match these filters.` : `No ${label} yet.`);
 
   if (!data) return <div className="page-head"><h1>Organization Structure</h1></div>;
 
@@ -114,22 +134,28 @@ export default function OrgStructure() {
             )}
           </div>
         ))}
-        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setAdding({ name: '', description: '' })}>+ Add role</button>
+        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setAdding({ name: '', description: '' })}>+ Add approval level</button>
+        {/* This adds a level to the APPROVAL CHAIN, not a role an employee can
+            hold — that is Role Catalog -> Add Role (a designation). */}
+        <div className="small-muted" style={{ marginTop: 6 }}>
+          To create a role for employees, use <Link to="/admin/roles">Role Catalog → Add Role</Link>.
+        </div>
       </div>
 
       <div className="section-label" style={{ marginTop: 22 }}>Departments, Branches &amp; Teams</div>
+      <ListFilterBar lf={lf} storageKey="admin-org-places" noun="entries" />
       <div className="two-col">
         <div className="panel panel-pad">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <h3 style={{ fontSize: 13, margin: 0 }}>Departments</h3>
             <button className="btn btn-sm btn-primary" onClick={() => setAddingDept('')}>+ Add Department</button>
           </div>
-          {data.departments.length === 0
-            ? <div className="empty-mini">No departments yet.</div>
-            : data.departments.map((d) => (
-              <div className="assign-row" style={{ paddingLeft: 0, paddingRight: 0 }} key={d.id}>
+          {shown('Department').length === 0
+            ? <div className="empty-mini">{none('departments')}</div>
+            : shown('Department').map((d) => (
+              <div className="assign-row" style={{ paddingLeft: 0, paddingRight: 0 }} key={d.key}>
                 <span>{d.name}</span>
-                <span className="cell-muted" style={{ fontSize: 11.5 }}>{d.parent ? `Under ${d.parent}` : 'Top-level'}</span>
+                <span className="cell-muted" style={{ fontSize: 11.5 }}>{d.sub}</span>
               </div>
             ))}
         </div>
@@ -141,12 +167,12 @@ export default function OrgStructure() {
                   branch is not its own record — it is the office an employee is
                   posted to — so branches are listed, not created here. */}
             </div>
-            {data.branches.length === 0
-              ? <div className="empty-mini">No branches yet.</div>
-              : data.branches.map((b) => (
-                <div className="assign-row" style={{ paddingLeft: 0, paddingRight: 0 }} key={b.name}>
+            {shown('Branch').length === 0
+              ? <div className="empty-mini">{none('branches')}</div>
+              : shown('Branch').map((b) => (
+                <div className="assign-row" style={{ paddingLeft: 0, paddingRight: 0 }} key={b.key}>
                   <span>{b.name}</span>
-                  <span className="cell-muted" style={{ fontSize: 11.5 }}>{b.location || '—'}</span>
+                  <span className="cell-muted" style={{ fontSize: 11.5 }}>{b.sub}</span>
                 </div>
               ))}
           </div>
@@ -155,12 +181,12 @@ export default function OrgStructure() {
               <h3 style={{ fontSize: 13, margin: 0 }}>Teams</h3>
               <button className="btn btn-sm" onClick={() => setAddingTeam({ departmentId: data.departments[0]?.id || '', name: '' })}>+ Add Team</button>
             </div>
-            {data.teams.length === 0
-              ? <div className="empty-mini">No teams yet.</div>
-              : data.teams.map((t) => (
-                <div className="assign-row" style={{ paddingLeft: 0, paddingRight: 0 }} key={t.id}>
+            {shown('Team').length === 0
+              ? <div className="empty-mini">{none('teams')}</div>
+              : shown('Team').map((t) => (
+                <div className="assign-row" style={{ paddingLeft: 0, paddingRight: 0 }} key={t.key}>
                   <span>{t.name}</span>
-                  <span className="cell-muted" style={{ fontSize: 11.5 }}>{t.department || '—'}</span>
+                  <span className="cell-muted" style={{ fontSize: 11.5 }}>{t.sub}</span>
                 </div>
               ))}
           </div>
@@ -223,14 +249,18 @@ export default function OrgStructure() {
 
       {adding && (
         <Modal
-          title="Add role"
+          title="Add approval level"
           onClose={() => setAdding(null)}
           foot={<>
             <button className="btn" onClick={() => setAdding(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveAdd}>Add role</button>
+            <button className="btn btn-primary" onClick={saveAdd}>Add approval level</button>
           </>}
         >
-          <div className="field"><label>New role name?</label>
+          <div className="notice" style={{ marginBottom: 10 }}>
+            This adds a level to the approval &amp; escalation chain only. To create a role for employees,
+            use <Link to="/admin/roles">Role Catalog → Add Role</Link>.
+          </div>
+          <div className="field"><label>Approval level name?</label>
             <input type="text" value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} /></div>
           <div className="field"><label>Scope / description?</label>
             <input type="text" value={adding.description} onChange={(e) => setAdding({ ...adding, description: e.target.value })} /></div>

@@ -37,7 +37,8 @@ function ideaWhere(user, extra = {}) {
   return { type: TYPE, employee: employeeWhere(user), ...extra };
 }
 
-const EMPLOYEE_SELECT = { id: true, name: true, employeeCode: true, department: true };
+// designation rides along so the lists can be filtered by role.
+const EMPLOYEE_SELECT = { id: true, name: true, employeeCode: true, department: true, designation: true, employmentStatus: true };
 
 function shape(record) {
   return {
@@ -112,6 +113,8 @@ router.get('/compliance', async (req, res) => {
       name: e.name,
       employeeCode: e.employeeCode,
       department: e.department || '—',
+      designation: e.designation || null,
+      employmentStatus: e.employmentStatus || null,
       count,
       quota: ideaAi.QUOTA,
       met: count >= ideaAi.QUOTA,
@@ -152,6 +155,8 @@ router.get('/leaderboard', async (req, res) => {
         name: r.employee.name,
         employeeCode: r.employee.employeeCode,
         department: r.employee.department || '—',
+        designation: r.employee.designation || null,
+        employmentStatus: r.employee.employmentStatus || null,
         ideas: 0, unique: 0, duplicates: 0, scored: 0, totalScore: 0, avgScore: null, weeks: new Set(),
       };
       byEmployee.set(r.employee.id, row);

@@ -26,6 +26,9 @@
 // ---------------------------------------------------------------------------
 
 const prisma = require('../db');
+const { resolvePositionScope } = require('./positionScope');
+const { scopeAliasFor } = require('./roleRegistry');
+const { isSystemAccount } = require('./systemAccounts');
 
 // Seeded fallback for the designation -> ATS role mapping, used only when the
 // DesignationRole table is empty (fresh DB before seed). The real mapping is
@@ -50,7 +53,9 @@ const prisma = require('../db');
 const FALLBACK_DESIGNATION_MAP = [
   { designation: 'Super Admin', atsRole: 'SUPER_ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats' },
   { designation: 'HR', hrmsRole: 'HR', atsRole: 'HR', hrms: true, ats: true, accounts: false, landing: 'hrms' },
-  { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: true, landing: 'ats' },
+  // accounts: false — Accounts is granted to a Manager per login, never by
+  // designation (access matrix 2026-09-25 §4).
+  { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'Assistant Manager', atsRole: 'ASSISTANT_MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats' },
   { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats' },
@@ -134,7 +139,7 @@ const WORKSPACE_HOME = {
   ats: '/ats/dashboard',
   accounts: '/accounts/dashboard',
   hrms: '/hrms',
-  client: '/ats/dashboard',
+  client: '/client-portal', // user notes #4 — a client lands on its own portal
   candidate: '/my-applications',
 };
 
@@ -156,6 +161,18 @@ async function resolveIdentity(userId, preloaded = null) {
   };
   if (!products.hrms && !products.ats && !products.accounts && mapping) {
     products = { hrms: !!mapping.hrms, ats: !!mapping.ats, accounts: !!mapping.accounts };
+  }
+
+  // THE USER'S RULES FOR ATS ACCESS (Sep 2026):
+  //  * An R&D employee has their own HRMS only — no ATS, whatever their role.
+  //  * A plain Employee (no Recruiter / TL / BDE / … working role in ATS) has
+  //    no ATS work, so no ATS workspace; "employee and recruiter are the same
+  //    person" means a RECRUITER role is what gives ATS, on the same login.
+  // Super Admin / Admin are never narrowed.
+  if (products.ats && !['SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
+    const rnd = employee && /^\s*(r\s*&\s*d|r\s*and\s*d|research)/i.test(employee.department || '');
+    const effectiveAts = user.atsRole || (mapping ? named(mapping.atsRole) : null) || user.role;
+    if (rnd || effectiveAts === 'EMPLOYEE') products = { ...products, ats: false };
   }
 
   // ------------------------------------------------------------------
@@ -198,6 +215,70 @@ async function resolveIdentity(userId, preloaded = null) {
     ? csv(user.atsScopeTeams)
     : [user.team || (employee && employee.team)].filter(Boolean);
 
+  // A TL WITH A TEAM IS SCOPED TO THAT TEAM IN ATS (access matrix §7: "TL =
+  // own team", no other TLs' private data). The team's members are the
+  // employees filed under the TL's team(s) in their department(s), plus
+  // anybody who reports to the TL; utils/scope.js requirementWhere() reads
+  // this list. A TL with no team configured keeps the department fallback,
+  // exactly as employeeWhere() already does for HRMS.
+  // CUSTOM ROLES borrow a system role's DATA SCOPE (utils/roleRegistry.js
+  // scopeAliasFor). Never a permission: only utils/scope.js and ATS stage
+  // ownership read these. A system role's alias is itself.
+  const [hrmsScopeRole, atsScopeRole, accountsScopeRole] = await Promise.all([
+    scopeAliasFor(hrmsRole, 'hrms'), scopeAliasFor(atsRole, 'ats'), scopeAliasFor(accountsRole, 'accounts'),
+  ]).catch(() => [hrmsRole, atsRole, accountsRole]);
+
+  let atsTeamUserIds = null;
+  if (named(atsScopeRole) === 'TL' && teams.length) {
+    const members = await prisma.employee.findMany({
+      where: {
+        userId: { not: null },
+        OR: [
+          { team: { in: teams }, ...(departments.length ? { department: { in: departments } } : {}) },
+          ...(employee ? [{ reportingManagerId: employee.id }] : []),
+        ],
+      },
+      select: { userId: true },
+    }).catch(() => []);
+    atsTeamUserIds = [...new Set([user.id, ...members.map((m) => m.userId)])];
+  }
+
+  // THE ORGANISATION STRUCTURE WINS WHERE IT EXISTS. A TL / STL / Recruiter
+  // who holds a seat is scoped by the seats (utils/positionScope.js): the
+  // TL's team is the recruiter seats reporting to their TL seat and whoever
+  // holds them today, not an Employee.team string. No seat -> null, and the
+  // team / department logic above applies exactly as before.
+  const atsPositionScope = employee
+    ? await resolvePositionScope({ userId: user.id, employeeId: employee.id, atsRole: named(atsScopeRole) })
+      .catch(() => null)
+    : null;
+  if (atsPositionScope && ['TL', 'STL'].includes(atsPositionScope.role)) {
+    atsTeamUserIds = atsPositionScope.holderUserIds;
+  }
+
+  // JOBS / REQUIREMENTS + CLIENTS ROLE SPECS (2026-09-29) — two id lists
+  // utils/scope.js reads, resolved here once per request (like the seat
+  // scope above) so every scope helper stays synchronous and matches() can
+  // check a single record exactly:
+  //   BDE         the clients whose Owner BDE they are (Client.bdeOwner holds
+  //               the owner's full name) — "my clients", besides the ones
+  //               assigned on Users (atsScopeClients).
+  //   ACCOUNTANT  the requirements that have a JOINED candidate — the only
+  //               requirements the billing desk sees.
+  let atsOwnedClientIds = null;
+  let atsJoinedRequirementIds = null;
+  if (named(atsScopeRole) === 'BDE' && user.name) {
+    atsOwnedClientIds = (await prisma.client.findMany({
+      where: { bdeOwner: String(user.name).trim() }, select: { id: true },
+    }).catch(() => [])).map((c) => c.id);
+  }
+  if (named(atsScopeRole) === 'ACCOUNTANT') {
+    atsJoinedRequirementIds = (await prisma.application.findMany({
+      where: { stage: { in: ['JOINED', 'HIRED'] } },
+      select: { requirementId: true }, distinct: ['requirementId'],
+    }).catch(() => [])).map((a) => a.requirementId);
+  }
+
   const identity = {
     id: user.id,
     email: user.email,
@@ -226,14 +307,27 @@ async function resolveIdentity(userId, preloaded = null) {
     products,
     atsRole,
     productRoles: { hrms: hrmsRole, ats: atsRole, accounts: accountsRole },
+    // The system role whose data scope each product role borrows — itself for
+    // a system role, the scope alias for a custom one.
+    scopeRoles: { hrms: hrmsScopeRole, ats: atsScopeRole, accounts: accountsScopeRole },
     atsDepartment: departments[0] || null,
     atsScopeDepartments: departments.join(','),
     atsScopeTeams: teams.join(','),
+    atsTeamUserIds,
+    atsPositionScope,
     atsScopeClients: user.atsScopeClients || '',
+    atsOwnedClientIds,
+    atsJoinedRequirementIds,
     landingWorkspace: user.landingWorkspace || (mapping ? mapping.landing : null) || null,
   };
   identity.workspace = landingFor(identity);
   identity.landingPath = WORKSPACE_HOME[identity.workspace] || '/';
+  // SUPER ADMIN IS A SYSTEM ACCOUNT, NOT AN EMPLOYEE (utils/systemAccounts.js).
+  // It lands straight on the overall admin Dashboard ("/"), never on a product
+  // workspace, and the screens use `systemAccount` to leave out every
+  // employee-only prompt (profile completion, My Attendance, My Profile).
+  identity.systemAccount = isSystemAccount(identity);
+  if (identity.systemAccount) identity.landingPath = '/';
   // Which workspaces this login can switch between — never a role picker.
   //
   // THE SWITCHER IS A SURFACE AN EXTERNAL LOGIN CAN SEE, so the labels it

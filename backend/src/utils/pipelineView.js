@@ -38,7 +38,7 @@ const STAGE_GROUPS = [
   { id: 'bde_review', label: 'BDE Review', stages: ['WITH_BDE', 'BDE_APPROVED'] },
   {
     id: 'client_review',
-    label: 'Client Review',
+    label: 'Client Submission / Decision', // the actual workflow (2026-09-29)
     stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'],
   },
   {
@@ -52,7 +52,7 @@ const STAGE_GROUPS = [
   },
   { id: 'selected', label: 'Selected', stages: ['SELECTED'] },
   { id: 'offer', label: 'Offer', stages: ['OFFER'] },
-  { id: 'joining', label: 'Joining', stages: ['OFFER_ACCEPTED'] },
+  { id: 'joining', label: 'Offer Accepted', stages: ['OFFER_ACCEPTED'] }, // the actual workflow: Offer → Offer Accepted → Joining
   { id: 'joined', label: 'Joined', stages: ['JOINED', 'HIRED'] },
 ];
 

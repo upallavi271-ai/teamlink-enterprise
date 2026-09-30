@@ -13,24 +13,38 @@ import { Link, NavLink } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+import AtsDataTools from '../../components/AtsDataTools.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
 import { stageLabel, offerStatusClass, joiningStatusClass } from '../../atsVocab';
 import {
   fmtDate, money, useWorkspace, Banner, IntJoinFilters,
   EMPTY_INTJOIN_FILTERS, matchesShared, INTJOIN_TABS,
+  usePersonApplicationIds, IntJoinEmpty, sortIntJoin,
 } from './intjoinShared.jsx';
 
 export default function InternalHiring() {
   const { user } = useAuth();
-  const { data, error, notice, act } = useWorkspace('/ats/internal-hiring');
+  const { data, error, notice, act, load } = useWorkspace('/ats/internal-hiring');
   const [filters, setFilters] = useState(EMPTY_INTJOIN_FILTERS);
+  const personIds = usePersonApplicationIds(filters);
   const canHire = can(user, 'ats', 'interviews', 'Internal Hiring', 'approve');
   const canSeeEmployees = can(user, 'hrms', 'hrms', 'Employee Management', 'view');
 
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
   const rows = useMemo(
-    () => (data.rows || []).filter((r) => matchesShared(r, filters, r.joiningDate)),
-    [data.rows, filters],
+    () => sortIntJoin(
+      (data.rows || []).filter((r) => matchesShared(r, filters, r.joiningDate, personIds)
+        && (!filters.status || r.stage === filters.status)),
+      filters.sort, (r) => r.joiningDate,
+    ),
+    [data.rows, filters, personIds],
   );
+  const statuses = useMemo(
+    () => [...new Set((data.rows || []).map((r) => r.stage).filter(Boolean))]
+      .map((s) => ({ value: s, label: stageLabel(s) })),
+    [data.rows],
+  );
+  const page = usePaged(rows);
 
   return (
     <div>
@@ -38,11 +52,19 @@ export default function InternalHiring() {
         <div>
           <h1>Internal Hiring</h1>
           <div className="page-sub">
-            TeamLink internal hires only: Selected → Internal Offer → Accepted → Hired → HRMS employee
-            creation. Client placements are never listed here and never become TeamLink employees —
+            TeamLink internal hires only: Selected → Offer → Offer Accepted → Joined → Hired → HRMS
+            employee record. Client placements are never listed here and never become TeamLink employees —
             they are billed to the client instead.
           </div>
         </div>
+        {/* Template · Import · Export — the rows shown (server-scoped
+            /ats/internal-hiring, narrowed to the filtered rows) and the matching import. */}
+        <AtsDataTools
+          module="internal-hiring"
+          kinds={['internal-hiring']}
+          onImported={load}
+          body={() => ({ ids: rows.length === (data.rows || []).length ? null : rows.map((r) => r.id) })}
+        />
       </div>
 
       <div className="tabbar">
@@ -59,6 +81,15 @@ export default function InternalHiring() {
         opts={data.filterOptions || {}}
         onClear={() => setFilters(EMPTY_INTJOIN_FILTERS)}
         count={rows.length}
+        total={(data.rows || []).length}
+        noun="internal hires"
+        storageKey="inthire"
+        statuses={statuses}
+        statusLabel="Stage"
+        statusAll="All stages"
+        dateLabel="Joining date"
+        noClient
+        noHiringType
       />
 
       <div className="tbl-wrap">
@@ -71,7 +102,7 @@ export default function InternalHiring() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {page.slice.map((r) => (
               <tr key={r.id}>
                 <td className="row-link"><Link to={`/candidates/${r.candidate.id}`}>{r.candidate.name}</Link></td>
                 <td className="row-link"><Link to={`/requirements/${r.requirement.id}`}>{r.requirement.title}</Link></td>
@@ -107,11 +138,12 @@ export default function InternalHiring() {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan="10" className="small-muted" style={{ padding: 16 }}>No TeamLink internal hires in the pipeline.</td></tr>
+              <tr><td colSpan="10" style={{ padding: 0 }}><IntJoinEmpty loading={data.loading} filters={filters} onClear={() => setFilters(EMPTY_INTJOIN_FILTERS)} noun="internal hires" title="No TeamLink internal hires in the pipeline." /></td></tr>
             )}
           </tbody>
         </table>
       </div>
+      <Pager page={page} noun="internal hires" />
 
       <div className="card section" style={{ marginTop: 12 }}>
         <b>Why this screen is separate.</b> Only a TeamLink internal hire becomes an employee. A selected

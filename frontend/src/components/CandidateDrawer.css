@@ -1,0 +1,110 @@
+/* Candidate side panel (components/CandidateDrawer.jsx). Scoped under .cdw-*. */
+.cdw-overlay{position:fixed;inset:0;background:rgba(18,28,52,.28);z-index:90;display:flex;justify-content:flex-end}
+.cdw{width:460px;max-width:100vw;height:100vh;background:var(--paper-raised,#fff);box-shadow:-8px 0 28px rgba(18,28,52,.18);display:flex;flex-direction:column;animation:cdw-in .16s ease-out}
+@keyframes cdw-in{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}
+.cdw-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line,#e3e8f0)}
+.cdw-name{font-size:17px;font-weight:700;color:var(--ink,#1b2437);overflow-wrap:anywhere}
+.cdw-contact{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px;font-size:12.5px;color:var(--ink-soft,#5b6478)}
+.cdw-contact a{color:var(--brand,#0a6fc2)}
+.cdw-x{border:0;background:none;font-size:24px;line-height:1;cursor:pointer;color:var(--ink-soft,#5b6478);padding:0 4px}
+.cdw-body{flex:1;overflow-y:auto;padding:12px 16px 24px}
+.cdw-card{border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--paper-raised,#fff)}
+.cdw-label{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft,#5b6478);margin-bottom:6px}
+.cdw-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.cdw-kv{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:3px 0}
+.cdw-kv>span:first-child{color:var(--ink-soft,#5b6478)}
+.cdw-kv>*:last-child{text-align:right;overflow-wrap:anywhere}
+.cdw-next{border-color:#b9d7f5;background:#f3f8fe}
+.cdw-next-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px}
+.cdw-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+.cdw-moveto{display:inline-flex;gap:4px;align-items:center}
+.cdw-moveto select,.cdw-moveto .combo{min-width:150px}
+.cdw-decision textarea{font:inherit;font-size:12.5px;border:1px solid var(--line,#e3e8f0);border-radius:6px;padding:6px}
+.cdw-text{font-size:12.5px;white-space:pre-wrap;margin-top:4px;color:var(--ink,#1b2437)}
+.cdw-note{font-size:12.5px;padding:5px 0;border-bottom:1px dashed var(--line,#e3e8f0)}
+.cdw-note:last-of-type{border-bottom:0}
+.cdw-noteform{display:flex;gap:6px;margin-top:8px}
+.cdw-noteform input{flex:1;min-width:0}
+.cdw-tl{display:flex;gap:8px;font-size:12.5px;padding:4px 0}
+.cdw-tl-dot{width:8px;height:8px;border-radius:50%;background:var(--brand,#0a6fc2);margin-top:5px;flex-shrink:0}
+.cdw-full{display:block;text-align:center;margin-top:4px}
+@media (max-width:560px){.cdw{width:100vw}}
+/* Candidate 360° blocks (components/Candidate360.jsx) — scoped under .c360-* */
+.cdw{width:520px}
+.c360-skills{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;align-items:center}
+.c360-steps{display:flex;flex-wrap:wrap;gap:4px 0;align-items:center}
+.c360-step{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-soft,#5b6478);padding:3px 8px 3px 0;position:relative}
+.c360-step:not(:last-of-type)::after{content:'';display:inline-block;width:12px;height:1px;background:var(--line,#d5dce7);margin-left:6px}
+.c360-dot{width:9px;height:9px;border-radius:50%;border:2px solid #c6d0de;background:#fff;flex-shrink:0}
+.c360-step.is-done{color:var(--ink,#1b2437)}
+.c360-step.is-done .c360-dot{background:#8fb8e3;border-color:#8fb8e3}
+.c360-step.is-current{color:var(--brand,#0a6fc2);font-weight:700}
+.c360-step.is-current .c360-dot{background:var(--brand,#0a6fc2);border-color:var(--brand,#0a6fc2);box-shadow:0 0 0 3px rgba(10,111,194,.18)}
+.c360-step.is-hold{color:#9a6400;font-weight:700}
+.c360-step.is-hold .c360-dot{background:#e0a230;border-color:#e0a230}
+.c360-step.is-rejected{color:#b3261e;font-weight:700}
+.c360-step.is-rejected .c360-dot{background:#d9534f;border-color:#d9534f}
+.c360-steps-note{flex-basis:100%;font-size:12px;color:var(--ink-soft,#5b6478);margin-top:4px}
+.c360-own{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:6px 0 2px}
+.c360-own.is-compact{grid-template-columns:repeat(3,minmax(0,1fr))}
+.c360-own-item{background:#f6f8fb;border:1px solid var(--line,#e3e8f0);border-radius:6px;padding:4px 7px;min-width:0}
+.c360-own-item span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft,#5b6478)}
+.c360-own-item b{display:block;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.c360-actions{margin-bottom:10px}
+.c360-actions .cdw-actions{margin-bottom:4px}
+.c360-feedback{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
+.c360-fb-card{border:1px solid var(--line,#e3e8f0);border-radius:6px;padding:8px 10px;background:#fbfcfe}
+.c360-fb-foot{margin-top:4px;font-size:11px}
+.c360-activity{max-height:none}
+.c360-why{font-style:italic}
+.cdw-tl-dot.is-audit{background:#9aa6b8}
+.cdw-approw{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line,#e3e8f0);font-size:12.5px}
+.cdw-approw:last-of-type{border-bottom:0}
+.cdw-approw-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:560px){.cdw{width:100vw}.c360-own,.c360-own.is-compact{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Full page 360° header (pages/CandidateDetail.jsx) */
+.c360-page{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:12px;margin-bottom:14px;align-items:start}
+.c360-page .cdw-card{margin-bottom:10px}
+.c360-page .c360-own.is-compact{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media (max-width:900px){.c360-page{grid-template-columns:1fr}.c360-page .c360-own.is-compact{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Review #3 §6 §7 §16 — role steps with ✓, the "Now at" chip for a stage
+   outside the viewer's steps, the ⋯ menu, AI / client feedback headings. */
+.c360-step .c360-dot{display:inline-flex;align-items:center;justify-content:center;font-size:8px;line-height:1;color:#fff;font-weight:700}
+.c360-step.is-done .c360-dot{width:13px;height:13px;background:#2f8f5b;border-color:#2f8f5b}
+.c360-step-out{display:inline-flex;align-items:center;margin:0 6px}
+.c360-more{position:relative;display:inline-block}
+.c360-more-pop{position:absolute;right:0;top:calc(100% + 4px);z-index:30;min-width:170px;background:#fff;border:1px solid var(--line,#e3e8f0);border-radius:8px;box-shadow:0 8px 24px rgba(15,30,60,.14);padding:4px;display:flex;flex-direction:column}
+.c360-more-item{background:none;border:0;text-align:left;padding:7px 10px;border-radius:6px;font-size:13px;color:var(--ink,#1b2437);cursor:pointer}
+.c360-more-item:hover{background:var(--brand-tint,#eaf3fc)}
+.c360-more-item.is-danger{color:#b3261e}
+.c360-ai-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:space-between;margin-bottom:4px}
+.c360-ai-head b{font-size:13px}
+.c360-actions .btn.is-on{border-color:var(--brand,#0a6fc2);color:var(--brand,#0a6fc2)}
+
+/* BIG WINDOW (user, 2026-09-29): clicking a candidate opens a large centred
+   window, not a narrow side panel. Cards flow in two columns on wide screens
+   (one column on tablets, full screen on phones). */
+.cdw-overlay{justify-content:center;align-items:center;padding:2vh 2vw}
+.cdw{width:min(1320px,96vw);height:94vh;border-radius:12px;box-shadow:0 18px 60px rgba(18,28,52,.28);overflow:hidden;animation:cdw-pop .16s ease-out}
+@keyframes cdw-pop{from{transform:scale(.985);opacity:.6}to{transform:none;opacity:1}}
+.cdw-head{padding:16px 22px}
+.cdw-name{font-size:20px}
+.cdw-body{padding:16px 22px 28px;column-count:2;column-gap:16px}
+.cdw-body>*{break-inside:avoid}
+.cdw-body>.notice,.cdw-body>.c360-skills{column-span:all}
+@media (max-width:980px){.cdw-body{column-count:1}}
+@media (max-width:560px){.cdw-overlay{padding:0}.cdw{width:100vw;height:100vh;border-radius:0}}
+
+/* Candidate 360 TABS inside the big window (spec 2026-09-29 §9): the header
+   strip + tab bar stay put, the chosen tab scrolls below; the Overview and
+   Activity tabs lay out in two columns (.c360t-grid) instead of CSS columns. */
+.cdw-tabbed .cdw-code{display:inline-block;margin-left:10px;font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--ink-soft,#5b6478);background:#eef3f9;border-radius:10px;padding:2px 9px;vertical-align:middle}
+.cdw-tabbed .cdw-headbtns{display:flex;align-items:flex-start;gap:8px;flex-shrink:0}
+.cdw-tabbed .cdw-top{padding:12px 22px 0;border-bottom:1px solid var(--line,#e3e8f0)}
+.cdw-tabbed .cdw-top .c360t-tabs{margin-bottom:0}
+.cdw-body.is-tabbed{column-count:1}
+@media (max-width:560px){.cdw-tabbed .cdw-top{padding:10px 12px 0}.cdw-tabbed .cdw-body{padding:12px}.cdw-tabbed .cdw-head{padding:12px}.cdw-tabbed .cdw-headbtns .btn{display:none}}
+/* Phones: the whole window scrolls (header strip + tabs + tab body), and it
+   fills the layout viewport even when the page itself is wider than the screen. */
+@media (max-width:560px){.cdw-overlay .cdw.cdw-tabbed{width:100%;max-width:none;height:100%;overflow-y:auto;display:block}.cdw-tabbed .cdw-body.is-tabbed{overflow:visible}.cdw-tabbed .c360t-head{gap:6px}.cdw-tabbed .c360t-cell{padding:6px 10px}}

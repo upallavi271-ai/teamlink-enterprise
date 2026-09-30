@@ -1,0 +1,65 @@
+/* Interview Calendar (§34) — the five view buttons. Scoped under .ivcal-*. */
+.ivcal-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 12px;
+}
+.ivcal-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised, #fff);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ivcal-view:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.ivcal-view.active {
+  background: var(--blue-tint);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.ivcal-count {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--line-soft, #eef2f7);
+  color: var(--ink);
+}
+.ivcal-view.active .ivcal-count {
+  background: var(--blue);
+  color: #fff;
+}
+
+/* Review #2 §17 — the interview lifecycle strip (each step a filter) and the
+   exceptions shown apart. Scoped under .ivcal-life. */
+.ivcal-life{margin:4px 0 12px;display:flex;flex-direction:column;gap:6px}
+.ivcal-life-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.ivcal-life-step{display:inline-flex;align-items:center;gap:4px}
+.ivcal-life-group{display:inline-flex;flex-wrap:wrap;gap:4px;padding:2px 4px;border:1px dashed var(--line);border-radius:14px}
+.ivcal-life-arrow{color:var(--ink-faint, #9aa3b2);font-size:12px}
+.ivcal-life-b{border:1px solid transparent;border-radius:14px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer;display:inline-flex;gap:5px;align-items:center}
+.ivcal-life-b.tone-new{background:var(--blue-tint, #e6eefc);color:var(--blue, #1d4ed8)}
+.ivcal-life-b.tone-active,.ivcal-life-b.tone-selected{background:var(--teal-tint, #e3f5ef);color:var(--teal, #0f766e)}
+.ivcal-life-b.tone-pending,.ivcal-life-b.tone-hold{background:var(--amber-tint, #fef3dc);color:var(--amber, #92400e)}
+.ivcal-life-b.tone-rejected{background:var(--red-tint, #fde8e8);color:var(--red, #b42318)}
+.ivcal-life-b.is-zero{opacity:.55}
+.ivcal-life-b.is-on{box-shadow:0 0 0 2px currentColor inset;opacity:1}
+.ivcal-life-exc{font-size:12px}
+.ivcal-type-set{display:block;margin-top:3px;font-size:11.5px;padding:1px 4px;height:auto;width:auto;min-width:0}
+
+/* Review #3 §15 — "My Interviews" / scope switch. */
+.ivcal-scope{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px}
+.ivcal-scope button{background:#fff;border:1px solid var(--line,#d5dce7);padding:6px 14px;font-size:12.5px;color:var(--ink-soft,#5b6478);cursor:pointer}
+.ivcal-scope button:first-child{border-radius:8px 0 0 8px}
+.ivcal-scope button:nth-child(2){border-radius:0 8px 8px 0;margin-left:-9px}
+.ivcal-scope button.active{background:var(--navy,#0a3d7a);border-color:var(--navy,#0a3d7a);color:#fff;font-weight:600}

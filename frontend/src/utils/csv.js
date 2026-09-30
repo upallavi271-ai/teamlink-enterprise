@@ -18,7 +18,7 @@ export function downloadCsv(filename, headers, rows) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 // "18:41" -> "6:41 PM". Anything that isn't a 24-hour clock time passes through.

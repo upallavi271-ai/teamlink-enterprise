@@ -1,0 +1,31 @@
+/* Candidates > Duplicates — everything scoped under .cdd */
+.cdd .cdd-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin:0 0 12px}
+.cdd .cdd-stat{text-align:left;cursor:pointer;font:inherit;color:inherit;background:var(--paper-raised,#fff);border:1px solid var(--line,#e3e8f0);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center}
+.cdd .cdd-stat b{font-size:22px;color:var(--navy,#0b3a6e)}
+.cdd .cdd-stat span{font-size:12.5px;color:var(--ink-soft,#5b6478)}
+.cdd .cdd-stat.on{border-color:var(--navy,#0b3a6e);background:var(--navy-tint,#eef3fb)}
+.cdd .filter-row{margin-bottom:12px}
+.cdd .cdd-card{background:var(--paper-raised,#fff);border:1px solid var(--line,#e3e8f0);border-left:4px solid var(--brand,#0a6fc2);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.cdd .cdd-card.is-warn{border-left-color:#d9534f}
+.cdd .cdd-card.is-skipped{opacity:.55}
+.cdd .cdd-card-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.cdd .cdd-card-tags{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start}
+.cdd-agree{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.3px;padding:2px 8px;border-radius:10px}
+.cdd-agree-same{background:var(--teal-tint,#e3f5ef);color:var(--teal,#127a5a)}
+.cdd-agree-variant{background:var(--amber-tint,#fdf3e0);color:var(--amber,#9a6400)}
+.cdd-agree-diff{background:var(--red-tint,#fde8e8);color:var(--red,#b3261e)}
+.cdd .cdd-tbl{margin-bottom:8px}
+.cdd .cdd-tbl th,.cdd .cdd-tbl td{font-size:12px;padding:6px 8px;vertical-align:top}
+.cdd .cdd-tbl tr.cdd-master td{background:var(--navy-tint,#eef3fb)}
+.cdd .cdd-tbl tr.cdd-out td{opacity:.45}
+.cdd .cdd-name{min-width:150px}
+.cdd .cdd-apps{min-width:240px;max-width:380px}
+.cdd .cdd-card-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.cdd .cdd-actions{display:flex;gap:6px}
+.cdd-list{margin:8px 0;padding-left:18px;font-size:13px}
+.cdd-confirm{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px}
+.cdd .filter-row label input[type=checkbox]{width:auto;min-width:0;height:auto;flex:none}
+
+/* Keep Separate decisions list */
+.cdd-kept{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line,#e3e8f0)}
+.cdd-kept:last-child{border-bottom:0}

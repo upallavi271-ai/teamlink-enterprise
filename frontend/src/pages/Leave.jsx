@@ -2,105 +2,42 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
-import { downloadCsv } from '../utils/csv.js';
-import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, ScopeNote, SectionLabel, TwoCol, Status, Modal } from '../components/proto.jsx';
+import { Panel, PanelPad, PanelHead, AssignRow, EmptyMini, ScopeNote, SectionLabel, TwoCol, Status, Modal } from '../components/proto.jsx';
 import { isAdmin, isHR as hasHrmsAdmin, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
+import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+import ApprovalChain, { ApprovalChainLine } from '../components/ApprovalChain.jsx';
+import ExportMenu from '../components/ExportMenu.jsx';
+import InsightsPanel from '../components/charts/InsightsPanel.jsx';
+import DataIoBar from '../components/dataio/DataIoBar.jsx';
+// Requests list (team, designation, approved-by, comments), Approve · Reject ·
+// Reassign with the TL rule, month-wise balance + report, TL rule setting.
+import {
+  LeaveRequestsTable, LeaveFacts, LeaveDecidePanel, MonthlyBalance, MonthlyReport, TlRuleSetting,
+} from './leave/LeaveExtras.jsx';
+// Balances (one employee / all employees month-wise / all employees now) and
+// the holiday calendar with the full Add Holiday form.
+import LeaveBalancesTab from './leave/LeaveBalancesTab.jsx';
+import HolidayCalendar from './leave/HolidaysTab.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
-// THE APPROVAL WORKFLOW (§15).
+// THE APPROVAL WORKFLOW (§15, spec item 2).
 //
-//   Employee → TL → STL → Manager → Asst Manager → Admin → Super Admin
+//   Employee → TL → STL → HR → Assistant Manager → Manager → Super Admin
 //
-// At every moment it must be obvious WHERE THE REQUEST CURRENTLY SITS and WHO
-// HAS ACTED, so every step draws its own marker and its own state:
-//
-//   ✓ done (applied / approved)   ● the current owner   ○ not reached
-//
-// Nothing here decides anything. The server sends the resolved chain, the step
-// states and `canAct`; a hidden Approve button is a courtesy and the refusal
-// always comes from the API (approving out of turn is answered 403).
+// The chain, the tracking facts (Submitted By / On, Current Approver,
+// Approval Level, Previous Approvers, Status, Approved/Rejected By / On,
+// Remarks, Direct Super Admin Approval) and the Approve / Reject controls are
+// the shared components/ApprovalChain.jsx — the same view Regularization,
+// Resignation, Rewards and Courses use. Nothing here decides who may act:
+// the server sends `canAct` (your turn) / `canDirect` (Super Admin), and
+// approving out of turn is answered 403 by the API.
 // ---------------------------------------------------------------------------
-const STEP_MARK = {
-  Applied: { mark: '✓', cls: 'wf-done' },
-  Approved: { mark: '✓', cls: 'wf-done' },
-  Pending: { mark: '●', cls: 'wf-current' },
-  Rejected: { mark: '✗', cls: 'wf-rejected' },
-  Waiting: { mark: '○', cls: 'wf-waiting' },
-  Visibility: { mark: '○', cls: 'wf-waiting' },
-  Skipped: { mark: '○', cls: 'wf-skipped' },
-};
-
-// The one line each step prints on the right — its CURRENT STATUS in words.
-function stepStatusText(step) {
-  if (step.status === 'Applied') return 'Applied';
-  if (step.status === 'Approved') return 'Approved';
-  if (step.status === 'Rejected') return 'Rejected';
-  if (step.status === 'Pending') return 'Pending Approval';
-  if (step.status === 'Skipped') return 'Skipped';
-  if (step.status === 'Visibility') return 'Visibility only';
-  return 'Waiting';
-}
-
-const shortTime = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
-
-function ageText(hours) {
-  if (hours == null) return '—';
-  if (hours < 1) return 'just now';
-  if (hours < 48) return `${Math.round(hours)}h`;
-  return `${Math.round(hours / 24)}d`;
-}
-
-// The ladder itself, shared by the modal and anywhere else that wants it.
-function ApprovalChain({ workflow, onDecide, busy }) {
-  if (!workflow) return <EmptyMini>No approval chain on this request.</EmptyMini>;
-  return (
-    <div className="wf-chain">
-      {workflow.steps.map((s) => {
-        const m = STEP_MARK[s.status] || STEP_MARK.Waiting;
-        const isCurrent = s.status === 'Pending';
-        return (
-          <div key={s.id} className={`wf-step ${m.cls}${isCurrent ? ' wf-step-current' : ''}`}>
-            <span className="wf-mark">{m.mark}</span>
-            <span className="wf-who">
-              <b>{s.label}</b>
-              {s.approverName ? <span className="cell-muted"> – {s.approverName}</span> : null}
-              {s.mode === 'visibility' && s.status === 'Visibility' && <> <span className="status applied">Visibility only</span></>}
-              {s.mode === 'required' && ['Waiting', 'Pending'].includes(s.status) && <> <span className="status pending">Required</span></>}
-              {s.note && <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 2 }}>{s.note}</div>}
-              {s.actedAt && <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 2 }}>{s.actedByName || s.approverName} · {shortTime(s.actedAt)}</div>}
-              {isCurrent && (
-                <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 2 }}>
-                  Pending since {shortTime(s.pendingSince)} ({ageText(s.pendingForHours)})
-                  {s.dueAt && <> · Due {shortTime(s.dueAt)}</>}
-                  {s.overdue && <> <span className="status overdue">Overdue</span></>}
-                </div>
-              )}
-            </span>
-            <span className="wf-state">
-              <span className="cell-muted" style={{ fontSize: 12 }}>{stepStatusText(s)}</span>
-              {isCurrent && workflow.canAct && onDecide && (
-                <span style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onDecide('Approved')}>Approve</button>
-                  <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => onDecide('Rejected')}>Reject</button>
-                </span>
-              )}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// The screen §15 drew: the request, then the chain, then the six facts it asks
-// every step to surface.
 function ApprovalWorkflowModal({ requestId, onClose, onActed }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
 
   function load() {
     setError('');
@@ -109,43 +46,6 @@ function ApprovalWorkflowModal({ requestId, onClose, onActed }) {
       .catch((err) => setError(err.response?.data?.error || 'Could not load the approval workflow'));
   }
   useEffect(load, [requestId]);
-
-  async function decide(decision) {
-    setError('');
-    const body = { status: decision };
-    if (decision === 'Rejected') {
-      const why = prompt('Reject this leave request — reason (the employee sees this):', '');
-      if (why === null) return;
-      if (!why.trim()) { setError('A rejection reason is required.'); return; }
-      body.rejectReason = why.trim();
-    }
-    setBusy(true);
-    try {
-      await api.patch(`/leave/${requestId}/decision`, body);
-      load();
-      onActed();
-    } catch (err) {
-      const d = err.response?.data;
-      // A >= threshold approval at the FINAL step still needs one of the
-      // configured reasons; the API hands the list back with the refusal.
-      if (d?.reasons?.length) {
-        const list = d.reasons.map((r, i) => `${i + 1}. ${r}`).join('\n');
-        const pick = prompt(`${d.error}\n${list}`, '1');
-        if (pick !== null) {
-          body.approvalReason = d.reasons[(Number(pick) || 1) - 1] || d.reasons[0];
-          try {
-            await api.patch(`/leave/${requestId}/decision`, body);
-            load();
-            onActed();
-          } catch (e2) { setError(e2.response?.data?.error || 'Could not record the decision'); }
-        }
-      } else {
-        setError(d?.error || 'Could not record the decision');
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const leave = data?.leave;
   const wf = data?.workflow;
@@ -158,24 +58,13 @@ function ApprovalWorkflowModal({ requestId, onClose, onActed }) {
         <>
           <div className="wf-head">
             <div><span className="cell-muted">Leave ID:</span> <b>LV-{String(leave.id).slice(-4).toUpperCase()}</b></div>
-            <div><span className="cell-muted">Employee:</span> <b>{leave.employee?.name}</b> <span className="cell-muted">{leave.employee?.department}{leave.employee?.team ? ` · ${leave.employee.team}` : ''}</span></div>
-            <div><span className="cell-muted">Leave:</span> {leave.fromDate}{leave.toDate && leave.toDate !== leave.fromDate ? ` – ${leave.toDate}` : ''} <span className="cell-muted">({leave.type}, {leave.days ?? 1} day{(leave.days ?? 1) === 1 ? '' : 's'})</span></div>
-            <div><span className="cell-muted">Reason:</span> {leave.reason || '—'}</div>
           </div>
+          <LeaveFacts leave={leave} handoffs={data.handoffs} />
 
           <SectionLabel style={{ marginTop: 14 }}>Approval Workflow</SectionLabel>
-          <ApprovalChain workflow={wf} onDecide={decide} busy={busy} />
-
-          {wf && (
-            <div className="wf-facts">
-              <div><span className="cell-muted">Current Owner</span><b>{wf.currentOwner ? `${wf.currentOwner.label} – ${wf.currentOwner.name}` : '—'}</b></div>
-              <div><span className="cell-muted">Current Status</span><b>{wf.currentStatus}</b></div>
-              <div><span className="cell-muted">Next Approver</span><b>{wf.nextApprover ? `${wf.nextApprover.label} – ${wf.nextApprover.name}` : '— (last required step)'}</b></div>
-              <div><span className="cell-muted">Previous Approvers</span><b>{wf.previousApprovers.length ? wf.previousApprovers.map((p) => `${p.label} ${p.name}`).join(', ') : '—'}</b></div>
-              <div><span className="cell-muted">Pending Since</span><b>{wf.pendingSince ? `${shortTime(wf.pendingSince)} (${ageText(wf.pendingForHours)})` : '—'}</b></div>
-              <div><span className="cell-muted">Due Date</span><b>{wf.dueAt ? shortTime(wf.dueAt) : 'No due date set'} {wf.overdue && <span className="status overdue">Overdue</span>}</b></div>
-            </div>
-          )}
+          <ApprovalChain workflow={wf} recordStatus={leave.status} />
+          {/* APPROVE · REJECT · REASSIGN — the TL rule is decided by the server. */}
+          <LeaveDecidePanel data={data} onDone={() => { load(); onActed(); }} />
           <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 10 }}>
             Pending-since and overdue are worked out when you open this screen — there is no background job
             chasing these, so an overdue step starts reading &quot;Overdue&quot; the next time somebody looks.
@@ -213,7 +102,7 @@ function ApprovalLevelsPanel({ canConfigure }) {
     <Panel>
       <PanelHead title="⑤ Approval Workflow Levels" />
       <div style={{ padding: '8px 18px 4px' }} className="cell-muted">
-        Employee → TL → STL → Manager → Asst Manager → Admin → Super Admin. Each level is either a
+        Employee → TL → STL → HR → Assistant Manager → Manager → Super Admin. Each level is either a
         <b> required approver</b> (the request stops and waits) or <b>visibility only</b> (they see it, it never waits on them).
         A level with nobody in the employee&apos;s department is skipped, and says so on the request.
       </div>
@@ -257,21 +146,41 @@ function capLabel(t) {
 }
 
 // The prototype's Apply Leave modal (openApplyLeaveModal, line 3908).
-function ApplyLeaveModal({ types, employees, isHR, onClose, onSaved }) {
-  const [form, setForm] = useState({ employeeId: '', type: types[0]?.name || '', days: 1, fromDate: '', toDate: '', reason: '' });
+function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved }) {
+  const [form, setForm] = useState({ employeeId: '', type: types[0]?.name || '', dayMode: 'full', halfDay: 'First Half', days: 1, fromDate: '', toDate: '', reason: '' });
   const [error, setError] = useState('');
+  const [avail, setAvail] = useState(null);
+  const [override, setOverride] = useState(false);
+  const half = form.dayMode === 'half';
+
+  // What is available right now (balance on record minus pending) — the same
+  // figure the server validates against.
+  useEffect(() => {
+    if (isHR && !form.employeeId) { setAvail(null); return; }
+    api.get('/leave/availability', { params: { employeeId: isHR ? form.employeeId : undefined } })
+      .then((r) => setAvail(r.data.types || [])).catch(() => setAvail(null));
+  }, [isHR, form.employeeId]);
+  const a = (avail || []).find((t) => t.type === form.type);
+  const span = form.fromDate && form.toDate ? Math.max(1, Math.round((new Date(form.toDate) - new Date(form.fromDate)) / 86400000) + 1) : null;
+  const days = half ? 0.5 : Number(form.days) || 0;
+  const over = !!(a && a.limited && days > a.available);
 
   async function submit() {
     setError('');
-    if (!form.fromDate || !form.toDate) { setError('From and To dates are required.'); return; }
+    if (!form.fromDate || (!half && !form.toDate)) { setError(half ? 'Choose the date.' : 'From and To dates are required.'); return; }
+    if (!half && form.toDate < form.fromDate) { setError('To date cannot be before From date.'); return; }
+    if (!half && (days <= 0 || (span && days > span))) { setError(`Days must be between 0.5 and ${span || 1}.`); return; }
+    if (over && !(canOverride && override)) { setError(`Not enough ${form.type} balance: ${a.available} day(s) available, ${days} requested.`); return; }
     try {
       await api.post('/leave', {
         employeeId: isHR ? form.employeeId : undefined,
         type: form.type,
         fromDate: form.fromDate,
-        toDate: form.toDate,
-        days: Number(form.days) || 1,
+        toDate: half ? form.fromDate : form.toDate,
+        days,
+        halfDay: half ? form.halfDay : undefined,
         reason: form.reason,
+        overrideBalance: canOverride && override ? true : undefined,
       });
       onSaved();
     } catch (err) {
@@ -294,31 +203,123 @@ function ApplyLeaveModal({ types, employees, isHR, onClose, onSaved }) {
           </Combo>
         </div>
       )}
-      <div className="grid-2">
-        <div className="field">
-          <label>Type</label>
-          <Combo value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-            {types.map((t) => <option key={t.id}>{t.name}</option>)}
+      <div className="field">
+        <label>Type</label>
+        <Combo value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+          {types.map((t) => <option key={t.id}>{t.name}</option>)}
+        </Combo>
+        {a && (
+          <div className={`lvx-avail${over ? ' bad' : ''}`}>
+            {a.limited
+              ? <>Available: <b>{a.available}</b> day(s) — {a.remaining} left of {a.total}{a.pending ? `, ${a.pending} pending` : ''}.</>
+              : <>No entitlement limit on {a.type}{a.pending ? ` · ${a.pending} day(s) pending` : ''}.</>}
+          </div>
+        )}
+      </div>
+      {/* FULL DAY / HALF DAY */}
+      <div className="lvx-halfday">
+        <label><input type="radio" name="dayMode" checked={!half} onChange={() => setForm({ ...form, dayMode: 'full' })} /> Full day</label>
+        <label><input type="radio" name="dayMode" checked={half} onChange={() => setForm({ ...form, dayMode: 'half' })} /> Half day</label>
+        {half && (
+          <Combo value={form.halfDay} onChange={(e) => setForm({ ...form, halfDay: e.target.value })} style={{ minWidth: 140 }}>
+            <option>First Half</option>
+            <option>Second Half</option>
           </Combo>
-        </div>
-        <div className="field"><label>Days</label><input type="number" min="1" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} /></div>
-        <div className="field"><label>From</label><input type="date" value={form.fromDate} onChange={(e) => setForm({ ...form, fromDate: e.target.value })} /></div>
-        <div className="field"><label>To</label><input type="date" value={form.toDate} onChange={(e) => setForm({ ...form, toDate: e.target.value })} /></div>
+        )}
+      </div>
+      <div className="grid-2">
+        <div className="field"><label>{half ? 'Date' : 'From'}</label><input type="date" value={form.fromDate} onChange={(e) => setForm({ ...form, fromDate: e.target.value, toDate: form.toDate && form.toDate >= e.target.value ? form.toDate : e.target.value, days: form.toDate && form.toDate >= e.target.value ? form.days : 1 })} /></div>
+        {!half && <div className="field"><label>To</label><input type="date" value={form.toDate} min={form.fromDate || undefined} onChange={(e) => { const to = e.target.value; const n = form.fromDate && to ? Math.max(1, Math.round((new Date(to) - new Date(form.fromDate)) / 86400000) + 1) : 1; setForm({ ...form, toDate: to, days: n }); }} /></div>}
+        {!half && <div className="field"><label>Days</label><input type="number" min="0.5" step="0.5" max={span || undefined} value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} /></div>}
+        {half && <div className="field"><label>Days</label><input value="0.5" disabled /></div>}
       </div>
       <div className="field"><label>Reason</label><textarea rows="2" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></div>
+      {over && canOverride && (
+        <label className="lvx-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input type="checkbox" style={{ width: 'auto' }} checked={override} onChange={(e) => setOverride(e.target.checked)} /> Apply beyond the balance (HR override)
+        </label>
+      )}
       {error && <div className="error-text">{error}</div>}
     </Modal>
   );
 }
 
-function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onReload }) {
+// ONE FILTER BAR FOR EVERY LEAVE TAB. Employee ID, name, department, leave
+// type, a date range (a request matches when its dates overlap the range) and
+// status — all working together over whatever the server already scoped.
+const LEAVE_STATUSES = ['Pending', 'Approved', 'Rejected', 'Cancellation Requested', 'Cancelled'];
+const EMPTY_LEAVE_FILTERS = { code: '', name: '', department: '', empStatus: '', type: '', from: '', to: '', status: '' };
+
+// hrms-24 §3 — the filter bar, as the server-side export's query. The export
+// runs the Leave list's own scoped query with these narrowing it, so the file
+// holds exactly the matching rows (routes/insights.js).
+function leaveExportParams(f) {
+  return {
+    code: f.code, name: f.name, department: f.department, empStatus: f.empStatus,
+    type: f.type, status: f.status, leaveFrom: f.from, leaveTo: f.to,
+  };
+}
+
+function leaveMatches(r, f, { skipRequestFields = false } = {}) {
+  const e = r.employee || r;
+  if (f.code && !String(e.employeeCode || '').toLowerCase().includes(f.code.trim().toLowerCase())) return false;
+  if (f.name && !String(e.name || '').toLowerCase().includes(f.name.trim().toLowerCase())) return false;
+  if (f.department && e.department !== f.department) return false;
+  // The person's HRMS status — Active, Inactive, Notice Period, Suspended, Exit.
+  if (f.empStatus && hrStatusOf(e.employmentStatus) !== f.empStatus) return false;
+  if (skipRequestFields) return true;
+  if (f.type && r.type !== f.type) return false;
+  if (f.status && r.status !== f.status) return false;
+  const start = r.fromDate || '';
+  const end = r.toDate || r.fromDate || '';
+  if (f.from && end && end < f.from) return false;
+  if (f.to && start && start > f.to) return false;
+  return true;
+}
+
+function LeaveFilterBar({ filters, setFilters, departments, types, children, requestFields = true }) {
+  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
+  const on = Object.values(filters).some(Boolean);
+  return (
+    <div className="filter-row" style={{ marginTop: 14, marginBottom: 12 }}>
+      <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
+      <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
+      <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
+        <option value="">All departments</option>
+        {departments.map((d) => <option key={d}>{d}</option>)}
+      </Combo>
+      <Combo value={filters.empStatus} onChange={(e) => set('empStatus', e.target.value)}>
+        <option value="">All employee statuses</option>
+        {HR_STATUSES.map((s) => <option key={s}>{s}</option>)}
+      </Combo>
+      {requestFields && (
+        <>
+          <Combo value={filters.type} onChange={(e) => set('type', e.target.value)}>
+            <option value="">All leave types</option>
+            {types.map((t) => <option key={t.id || t.name} value={t.name}>{t.code ? `${t.name} (${t.code})` : t.name}</option>)}
+          </Combo>
+          <input type="date" aria-label="From" title="From" value={filters.from} onChange={(e) => set('from', e.target.value)} />
+          <input type="date" aria-label="To" title="To" value={filters.to} onChange={(e) => set('to', e.target.value)} />
+          <Combo value={filters.status} onChange={(e) => set('status', e.target.value)}>
+            <option value="">All statuses</option>
+            {LEAVE_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </Combo>
+        </>
+      )}
+      {on && <button className="btn btn-sm" onClick={() => setFilters(EMPTY_LEAVE_FILTERS)}>Clear</button>}
+      {children}
+    </div>
+  );
+}
+
+function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, reloadKey, onReload }) {
   const [chainFor, setChainFor] = useState(null);
   const [requests, setRequests] = useState([]);
   const [types, setTypes] = useState([]);
   const [reasons, setReasons] = useState([]);
   const [caps, setCaps] = useState(null);
   const [onLeave, setOnLeave] = useState(null);
-  const [filters, setFilters] = useState({ department: '', type: '' });
+  const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
   const [error, setError] = useState('');
 
   function load() {
@@ -396,46 +397,27 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
   }
   async function toggleReason(reason) { await api.put(`/leave/reasons/${reason.id}`, { active: !reason.active }); onReload(); }
 
-  const scoped = requests.filter((r) => (
-    (!filters.department || r.employee?.department === filters.department)
-    && (!filters.type || r.type === filters.type)
-  ));
+  const scoped = requests.filter((r) => leaveMatches(r, filters));
   const pending = scoped.filter((r) => r.status === 'Pending');
-  const approved = scoped.filter((r) => r.status === 'Approved');
-  const rejected = scoped.filter((r) => r.status === 'Rejected');
-  const cancellations = scoped.filter((r) => r.status === 'Cancellation Requested');
-  const onLeaveToday = approved.filter((r) => r.fromDate <= today() && (r.toDate || r.fromDate) >= today());
   const departments = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
-
-  function exportRequests() {
-    downloadCsv(
-      'leave-requests.csv',
-      ['Employee', 'Department', 'Type', 'From', 'To', 'Days', 'Status', 'Reason'],
-      scoped.map((r) => [r.employee?.name || '', r.employee?.department || '', r.type, r.fromDate, r.toDate, r.days ?? 1, r.status, r.reason || ''])
-    );
-  }
 
   return (
     <div>
-      <div className="filter-row" style={{ marginTop: 14, marginBottom: 12 }}>
-        <Combo value={filters.department} onChange={(e) => setFilters({ ...filters, department: e.target.value })}>
-          <option value="">All Departments</option>
-          {departments.map((d) => <option key={d}>{d}</option>)}
-        </Combo>
-        <Combo value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
-          <option value="">Leave Type</option>
-          {types.map((t) => <option key={t.id} value={t.name}>{t.name} ({t.code})</option>)}
-        </Combo>
-        <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={exportRequests}>Export</button>
-      </div>
+      {/* hrms-24 §1 / §9 — From → To → Apply, and the tiles and charts
+          (by type, by status, department-wise) for requests overlapping it,
+          counted on the server in this login's scope. */}
+      {/* ONE KPI row, from the range: requests, pending, approved,
+          rejected, cancelled, cancellation requests, approved days and who
+          is on leave today. Filters → tiles → charts, then the lists below
+          with their own filter bar. */}
+      <InsightsPanel module="leave" storageKey="tl_range_leave" />
 
-      <StatRow cells={[
-        { value: pending.length, label: 'Pending Requests' },
-        { value: approved.length, label: 'Approved (MTD)' },
-        { value: rejected.length, label: 'Rejected (MTD)' },
-        { value: onLeaveToday.length, label: 'Employees on Leave Today' },
-        { value: cancellations.length, label: 'Cancellation Requests' },
-      ]} />
+      <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types}>
+        <span className="small-muted" style={{ alignSelf: 'center' }}>{scoped.length} of {requests.length}</span>
+        <span style={{ marginLeft: 'auto' }}>
+          <ExportMenu url="/insights/leave/export" params={leaveExportParams(filters)} note="The requests matching these filters" />
+        </span>
+      </LeaveFilterBar>
 
       {error && <div className="error-text">{error}</div>}
 
@@ -444,7 +426,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
         <Panel>
           <PanelHead title="① Leave Approval Chain" />
           <div style={{ padding: '8px 18px 4px' }} className="cell-muted">
-            Employee → TL → STL → Manager → Asst Manager → Admin → Super Admin.
+            Employee → TL → STL → HR → Assistant Manager → Manager → Super Admin.
             Open a request to see the full chain, who has acted and what it is waiting on.
           </div>
           {pending.length === 0
@@ -458,7 +440,11 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
               // and simply has no buttons. Either way the API is what
               // refuses — out-of-turn is answered 403, not merely hidden.
               const isOwner = !!wf && wf.currentOwnerUserId === user?.id;
-              const mayDecide = canApprove && (isOwner || canEditPolicy);
+              // A Super Admin may decide directly from any step — recorded as
+              // a Direct Super Admin Approval, never as somebody else's turn.
+              const isSA = user?.role === 'SUPER_ADMIN' || user?.hrmsRole === 'SUPER_ADMIN';
+              const mayDecide = canApprove && (isOwner || isSA);
+              const direct = mayDecide && !isOwner;
               return (
                 <AssignRow key={r.id}>
                   <span>
@@ -474,12 +460,15 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
                         {wf.overdue && <> <span className="status overdue">Overdue</span></>}
                       </div>
                     )}
+                    {wf && <ApprovalChainLine workflow={wf} compact />}
                     {!wf && <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 3 }}>No approval chain — decided in one step.</div>}
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <button className="btn btn-sm" onClick={() => setChainFor(r.id)}>Chain</button>
-                    {mayDecide && <button className="btn btn-sm btn-primary" onClick={() => decide(r, 'Approved')}>Approve</button>}
-                    {mayDecide && <button className="btn btn-sm btn-danger" onClick={() => decide(r, 'Rejected')}>Reject</button>}
+                    {/* Approve / Reject / Reassign open the request: the reason,
+                        the employee's comments, the TL rule and the reassign
+                        picker are all there. */}
+                    {mayDecide && <button className="btn btn-sm btn-primary" title={direct ? 'Direct Super Admin decision — skips the levels still waiting' : 'Approve, reject or reassign'} onClick={() => setChainFor(r.id)}>{direct ? 'Decide directly' : 'Decide'}</button>}
                   </span>
                 </AssignRow>
               );
@@ -565,35 +554,25 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
 
       <ApprovalLevelsPanel canConfigure={canEditPolicy} />
 
+      <TlRuleSetting canConfigure={canConfigure} />
+
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title="All leave requests" />
-        {scoped.length === 0
-          ? <EmptyMini>No leave requests yet.</EmptyMini>
-          : scoped.slice(0, 10).map((r) => (
-            <AssignRow key={r.id}>
-              <span>
-                {r.employee?.name || 'You'}<br />
-                <span className="cell-muted" style={{ fontSize: 11.5 }}>
-                  {r.type} · {r.fromDate}
-                </span>
-                {r.workflow && r.workflow.currentLabel && (
-                  <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 2 }}>
-                    Current Approval: <b>{r.workflow.currentLabel}</b>{r.workflow.currentOwnerName ? ` – ${r.workflow.currentOwnerName}` : ''}
-                  </div>
-                )}
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Status>{r.status}</Status>
-                {r.workflow && <button className="btn btn-sm" onClick={() => setChainFor(r.id)}>Chain</button>}
-                {/* Confirming a cancellation is a DECISION, so it needs the
-                    approve permission — isHR is a view permission a Manager
-                    keeps, which is why this button was showing to a role the
-                    API then refused with a 403. */}
-                {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => decide(r, 'Cancelled')}>Confirm Cancel</button>}
-                {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
-              </span>
-            </AssignRow>
-          ))}
+        {/* Team, designation, who approved / decided it and the employee's
+            comments — the full list is on the Requests tab. */}
+        <LeaveRequestsTable
+          requests={scoped}
+          onOpen={setChainFor}
+          limit={10}
+          renderActions={(r) => (
+            <>
+              {/* Confirming a cancellation is a DECISION, so it needs the
+                  approve permission. */}
+              {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => decide(r, 'Cancelled')}>Confirm Cancel</button>}
+              {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
+            </>
+          )}
+        />
       </Panel>
 
       {chainFor && (
@@ -607,90 +586,141 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, reloadKey, onRelo
   );
 }
 
-// Reports: the filterable request log plus the remaining/total balance grid.
-function ReportsTab({ reloadKey }) {
+// REQUESTS — every request this login may see (HR / TL / Manager: their scope;
+// an employee: their own), with Team, Designation, who approved / decided it
+// and the employee's comments. Open → the request, its chain and Approve ·
+// Reject · Reassign.
+function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
   const [requests, setRequests] = useState([]);
+  const [types, setTypes] = useState([]);
+  const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
+  const [openId, setOpenId] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get('/leave').then((res) => setRequests(res.data)).catch((e) => setError(e.response?.data?.error || 'Could not load leave requests'));
+    api.get('/leave/types').then((res) => setTypes(res.data)).catch(() => setTypes([]));
+  }, [reloadKey]);
+  const scoped = requests.filter((r) => leaveMatches(r, filters));
+  const departments = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
+  async function confirmCancel(r) {
+    setError('');
+    try { await api.patch('/leave/' + r.id + '/decision', { status: 'Cancelled' }); onReload(); } catch (e) { setError(e.response?.data?.error || 'Could not cancel'); }
+  }
+  async function requestCancel(id) { await api.patch('/leave/' + id + '/cancel-request'); onReload(); }
+  return (
+    <div>
+      <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types}>
+        <span className="small-muted" style={{ alignSelf: 'center' }}>{scoped.length} of {requests.length}</span>
+        <span style={{ marginLeft: 'auto' }}>
+          {/* Export all (these filters) · Export one employee · Import leave
+              history with the compulsory sample (backend src/io/leaveHistory.js).
+              The export's columns ARE the import sample's. */}
+          <DataIoBar ioKey="leave-history" exportUrl="/insights/leave/export" params={leaveExportParams(filters)} onImported={onReload} />
+        </span>
+      </LeaveFilterBar>
+      {error && <div className="error-text">{error}</div>}
+      <Panel>
+        <PanelHead title="Leave requests" />
+        <LeaveRequestsTable
+          requests={scoped}
+          onOpen={setOpenId}
+          renderActions={(r) => (
+            <>
+              {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => confirmCancel(r)}>Confirm Cancel</button>}
+              {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
+            </>
+          )}
+        />
+      </Panel>
+      {openId && <ApprovalWorkflowModal requestId={openId} onClose={() => setOpenId(null)} onActed={onReload} />}
+    </div>
+  );
+}
+
+// Reports: the filterable request log plus the remaining/total balance grid.
+// ---------------------------------------------------------------------------
+// REPORTS — LAYOUT FIXED BY THE USER (2026-09-29). Keep, in this order:
+//   1. "Leave Requests Report" card: Export ▾ in the head; filter grid
+//      Employee ID · Employee name · All departments · All employee statuses ·
+//      All leave types · from · to · All statuses · All roles · "N of M";
+//      then the request table.
+//   2. "Month-wise Leave Report" (search · leave type · year · Export Excel;
+//      CODE · EMPLOYEE · TEAM · DESIGNATION · TYPE · CREDITED · JAN…DEC ·
+//      TAKEN · PENDING · CLOSING).
+//   3. "Leave Balances" grid.
+// Do not restructure or swap these for a shared filter component.
+// ---------------------------------------------------------------------------
+function ReportsTab({ reloadKey, canExport }) {
+  const [requests, setRequests] = useState([]);
+  const [reqState, setReqState] = useState('loading'); // loading | ok | error
+  const [retryTick, setRetryTick] = useState(0);
   const [balances, setBalances] = useState(null);
-  const [filters, setFilters] = useState({ code: '', name: '', department: '', role: '' });
+  const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
+  const [role, setRole] = useState('');
   const [roles, setRoles] = useState([]);
+  const [types, setTypes] = useState([]);
+  const [balanceTick, setBalanceTick] = useState(0); // a balance import re-reads the grid
 
   useEffect(() => {
-    api.get('/leave').then((res) => setRequests(res.data));
     api.get('/leave/balances').then((res) => setBalances(res.data));
+  }, [reloadKey, balanceTick]);
+
+  useEffect(() => {
+    let alive = true;
+    setReqState('loading');
+    // One quiet retry: a read that lands while the API is restarting must not
+    // leave the report empty.
+    const read = (attempt) => api.get('/leave')
+      .then((res) => { if (alive) { setRequests(Array.isArray(res.data) ? res.data : []); setReqState('ok'); } })
+      .catch(() => { if (!alive) return; if (attempt === 0) setTimeout(() => read(1), 1500); else setReqState('error'); });
+    read(0);
+    api.get('/leave/types').then((res) => setTypes(res.data)).catch(() => setTypes([]));
     api.get('/employees')
       .then((res) => setRoles([...new Set(res.data.map((e) => e.designation).filter(Boolean))].sort()))
       .catch(() => setRoles([]));
-  }, [reloadKey]);
+    return () => { alive = false; };
+  }, [reloadKey, retryTick]);
 
-  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-  const matches = (emp) => (
-    (!filters.code || (emp?.employeeCode || '').toLowerCase().includes(filters.code.toLowerCase()))
-    && (!filters.name || (emp?.name || '').toLowerCase().includes(filters.name.toLowerCase()))
-    && (!filters.department || emp?.department === filters.department)
-    && (!filters.role || emp?.designation === filters.role)
-  );
-  const scoped = requests.filter((r) => matches(r.employee));
-  const balanceRows = balances?.rows || [];
-  const departments = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
-
-  function exportRequests() {
-    downloadCsv(
-      'leave-requests.csv',
-      ['Code', 'Employee', 'Department', 'Type', 'From', 'To', 'Days', 'Status', 'Reason'],
-      scoped.map((r) => [r.employee?.employeeCode || '', r.employee?.name || '', r.employee?.department || '', r.type, r.fromDate, r.toDate, r.days ?? 1, r.status, r.reason || ''])
-    );
-  }
+  const scoped = requests.filter((r) => leaveMatches(r, filters) && (!role || r.employee?.designation === role));
+  // The balance grid is per person, so only the person filters apply to it.
+  const balanceRows = (balances?.rows || []).filter((r) => leaveMatches(r, filters, { skipRequestFields: true }));
+  const departments = [...new Set([
+    ...requests.map((r) => r.employee?.department),
+    ...(balances?.rows || []).map((r) => r.department),
+  ].filter(Boolean))].sort();
 
   return (
     <div>
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title="Leave Requests Report">
-          <button className="btn btn-sm btn-primary" onClick={exportRequests}>Export (Excel)</button>
+          <ExportMenu url="/insights/leave/export" params={{ ...leaveExportParams(filters), role }} note="The requests matching these filters" />
         </PanelHead>
-        <div style={{ padding: '12px 18px' }}>
-          <div className="filter-row">
-            <input placeholder="Employee ID…" value={filters.code} onChange={(e) => set('code', e.target.value)} />
-            <input placeholder="Employee name…" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-            <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
-              <option value="">All Departments</option>
-              {departments.map((d) => <option key={d}>{d}</option>)}
-            </Combo>
-            <Combo value={filters.role} onChange={(e) => set('role', e.target.value)}>
-              <option value="">All Roles</option>
+        <div style={{ padding: '0 18px' }}>
+          <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types}>
+            <Combo value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="">All roles</option>
               {roles.map((r) => <option key={r}>{r}</option>)}
             </Combo>
-            <span className="cell-muted" style={{ fontSize: 12, alignSelf: 'center' }}>{scoped.length} of {requests.length}</span>
-          </div>
+            <span className="cell-muted" style={{ fontSize: 12, alignSelf: 'center' }}>{reqState === 'loading' ? 'Loading…' : `${scoped.length} of ${requests.length}`}</span>
+          </LeaveFilterBar>
         </div>
-        {scoped.length === 0 ? <EmptyMini>No leave requests yet.</EmptyMini> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Code</th><th>Employee</th><th>Department</th><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Status</th><th>Currently With</th></tr></thead>
-              <tbody>
-                {scoped.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.employee?.employeeCode || '—'}</td><td>{r.employee?.name}</td>
-                    <td className="cell-muted">{r.employee?.department || '—'}</td>
-                    <td className="cell-muted">{r.type}</td>
-                    <td className="cell-muted">{r.fromDate}</td>
-                    <td className="cell-muted">{r.toDate || r.fromDate}</td>
-                    <td className="cell-muted">{r.days ?? 1}</td>
-                    <td><Status>{r.status}</Status></td>
-                    <td className="cell-muted">
-                      {r.workflow?.currentLabel
-                        ? <>{r.workflow.currentLabel}{r.workflow.currentOwnerName ? ` – ${r.workflow.currentOwnerName}` : ''}{r.workflow.overdue ? <> <span className="status overdue">Overdue</span></> : null}</>
-                        : (r.workflow ? 'Chain complete' : '—')}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {reqState === 'error' && (
+          <div className="error-text" style={{ margin: '0 18px 10px' }}>
+            Could not load the leave requests. <button className="btn btn-sm" onClick={() => setRetryTick((t) => t + 1)}>Retry</button>
           </div>
         )}
+        {reqState === 'loading' ? <EmptyMini>Loading leave requests…</EmptyMini> : <LeaveRequestsTable requests={scoped} />}
       </Panel>
 
+      {/* MONTH-WISE — taken per month for everyone in scope, with export. */}
+      <MonthlyReport canExport={canExport} />
+
       <Panel style={{ marginTop: 16 }}>
-        <PanelHead title={<>Leave Balances <span className="cell-muted" style={{ fontSize: 12 }}>(remaining / total — paused leave types are hidden)</span></>} />
+        <PanelHead title={<>Leave Balances <span className="cell-muted" style={{ fontSize: 12 }}>(remaining / total — paused leave types are hidden)</span></>}>
+          {/* Balances: export everyone in scope / one employee, import with the
+              compulsory sample (backend src/io/leaveBalances.js). */}
+          <DataIoBar ioKey="leave-balances" params={{ type: filters.type }} onImported={() => setBalanceTick((t) => t + 1)} />
+        </PanelHead>
         <div className="tbl-wrap">
           <table>
             <thead>
@@ -715,56 +745,6 @@ function ReportsTab({ reloadKey }) {
   );
 }
 
-function HolidaysTab({ canManage }) {
-  const [holidays, setHolidays] = useState([]);
-
-  function load() { api.get('/leave/holidays').then((res) => setHolidays(res.data)); }
-  useEffect(load, []);
-
-  async function add() {
-    const name = prompt('Holiday name?');
-    if (!name || !name.trim()) return;
-    const date = prompt('Date (YYYY-MM-DD)?', `${new Date().getFullYear()}-12-25`);
-    if (!date) return;
-    const type = prompt('Type?', 'Festival') || 'Festival';
-    await api.post('/leave/holidays', { name: name.trim(), date, type });
-    load();
-  }
-
-  async function remove(id) { await api.delete(`/leave/holidays/${id}`); load(); }
-
-  const sorted = [...holidays].sort((a, b) => a.date.localeCompare(b.date));
-
-  return (
-    <Panel style={{ marginTop: 16 }}>
-      <PanelHead title="Company Holiday Calendar">
-        {canManage && <button className="btn btn-sm btn-primary" onClick={add}>+ Add Holiday</button>}
-      </PanelHead>
-      {sorted.length === 0 ? <EmptyMini>No holidays added yet — add the company holiday calendar for the year.</EmptyMini> : (
-        <div className="tbl-wrap">
-          <table>
-            <thead><tr><th>Date</th><th>Holiday</th><th>Type</th><th>Actions</th></tr></thead>
-            <tbody>
-              {sorted.map((h) => (
-                <tr key={h.id}>
-                  <td className="cell-muted">
-                    {h.date}{' '}
-                    {h.date === today() && <span className="status active">Today</span>}
-                    {h.date < today() && <span className="status pending">Past</span>}
-                  </td>
-                  <td>{h.name}</td>
-                  <td className="cell-muted">{h.type || '—'}</td>
-                  <td>{canManage && <button className="btn btn-sm" onClick={() => remove(h.id)}>Remove</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
 export default function Leave() {
   const { user } = useAuth();
   const isHR = hasHrmsAdmin(user);
@@ -778,6 +758,11 @@ export default function Leave() {
   // the CREATE action, so the tab asks the engine that same question. isAdmin()
   // was too narrow — HR holds HRMS edit rights and the API already lets HR in.
   const canManageHolidays = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'create');
+  // HR leave settings (TL approval rule), the balance override and export.
+  const canConfigure = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'configure');
+  // Edit / delete a holiday: the API guards both with `edit` (HR / Admin / SA).
+  const canEditHolidays = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'edit');
+  const canExport = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'export');
   const [applyOpen, setApplyOpen] = useState(false);
   const [types, setTypes] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -800,11 +785,13 @@ export default function Leave() {
         head={<button className="btn btn-primary" onClick={() => setApplyOpen(true)}>Apply Leave</button>}
         banner={banner}
         tabs={[
-          { key: 'dashboard', label: 'Dashboard', element: <DashboardTab user={user} isHR={isHR} canEditPolicy={canEditPolicy} canApprove={canApprove} reloadKey={reloadKey} onReload={() => setReloadKey((k) => k + 1)} /> },
-          { key: 'reports', label: 'Reports', element: <ReportsTab reloadKey={reloadKey} /> },
+          { key: 'dashboard', label: 'Dashboard', element: <DashboardTab user={user} isHR={isHR} canEditPolicy={canEditPolicy} canApprove={canApprove} canConfigure={canConfigure} reloadKey={reloadKey} onReload={() => setReloadKey((k) => k + 1)} /> },
+          { key: 'requests', label: 'Requests', element: <RequestsTab isHR={isHR} canApprove={canApprove} reloadKey={reloadKey} onReload={() => setReloadKey((k) => k + 1)} /> },
+          { key: 'monthly', label: 'Month-wise Balance', element: <LeaveBalancesTab canExport={canExport} /> },
+          { key: 'reports', label: 'Reports', element: <ReportsTab reloadKey={reloadKey} canExport={canExport} /> },
           // Managing holidays is a WRITE, so it follows the create permission
           // and not a role name — HR manages holidays, a view-only Manager does not.
-          { key: 'holidays', label: 'Holidays', element: <HolidaysTab canManage={canManageHolidays} /> },
+          { key: 'holidays', label: 'Holidays', element: <HolidayCalendar canManage={canManageHolidays} canEdit={canEditHolidays} canExport={canExport} /> },
         ]}
       />
       {applyOpen && (
@@ -812,6 +799,7 @@ export default function Leave() {
           types={types}
           employees={employees}
           isHR={isHR}
+          canOverride={canConfigure}
           onClose={() => setApplyOpen(false)}
           onSaved={() => { setApplyOpen(false); setReloadKey((k) => k + 1); }}
         />

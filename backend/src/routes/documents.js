@@ -2,6 +2,9 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const {
+  EXITED, list, parseAudience, parseChannels, resolveAudience, storedColumns, viewerContext, reaches, reachesEmployee, deliver, describeDelivery,
+} = require('../utils/audience');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -24,31 +27,73 @@ function isInternalOnly(category) {
 }
 
 
+// AUDIENCE (utils/audience.js). A document can be sent to everyone, to one or
+// many departments, or to named employees. `totalEmployees` on each row is
+// now THAT document's audience size, so "12 / 37 acknowledged" is measured
+// against the people it was actually sent to. An employee only sees (and can
+// only acknowledge) what was sent to them.
 router.get('/', async (req, res) => {
   const where = req.user.caps.hrmsSelfOnly ? { published: true } : {};
   const documents = await prisma.policyDocument.findMany({ where, include: { acknowledgments: true }, orderBy: { createdAt: 'desc' } });
-  const totalEmployees = await prisma.employee.count();
-  res.json(documents.map((d) => ({
-    ...d,
-    totalEmployees,
-    // So the screen can explain the missing Publish button instead of just
-    // not drawing one.
-    publishable: !isInternalOnly(d.category),
-  })));
+  const ctx = await viewerContext(req.user);
+  const own = ctx.selfOnly ? await prisma.employee.findUnique({ where: { userId: req.user.id }, select: { id: true, department: true } }) : null;
+  const visible = documents.filter((d) => (ctx.selfOnly ? reachesEmployee(d, own) : reaches(ctx, d)));
+  const active = { employmentStatus: { notIn: EXITED } };
+  const byDept = new Map((await prisma.employee.groupBy({ by: ['department'], where: active, _count: true }))
+    .map((g) => [g.department, g._count]));
+  const everyone = [...byDept.values()].reduce((a, b) => a + b, 0);
+  res.json(visible.map((d) => {
+    const ids = list(d.employeeIds);
+    const depts = list(d.departments);
+    return {
+      ...d,
+      departments: depts,
+      employeeIds: ids,
+      totalEmployees: ids.length ? ids.length : depts.length ? depts.reduce((n, x) => n + (byDept.get(x) || 0), 0) : everyone,
+      // So the screen can explain the missing Publish button instead of just
+      // not drawing one.
+      publishable: !isInternalOnly(d.category),
+    };
+  }));
 });
 
 router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async (req, res) => {
-  const { title, category, mandatory, target, uploadedDate } = req.body;
+  const { title, category, mandatory, uploadedDate } = req.body;
+  let { target } = req.body;
   if (!title || !uploadedDate) return res.status(400).json({ error: 'title and uploadedDate are required' });
+  const aud = parseAudience(req.body);
+  let reached = null;
+  let columns = { departments: null, employeeIds: null };
+  if (aud) {
+    const out = await resolveAudience(req.user, aud);
+    if (!out.ok) return res.status(out.status).json({ error: out.error });
+    reached = out.employees;
+    columns = storedColumns(out.audience);
+    target = out.label;
+  }
+  const internal = isInternalOnly(category);
   const doc = await prisma.policyDocument.create({
     data: {
       title, category, mandatory: !!mandatory, target, uploadedDate, uploadedBy: req.user.name,
+      createdById: req.user.id, ...columns,
       // A company document starts — and stays — off employee self-service.
-      published: !isInternalOnly(category),
+      published: !internal,
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Document published', entity: 'PolicyDocument', entityId: doc.id });
-  res.status(201).json(doc);
+  // A company document is never pushed to employees, so nobody is told.
+  let delivery = null;
+  if (reached && !internal) {
+    delivery = await deliver({
+      employees: reached,
+      channels: parseChannels(req.body.channels),
+      title: `${mandatory ? 'Please acknowledge' : 'New document'}: ${title}`,
+      message: `${title} has been published in Employee Services → Documents${mandatory ? ' and needs your acknowledgement' : ''}.`,
+      by: req.user,
+      exceptUserId: req.user.id,
+    });
+  }
+  await logAudit({ userId: req.user.id, action: 'Document published', entity: 'PolicyDocument', entityId: doc.id, toValue: target || null });
+  res.status(201).json({ ...doc, reached: reached ? reached.length : null, delivery, deliveryText: delivery ? describeDelivery(delivery) : null });
 });
 
 router.put('/:id/visibility', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
@@ -73,6 +118,9 @@ router.delete('/:id', requirePerm(null, 'hrms', 'Employee Services', 'delete'), 
 router.post('/:id/acknowledge', async (req, res) => {
   const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
   if (!own) return res.status(404).json({ error: 'No employee record linked to this account' });
+  const doc = await prisma.policyDocument.findUnique({ where: { id: req.params.id } });
+  if (!doc) return res.status(404).json({ error: 'Document not found' });
+  if (!reachesEmployee(doc, own)) return res.status(403).json({ error: 'This document was not sent to you' });
   const ack = await prisma.acknowledgment.upsert({
     where: { documentId_employeeId: { documentId: req.params.id, employeeId: own.id } },
     update: {},

@@ -5,13 +5,44 @@
 
 // Every outside channel the platform talks to. `fields` is [label, placeholder]
 // in the prototype's order — the Configure modal renders them exactly so.
+// REAL (utils/whatsappCloud.js, utils/smsGateway.js). The labels are the keys
+// the adapters read — change one here and change it there.
+const WA_FIELDS = {
+  display: 'Business phone number',
+  phoneId: 'Phone number ID',
+  wabaId: 'WhatsApp Business ID',
+  token: 'Permanent access token',
+  namespace: 'Template namespace',
+  language: 'Template language code',
+  linkTpl: 'Template name — agreement link',
+  otpTpl: 'Template name — OTP (Authentication)',
+  bulkTpl: 'Template name — bulk / general',
+};
+const SMS_FIELDS = {
+  provider: 'Provider (MSG91 / Fast2SMS / Twilio)',
+  sender: 'Sender ID (6 chars) / Twilio From number',
+  key: 'API key / Auth token',
+  sid: 'Twilio Account SID',
+  linkTpl: 'DLT template ID — agreement link',
+  otpTpl: 'DLT template ID — OTP',
+  bulkTpl: 'DLT template ID — bulk / general',
+};
+
 const INTEGRATION_CATALOG = [
   { id: 'whatsapp', name: 'WhatsApp Business', group: 'Messaging', glyph: '\u{1F4AC}',
-    desc: 'Send candidate updates, interview reminders and client approvals over WhatsApp.',
-    fields: [['Business phone number', '+91 '], ['WhatsApp Business ID', ''], ['Permanent access token', ''], ['Template namespace', '']] },
+    desc: 'WhatsApp Cloud API (Meta): agreement links, signing OTPs, candidate updates and bulk messages — approved templates, plain text only inside a 24-hour customer session.',
+    fields: [[WA_FIELDS.display, '+91 '], [WA_FIELDS.phoneId, 'from Meta → WhatsApp → API Setup'], [WA_FIELDS.wabaId, ''],
+      [WA_FIELDS.token, ''], [WA_FIELDS.namespace, 'optional (legacy)'], [WA_FIELDS.language, 'en'],
+      [WA_FIELDS.linkTpl, 'body {{1}} name, {{2}} agreement no., {{3}} link'],
+      [WA_FIELDS.otpTpl, 'authentication template, {{1}} code'],
+      [WA_FIELDS.bulkTpl, 'body {{1}} = the message']] },
   { id: 'sms', name: 'SMS Gateway', group: 'Messaging', glyph: '\u{1F4F1}',
-    desc: 'Transactional SMS for OTPs, interview alerts and offer notifications.',
-    fields: [['Provider', ''], ['Sender ID (6 chars)', ''], ['API key', ''], ['DLT template ID', '']] },
+    desc: 'Transactional SMS (MSG91, Fast2SMS or Twilio) for signing OTPs, agreement links, interview alerts and bulk messages.',
+    fields: [[SMS_FIELDS.provider, 'MSG91'], [SMS_FIELDS.sender, 'TMLINK'], [SMS_FIELDS.key, ''],
+      [SMS_FIELDS.sid, 'Twilio only (AC…)'],
+      [SMS_FIELDS.linkTpl, 'vars: name, agreement no., link'],
+      [SMS_FIELDS.otpTpl, 'vars: code, minutes'],
+      [SMS_FIELDS.bulkTpl, 'one var: the message']] },
   // REAL. nodemailer talks to this host — see utils/mailer.js. The last two
   // fields were added with the sending worker: "Encryption" chooses SSL vs
   // STARTTLS (587/STARTTLS is the common case, 465/SSL the other), and the
@@ -86,34 +117,34 @@ const INTEGRATION_CATALOG = [
     desc: 'Collect client invoice payments online and auto-reconcile receipts.',
     fields: [['Provider', ''], ['Key ID', ''], ['Key secret', ''], ['Webhook secret', '']] },
   { id: 'biometric', name: 'Biometric / Attendance Device', group: 'Workforce', glyph: '\u{1F590}️',
-    desc: 'Import daily punch data from attendance devices into HRMS.',
-    fields: [['Device vendor', ''], ['Device / site ID', ''], ['Sync endpoint', '']] },
+    desc: 'eSSL device pushing punches to TeamLink over ADMS / iClock — every punch lands in HRMS attendance.',
+    // REAL (routes/iclock.js). Save & Connect stores the device in the
+    // BiometricDevice table; the connection status comes from its heartbeats.
+    fields: [['Vendor', 'eSSL X2008 (ADMS/iClock)'], ['Serial', 'NFZ8250204996'],
+      ['Endpoint', 'http://72.61.233.104:8080/iclock'], ['Status', 'Active']] },
   { id: 'webhooks', name: 'Webhooks', group: 'Developer', glyph: '\u{1FA9D}',
     desc: 'Notify your own systems when a candidate joins, an invoice is paid, and similar events.',
     fields: [['Endpoint URL', ''], ['Signing secret', ''], ['Events (comma separated)', 'candidate.joined, invoice.paid']] },
   { id: 'api', name: 'REST API Access', group: 'Developer', glyph: '\u{1F511}',
     desc: 'Issue API keys for external systems to read and write platform data.',
     fields: [['Key label', ''], ['Allowed IP range', ''], ['Scope (read / write)', 'read']] },
-  // REAL. The AI Assistant's free-text Q&A calls the Anthropic API with this
-  // key — see utils/aiAgent.js. The key stays on the server: it is encrypted
-  // at rest and is never included in any response.
+  // REAL. The Anthropic key for the AI Assistant / Agent when the server runs
+  // with AI_PROVIDER=claude (the default provider is the local Ollama model —
+  // see utils/ai.js), and for the weekly-idea screener (utils/ideaAi.js). The
+  // key stays on the server: it is encrypted at rest and is never included in
+  // any response. The Agent never acts without the user pressing Confirm, and
+  // then only through the app's own routes.
   { id: 'ai-claude', name: 'AI Assistant (Anthropic Claude)', group: 'AI', glyph: '\u{1F916}',
-    desc: 'Free-text questions in the AI Assistant, answered from this app’s own data — always inside the asking user’s permissions and scope.',
+    desc: 'Claude for the AI Assistant and Agent (when AI_PROVIDER=claude) and the weekly-idea screener — always inside the asking user’s permissions and scope.',
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
-      ['Max answer tokens', '1500'], ['Questions per user per hour', '30'],
-      // OFF UNLESS THIS SAYS YES. With anything else the assistant is
-      // read-only: no write tool is offered to the model, and /api/ai/act
-      // refuses. With "Yes" the assistant may PROPOSE a stage move, an
-      // interview or a task; the user still has to press Confirm in the
-      // panel, and the permission check runs again at that moment.
-      ['Allow the assistant to act (with confirmation)', 'No']] },
+      ['Max answer tokens', '1500'], ['Questions per user per hour', '30']] },
 ];
 
 const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling', 'Job Boards', 'Storage', 'Finance', 'Workforce', 'Developer'];
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['email', 'ai-claude'];
+const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp'];
 
 const INTEGRATION_STATES = ['Not Connected', 'Connected', 'Expired', 'Reconnect Required'];
 
@@ -174,4 +205,6 @@ module.exports = {
   EMP_GENDERS,
   EMP_MGMT_STATUS_FILTER,
   integrationById,
+  WA_FIELDS,
+  SMS_FIELDS,
 };

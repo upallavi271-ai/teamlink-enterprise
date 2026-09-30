@@ -1,0 +1,38 @@
+/* "Search TeamLink" dropdown (components/GlobalSearch.jsx) + the header scope
+   indicator (components/Shell.jsx). Scoped under .gsx / .shell-scope. */
+.gsx .gsx-panel {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  width: 420px; max-width: calc(100vw - 32px); max-height: 70vh; overflow-y: auto;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.14); padding: 6px 0;
+}
+.gsx .gsx-note { padding: 10px 14px; font-size: 12.5px; color: var(--ink-soft); }
+.gsx .gsx-err { color: var(--red, #b42318); }
+.gsx .gsx-group + .gsx-group { border-top: 1px solid var(--line-soft); margin-top: 4px; padding-top: 4px; }
+.gsx .gsx-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px 2px; }
+.gsx .gsx-type { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--navy); }
+.gsx .gsx-count { font-size: 11px; color: var(--ink-soft); }
+.gsx .gsx-row { padding: 6px 14px; cursor: pointer; }
+.gsx .gsx-row.on { background: var(--navy-tint, #eef3fb); }
+.gsx .gsx-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.gsx .gsx-name { font-size: 13px; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gsx .gsx-code { font-size: 11px; color: var(--ink-soft); font-family: var(--font-mono, monospace); white-space: nowrap; flex: none; }
+.gsx .gsx-sub { font-size: 11.5px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gsx .gsx-all {
+  display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: 8px 14px; margin-top: 4px; border-top: 1px solid var(--line-soft);
+  font-size: 12.5px; color: var(--navy); font-weight: 600;
+}
+.gsx .gsx-all:hover { text-decoration: underline; }
+
+.breadcrumb .shell-scope {
+  margin-left: auto; font-size: 11.5px; color: var(--navy); background: var(--navy-tint, #eef3fb);
+  border-radius: 20px; padding: 2px 10px; font-weight: 600; white-space: nowrap;
+  max-width: 60%; overflow: hidden; text-overflow: ellipsis; font-family: inherit;
+}
+@media (max-width: 760px) {
+  .breadcrumb .shell-scope { margin-left: 0; max-width: 100%; margin-top: 4px; }
+}
+/* keep clear of the ⌕ icon whatever generic input rule loads later */
+.topbar .gsearch.gsx input { padding-left: 30px; width: 250px; }
+@media (max-width: 1100px) { .topbar .gsearch.gsx input { width: 190px; } }

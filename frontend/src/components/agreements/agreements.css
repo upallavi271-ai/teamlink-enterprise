@@ -1,0 +1,69 @@
+/* Agreement e-sign + execution panel. Everything is scoped under .sig-*,
+   .agr-sign or .agr-panel so nothing else in the app changes. */
+
+/* ---- signature capture ---- */
+.sig-capture { display: flex; flex-direction: column; gap: 10px; }
+.sig-capture.is-disabled { opacity: .6; pointer-events: none; }
+.sig-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.sig-tab { flex: 1 1 0; min-width: 80px; padding: 9px 10px; border: 1px solid var(--line); background: #fff; border-radius: 8px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
+.sig-tab.on { border-color: var(--navy); color: var(--navy); background: var(--navy-tint); }
+.sig-typed { border: 1px dashed var(--line); border-radius: 8px; background: #fff; min-height: 96px; display: flex; align-items: center; padding: 10px 16px; font-size: 42px; color: #1f2a44; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sig-fonts { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
+.sig-font { padding: 5px 12px; border: 1px solid var(--line); background: #fff; border-radius: 16px; font-size: 18px; cursor: pointer; }
+.sig-font.on { border-color: var(--navy); background: var(--navy-tint); }
+.sig-pad { width: 100%; height: 170px; border: 1px dashed var(--line); border-radius: 8px; background: #fff; touch-action: none; display: block; cursor: crosshair; }
+.sig-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.sig-preview { display: block; max-width: 100%; max-height: 120px; margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+
+/* ---- public signing page ---- */
+.agr-sign { max-width: 860px; margin: 0 auto; padding: 22px 16px 70px; }
+.agr-sign h1 { font-size: 21px; margin-bottom: 2px; }
+.agr-steps { display: flex; gap: 6px; margin: 14px 0; list-style: none; padding: 0; }
+.agr-steps li { flex: 1 1 0; padding: 8px 8px; border-radius: 8px; background: var(--line-soft); color: var(--ink-soft); font-size: 12.5px; font-weight: 600; text-align: center; }
+.agr-steps li.on { background: var(--navy); color: #fff; }
+.agr-steps li.done { background: var(--teal-tint); color: var(--teal); }
+.agr-doc { white-space: pre-wrap; font-family: Georgia, 'Times New Roman', serif; font-size: 13.5px; line-height: 1.6; max-height: 58vh; overflow-y: auto; padding: 16px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.agr-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-top: 12px; }
+.agr-card h3 { font-size: 15px; margin-bottom: 8px; }
+.agr-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.agr-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.agr-otp { font-size: 26px; letter-spacing: 8px; text-align: center; max-width: 240px; font-variant-numeric: tabular-nums; }
+.agr-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13.5px; }
+.agr-done { text-align: center; padding: 26px 16px; }
+.agr-done .tick { width: 54px; height: 54px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 30px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+.agr-kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; font-size: 13px; }
+.agr-kv .k { color: var(--ink-soft); }
+
+/* ---- internal execution panel ---- */
+.agr-panel .agr-channels { display: flex; gap: 8px; flex-wrap: wrap; }
+.agr-chip { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; border-radius: 14px; font-size: 12px; font-weight: 600; background: var(--line-soft); color: var(--ink-soft); }
+.agr-chip.ok { background: var(--teal-tint); color: var(--teal); }
+.agr-chip.warn { background: var(--amber-tint); color: var(--amber); }
+.agr-chip.bad { background: var(--red-tint); color: var(--red); }
+.agr-sigs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.agr-sigbox { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fff; min-height: 120px; }
+.agr-sigbox img { max-width: 100%; max-height: 90px; display: block; margin: 4px 0; }
+.agr-timeline { list-style: none; padding: 0; margin: 0; max-height: 320px; overflow-y: auto; }
+.agr-timeline li { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
+.agr-timeline .when { color: var(--ink-soft); }
+
+/* ---- bulk send progress ---- */
+.bulk-bar { height: 8px; background: var(--line-soft); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.bulk-bar > span { display: block; height: 100%; background: var(--teal); transition: width .4s; }
+.bulk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
+.bulk-cell { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; background: #fff; }
+.bulk-cell b { display: block; font-size: 13px; margin-bottom: 2px; }
+.bulk-rows { max-height: 260px; overflow-y: auto; }
+.bulk-ch { display: flex; gap: 10px; flex-wrap: wrap; }
+.bulk-ch label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+
+@media (max-width: 600px) {
+  .agr-fields, .agr-sigs { grid-template-columns: 1fr; }
+  .agr-kv { grid-template-columns: 1fr; }
+  .agr-kv .k { margin-top: 6px; }
+  .agr-steps li { font-size: 11px; padding: 7px 4px; }
+  .agr-doc { max-height: 52vh; font-size: 13px; padding: 12px; }
+  .agr-timeline li { grid-template-columns: 1fr; gap: 0; }
+  .sig-typed { font-size: 34px; }
+  .agr-actions .btn { flex: 1 1 auto; justify-content: center; }
+}

@@ -844,7 +844,7 @@ async function main() {
   await prisma.announcement.create({ data: { title: 'Diwali Holiday Schedule', body: 'Office will be closed 08–09 Nov 2026 for Diwali.', category: 'Holiday', pinned: true, target: 'All Employees', postedBy: 'Vasu (Admin)', date: '15 Sep 2026' } });
   await prisma.announcement.create({ data: { title: 'Updated WFH Policy', body: 'Hybrid policy now allows 3 WFH days per week.', category: 'Policy', pinned: false, target: 'All Employees', postedBy: 'Vasu (Admin)', date: '10 Sep 2026' } });
 
-  await prisma.hrConfig.create({ data: {} });
+  await prisma.hrConfig.create({ data: { basicPctOfCtc: 40 } }); // Standard Package: Basic 40% of CTC (utils/salaryRules.js)
   await prisma.company.create({ data: { name: 'TeamLink Consultants', email: 'hello@teamlink.test', phone: '+91 40 1234 5678', address: 'Hyderabad, India' } });
 
   // Shift patterns

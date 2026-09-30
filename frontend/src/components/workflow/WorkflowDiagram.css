@@ -1,0 +1,43 @@
+/* The actual workflow diagram (components/workflow/WorkflowDiagram.jsx).
+   Everything is scoped under .wfd so nothing leaks into other screens. */
+.wfd { display: flex; flex-direction: column; gap: 10px; }
+.wfd-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.wfd-top { display: flex; justify-content: center; }
+.wfd-root { background: var(--navy); color: #fff; font-weight: 700; letter-spacing: .06em; padding: 8px 18px; border-radius: var(--radius); }
+.wfd-merge { text-align: center; color: var(--ink-faint); font-size: 14px; line-height: 1; }
+.wfd-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.wfd-chain { background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; min-width: 0; }
+.wfd-chain-title { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); }
+.wfd-chain-note { font-size: 12px; color: var(--ink-soft); margin: -2px 0 8px; }
+.wfd-chain-client { border-top: 3px solid var(--blue); }
+.wfd-chain-internal { border-top: 3px solid var(--violet); }
+.wfd-chain-portal { border-top: 3px solid var(--teal); }
+.wfd-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: stretch; }
+.wfd-chain-portal .wfd-steps { justify-content: center; }
+.wfd-step { display: flex; flex-direction: column; align-items: stretch; gap: 2px; position: relative; }
+.wfd-step:not(:last-child)::after { content: '→'; position: absolute; right: -10px; top: 14px; color: var(--ink-faint); font-size: 12px; }
+.wfd-step { margin-right: 10px; }
+.wfd-box { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 104px; max-width: 150px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; font: inherit; text-decoration: none; }
+.wfd-box:hover { border-color: var(--brand-bright); box-shadow: var(--shadow-sm); }
+.wfd-box:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+.wfd-box.is-active { border-color: var(--brand); background: var(--brand-tint); }
+.wfd-box.is-static { cursor: default; }
+.wfd-box-label { font-size: 12px; color: var(--ink-soft); line-height: 1.25; }
+.wfd-box-count { font-size: 18px; line-height: 1.1; }
+.wfd-box-also { font-size: 11px; color: var(--ink-soft); }
+.wfd-client .wfd-box-count { color: var(--blue); }
+.wfd-internal .wfd-box-count { color: var(--violet); }
+.wfd-portal .wfd-box-count { color: var(--teal); }
+.wfd-also-link { background: none; border: 0; padding: 0 2px; font-size: 11px; color: var(--brand-ink); cursor: pointer; text-align: left; }
+.wfd-also-link.is-active { font-weight: 700; }
+.wfd-drill { margin-top: 4px; }
+.wfd-drill-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.wfd-drill-head .btn { margin-left: auto; }
+.wfd.is-compact .wfd-box { min-width: 92px; }
+@media (max-width: 900px) {
+  .wfd-split { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .wfd-box { min-width: 0; max-width: none; width: 100%; }
+  .wfd-step { width: calc(50% - 10px); }
+}

@@ -18,6 +18,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { stampFor } = require('../utils/positions');
+const { leadsOfPosition } = require('../utils/positionScope');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const {
   applicationWhere, isAssignedTo, scopeOf, scopeLabel, OUT_OF_SCOPE,
@@ -25,6 +26,7 @@ const {
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { stageLabel } = require('../utils/atsVocab');
+const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 const {
   FOLLOWUP_STATUSES, CONTACT_MODES, decorate, chainSnapshot, resolveNames,
   defaultNextAction, defaultDueDate, escalateOverdue, todayStr, followUpStatus,
@@ -40,6 +42,24 @@ router.use(requirePerm('ats', 'candidates', 'Applications', 'view'));
 const APPLICATION_INCLUDE = {
   candidate: { select: { id: true, name: true, email: true, phone: true } },
   requirement: { include: { client: true, recruiter: true, bde: true } },
+};
+
+// What buildList() reads of a requirement: the columns it shows and the
+// assignment chain (utils/followups.js chainSnapshot / resolveNames) — nothing
+// else. The candidate contributes only its name.
+const LIST_REQUIREMENT_SELECT = {
+  title: true,
+  reqCode: true,
+  internal: true,
+  recruiterId: true,
+  bdeId: true,
+  tlId: true,
+  tl: true,
+  stlId: true,
+  stl: true,
+  client: { select: { name: true } },
+  recruiter: { select: { name: true } },
+  bde: { select: { name: true } },
 };
 
 // Load the application this follow-up is about, scope-checked. Returns null
@@ -96,19 +116,60 @@ async function buildList(req) {
   const where = { ...applicationWhere(req.user) };
   if (req.query.applicationId) where.id = req.query.applicationId;
   if (req.query.candidateId) where.candidateId = req.query.candidateId;
+  // FILTERS (2026-09-29, the list standard): ?department= (the requirement's
+  // department) and the hierarchy filter's ?tl= / ?recruiter= / ?bde= /
+  // ?positionCode= (utils/workers.js attribution — the same answer ATS Reports
+  // and GET /applications give, computed INSIDE the caller's scope). They only
+  // ever narrow the scoped list; they never widen it.
+  const narrow = [];
+  const department = typeof req.query.department === 'string' ? req.query.department.trim() : '';
+  if (department) narrow.push({ requirement: { is: { department } } });
+  if (hasPersonQuery(req.query)) {
+    const att = await attributedApplications(req.user, req.query, { scope: applicationWhere(req.user) });
+    narrow.push({ id: { in: [...att.ids] } });
+  }
+  const scoped = narrow.length ? { AND: [where, ...narrow] } : where;
+  // PERFORMANCE (2026-09-26): only the columns the rows below read, and the
+  // closed stages left in the database unless they were asked for — this was
+  // every application with its full candidate, requirement, client, recruiter
+  // and BDE records (~10 s for a Super Admin). The rows are unchanged.
+  // The requirement (with its chain) and the candidate's name are read once
+  // per distinct record, alongside the follow-ups, instead of per row.
   const applications = await prisma.application.findMany({
-    where, include: APPLICATION_INCLUDE, orderBy: { updatedAt: 'desc' },
+    where: req.query.includeClosed === '1' ? scoped : { AND: [scoped, { stage: { notIn: CLOSED_STAGES } }] },
+    select: {
+      id: true, candidateId: true, requirementId: true, stage: true,
+    },
+    orderBy: { updatedAt: 'desc' },
   });
   const active = req.query.includeClosed === '1'
     ? applications
     : applications.filter((a) => !CLOSED_STAGES.includes(a.stage));
   const ids = active.map((a) => a.id);
 
-  const rows = ids.length
-    ? await prisma.applicationFollowUp.findMany({
-      where: { applicationId: { in: ids } }, orderBy: { createdAt: 'desc' },
-    })
-    : [];
+  const [rows, requirements, candidates] = ids.length
+    ? await Promise.all([
+      prisma.applicationFollowUp.findMany({
+        where: { applicationId: { in: ids } }, orderBy: { createdAt: 'desc' },
+      }),
+      prisma.requirement.findMany({
+        where: { id: { in: [...new Set(active.map((a) => a.requirementId))] } },
+        select: { id: true, ...LIST_REQUIREMENT_SELECT },
+      }),
+      prisma.candidate.findMany({
+        where: { id: { in: [...new Set(active.map((a) => a.candidateId))] } },
+        select: { id: true, name: true },
+      }),
+    ])
+    : [[], [], []];
+  const requirementById = new Map(requirements.map((r) => [r.id, r]));
+  const candidateById = new Map(candidates.map((c) => [c.id, c]));
+  active.forEach((a) => {
+    /* eslint-disable no-param-reassign */
+    a.requirement = requirementById.get(a.requirementId) || null;
+    a.candidate = candidateById.get(a.candidateId) || null;
+    /* eslint-enable no-param-reassign */
+  });
   const current = new Map();
   rows.forEach((row) => {
     const held = current.get(row.applicationId);
@@ -235,9 +296,12 @@ router.get('/dashboard', async (req, res, next) => {
     };
 
     const payload = {
-      scope: scopeLabel(req.user),
+      scope: scopeLabel(req.user, 'ats'),
       // §21 — every role gets this, and it is always FIRST.
-      mine: { ...tally(mine), rows: mine.slice(0, 50) },
+      // ?rows=all — every one of MY rows (the Follow-ups page filters and
+      // pages them itself); otherwise the first 50, as before. `total` says
+      // how many there are either way.
+      mine: { ...tally(mine), total: mine.length, rows: req.query.rows === 'all' ? mine : mine.slice(0, 50) },
       // §26-§27 — the three things to do now, most overdue first. The whole
       // point is that a user should not have to go looking.
       doThisNow: [...mine]
@@ -384,14 +448,22 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'edit'), async
       });
     }
 
+    // The SEAT this follow-up belongs to — what "did this desk do its
+    // follow-ups" is counted over — and, where the requirement names no TL /
+    // STL, the leads of that seat in the org structure (Positions), so the
+    // escalation ladder and the notice below reach the team's TL.
+    const seatStamp = await stampFor(req.user, 'owner');
+    if (seatStamp.ownerPositionId && (!snap.tlUserId || !snap.stlUserId)) {
+      const leads = await leadsOfPosition({ positionId: seatStamp.ownerPositionId });
+      if (!snap.tlUserId && leads.tlUserId) Object.assign(snap, { tlUserId: leads.tlUserId, tlName: leads.tlName });
+      if (!snap.stlUserId && leads.stlUserId) Object.assign(snap, { stlUserId: leads.stlUserId, stlName: leads.stlName });
+    }
     const created = await prisma.applicationFollowUp.create({
       data: {
         applicationId: application.id,
         candidateId: application.candidateId,
         requirementId: application.requirementId,
-        // The SEAT this follow-up belongs to — what "did this desk do its
-        // follow-ups" is counted over.
-        ...(await stampFor(req.user, 'owner')),
+        ...seatStamp,
         ...snap,
         lastContactedAt,
         contactMode,
@@ -550,15 +622,61 @@ router.post('/run-escalation', requirePerm('ats', 'candidates', 'Applications', 
   }
 });
 
-router.get('/statuses', (req, res) => res.json({
-  statuses: FOLLOWUP_STATUSES,
-  contactModes: CONTACT_MODES,
-  callResults: CALL_RESULTS,
-  outcomes: FOLLOWUP_OUTCOMES,
-  nextSteps: FOLLOWUP_NEXT_STEPS,
-  nextStepsNeedingDate: NEXT_STEPS_NEEDING_DATE,
-  templates: FOLLOWUP_TEMPLATES,
-  escalationLadder: ESCALATION_LADDER.map((r) => ({ level: r.level, label: r.label, afterDays: r.afterDays })),
-}));
+router.get('/statuses', async (req, res) => {
+  // Built-in purposes first, then the ones people have added (ContactPurpose).
+  const custom = await prisma.contactPurpose.findMany({ orderBy: { label: 'asc' } });
+  const withCustom = (audience) => [
+    ...FOLLOWUP_TEMPLATES[audience],
+    ...custom.filter((c) => c.audience === audience && !FOLLOWUP_TEMPLATES[audience].includes(c.label)).map((c) => c.label),
+  ];
+  res.json({
+    statuses: FOLLOWUP_STATUSES,
+    contactModes: CONTACT_MODES,
+    callResults: CALL_RESULTS,
+    outcomes: FOLLOWUP_OUTCOMES,
+    nextSteps: FOLLOWUP_NEXT_STEPS,
+    nextStepsNeedingDate: NEXT_STEPS_NEEDING_DATE,
+    templates: { candidate: withCustom('candidate'), client: withCustom('client') },
+    customPurposes: custom.map((c) => ({
+      id: c.id, audience: c.audience, label: c.label, template: c.template,
+      createdByName: c.createdByName,
+      canDelete: c.createdById === req.user.id || ['SUPER_ADMIN', 'ADMIN'].includes(req.user.role),
+    })),
+    escalationLadder: ESCALATION_LADDER.map((r) => ({ level: r.level, label: r.label, afterDays: r.afterDays })),
+  });
+});
+
+// Add a contact purpose for everyone (with an optional message template).
+router.post('/purposes', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res) => {
+  const audience = req.body.audience === 'client' ? 'client' : 'candidate';
+  const label = String(req.body.label || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const template = String(req.body.template || '').trim().slice(0, 1000) || null;
+  if (label.length < 2) return res.status(400).json({ error: 'Enter the purpose (at least 2 characters).' });
+  if (FOLLOWUP_TEMPLATES[audience].some((t) => t.toLowerCase() === label.toLowerCase())) {
+    return res.status(409).json({ error: `"${label}" is already in the list.` });
+  }
+  const existing = await prisma.contactPurpose.findMany({ where: { audience } });
+  if (existing.some((c) => c.label.toLowerCase() === label.toLowerCase())) {
+    return res.status(409).json({ error: `"${label}" is already in the list.` });
+  }
+  const row = await prisma.contactPurpose.create({
+    data: { audience, label, template, createdById: req.user.id, createdByName: req.user.name || null },
+  });
+  await logAudit({ userId: req.user.id, action: 'Contact purpose added', entity: 'ContactPurpose', entityId: row.id, toValue: `${audience}: ${label}` });
+  res.status(201).json(row);
+});
+
+// Remove one — by whoever added it, or Super Admin / Admin. Contacts already
+// logged with it keep their purpose text.
+router.delete('/purposes/:id', async (req, res) => {
+  const row = await prisma.contactPurpose.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ error: 'Purpose not found' });
+  if (row.createdById !== req.user.id && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only the person who added it, or an admin, can remove this purpose.' });
+  }
+  await prisma.contactPurpose.delete({ where: { id: row.id } });
+  await logAudit({ userId: req.user.id, action: 'Contact purpose removed', entity: 'ContactPurpose', entityId: row.id, fromValue: `${row.audience}: ${row.label}` });
+  res.json({ ok: true });
+});
 
 module.exports = router;

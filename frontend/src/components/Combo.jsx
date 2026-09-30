@@ -107,11 +107,20 @@ export default function Combo({
     const r = el.getBoundingClientRect();
     const below = window.innerHeight - r.bottom;
     const up = below < 200 && r.top > below;
+    // THE LIST IS AS WIDE AS ITS LONGEST OPTION ("Bathineni Yamuna · MED-3 ·
+    // left Jun 2026"), never narrower than the box and never off-screen. A
+    // box on the right half of the window opens leftwards, its right edges
+    // lined up, so a wide list has room.
+    const vw = window.innerWidth;
+    const openLeft = r.left > vw / 2;
     setRect({
-      left: r.left, width: r.width,
+      left: openLeft ? undefined : r.left,
+      right: openLeft ? vw - r.right : undefined,
+      minWidth: r.width,
+      maxWidth: Math.max(r.width, Math.min(480, (openLeft ? r.right : vw - r.left) - 8)),
       top: up ? undefined : r.bottom + 2,
       bottom: up ? window.innerHeight - r.top + 2 : undefined,
-      max: Math.max(120, Math.min(260, (up ? r.top : below) - 12)),
+      max: Math.max(140, Math.min(380, (up ? r.top : below) - 12)),
     });
   }, []);
 
@@ -193,7 +202,8 @@ export default function Combo({
     <div
       className="combo-pop"
       style={{
-        position: 'fixed', left: rect.left, width: rect.width,
+        position: 'fixed', left: rect.left, right: rect.right,
+        width: 'max-content', minWidth: rect.minWidth, maxWidth: rect.maxWidth,
         top: rect.top, bottom: rect.bottom, maxHeight: rect.max,
       }}
       onMouseDown={(e) => e.preventDefault()}   // keep focus on the input

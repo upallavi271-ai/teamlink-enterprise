@@ -157,8 +157,13 @@ function providerError(err) {
 
 // --- Envelope --------------------------------------------------------------
 // See the header comment. `senderEmail`/`senderName` come off the message row.
-function addressesFor(cfg, { senderEmail, senderName }, { useEmployeeFrom = true } = {}) {
-  const service = cfg.fromName ? { name: cfg.fromName, address: cfg.fromAddress } : cfg.fromAddress;
+// `fromName` overrides the configured "Default from name" for ONE message.
+// Passing '' asks for the bare address with no display name at all, which is
+// what an account mail wants: it comes from the company mailbox, not from a
+// person, and a display name there is just something else to get wrong.
+function addressesFor(cfg, { senderEmail, senderName }, { useEmployeeFrom = true, fromName } = {}) {
+  const name = fromName === undefined ? cfg.fromName : fromName;
+  const service = name ? { name, address: cfg.fromAddress } : cfg.fromAddress;
   if (!useEmployeeFrom || !senderEmail) {
     return { from: service, sender: undefined, replyTo: senderEmail || undefined, envelopeFrom: cfg.fromAddress };
   }
@@ -171,17 +176,31 @@ function addressesFor(cfg, { senderEmail, senderName }, { useEmployeeFrom = true
 }
 
 // --- Sending ---------------------------------------------------------------
+function isReservedTestAddress(to) {
+  const domain = String(to || '').trim().toLowerCase().split('@').pop().replace(/[>\s]+$/, '');
+  if (!domain) return false;
+  if (/\.(test|example|invalid|localhost)$/.test(domain) || ['test', 'example', 'invalid', 'localhost'].includes(domain)) return true;
+  return /(^|\.)example\.(com|net|org)$/.test(domain);
+}
+
 // Returns { ok, providerRef, error, transient }. Throws nothing: the worker
 // and the test button both want the failure as data.
 async function sendMail({
-  to, subject, text, senderEmail, senderName, useEmployeeFrom = true,
+  to, subject, text, senderEmail, senderName, useEmployeeFrom = true, fromName,
 }) {
   const cfg = await emailConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, error: cfg.reason, transient: false };
   if (!to || !String(to).trim()) {
     return { ok: false, error: 'No recipient address on this record.', transient: false };
   }
-  const addr = addressesFor(cfg, { senderEmail, senderName }, { useEmployeeFrom });
+  // RESERVED TEST DOMAINS ARE NEVER HANDED TO THE PROVIDER (RFC 2606 / 6761:
+  // *.test, *.example, *.invalid, *.localhost, example.com/.net/.org). Test
+  // data (ZZTEST candidates, seed rows) uses them, and a stage move kicks the
+  // worker within a second — without this those rows reached the real relay.
+  if (isReservedTestAddress(to)) {
+    return { ok: false, error: `Reserved test domain (${String(to).trim()}) — never transmitted.`, transient: false };
+  }
+  const addr = addressesFor(cfg, { senderEmail, senderName }, { useEmployeeFrom, fromName });
   try {
     const info = await buildTransport(cfg).sendMail({
       from: addr.from,
@@ -239,6 +258,7 @@ module.exports = {
   CHANNEL,
   emailConfig,
   sendMail,
+  isReservedTestAddress,
   verifyAndSendTest,
   resetTransport,
   isTransient,

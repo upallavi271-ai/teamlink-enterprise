@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { JOB_PORTAL_URL } from '../JobPortalRedirect.jsx';
+import { useJobPortalUrl } from '../JobPortalRedirect.jsx';
+import BiometricPanel from './BiometricPanel.jsx';
+import JobPortalSyncPanel from '../ats/JobPortalSyncPanel.jsx';
+import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
+import Pager, { usePaged, PAGE_SIZES } from '../../components/Pager.jsx';
 
 // Integrations — the prototype's integrationsView() (line 10367).
 //
@@ -24,12 +28,17 @@ import { JOB_PORTAL_URL } from '../JobPortalRedirect.jsx';
 
 function stateClass(state) {
   if (state === 'Connected') return 'active';
-  if (state === 'Expired' || state === 'Reconnect Required') return 'rejected';
+  if (state === 'Expired' || state === 'Reconnect Required' || state === 'Offline' || state === 'Inactive') return 'rejected';
   return 'pending';
 }
 
 export default function Integrations() {
-  const [tab, setTab] = useState('connections');
+  // Administration → Integrations → Job Portal is ?tab=jobportal (the admin
+  // dashboard's job-source status links there); /ats/job-portal opens on it.
+  const [searchParams] = useSearchParams();
+  const { pathname } = useLocation();
+  const [tab, setTab] = useState(() => (
+    searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal' : 'connections'));
   const [data, setData] = useState(null);
   const [jp, setJp] = useState(null);
   const [configuring, setConfiguring] = useState(null); // { channel, values }
@@ -72,22 +81,49 @@ export default function Integrations() {
   async function openHistory(channel) {
     setError('');
     try {
-      const res = await api.get(`/admin/integrations/${channel.id}/history`);
+      const res = await api.get(`/admin/integrations/${channel.id}/history`, { params: { limit: 200 } });
       setHistory(res.data);
     } catch (err) { setError('Could not load the sync history.'); }
   }
 
+  // A secret field opens EMPTY — the server never sends the value, only a
+  // masked hint, and blank means "keep what is stored".
+  function openConfigure(c) {
+    setConfiguring({
+      channel: c,
+      values: Object.fromEntries(c.fields.map(([label, ph]) => [
+        label,
+        (c.secretFields || []).includes(label) ? '' : (c.values[label] || ph || ''),
+      ])),
+    });
+  }
+
   async function saveConfigure() {
+    const bio = configuring.channel.id === 'biometric';
     const ok = await run(
       () => api.put(`/admin/integrations/${configuring.channel.id}/configure`, { values: configuring.values }),
-      `${configuring.channel.name} connected (configuration saved — no live call made).`,
+      bio
+        ? (r) => `Biometric device ${r.data.device?.serialNumber} saved — ${r.data.state}.`
+        : `${configuring.channel.name} connected (configuration saved — no live call made).`,
     );
     if (ok) setConfiguring(null);
   }
 
+  // THE FILTER STANDARD for the channel catalogue: Search · Group · Status ·
+  // Mode (Live / Demo). Filtered here — the catalogue is loaded whole.
+  const lf = useListFilters(data ? data.channels : [], [
+    { key: 'q', type: 'search', placeholder: 'Search channel…', get: (c) => `${c.name} ${c.desc || ''} ${c.group || ''}` },
+    { key: 'group', label: 'Group', allLabel: 'All groups', primary: true, get: (c) => c.group, options: data ? data.groups : [] },
+    { key: 'state', label: 'Status', allLabel: 'All statuses', primary: true, get: (c) => c.state },
+    { key: 'mode', label: 'Mode', allLabel: 'Live or demo', primary: true,
+      options: [{ value: 'live', label: 'Live' }, { value: 'demo', label: 'Demo' }],
+      match: (c, v) => (v === 'live') === !!c.live },
+  ]);
+
   if (!data) return <div className="page-head"><h1>Integrations</h1></div>;
 
   const jpStats = data.jobPortal;
+  const bioChannel = data.channels.find((c) => c.id === 'biometric');
   const jpBadge = jpStats.failed
     ? { cls: 'rejected', txt: `${jpStats.failed} failed` }
     : { cls: jp && jp.status === 'Connected' ? 'active' : 'pending', txt: jp ? jp.status : 'Not Connected' };
@@ -106,14 +142,14 @@ export default function Integrations() {
           Connections — all channels <span className="status active">{data.connected} of {data.total}</span>
         </div>
         <div className={`tab${tab === 'jobportal' ? ' active' : ''}`} onClick={() => setTab('jobportal')}>
-          Job Portal Synchronisation <span className={`status ${jpBadge.cls}`}>{jpBadge.txt}</span>
+          Job Portal <span className={`status ${jpBadge.cls}`}>{jpBadge.txt}</span>
         </div>
       </div>
 
       <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
         {tab === 'jobportal'
-          ? "Synchronisation only — what has come across from the Job Portal, the sync controls and the log of every record. The Job Portal's own connection and credentials sit on the Connections tab, under Job Boards."
-          : 'The connection side of every channel — switch one on, add its credentials, test it or disconnect it. What actually syncs from the TeamLink Job Portal is on the Job Portal Synchronisation tab.'}
+          ? "Job Portal sync status, errors and logs — whether the portal answers, requirements that did not reach it (with Retry), what has come across and the log of every record. Publishing is done per requirement; the applications themselves are screened in Candidates & Pipeline → Job Portal Candidates. The portal's own connection and credentials sit on the Connections tab, under Job Boards."
+          : 'The connection side of every channel — switch one on, add its credentials, test it or disconnect it. What actually syncs from the TeamLink Job Portal is on the Job Portal tab.'}
       </div>
 
       {error && <div className="error-text">{error}</div>}
@@ -131,14 +167,20 @@ export default function Integrations() {
         )}
       />}
 
+      {tab === 'connections' && bioChannel && (
+        <BiometricPanel onConfigure={() => openConfigure(bioChannel)} onChanged={load} />
+      )}
+
       {tab === 'connections' ? (
         <div className="panel panel-pad">
           <h3 style={{ fontSize: 14, marginBottom: 2 }}>Integrations</h3>
-          <div className="cell-muted" style={{ fontSize: 12.5 }}>
+          <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
             {data.connected} of {data.total} channels connected. Enable a channel and add its credentials to switch it on for every product.
           </div>
+          <ListFilterBar lf={lf} storageKey="admin-integrations" noun="channels" />
+          {lf.rows.length === 0 && <ListEmpty lf={lf} noun="channels" />}
           {data.groups.map((g) => {
-            const items = data.channels.filter((c) => c.group === g);
+            const items = lf.rows.filter((c) => c.group === g);
             if (!items.length) return null;
             return (
               <div key={g}>
@@ -170,7 +212,9 @@ export default function Integrations() {
                             Last sync {c.lastSync} · {c.recordsSynced} ok / {c.recordsFailed} failed
                           </span>
                         )}
-                        {c.state === 'Connected' ? (
+                        {c.id === 'biometric' ? (
+                          <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/test`), (r) => `${c.name}: ${r.data.result}`)}>Test</button>
+                        ) : c.state === 'Connected' ? (
                           <>
                             {!c.live && (
                               <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/sync`), (r) => `${c.name}: ${r.data.synced} synced, ${r.data.failed} failed (Demo).`)}>Sync Now</button>
@@ -187,17 +231,7 @@ export default function Integrations() {
                           </button>
                         )}
                         <button className="btn btn-sm" onClick={() => openHistory(c)}>History</button>
-                        {/* A secret field opens EMPTY — the server never sends
-                            the value, only a masked hint, and blank means
-                            "keep what is stored". */}
-                        <button className="btn btn-sm" onClick={() => setConfiguring({
-                          channel: c,
-                          values: Object.fromEntries(c.fields.map(([label, ph]) => [
-                            label,
-                            (c.secretFields || []).includes(label) ? '' : (c.values[label] || ph || ''),
-                          ])),
-                        })}
-                        >Configure →</button>
+                        <button className="btn btn-sm" onClick={() => openConfigure(c)}>Configure →</button>
                       </span>
                     </div>
                     {c.error && <div className="cell-muted" style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--red)' }}>{c.error}</div>}
@@ -224,6 +258,17 @@ export default function Integrations() {
           {configuring.channel.fields.map(([label, placeholder]) => {
             const secret = (configuring.channel.secretFields || []).includes(label);
             const hint = (configuring.channel.secretHints || {})[label];
+            if (configuring.channel.id === 'biometric' && label === 'Status') {
+              return (
+                <div className="field" key={label}>
+                  <label>{label}</label>
+                  <select value={configuring.values[label] || 'Active'} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
+                    <option>Active</option>
+                    <option>Inactive</option>
+                  </select>
+                </div>
+              );
+            }
             return (
               <div className="field" key={label}>
                 <label>{label}{secret && <span className="small-muted"> · stored encrypted, never shown</span>}</label>
@@ -238,7 +283,9 @@ export default function Integrations() {
             );
           })}
           <div className="cell-muted" style={{ fontSize: 11.5, fontStyle: 'italic' }}>
-            {configuring.channel.live
+            {configuring.channel.id === 'biometric'
+              ? 'Saved in the TeamLink database. The device pushes its heartbeat and punches to this endpoint; the status shows Connected once a heartbeat arrives, and Last Seen updates automatically.'
+              : configuring.channel.live
               ? 'Credentials are encrypted on the server before they are stored and are never sent back to this page. This channel really contacts the provider once it is connected.'
               : 'Configuration only — this channel is Demo / Simulated and never contacts the provider.'}
           </div>
@@ -252,29 +299,119 @@ export default function Integrations() {
           onClose={() => setHistory(null)}
           foot={<button className="btn btn-primary" onClick={() => setHistory(null)}>Close</button>}
         >
-          <div className="notice amber">
-            Demo / Simulated — these runs were produced locally. No external API was contacted.
-          </div>
-          {history.history.length ? (
-            <div className="tbl-wrap"><table>
-              <thead><tr><th>When</th><th>Action</th><th>By</th><th>Result</th><th>Synced</th><th>Failed</th><th>Entities</th></tr></thead>
-              <tbody>
-                {history.history.map((h, i) => (
-                  <tr key={i}>
-                    <td className="cell-muted">{h.at}</td>
-                    <td>{h.action}</td>
-                    <td className="cell-muted">{h.by || '—'}</td>
-                    <td><span className={`status ${/Fail|error/.test(String(h.result)) ? 'rejected' : 'active'}`}>{h.result}</span></td>
-                    <td className="cell-muted">{h.synced || 0}</td>
-                    <td className="cell-muted">{h.failed || 0}</td>
-                    <td className="cell-muted">{h.entities || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          ) : <div className="empty-mini">No sync runs yet.</div>}
+          {!history.live && (
+            <div className="notice amber">
+              Demo / Simulated — these runs were produced locally. No external API was contacted.
+            </div>
+          )}
+          {history.history.length ? <HistoryTable rows={history.history} /> : <div className="empty-mini">No sync runs yet.</div>}
         </Modal>
       )}
+    </div>
+  );
+}
+
+// One channel's History (the latest 200 runs), with the filter standard:
+// Search · Action · Outcome, paged.
+const failedRun = (h) => /Fail|error/.test(String(h.result));
+function HistoryTable({ rows }) {
+  const lf = useListFilters(rows, [
+    { key: 'q', type: 'search', placeholder: 'Search result, person or entities…', get: (h) => `${h.result} ${h.by || ''} ${h.entities || ''}` },
+    { key: 'action', label: 'Action', allLabel: 'All actions', primary: true, get: (h) => h.action },
+    { key: 'outcome', label: 'Outcome', allLabel: 'All outcomes', primary: true,
+      options: [{ value: 'ok', label: 'Succeeded' }, { value: 'failed', label: 'Failed' }],
+      match: (h, v) => (v === 'failed') === failedRun(h) },
+    { key: 'by', label: 'By', allLabel: 'Anyone', get: (h) => h.by },
+  ]);
+  const page = usePaged(lf.rows);
+  return (
+    <>
+      <ListFilterBar lf={lf} storageKey="admin-integration-history" noun="runs" />
+      <div className="tbl-wrap"><table>
+        <thead><tr><th>When</th><th>Action</th><th>By</th><th>Result</th><th>Synced</th><th>Failed</th><th>Entities</th></tr></thead>
+        <tbody>
+          {page.slice.map((h, i) => (
+            <tr key={`${h.at}-${i}`}>
+              <td className="cell-muted">{h.at}</td>
+              <td>{h.action}</td>
+              <td className="cell-muted">{h.by || '—'}</td>
+              <td><span className={`status ${failedRun(h) ? 'rejected' : 'active'}`}>{h.result}</span></td>
+              <td className="cell-muted">{h.synced || 0}</td>
+              <td className="cell-muted">{h.failed || 0}</td>
+              <td className="cell-muted">{h.entities || '—'}</td>
+            </tr>
+          ))}
+          {lf.rows.length === 0 && <tr><td colSpan="7"><ListEmpty lf={lf} noun="runs" /></td></tr>}
+        </tbody>
+      </table></div>
+      <Pager page={page} noun="runs" />
+    </>
+  );
+}
+
+// The Job Portal Sync Logs, paged and filtered on the server
+// (GET /admin/integrations/job-portal/logs): Search · Status · Entity · Date range.
+function SyncLogs({ run, reloadKey }) {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [opts, setOpts] = useState({ entities: [], statuses: [] });
+  const [loaded, setLoaded] = useState(false);
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(PAGE_SIZES[0]);
+  const lf = useListFilters(rows, [
+    { key: 'q', type: 'search', placeholder: 'Search reason or record…' },
+    { key: 'status', label: 'Status', allLabel: 'All statuses', primary: true, options: opts.statuses },
+    { key: 'entity', label: 'Entity', allLabel: 'All entities', primary: true, options: opts.entities },
+    { key: 'date', type: 'daterange', label: 'Date range', primary: true },
+  ], { server: true });
+  useEffect(() => { setPage(1); }, [lf.paramsKey, size]);
+  useEffect(() => {
+    let alive = true;
+    const { dateFrom, dateTo, ...rest } = lf.params;
+    const params = { ...rest, page, pageSize: size };
+    if (dateFrom) params.from = dateFrom;
+    if (dateTo) params.to = dateTo;
+    api.get('/admin/integrations/job-portal/logs', { params })
+      .then((res) => {
+        if (!alive) return;
+        setRows(res.data.rows || []);
+        setTotal(res.data.total || 0);
+        setOpts({ entities: res.data.entities || [], statuses: res.data.statuses || [] });
+        setLoaded(true);
+      })
+      .catch(() => { if (alive) setLoaded(true); });
+    return () => { alive = false; };
+  }, [lf.paramsKey, page, size, reloadKey]);
+  const pages = Math.max(1, Math.ceil(total / size));
+  const pager = {
+    total, pages, size, setSize, page: Math.min(page, pages), setPage,
+    from: total === 0 ? 0 : (page - 1) * size + 1,
+    to: Math.min(page * size, total),
+  };
+  return (
+    <div className="card">
+      <h3 style={{ fontSize: 14, marginBottom: 10 }}>Sync Logs</h3>
+      <ListFilterBar lf={lf} storageKey="admin-jp-synclogs" />
+      <div className="tbl-wrap"><table>
+        <thead><tr><th>Date</th><th>Entity</th><th>Status</th><th>Reason</th><th /></tr></thead>
+        <tbody>
+          {rows.map((l) => (
+            <tr key={l.id}>
+              <td>{l.date}</td>
+              <td>{l.entity}</td>
+              <td><span className={`status ${l.status === 'Success' ? 'active' : 'rejected'}`}>{l.status}</span></td>
+              <td>{l.reason || '—'}</td>
+              <td>{l.status === 'Failed' && (
+                <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/job-portal/log/${l.id}/retry`), 'Retried.')}>Retry</button>
+              )}</td>
+            </tr>
+          ))}
+          {loaded && rows.length === 0 && (
+            <tr><td colSpan="5"><ListEmpty lf={lf} noun="sync log entries" title="No sync has run yet." /></td></tr>
+          )}
+        </tbody>
+      </table></div>
+      <Pager page={pager} noun="sync log entries" />
     </div>
   );
 }
@@ -359,10 +496,16 @@ function EmailPanel({ mail, testTo, setTestTo, sending, onSend, onRunWorker }) {
 // controls, and the Date / Entity / Status / Reason sync log.
 function JobPortalTab({ jp, stats, run }) {
   const [showConfig, setShowConfig] = useState(false);
+  const portalUrl = useJobPortalUrl();
   if (!jp) return <div className="empty-mini">Job Portal synchronisation is not available.</div>;
   const connected = jp.status === 'Connected';
   return (
     <>
+      {/* Sync status / errors (moved here from the old Job Portal workspace):
+          portal reachability, last sync, published requirements that did not
+          reach the portal with Retry, and recent sync problems. */}
+      <JobPortalSyncPanel refreshKey={jp} />
+
       <div className="statbar">
         <div className="statitem"><div className="n">{stats.candidates}</div><div className="l">Candidates synced</div></div>
         <div className="statitem"><div className="n">{stats.applications}</div><div className="l">Applications synced</div></div>
@@ -380,64 +523,44 @@ function JobPortalTab({ jp, stats, run }) {
             <div className="kv"><span className="k">Sync Status</span>
               <span><span className={`status ${connected ? 'active' : 'pending'}`}>{jp.lastSyncResult}</span></span></div>
             <div className="kv"><span className="k">Mode</span>
-              <span>Portal served by this platform at <code>/job-portal/</code>; its own data store is the browser</span></div>
+              <span>Separate application at <code>{portalUrl}</code> (JOB_PORTAL_URL), with its own PostgreSQL database</span></div>
             <div className="kv"><span className="k">Real-time channel</span>
-              <span><span className="conn-dot fail" />Not connected — the portal does not yet post applications into this ATS</span></div>
-            <div className="kv"><span className="k">Sync direction</span><span>None yet — Sync re-reads this ATS only</span></div>
+              <span><span className="conn-dot ok" />The portal posts each application to this ATS as it is made</span></div>
+            <div className="kv"><span className="k">Sync direction</span><span>Two-way — requirements out, applications in (at startup, hourly and on Sync)</span></div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 190 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => run(() => api.post('/admin/integrations/job-portal/sync'), (r) => `${r.data.synced} synced, ${r.data.failed} failed.`)}>Sync</button>
-            <a className="btn btn-sm" href={JOB_PORTAL_URL} target="_blank" rel="noreferrer">Open Job Portal ↗</a>
+            <button className="btn btn-primary btn-sm" onClick={() => run(() => api.post('/admin/integrations/job-portal/sync'), (r) => (r.data.portal && !r.data.portal.ok
+              ? `Job Portal sync failed: ${r.data.portal.error}`
+              : `${r.data.portal ? `${r.data.portal.jobs} job(s) live on the portal, ${r.data.portal.closed} closed, ${r.data.portal.created} new application(s). ` : ''}${r.data.synced} synced, ${r.data.failed} failed.`))}>Sync</button>
+            <a className="btn btn-sm" href={`${portalUrl}/`} target="_blank" rel="noreferrer">Open Job Portal ↗</a>
             <button className="btn btn-sm" onClick={() => run(() => api.post('/admin/integrations/jobportal/test'), (r) => `TeamLink Job Portal: ${r.data.result}`)}>Test Connection</button>
             <button className="btn btn-sm" onClick={() => setShowConfig(true)}>Configure</button>
             {stats.needsMapping > 0 && (
               <Link className="btn btn-sm" to="/candidates">Mapping queue ({stats.needsMapping}) →</Link>
             )}
             {/* This screen is company-wide and Administration-only. The
-                day-to-day publishing / sync / import work is a recruiter's,
-                a TL's and a BDE's, and it lives inside Jobs / Requirements,
-                scoped to what each of them is assigned. */}
-            <Link className="btn btn-sm" to="/requirements/job-portal">Job Portal workspace →</Link>
+                day-to-day work is elsewhere, scoped to each person: publishing
+                on each requirement ("Posted on"), and screening / Send to ATS
+                in Candidates & Pipeline → Job Portal Candidates. */}
+            <Link className="btn btn-sm" to="/candidates?view=job-portal">Job Portal Candidates →</Link>
           </div>
         </div>
         {/* Sync and Open Job Portal are two different actions and must stay
             that way. Neither one does the other's job. */}
         <div className="notice amber" style={{ marginTop: 14 }}>
-          <strong>Open Job Portal</strong> opens the real TeamLink Job Portal (served at <code>/job-portal/</code>)
-          in a new tab. It never triggers a sync.
+          <strong>Open Job Portal</strong> opens the TeamLink Job Portal (<code>{portalUrl}</code>) in a new tab. It never
+          triggers a sync.
           <br />
-          <strong>Sync</strong> stays on this page: today it re-reads this ATS&apos;s own records — candidates and
-          applications already carrying a portal source — refreshes the counters above and writes a sync-log row.
-          It does <strong>not</strong> yet move data between this ATS and the Job Portal: the portal is the
-          customer&apos;s self-contained app and keeps its jobs, candidates, applications and resumes in the
-          browser&apos;s local storage, not in this database. A real two-way sync needs the portal to read and write
-          through an API instead — pushing new, updated and closed requirements out, and bringing applications,
-          candidate profiles, resumes, stage changes and source back in.
+          <strong>Sync</strong> pushes every published, live requirement to the portal as a job, closes the ones that
+          are no longer published or live, and pulls in any portal application not yet in this ATS (new candidates are
+          matched by email, then phone). It also runs at startup and hourly, and a single requirement is pushed the
+          moment it is published, unpublished or changed. Not yet synced: resumes (the file stays on the portal) and
+          stage changes made here flowing back to the candidate&apos;s portal dashboard.
         </div>
       </div>
 
-      <div className="card">
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Sync Logs</h3>
-        <div className="tbl-wrap"><table>
-          <thead><tr><th>Date</th><th>Entity</th><th>Status</th><th>Reason</th><th /></tr></thead>
-          <tbody>
-            {jp.syncLog.map((l) => (
-              <tr key={l.id}>
-                <td>{l.date}</td>
-                <td>{l.entity}</td>
-                <td><span className={`status ${l.status === 'Success' ? 'active' : 'rejected'}`}>{l.status}</span></td>
-                <td>{l.reason || '—'}</td>
-                <td>{l.status === 'Failed' && (
-                  <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/integrations/job-portal/log/${l.id}/retry`), 'Retried.')}>Retry</button>
-                )}</td>
-              </tr>
-            ))}
-            {jp.syncLog.length === 0 && (
-              <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>No sync has run yet.</td></tr>
-            )}
-          </tbody>
-        </table></div>
-      </div>
+      {/* Re-read whenever the parent reloads (after Sync / Retry). */}
+      <SyncLogs run={run} reloadKey={jp} />
 
       {showConfig && (
         <Modal
@@ -446,15 +569,14 @@ function JobPortalTab({ jp, stats, run }) {
           foot={<button className="btn btn-primary" onClick={() => setShowConfig(false)}>Close</button>}
         >
           <div className="notice amber">
-            The Job Portal is served by this platform itself, at <code>/job-portal/</code>, so there is no
-            external API endpoint, API key or webhook to configure here. There is also nothing to configure for
-            synchronisation yet: the portal stores its own data in the browser, so no record crosses between it
-            and this database.
+            The Job Portal is a separate application. Its address and the two shared secrets are server settings in
+            backend/.env (and the portal&apos;s own .env), never entered on this screen: JOB_PORTAL_URL,
+            JOB_PORTAL_SYNC_TOKEN, JOB_PORTAL_PUSH_SECRET, JOB_PORTAL_SYNC_INTERVAL_MS.
           </div>
-          <div className="kv"><span className="k">Connection type</span><span>Internal — served by this platform at /job-portal/</span></div>
-          <div className="kv"><span className="k">Portal data store</span><span>Browser local storage (the portal&apos;s own), not this database</span></div>
-          <div className="kv"><span className="k">Sync direction</span><span>None yet — Sync re-reads this ATS only</span></div>
-          <div className="kv"><span className="k">Sync frequency</span><span>Manual (&quot;Sync&quot;)</span></div>
+          <div className="kv"><span className="k">Connection type</span><span>Server to server — {portalUrl}</span></div>
+          <div className="kv"><span className="k">Portal data store</span><span>The portal&apos;s own PostgreSQL database</span></div>
+          <div className="kv"><span className="k">Sync direction</span><span>Requirements out; applications and candidates in</span></div>
+          <div className="kv"><span className="k">Sync frequency</span><span>On publish / change, on &quot;Sync&quot;, at startup and hourly</span></div>
           {/* ---- SYNC SEAM ------------------------------------------------
               A real Enterprise ↔ Portal sync attaches here. It needs, in this
               order: (1) the portal reading its job list from GET /api/public/jobs

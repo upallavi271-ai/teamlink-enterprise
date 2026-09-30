@@ -1,0 +1,21 @@
+/* Review #3 §25 — the floating button reads "AI Assistant" and nothing else
+   (no count). A small pill, same navy, same corner. Scoped to .ai-fab-pill so
+   nothing else changes. */
+.ai-fab.ai-fab-pill{width:auto;height:44px;padding:0 16px;border-radius:24px;gap:6px;white-space:nowrap}
+.ai-fab-pill .ai-fab-mark{font-size:13px;letter-spacing:.01em}
+.ai-fab-pill .ai-fab-n{display:inline-flex;align-items:center;font-size:12.5px;font-weight:600;color:#ffd98a}
+@media (max-width: 760px){
+  .ai-fab.ai-fab-pill{height:36px;padding:0 12px}
+  .ai-fab-pill .ai-fab-mark{font-size:12px}
+}
+/* Out of the way while any modal, dialog or drawer is open — it must never sit
+   on top of a modal's sticky Cancel / Save bar (e.g. Office & Expenses → + New
+   Expense on a phone). Every app modal is an .overlay.show (components/
+   Modal.jsx and the page-level ones) or an aria-modal dialog / drawer. The
+   body.tl-modal-open class is the fallback for browsers without :has(),
+   set by AiAssistant.jsx. */
+body:has(.overlay.show) .ai-fab,
+body:has([aria-modal="true"]) .ai-fab,
+body:has(.oe-drw) .ai-fab,
+body:has(.reqdrw) .ai-fab,
+body.tl-modal-open .ai-fab{display:none !important}

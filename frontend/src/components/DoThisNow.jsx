@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../api';
+import sharedGet from '../utils/sharedGet';
 
 // ---------------------------------------------------------------------------
 // "🔴 DO THIS NOW" (§27).
@@ -17,7 +17,7 @@ export default function DoThisNow() {
   const [items, setItems] = useState(null);
 
   useEffect(() => {
-    api.get('/followups/dashboard')
+    sharedGet('/followups/dashboard')
       .then((r) => setItems(r.data.doThisNow || []))
       .catch(() => setItems([]));
   }, []);

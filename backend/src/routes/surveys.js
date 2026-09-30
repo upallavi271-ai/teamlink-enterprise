@@ -2,6 +2,9 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const {
+  list, parseAudience, parseChannels, resolveAudience, storedColumns, viewerContext, reaches, reachesEmployee, deliver, describeDelivery,
+} = require('../utils/audience');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -21,7 +24,7 @@ function parseDepartments(value) {
 }
 
 // Does this survey reach that department? An untargeted survey reaches all.
-function reaches(survey, department) {
+function reachesDept(survey, department) {
   const targets = parseDepartments(survey.departments);
   if (!targets.length) return true;
   return !!department && targets.includes(department);
@@ -53,10 +56,15 @@ router.get('/', async (req, res) => {
   // A lead sees every survey so they can read the aggregate; an employee sees
   // only what was published to their department. Filtered in JS rather than
   // SQL because the target list is a CSV column, and the set is small.
+  //
+  // A survey sent to INDIVIDUAL employees (audience.employeeIds) reaches those
+  // people, and the leads whose scope covers at least one of them.
   const allowed = surveyDepartments(req.user);
+  const ctx = allowed === undefined ? null : await viewerContext(req.user);
   const visible = allowed === undefined
     ? surveys
     : surveys.filter((s) => {
+      if (list(s.employeeIds).length) return reaches(ctx, s);
       const targets = parseDepartments(s.departments);
       // Untargeted reaches everybody; otherwise the viewer's scope has to
       // overlap the survey's target list.
@@ -67,6 +75,7 @@ router.get('/', async (req, res) => {
     ...s,
     questions: JSON.parse(s.questions),
     departments: parseDepartments(s.departments),
+    employeeIds: list(s.employeeIds),
   })));
 });
 
@@ -75,18 +84,36 @@ router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async
   if (!title || !Array.isArray(questions) || questions.length === 0) {
     return res.status(400).json({ error: 'title and a non-empty questions array are required' });
   }
-  // The department dropdown. Nothing selected = published to everybody, which
-  // is the same thing an empty column has always meant.
-  const departments = parseDepartments(req.body.departments);
+  // The Send-to picker (Everyone / one or many departments / one or many
+  // employees). A caller that sends only `departments` — the older
+  // single-department dropdown — lands in the same place: nothing selected
+  // is published to everybody, which is what an empty column always meant.
+  const aud = parseAudience(req.body) || { mode: 'everyone', departments: [], employeeIds: [] };
+  const out = await resolveAudience(req.user, aud);
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  const columns = storedColumns(out.audience);
   const survey = await prisma.survey.create({
     data: {
       title,
       questions: JSON.stringify(questions),
-      departments: departments.length ? departments.join(',') : null,
+      departments: columns.departments,
+      employeeIds: columns.employeeIds,
+      createdById: req.user.id,
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Survey created', entity: 'Survey', entityId: survey.id });
-  res.status(201).json({ ...survey, questions, departments });
+  const delivery = await deliver({
+    employees: out.employees,
+    channels: parseChannels(req.body.channels),
+    title: `New survey: ${title}`,
+    message: 'A new engagement survey is waiting for you in Employee Services → Engagement Survey.',
+    by: req.user,
+    exceptUserId: req.user.id,
+  });
+  await logAudit({ userId: req.user.id, action: 'Survey created', entity: 'Survey', entityId: survey.id, toValue: out.label });
+  res.status(201).json({
+    ...survey, questions, departments: parseDepartments(survey.departments), employeeIds: list(survey.employeeIds),
+    reached: out.employees.length, label: out.label, delivery, deliveryText: describeDelivery(delivery),
+  });
 });
 
 // Close a survey to new responses, or reopen it.
@@ -108,8 +135,8 @@ router.post('/:id/respond', async (req, res) => {
   if (survey.status !== 'Active') return res.status(409).json({ error: 'This survey is closed to new responses' });
   // ENFORCED SERVER-SIDE, not just hidden from the list: a survey published
   // to Medical cannot be answered by IT even with the id in hand.
-  if (!reaches(survey, own.department)) {
-    return res.status(403).json({ error: 'This survey was not published to your department' });
+  if (list(survey.employeeIds).length ? !reachesEmployee(survey, own) : !reachesDept(survey, own.department)) {
+    return res.status(403).json({ error: list(survey.employeeIds).length ? 'This survey was not sent to you' : 'This survey was not published to your department' });
   }
   const response = await prisma.surveyResponse.upsert({
     where: { surveyId_employeeId: { surveyId: req.params.id, employeeId: own.id } },

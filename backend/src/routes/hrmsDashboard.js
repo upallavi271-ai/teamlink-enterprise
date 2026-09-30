@@ -2,6 +2,10 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { employeeWhere } = require('../utils/scope');
+const { HR_STATUSES, hrStatusOf } = require('../utils/hrStatus');
+const dateRange = require('../utils/dateRange');
+const D = require('../utils/attendanceDays');
+const { withoutSystemAccounts } = require('../utils/systemAccounts');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -25,16 +29,31 @@ function withinNextDays(dateStr, days) {
 function matchesFilters(e, q) {
   if (q.department && e.department !== q.department) return false;
   if (q.location && e.location !== q.location) return false;
-  if (q.status && e.employmentStatus !== q.status) return false;
+  if (q.status && hrStatusOf(e.employmentStatus, e.user && e.user.status) !== q.status) return false;
   if (q.manager && e.reportingManagerId !== q.manager) return false;
   return true;
 }
 
 // Everything the HRMS Dashboard shows, computed against the same filtered
 // employee set so every tile, panel and the CSV export agree with each other.
+//
+// THE DATE FILTER (?range=today|this_week|…|custom&from&to, utils/dateRange.js)
+// narrows only the figures that have a date of their own:
+//   attendance      the marks inside the range (one day = that day's marks,
+//                   several = the total of every mark across them)
+//   on leave        approved leave overlapping the range
+//   leave overview  requests overlapping the range
+//   new joiners     dateOfJoining inside the range (was a fixed 30 days)
+// Headcount, active / notice / exit-process / relieved counts (an Employee
+// carries no relieving date — imported leavers have no resignation record —
+// so there is nothing honest to date an exit by), the pending-approval
+// queues, upcoming leave, celebrations and holidays are the state of things
+// NOW and stay so — the page labels them that way.
 router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const thirtyDaysAgo = new Date(Date.now() - 30 * DAY_MS);
+  const period = dateRange.fromQuery(req, res);
+  if (!period) return;
+  const inDays = dateRange.dayStringIn(period);
 
   // SCOPED, like every other employee list in the app. This read had no filter
   // at all, so a TL opening the HRMS Dashboard saw the WHOLE COMPANY: 28 Total
@@ -43,17 +62,21 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
   // utils/scope.js gives /api/employees, so the two screens agree and widening
   // a role's scope widens both.
   const allEmployees = await prisma.employee.findMany({
-    where: employeeWhere(req.user),
-    include: { reportingManager: true },
+    where: withoutSystemAccounts(employeeWhere(req.user)), // Super Admin is a system account, not headcount
+    include: { reportingManager: true, user: { select: { status: true } } },
     orderBy: { name: 'asc' },
   });
   const employees = allEmployees.filter((e) => matchesFilters(e, req.query));
   const ids = employees.map((e) => e.id);
 
-  const [attendanceToday, punchesToday, leaveRequests, regularizations, holidays, announcements, assets, courseAssignments, targets, tickets] = await Promise.all([
-    prisma.attendance.findMany({ where: { date: today, employeeId: { in: ids } } }),
-    prisma.attendancePunch.findMany({ where: { date: today, employeeId: { in: ids } } }),
-    prisma.leaveRequest.findMany({ where: { employeeId: { in: ids } }, include: { employee: true } }),
+  const [attendance, punches, leaveRequests, leavePending, leaveUpcoming, regularizations, holidays, announcements, assets, courseAssignments, targets, tickets] = await Promise.all([
+    prisma.attendance.findMany({ where: { date: inDays, employeeId: { in: ids } } }),
+    prisma.attendancePunch.findMany({ where: { date: inDays, employeeId: { in: ids } }, select: { employeeId: true, date: true, direction: true } }),
+    // Overlapping the range: starts before it ends, ends on or after it starts.
+    prisma.leaveRequest.findMany({ where: { employeeId: { in: ids }, fromDate: { lt: inDays.lt }, toDate: { gte: period.from } } }),
+    // The approval queue and what is booked ahead are NOW, whatever the range.
+    prisma.leaveRequest.count({ where: { employeeId: { in: ids }, status: 'Pending' } }),
+    prisma.leaveRequest.count({ where: { employeeId: { in: ids }, status: 'Approved', fromDate: { gt: today } } }),
     prisma.attendanceRegularization.findMany({ where: { employeeId: { in: ids }, status: 'Pending' } }),
     prisma.holiday.findMany({ orderBy: { date: 'asc' } }),
     prisma.announcement.findMany({ orderBy: { createdAt: 'desc' }, take: 4 }),
@@ -66,8 +89,56 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
     prisma.employeeRecord.count({ where: { type: 'HELPDESK', status: { notIn: ['Resolved', 'Closed'] }, employeeId: { in: ids } } }),
   ]);
 
-  const countStatus = (s) => attendanceToday.filter((a) => a.status === s).length;
-  const onLeaveToday = leaveRequests.filter((l) => l.status === 'Approved' && l.fromDate <= today && (l.toDate || l.fromDate) >= today);
+  const countStatus = (s) => attendance.filter((a) => a.status === s).length;
+
+  // hrms-24 §9 — THE ATTENDANCE TILES AND CHARTS FROM ONE COMPUTATION. Each
+  // person's day status comes from utils/attendanceDays.js (punches, marks,
+  // approved leave, holidays, weekly offs) — the rule My Attendance, Team
+  // Attendance and the Monthly Summary use — over the same filtered employee
+  // set, so a tile and the chart beside it can never disagree. Day by day, so
+  // it covers ranges up to a year; a longer custom range keeps the raw mark
+  // counts below and draws no attendance chart.
+  //
+  // THE TILES COUNT PEOPLE, NOT PERSON-DAYS. They used to total every day of
+  // the range, so "This Year" showed Present 3,038 and Missing Punch 1,714
+  // against a headcount of 35 active people (366 records, 330 of whom have
+  // left). Now the tiles are ONE DAY — the range's last day, or today when the
+  // range runs into the future — out of the people on the rolls that day
+  // (utils/attendanceDays.js rollOf: joined, not yet left, Super Admin
+  // excluded), each person in exactly one bucket, so they add up to the day's
+  // headcount and match the Attendance page's Dashboard for that date. The
+  // charts beside them still show the whole range, labelled person-days.
+  const insights = require('./insights');
+  const cfg = (await prisma.hrConfig.findFirst()) || await prisma.hrConfig.create({ data: {} });
+  const roll = await D.rollOf(prisma, employees);
+  const asOf = period.to < D.localDate() ? period.to : D.localDate();
+  const onDay = roll.employees.filter((e) => D.onRolls(e, asOf, asOf, roll.lastDayOf));
+  const dayLoad = await D.loadDays(prisma, { employees: onDay, from: asOf, to: asOf, cfg, lastDayOf: roll.lastDayOf });
+  const dayTally = D.tally(onDay.map((e) => dayLoad.days(e)[0]));
+  let computed = null;
+  if (period.days <= insights.MAX_DAY_RANGE) {
+    const working = roll.employees.filter((e) => D.onRolls(e, period.from, period.to, roll.lastDayOf));
+    const { days } = await D.loadDays(prisma, { employees: working, from: period.from, to: period.to, cfg, lastDayOf: roll.lastDayOf });
+    const per = working.map((e) => {
+      const rows = days(e).filter((d) => !['Upcoming', 'Not Joined', 'Left'].includes(d.status));
+      return { employee: e, rows, summary: D.summarise(rows) };
+    });
+    computed = insights.buildAttendance(per, period);
+  }
+  const deptById = new Map(employees.map((e) => [e.id, e.department]));
+  const leaveBuilt = insights.buildLeave(leaveRequests.map((l) => ({ ...l, employee: { department: deptById.get(l.employeeId) || null } })));
+  // Punches keyed by employee + day, so a mark is checked against its own day's.
+  const punchKey = (p) => `${p.employeeId}|${p.date}`;
+  const punchedIn = new Set(punches.filter((p) => p.direction === 'In').map(punchKey));
+  const punchedOut = new Set(punches.filter((p) => p.direction === 'Out').map(punchKey));
+  // Distinct employees, not requests: two approved requests inside one month
+  // are still one person away.
+  const onLeave = new Set(leaveRequests.filter((l) => l.status === 'Approved').map((l) => l.employeeId));
+  const joinedInRange = (e) => {
+    if (!e.dateOfJoining) return false;
+    const d = new Date(e.dateOfJoining).toISOString().slice(0, 10);
+    return d >= period.from && d <= period.to;
+  };
   const deptCounts = {};
   employees.forEach((e) => { if (e.department) deptCounts[e.department] = (deptCounts[e.department] || 0) + 1; });
 
@@ -80,41 +151,56 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
 
   res.json({
     date: today,
+    period,
     filterOptions: {
       departments: [...new Set(allEmployees.map((e) => e.department).filter(Boolean))].sort(),
       locations: [...new Set(allEmployees.map((e) => e.location).filter(Boolean))].sort(),
-      statuses: ['Active', 'On Probation', 'Notice Period', 'Exit Process', 'Relieved'],
+      statuses: HR_STATUSES,
       managers: [...new Map(allEmployees.filter((e) => e.reportingManager).map((e) => [e.reportingManagerId, { id: e.reportingManagerId, name: e.reportingManager.name }])).values()],
     },
     employeeOverview: {
       total: employees.length,
       active: employees.filter((e) => e.employmentStatus === 'Active').length,
-      newJoiners30d: employees.filter((e) => e.dateOfJoining && new Date(e.dateOfJoining) >= thirtyDaysAgo).length,
-      onLeaveToday: onLeaveToday.length,
+      newJoiners: employees.filter(joinedInRange).length,
+      onLeave: onLeave.size,
       servingNotice: employees.filter((e) => e.employmentStatus === 'Notice Period').length,
       exitProcess: employees.filter((e) => e.employmentStatus === 'Exit Process').length,
       relieved: employees.filter((e) => e.employmentStatus === 'Relieved').length,
     },
+    // PEOPLE on one day (asOf) — see above. present + halfDay + absent +
+    // onLeave + offDay + noRecord + notYet (+ upcoming) = headcount.
     attendanceOverview: {
-      present: countStatus('Present'),
-      absent: countStatus('Absent'),
-      late: countStatus('Late'),
-      halfDay: countStatus('Half Day'),
-      // Punched in but never punched out (and no manual check-out recorded).
-      missingPunch: attendanceToday.filter((a) => (a.checkIn || punchesToday.some((p) => p.employeeId === a.employeeId && p.direction === 'In'))
-        && !a.checkOut && !punchesToday.some((p) => p.employeeId === a.employeeId && p.direction === 'Out')).length,
+      asOf,
+      headcount: dayTally.headcount,
+      present: dayTally.present,
+      late: dayTally.late, // of those present / half day
+      halfDay: dayTally.halfDay,
+      absent: dayTally.absent,
+      onLeave: dayTally.onLeave,
+      offDay: dayTally.offDay,
+      noRecord: dayTally.noRecord,
+      notYet: dayTally.notYet,
+      upcoming: dayTally.upcoming,
+      missingPunch: dayTally.missingCheckIn + dayTally.missingCheckOut,
+      checkedIn: dayTally.checkedIn,
+      checkedOut: dayTally.checkedOut,
       regularizationPending: regularizations.length,
+      computed: true,
+      // The range's person-days (what the tiles used to show), for the charts' context.
+      rangePersonDays: computed ? computed.totals : null,
     },
+    // hrms-24 §9 — the charts, built from exactly the figures in the tiles.
+    charts: [...(computed ? computed.charts : []), ...leaveBuilt.charts],
     leaveOverview: {
       total: leaveRequests.length,
       pending: leaveRequests.filter((l) => l.status === 'Pending').length,
       approved: leaveRequests.filter((l) => l.status === 'Approved').length,
       rejected: leaveRequests.filter((l) => l.status === 'Rejected').length,
       cancellationRequests: leaveRequests.filter((l) => l.status === 'Cancellation Requested').length,
-      upcoming: leaveRequests.filter((l) => l.status === 'Approved' && l.fromDate > today).length,
+      upcoming: leaveUpcoming,
     },
     pendingTasks: {
-      leaveApprovals: leaveRequests.filter((l) => l.status === 'Pending').length,
+      leaveApprovals: leavePending,
       attendanceRegularization: regularizations.length,
       assetsAssigned: assets,
       trainingPending: courseAssignments,

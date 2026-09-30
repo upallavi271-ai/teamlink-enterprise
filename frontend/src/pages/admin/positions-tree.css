@@ -1,0 +1,32 @@
+/* Administration -> Positions -> Structure tree. Everything is scoped under
+   .pos-tree so nothing here leaks into the rest of the app. */
+.pos-tree { display: flex; flex-direction: column; gap: 14px; }
+.pos-tree .pt-dept { border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); overflow: hidden; }
+.pos-tree .pt-dept-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; background: var(--paper); border-bottom: 1px solid var(--line); }
+.pos-tree .pt-dept-head h3 { margin: 0; font-size: 17px; }
+.pos-tree .pt-dept-head .pt-meta { margin-left: auto; font-size: 12.5px; color: var(--ink-soft); }
+.pos-tree .pt-body { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.pos-tree .pt-team { border-left: 3px solid var(--brand, var(--navy)); padding-left: 12px; }
+.pos-tree .pt-team-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin-bottom: 6px; }
+.pos-tree .pt-children { margin-left: 22px; border-left: 1px dashed var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.pos-tree .pt-seat { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised); }
+.pos-tree .pt-seat.pt-tl { background: var(--navy-tint, var(--paper)); }
+.pos-tree .pt-seat.pt-inactive { opacity: .7; }
+.pos-tree .pt-code { font-weight: 700; }
+.pos-tree .pt-name { font-size: 12px; color: var(--ink-soft); }
+.pos-tree .pt-holder { min-width: 0; }
+.pos-tree .pt-holder b { font-weight: 600; }
+.pos-tree .pt-since { font-size: 12px; color: var(--ink-soft); }
+.pos-tree .pt-prev-toggle { background: none; border: 0; padding: 0; margin-top: 3px; font-size: 12px; color: var(--navy, var(--brand)); cursor: pointer; text-decoration: underline; }
+.pos-tree .pt-prev { margin: 5px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--ink-soft); }
+.pos-tree .pt-prev li { padding: 2px 0; }
+.pos-tree .pt-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.pos-tree .pt-work { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
+.pos-tree .pt-flag { border: 1px solid var(--amber, #b7791f); background: var(--amber-tint, #fff7e6); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.pos-tree .pt-section-title { font-size: 12px; font-weight: 700; color: var(--ink-soft); margin: 4px 0; }
+.pos-tree details > summary { cursor: pointer; font-size: 13px; color: var(--ink-soft); }
+@media (max-width: 720px) {
+  .pos-tree .pt-seat { grid-template-columns: 1fr; }
+  .pos-tree .pt-actions { justify-content: flex-start; }
+  .pos-tree .pt-children { margin-left: 8px; }
+}

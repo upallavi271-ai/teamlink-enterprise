@@ -13,24 +13,38 @@ import { Link, NavLink } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+import AtsDataTools from '../../components/AtsDataTools.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
 import { stageLabel, offerStatusClass } from '../../atsVocab';
 import {
   fmtDate, money, useWorkspace, Banner, Panel, HiringTypeChip, IntJoinFilters,
   EMPTY_INTJOIN_FILTERS, matchesShared, INTJOIN_TABS,
+  usePersonApplicationIds, IntJoinEmpty, sortIntJoin,
 } from './intjoinShared.jsx';
 
 export default function Offers() {
   const { user } = useAuth();
-  const { data, error, notice, act } = useWorkspace('/ats/offers');
+  const { data, error, notice, act, load } = useWorkspace('/ats/offers');
   const [filters, setFilters] = useState(EMPTY_INTJOIN_FILTERS);
+  const personIds = usePersonApplicationIds(filters);
   const [dialog, setDialog] = useState(null);
   const canAct = can(user, 'ats', 'interviews', 'Offers', 'edit');
 
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
   const rows = useMemo(
-    () => (data.rows || []).filter((r) => matchesShared(r, filters, r.offerDate)),
-    [data.rows, filters],
+    () => sortIntJoin(
+      (data.rows || []).filter((r) => matchesShared(r, filters, r.offerDate, personIds)
+        && (!filters.status || r.offerStatus === filters.status)),
+      filters.sort, (r) => r.offerDate,
+    ),
+    [data.rows, filters, personIds],
   );
+  const statuses = useMemo(
+    () => [...new Set([...(data.offerStatuses || []), ...(data.rows || []).map((r) => r.offerStatus)].filter(Boolean))]
+      .map((s) => ({ value: s, label: s })),
+    [data.rows, data.offerStatuses],
+  );
+  const page = usePaged(rows);
 
   return (
     <div>
@@ -38,10 +52,20 @@ export default function Offers() {
         <div>
           <h1>Offers</h1>
           <div className="page-sub">
-            Selected → Offer → Offer Accepted → Documents → Joining. A client placement carries on into
-            Accounts on joining; a TeamLink internal hire carries on into HRMS. The row says which.
+            Selected → Offer → Offer Accepted → <Link to="/ats/joining">Joining</Link>, for both kinds of hire (the
+            actual workflow). A client placement&apos;s offer is the client&apos;s — record it here with the CTC the
+            placement fee is worked out on. A TeamLink internal hire gets TeamLink&apos;s own offer and, after joining,
+            an HRMS employee record.
           </div>
         </div>
+        {/* Template · Import · Export — the rows shown (server-scoped
+            /ats/offers, narrowed to the filtered rows) and the matching import. */}
+        <AtsDataTools
+          module="offers"
+          kinds={['offers']}
+          onImported={load}
+          body={() => ({ ids: rows.length === (data.rows || []).length ? null : rows.map((r) => r.id) })}
+        />
       </div>
 
       <div className="tabbar">
@@ -58,6 +82,13 @@ export default function Offers() {
         opts={data.filterOptions || {}}
         onClear={() => setFilters(EMPTY_INTJOIN_FILTERS)}
         count={rows.length}
+        total={(data.rows || []).length}
+        noun="offers"
+        storageKey="offers"
+        statuses={statuses}
+        statusLabel="Offer status"
+        statusAll="All offer statuses"
+        dateLabel="Offer date"
       />
 
       <div className="tbl-wrap">
@@ -70,7 +101,7 @@ export default function Offers() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {page.slice.map((r) => {
               const internal = r.hiringType === 'TeamLink Internal Hire';
               return (
                 <tr key={r.id}>
@@ -91,9 +122,10 @@ export default function Offers() {
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {!canAct ? <span className="small-muted">—</span> : (
                       <>
+                        {/* Both kinds of hire: TeamLink's offer (internal) or the client's offer, recorded. */}
                         {(r.stage === 'SELECTED' || r.offerStatus === 'Offer Declined') && (
                           <button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'release', row: r })}>
-                            {internal ? 'Release Internal Offer' : 'Release Offer'}
+                            {internal ? 'Release Internal Offer' : "Record Client's Offer"}
                           </button>
                         )}
                         {r.offerStatus === 'Offer Released' && (
@@ -128,11 +160,12 @@ export default function Offers() {
               );
             })}
             {rows.length === 0 && (
-              <tr><td colSpan="11" className="small-muted" style={{ padding: 16 }}>No candidates are at offer stage.</td></tr>
+              <tr><td colSpan="11" style={{ padding: 0 }}><IntJoinEmpty loading={data.loading} filters={filters} onClear={() => setFilters(EMPTY_INTJOIN_FILTERS)} noun="offers" title="Nobody is at offer stage yet." /></td></tr>
             )}
           </tbody>
         </table>
       </div>
+      <Pager page={page} noun="offers" />
 
       {dialog?.kind === 'release' && (
         <ReleaseForm
@@ -186,7 +219,7 @@ function ReleaseForm({ row, onClose, onSubmit }) {
         </div>
         <div className="small-muted" style={{ marginBottom: 10 }}>
           {internal
-            ? 'A TeamLink internal hire is never invoiced. Once they join, Internal Hiring creates the HRMS employee record.'
+            ? 'A TeamLink internal hire is never invoiced. Once they join, Create HRMS Employee (Joining / Candidate 360) makes the HRMS employee record.'
             : `The offered CTC is what the placement fee is calculated on when this candidate joins — ${row.requirement.client?.name}'s agreed fee %, plus GST, less TDS.`}
         </div>
         <button className="btn btn-primary btn-sm" type="submit">Release offer</button>

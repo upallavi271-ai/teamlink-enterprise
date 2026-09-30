@@ -22,7 +22,24 @@ const prisma = require('../db');
 // ---------------------------------------------------------------------------
 
 const CONSULTANT = 'TeamLink Consultants (OPC) Pvt. Ltd.';
-const CONSULTANT_ADDRESS = '#512, 5th Floor, ARV Work Spaces LLP, KPHB, Hyderabad – 500072, Telangana, India';
+
+// OUR ADDRESS HAS ONE SOURCE: Administration → Company Setup. It used to be a
+// constant here (#512) while the public home page printed another (#606);
+// an agreement now prints whatever Company Setup holds, and a blank line when
+// it holds nothing, so fixing the address once fixes every new agreement.
+async function consultantParty() {
+  const c = await prisma.company.findFirst({
+    select: { name: true, legalName: true, address: true, city: true, state: true, pin: true },
+  }).catch(() => null);
+  const parts = c ? [c.address, c.city, c.state, c.pin].map((p) => String(p || '').trim()).filter(Boolean) : [];
+  // Don't repeat a city / state the address line already contains.
+  const address = parts.filter((p, i) => i === 0 || !parts[0].toLowerCase().includes(p.toLowerCase())).join(', ');
+  return { name: (c && String(c.legalName || '').trim()) || CONSULTANT, address: address || null };
+}
+
+// The payment terms every client record starts with (schema default). A
+// client whose terms were changed gets THEIR terms in clause 5.2.
+const DEFAULT_PAYMENT_TERMS = 'Invoice 6 days after joining; payment due within 6 days of invoice';
 
 // A blank to be completed by hand, rather than a value nobody supplied.
 const blank = (n = 40) => '_'.repeat(n);
@@ -36,8 +53,11 @@ function addressOf(client) {
   return parts.length ? parts.join(', ') : blank(70);
 }
 
-function buildAgreementDocument(client = {}) {
+function buildAgreementDocument(client = {}, consultant = null) {
   const c = client || {};
+  const us = consultant || { name: CONSULTANT, address: null };
+  const terms = String(c.paymentTerms || '').trim();
+  const customTerms = terms && terms.toLowerCase() !== DEFAULT_PAYMENT_TERMS.toLowerCase();
   const fee = c.agreementFeePercent != null ? c.agreementFeePercent : 8.33;
   const gst = c.gstPercent != null ? c.gstPercent : 18;
   const guarantee = String(c.guaranteePeriod || '30 Days').trim();
@@ -56,8 +76,8 @@ function buildAgreementDocument(client = {}) {
     `(1) ${or(c.legalName || c.name, 50)}, a company having its registered / principal office at`,
     `${addressOf(c)} ("Client"); and`,
     '',
-    `(2) ${CONSULTANT}, a company incorporated under the Companies Act, 2013,`,
-    `having its principal place of business at ${CONSULTANT_ADDRESS} ("Consultant").`,
+    `(2) ${us.name}, a company incorporated under the Companies Act, 2013,`,
+    `having its principal place of business at ${us.address || blank(70)} ("Consultant").`,
     '',
     'Client and Consultant are each referred to individually as a "Party" and collectively as the "Parties".',
     '',
@@ -130,9 +150,13 @@ function buildAgreementDocument(client = {}) {
     '5.1  Client shall pay Consultant a Placement Fee for each Candidate referred by Consultant who is',
     "selected by Client and joins Client's employment or engagement, calculated as set out in Schedule A,",
     'plus applicable taxes (including GST).',
-    "5.2  Consultant shall raise an invoice after six (6) business days of the Placed Candidate's date of",
-    'joining. Client shall pay each invoice within six (6) days of the invoice date, by bank transfer to the',
-    'account designated by Consultant.',
+    // The client's own agreed payment terms, when they differ from the standard.
+    ...(customTerms
+      ? [`5.2  Payment terms agreed with Client: ${terms}. Client shall pay each invoice by bank transfer to the`,
+        'account designated by Consultant.']
+      : ["5.2  Consultant shall raise an invoice after six (6) business days of the Placed Candidate's date of",
+        'joining. Client shall pay each invoice within six (6) days of the invoice date, by bank transfer to the',
+        'account designated by Consultant.']),
     '5.3  If Client disputes any invoice in good faith, Client shall notify Consultant in writing of the',
     'specific basis for the dispute within seven (7) days of receipt of the invoice, and the Parties shall',
     'promptly work to resolve the dispute. Undisputed amounts shall be paid on the original due date.',
@@ -245,7 +269,7 @@ function buildAgreementDocument(client = {}) {
     '',
     'This Agreement has been executed by authorized signatories of the respective parties.',
     '',
-    `For ${CONSULTANT}                          For Client`,
+    `For ${us.name}                          For Client`,
     '',
     `Name: ${blank(28)}                Name: ${blank(28)}`,
     `Designation: ${blank(21)}                Designation: ${blank(21)}`,
@@ -268,4 +292,6 @@ function newEsignToken() {
   return crypto.randomBytes(24).toString('hex');
 }
 
-module.exports = { buildAgreementDocument, nextAgreementId, newEsignToken, CONSULTANT, CONSULTANT_ADDRESS };
+module.exports = {
+  buildAgreementDocument, nextAgreementId, newEsignToken, consultantParty, CONSULTANT, DEFAULT_PAYMENT_TERMS,
+};

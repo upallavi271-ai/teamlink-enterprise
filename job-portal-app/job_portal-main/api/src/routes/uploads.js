@@ -1,0 +1,471 @@
+/**
+ * Resume upload and download (requirements 8, 9, 19).
+ *
+ * The prototype's Upload Resume -> AI Extraction -> Review flow keeps its
+ * UI exactly as it is. What changes underneath: the bytes now go to object
+ * storage instead of a base64 string in localStorage, and the candidate
+ * record keeps a reference.
+ *
+ * Requirement 9 matters here — if extraction cannot fill a field, the
+ * candidate is still saved with whatever was parsed and the field stays
+ * editable. Nothing is discarded because a parse was incomplete.
+ */
+import { Router } from 'express';
+import multer from 'multer';
+import { config } from '../config.js';
+import { withUser } from '../db.js';
+import { wrap, badRequest, notFound, forbidden, ApiError, CODES } from '../errors.js';
+import { requireAuth, requireRole } from '../auth.js';
+import { storeResume, getStorage, ALLOWED_EXT } from '../storage.js';
+import { extractResumeText } from '../resume/extract.js';
+import { extractFields, parseConfidence } from '../resume/fields.js';
+import { applyExtractedFields } from '../resume/apply.js';
+import { matchResumeToCandidate } from '../resume/match.js';
+import { toCandidate } from '../shapes.js';
+import { screenApplication } from '../ai/screening.js';
+
+/* The screening runs as the engine: it reads a job and a candidate that
+   the uploader may not be entitled to see, and it is the same identity
+   that screens an application when it is created. */
+const ENGINE_SESSION = { userId: '', role: 'admin', profileId: null };
+
+// Memory storage so the buffer can be inspected BEFORE anything touches
+// disk — a file is never written until its magic bytes check out.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: config.maxUploadBytes, files: 1, fields: 20 },
+});
+
+/*
+ * The same rules, for a batch.
+ *
+ * Memory storage for the same reason as above: nothing is written until
+ * its magic bytes have been read. Forty at a time, because emptying a
+ * folder of CVs is the case this exists for, and a limit that refuses is
+ * better than a request that times out half way through.
+ */
+const bulk = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: config.maxUploadBytes, files: 40, fields: 20 },
+});
+
+export default function uploadRoutes() {
+  const r = Router();
+
+  r.post('/uploads/resume', requireAuth(),
+    (req, res, next) => upload.single('resume')(req, res, (err) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        const mb = Math.round(config.maxUploadBytes / 1024 / 1024);
+        return next(new ApiError(413, CODES.FILE_TOO_LARGE,
+          `That file is too large. The limit is ${mb}MB.`));
+      }
+      return next(new ApiError(400, CODES.UPLOAD_FAILED, 'That file could not be uploaded.'));
+    }),
+    wrap(async (req, res) => {
+      if (!req.file) {
+        throw badRequest(`Please choose a file to upload (${ALLOWED_EXT.join(', ').toUpperCase()}).`);
+      }
+
+      let candidateId = req.body?.candidateId;
+      if (req.session.role === 'candidate') candidateId = req.session.profileId;
+      else if (!['recruiter', 'admin'].includes(req.session.role)) {
+        throw forbidden('You cannot upload a resume for someone else.');
+      }
+      if (!candidateId) throw badRequest('No candidate specified.');
+
+      // validates magic bytes, size and extension consistency
+      const stored = await storeResume({
+        candidateId,
+        buffer: req.file.buffer,
+        originalName: req.file.originalname,
+      });
+
+      /* ---------------------------------------------------------------- *
+       * Read the file while we have it.
+       *
+       * Storing the bytes and leaving the record empty is how a resume
+       * ends up on file with "0 skills detected" beside it. The same
+       * extractor the registration form uses runs here, so a resume
+       * uploaded by any route - the profile page, a recruiter acting for
+       * a candidate - produces the same parsed detail.
+       *
+       * A parse failure does NOT fail the upload: the file is the source
+       * document and is worth keeping even when it cannot be read. The
+       * reason is recorded against the candidate instead.
+       * ---------------------------------------------------------------- */
+      let parsed = null;
+      let parseError = null;
+      let resumeText = null;
+      try {
+        const doc = await extractResumeText(req.file.buffer, req.file.originalname);
+        const out = extractFields(doc.text);
+        // Kept so the screening can read the CV itself, not only the
+        // fields the extractor recognised in it.
+        resumeText = String(doc.text || '').slice(0, 200_000);
+        parsed = {
+          parser: doc.parser,
+          chars: doc.chars,
+          fields: out.fields,
+          found: out.found,
+          confidence: parseConfidence({ fields: out.fields, chars: doc.chars }),
+        };
+      } catch (err) {
+        parseError = err && err.message ? String(err.message).slice(0, 400) : 'could not be read';
+      }
+
+      const cand = await withUser(req.session, async (c) => {
+        const upd = await c.query(
+          `update candidates
+              set resume_file=$1, resume_storage_path=$2, resume_mime=$3,
+                  resume_size=$4, resume_uploaded_at=now(),
+                  resume_parsed_at=$6, resume_parser=$7, resume_chars=$8,
+                  resume_fields_detected=$9, resume_parse_confidence=$10,
+                  resume_parse_error=$11, resume_text=$12
+            where id=$5 returning *`,
+          [stored.displayName, stored.path, stored.mime, stored.size, candidateId,
+           parsed ? new Date() : null,
+           parsed ? parsed.parser : null,
+           parsed ? parsed.chars : null,
+           parsed ? parsed.found : null,
+           parsed ? parsed.confidence : null,
+           parseError, resumeText]);
+
+        if (parsed) await applyExtractedFields(c, candidateId, parsed.fields);
+        if (!upd.rowCount) {
+          // the row exists but RLS refused the write, or it is simply gone
+          const seen = await c.query(`select 1 from candidates where id=$1`, [candidateId]);
+          throw seen.rowCount ? forbidden('You cannot change this profile.')
+                              : notFound('That candidate could not be found.');
+        }
+        const fresh = await c.query(`select * from candidates where id=$1`, [candidateId]);
+        return fresh.rows[0] || upd.rows[0];
+      });
+
+      /* ---------------------------------------------------------------- *
+       * The score is worked out again, now there is a resume to read.
+       *
+       * A candidate is screened the moment they apply, which is almost
+       * always BEFORE they attach a CV - so the number on the recruiter's
+       * screen was computed from a record with nothing behind it, and
+       * uploading the resume changed nothing. That is the opposite of
+       * what uploading a resume is for.
+       *
+       * Every open application of theirs, and after the response is
+       * decided rather than before: a screening that fails must not fail
+       * the upload, because the file is safely stored either way.
+       * ---------------------------------------------------------------- */
+      const rescreened = [];
+      try {
+        const apps = await withUser(ENGINE_SESSION, async (c) => (await c.query(
+          `select id from applications where candidate_id=$1
+             and stage not in ('rejected','joined')`, [candidateId])).rows);
+        for (const a of apps) {
+          // eslint-disable-next-line no-await-in-loop
+          const out = await screenApplication(a.id, { actor: 'system', force: true });
+          if (out) rescreened.push({ applicationId: a.id, score: out.score });
+        }
+      } catch (err) {
+        console.error('[uploads] re-screening failed:', err.message);
+      }
+
+      res.status(201).json({
+        rescreened,
+        candidate: toCandidate(cand),
+        resume: {
+          fileName: stored.displayName,
+          size: stored.size,
+          mime: stored.mime,
+          // the UI shows the name; the path stays server-side
+        },
+        // What the parser managed, so the page can report it rather than
+        // asserting a number nothing measured.
+        parse: parsed
+          ? { ok: true, parser: parsed.parser, chars: parsed.chars,
+              fieldsDetected: parsed.found, confidence: parsed.confidence,
+              fields: parsed.fields }
+          : { ok: false, error: parseError },
+      });
+    }));
+
+  /**
+   * POST /api/candidates/:id/resume/reparse
+   *
+   * Reads the file ALREADY ON RECORD again.
+   *
+   * The prototype's "Re-parse with AI" button called reparseResume(),
+   * which re-ran its simulated extraction over the profile that was
+   * already on screen - so it could never discover anything the profile
+   * did not already say. This fetches the stored bytes and runs the real
+   * extractor over them, which is what the button claims to do.
+   *
+   * Useful after the extractor improves, and after a parse that failed.
+   */
+  /**
+   * POST /api/candidates/resumes/match
+   *
+   * A batch of resumes, placed on the candidates they belong to.
+   *
+   * The candidates imported from a job board's summary email have no CV,
+   * because the mail carries none. The CVs arrive separately - forwarded
+   * together, downloaded from the dashboard - and somebody would
+   * otherwise open each one, work out who it is, find them in the portal
+   * and attach it. For eighty-seven candidates that is a day's work, and
+   * it is the kind of day that does not happen.
+   *
+   * Each file is read, the person is looked up from what the resume
+   * ITSELF says, and it is attached. A file that cannot be placed is
+   * REPORTED, with what was read from it, rather than attached to a best
+   * guess - a CV on the wrong candidate is the document that gets sent
+   * to a client.
+   *
+   * The lookup runs as the CALLER, so a recruiter can only ever place a
+   * resume onto somebody they were already entitled to see.
+   */
+  r.post('/candidates/resumes/match', requireAuth(),
+    requireRole('recruiter', 'bde', 'admin'),
+    (req, res, next) => bulk.array('resumes', 40)(req, res, (err) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        const mb = Math.round(config.maxUploadBytes / 1024 / 1024);
+        return next(new ApiError(413, CODES.FILE_TOO_LARGE,
+          `One of those files is too large. The limit is ${mb}MB each.`));
+      }
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return next(badRequest('Too many files at once - 40 is the limit.'));
+      }
+      return next(new ApiError(400, CODES.UPLOAD_FAILED, 'Those files could not be uploaded.'));
+    }),
+    wrap(async (req, res) => {
+      const files = req.files || [];
+      if (!files.length) throw badRequest('Choose the resume files to add.');
+
+      const matched = [];
+      const unmatched = [];
+      const refused = [];
+
+      for (const file of files) {
+        const name = file.originalname || 'resume';
+
+        let doc;
+        let parsed;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          doc = await extractResumeText(file.buffer, name);
+          parsed = extractFields(doc.text);
+        } catch (err) {
+          refused.push({ file: name, reason: err.message || 'it could not be read' });
+          continue;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        const hit = await matchResumeToCandidate(req.session, parsed.fields);
+        if (!hit) {
+          /*
+           * What was read, so a person can place it without opening the
+           * file again. The fields only - never the text of somebody's
+           * CV in an API response.
+           */
+          unmatched.push({
+            file: name,
+            read: {
+              name: parsed.fields.name || undefined,
+              email: parsed.fields.email || undefined,
+              phone: parsed.fields.phone || undefined,
+              currentCompany: parsed.fields.currentCompany || undefined,
+              location: parsed.fields.location || undefined,
+            },
+            reason: (parsed.fields.name || parsed.fields.email)
+              ? 'nobody in the portal matches what this resume says'
+              : 'no name, address or number could be read from it',
+          });
+          continue;
+        }
+
+        let stored;
+        try {
+          // Magic bytes. A file that is not a document never reaches
+          // storage, whatever it is called.
+          // eslint-disable-next-line no-await-in-loop
+          stored = await storeResume({
+            candidateId: hit.candidateId, buffer: file.buffer, originalName: name,
+          });
+        } catch (err) {
+          refused.push({ file: name, reason: err.message });
+          continue;
+        }
+
+        const text = String(doc.text || '').slice(0, 200000);
+        const confidence = parseConfidence({ fields: parsed.fields, chars: doc.chars });
+
+        // eslint-disable-next-line no-await-in-loop
+        await withUser(req.session, async (c) => {
+          await c.query(
+            `update candidates
+                set resume_file=$1, resume_storage_path=$2, resume_mime=$3,
+                    resume_size=$4, resume_uploaded_at=now(), resume_parsed_at=now(),
+                    resume_parser=$6, resume_chars=$7, resume_fields_detected=$8,
+                    resume_parse_confidence=$9, resume_parse_error=null, resume_text=$10
+              where id=$5`,
+            [stored.displayName, stored.path, stored.mime, stored.size, hit.candidateId,
+             doc.parser, doc.chars, parsed.found, confidence, text]);
+          await applyExtractedFields(c, hit.candidateId, parsed.fields);
+        });
+
+        /*
+         * And the score is worked out again, because it was computed
+         * before this CV existed. A failure to re-screen must not lose
+         * the resume, which is safely stored either way.
+         */
+        const rescreened = [];
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const apps = await withUser(ENGINE_SESSION, async (c) => (await c.query(
+            `select id from applications where candidate_id=$1
+               and stage not in ('rejected','joined')`, [hit.candidateId])).rows);
+          for (const a of apps) {
+            // eslint-disable-next-line no-await-in-loop
+            const out = await screenApplication(a.id, { actor: 'system', force: true });
+            if (out) rescreened.push({ applicationId: a.id, score: out.score });
+          }
+        } catch (err) {
+          console.error('[resumes] re-screening failed:', err.message);
+        }
+
+        matched.push({
+          file: name,
+          candidateId: hit.candidateId,
+          candidateName: hit.name,
+          matchedBy: hit.by,
+          fileName: stored.displayName,
+          fieldsDetected: parsed.found,
+          rescreened,
+        });
+      }
+
+      res.status(201).json({
+        files: files.length,
+        matched: matched.length,
+        unmatched: unmatched.length,
+        refused: refused.length,
+        detail: { matched, unmatched, refused },
+      });
+    }));
+
+  r.post('/candidates/:id/resume/reparse', requireAuth(), wrap(async (req, res) => {
+    const candidateId = req.session.role === 'candidate'
+      ? req.session.profileId
+      : req.params.id;
+    if (req.session.role === 'candidate' && req.params.id !== req.session.profileId) {
+      throw forbidden('You can only re-parse your own resume.');
+    }
+    if (!['candidate', 'recruiter', 'admin'].includes(req.session.role)) {
+      throw forbidden('You cannot re-parse this resume.');
+    }
+
+    const row = await withUser(req.session, async (c) => {
+      const { rows } = await c.query(
+        `select id, resume_file, resume_storage_path from candidates where id=$1`,
+        [candidateId]);
+      return rows[0];
+    });
+    if (!row) throw notFound('That candidate could not be found.');
+    if (!row.resume_storage_path) throw badRequest('There is no resume on file to re-parse.');
+
+    const buffer = await getStorage().get(row.resume_storage_path);
+
+    let parsed = null;
+    let parseError = null;
+    let reparsedText = null;
+    try {
+      const doc = await extractResumeText(buffer, row.resume_file || '');
+      const out = extractFields(doc.text);
+      // A re-parse refreshes what the screening reads, not just the
+      // fields on the profile.
+      reparsedText = String(doc.text || '').slice(0, 200_000);
+      parsed = {
+        parser: doc.parser, chars: doc.chars, fields: out.fields, found: out.found,
+        confidence: parseConfidence({ fields: out.fields, chars: doc.chars }),
+      };
+    } catch (err) {
+      parseError = err && err.message ? String(err.message).slice(0, 400) : 'could not be read';
+    }
+
+    const cand = await withUser(req.session, async (c) => {
+      const upd = await c.query(
+        `update candidates
+            set resume_parsed_at=$1, resume_parser=$2, resume_chars=$3,
+                resume_fields_detected=$4, resume_parse_confidence=$5,
+                resume_parse_error=$6, resume_text=$8
+          where id=$7 returning *`,
+        [parsed ? new Date() : null,
+         parsed ? parsed.parser : null,
+         parsed ? parsed.chars : null,
+         parsed ? parsed.found : null,
+         parsed ? parsed.confidence : null,
+         parseError, candidateId, reparsedText]);
+      if (parsed) await applyExtractedFields(c, candidateId, parsed.fields);
+      const again = await c.query(`select * from candidates where id=$1`, [candidateId]);
+      return again.rows[0] || upd.rows[0];
+    });
+
+    res.json({
+      candidate: toCandidate(cand),
+      parse: parsed
+        ? { ok: true, parser: parsed.parser, chars: parsed.chars,
+            fieldsDetected: parsed.found, confidence: parsed.confidence, fields: parsed.fields }
+        : { ok: false, error: parseError },
+    });
+  }));
+
+  /**
+   * Issues a short-lived link to a resume, after re-checking access.
+   *
+   * The permission question is answered by asking the DATABASE for the
+   * candidate row: if RLS returns nothing, the caller is not entitled to
+   * the file either. That keeps file access and record access from ever
+   * drifting apart.
+   */
+  r.get('/candidates/:id/resume', requireAuth(), wrap(async (req, res) => {
+    const row = await withUser(req.session, async (c) => {
+      const { rows } = await c.query(
+        `select id, resume_file, resume_storage_path, resume_mime
+           from candidates where id=$1`, [req.params.id]);
+      return rows[0];
+    });
+
+    if (!row) throw notFound('That candidate could not be found.');
+    if (!row.resume_storage_path) {
+      throw notFound('No resume has been uploaded for this candidate.');
+    }
+
+    const url = await getStorage().signedUrl(row.resume_storage_path, 120);
+    res.json({ url, fileName: row.resume_file, mime: row.resume_mime, expiresInSeconds: 120 });
+  }));
+
+  /**
+   * Local-driver download route. The signed URL above points here when
+   * STORAGE_DRIVER=local; permissions are re-checked, because a URL alone
+   * must never be enough to read someone's resume.
+   */
+  r.get('/files/:key(*)', requireAuth(), wrap(async (req, res) => {
+    const key = req.params.key;
+
+    const allowed = await withUser(req.session, async (c) => {
+      const { rows } = await c.query(
+        `select resume_file, resume_mime from candidates where resume_storage_path=$1`, [key]);
+      return rows[0] || null;
+    });
+    if (!allowed) throw notFound('That file is no longer available.');
+
+    const buf = await getStorage().get(key);
+    res.setHeader('content-type', allowed.resume_mime || 'application/octet-stream');
+    // `attachment` stops a crafted file rendering inline in the origin
+    res.setHeader('content-disposition',
+      `attachment; filename="${String(allowed.resume_file || 'resume').replace(/"/g, '')}"`);
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.send(buf);
+  }));
+
+  return r;
+}

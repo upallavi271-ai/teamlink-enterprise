@@ -32,12 +32,32 @@ const METHODS = [
   { id: 'Email', icon: '✉️', label: 'Email' },
 ];
 
+// THE NUMBER, IN THE FORM A DIALLER WANTS IT. Records hold "9981520714",
+// "+91 99815 20714" and "09981520714" for the same phone. tel:, wa.me and
+// sms: all want the country code and nothing else: 919981520714. A number
+// that is none of those shapes is passed through as its digits rather than
+// guessed at.
+function intlDigits(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10) return `91${d}`;
+  if (d.length === 11 && d.startsWith('0')) return `91${d.slice(1)}`;
+  return d;
+}
+const telHref = (phone) => `tel:+${intlDigits(phone)}`;
+const whatsappHref = (phone, text) => `https://wa.me/${intlDigits(phone)}?text=${encodeURIComponent(text || '')}`;
+// iOS reads "&body=", everything else "?body=". "?" is the more widely honoured.
+const smsHref = (phone, text) => `sms:+${intlDigits(phone)}?body=${encodeURIComponent(text || '')}`;
+
 // §17 — what a message says before anybody edits it. The token is filled from
 // whatever the caller knows; anything it does not know is simply left out.
-function draftFor(template, { name, role, client }) {
+function draftFor(template, { name, role, client }, custom) {
   const who = name || 'there';
   const what = role ? ` for ${role}` : '';
   const at = client ? ` at ${client}` : '';
+  // A purpose somebody added carries its own text; {name} {role} {client} filled in.
+  if (custom && custom.template) {
+    return custom.template.replace(/\{name\}/gi, who).replace(/\{role\}/gi, role || '').replace(/\{client\}/gi, client || '');
+  }
   switch (template) {
     case 'Interview Reminder':
       return `Hi ${who}, a reminder about your interview${what}${at}. Please confirm you are able to attend.`;
@@ -70,27 +90,75 @@ export default function ContactPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(null);
+  // "+ Add purpose": saved for everyone (ContactPurpose), with an optional message.
+  const [adding, setAdding] = useState(null); // { label, template }
+  const [addError, setAddError] = useState('');
 
-  useEffect(() => {
-    api.get('/followups/statuses').then((r) => setVocab(r.data)).catch(() => setVocab(null));
-  }, []);
+  function loadVocab() {
+    return api.get('/followups/statuses').then((r) => setVocab(r.data)).catch(() => setVocab(null));
+  }
+  useEffect(() => { loadVocab(); }, []);
 
   const templates = vocab ? vocab.templates.candidate : [];
-  const simulated = method === 'WhatsApp' || method === 'SMS';
+  const customOf = (label) => (vocab?.customPurposes || []).find((c) => c.audience === 'candidate' && c.label === label) || null;
+
+  async function savePurpose() {
+    setAddError('');
+    try {
+      const r = await api.post('/followups/purposes', { audience: 'candidate', label: adding.label, template: adding.template });
+      await loadVocab();
+      setPurpose(r.data.label);
+      setAdding(null);
+    } catch (err) {
+      setAddError(err.response?.data?.error || 'Could not add that purpose.');
+    }
+  }
+
+  async function removePurpose(c) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Remove the purpose "${c.label}" for everyone? Contacts already logged keep it.`)) return;
+    try {
+      await api.delete(`/followups/purposes/${c.id}`);
+      if (purpose === c.label) setPurpose('');
+      await loadVocab();
+    } catch (err) {
+      setAddError(err.response?.data?.error || 'Could not remove that purpose.');
+    }
+  }
+  // WhatsApp and SMS go out from the recruiter's OWN phone: the panel opens
+  // the app with the message typed, the recruiter presses send there.
+  const onDevice = method === 'WhatsApp' || method === 'SMS';
   const reach = method === 'Email' ? email : phone;
 
   function pickTemplate(t) {
     setTemplate(t);
     if (!purpose) setPurpose(t);
     setSubject(t);
-    setBody(draftFor(t, { name, role, client }));
+    setBody(draftFor(t, { name, role, client }, customOf(t)));
+  }
+
+  // CLICKING CALL DIALS. The browser hands tel: to whatever calls on this
+  // device — the phone itself on a mobile, Phone Link / Teams / Skype on a
+  // desktop — and the form stays open underneath to record how it went.
+  function chooseMethod(id) {
+    setMethod(id);
+    setError('');
+    if (id === 'Call' && phone) window.location.href = telHref(phone);
+    if (id !== 'Call' && !body) pickTemplate(purpose || templates[0] || '');
   }
 
   async function send() {
-    setError(''); setBusy(true);
+    setError('');
+    // The app must be opened INSIDE the click, before anything is awaited:
+    // a window opened after an await is no longer a user gesture, and popup
+    // blockers stop it.
+    if (method === 'WhatsApp') window.open(whatsappHref(phone, body), '_blank', 'noopener');
+    if (method === 'SMS') window.location.href = smsHref(phone, body);
+    setBusy(true);
     try {
       const res = await api.post(`/candidates/${candidateId}/contact`, {
         method, purpose, applicationId, callResult, notes, subject, body,
+        sentVia: onDevice ? 'device' : undefined,
       });
       setDone(res.data);
     } catch (err) {
@@ -114,6 +182,12 @@ export default function ContactPanel({
         <div className="notice">
           {done.delivery === 'logged' && <>Call recorded — <b>{callResult}</b>.</>}
           {done.delivery === 'queued' && <><b>{method} queued</b> to {reach}. It will show as Sent once the provider accepts it.</>}
+          {done.delivery === 'by-hand' && (
+            <>
+              <b>{method} opened on your device</b> with the message typed, and logged. Press send there if you
+              haven&apos;t — the app can see that you opened it, not whether it went.
+            </>
+          )}
           {done.delivery === 'simulated' && (
             <>
               <b>{method} recorded — Demo / Simulated.</b> No {method} provider is connected, so nothing was
@@ -121,6 +195,13 @@ export default function ContactPanel({
             </>
           )}
         </div>
+        {/* Said so the recruiter knows the follow-up screen has moved, not
+            just the communications history. */}
+        {done.followUpsTouched > 0 && (
+          <div className="small-muted" style={{ marginTop: 8 }}>
+            Added to the follow-up log, and the open follow-up now shows this {method.toLowerCase()} as the last contact.
+          </div>
+        )}
         <div className="small-muted" style={{ marginTop: 8 }}>
           Next: say what happened and when the next touch is due, so this does not stop here.
         </div>
@@ -136,7 +217,7 @@ export default function ContactPanel({
         <button className="btn" onClick={onClose}>Cancel</button>
         {method && (
           <button className="btn btn-primary" disabled={busy || !purpose} onClick={send}>
-            {busy ? 'Recording…' : (method === 'Call' ? 'Save call' : `Send ${method}${simulated ? ' (Demo)' : ''}`)}
+            {busy ? 'Recording…' : (method === 'Call' ? 'Save call' : (onDevice ? `Open ${method} & log` : `Send ${method}`))}
           </button>
         )}
       </>}
@@ -148,6 +229,37 @@ export default function ContactPanel({
           <option value="">Choose a purpose…</option>
           {templates.map((t) => <option key={t} value={t}>{t}</option>)}
         </Combo>
+        {!adding && (
+          <button type="button" className="link-btn" style={{ marginTop: 4 }} onClick={() => { setAdding({ label: '', template: '' }); setAddError(''); }}>
+            + Add a purpose to the list
+          </button>
+        )}
+        {customOf(purpose)?.canDelete && !adding && (
+          <button type="button" className="link-btn" style={{ marginTop: 4, marginLeft: 10 }} onClick={() => removePurpose(customOf(purpose))}>
+            Remove “{purpose}” from the list
+          </button>
+        )}
+        {adding && (
+          <div className="card" style={{ marginTop: 6, padding: 10 }}>
+            <div className="field">
+              <label>New purpose</label>
+              <input autoFocus value={adding.label} maxLength={80} placeholder="e.g. Salary discussion"
+                onChange={(e) => setAdding({ ...adding, label: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Message for it <span className="small-muted">(optional — {'{name}'}, {'{role}'}, {'{client}'} are filled in)</span></label>
+              <textarea rows="2" value={adding.template} placeholder="Hi {name}, …"
+                onChange={(e) => setAdding({ ...adding, template: e.target.value })} />
+            </div>
+            {addError && <div className="error-text">{addError}</div>}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" className="btn btn-sm btn-primary" disabled={adding.label.trim().length < 2} onClick={savePurpose}>Save purpose</button>
+              <button type="button" className="btn btn-sm" onClick={() => { setAdding(null); setAddError(''); }}>Cancel</button>
+            </div>
+            <div className="small-muted" style={{ fontSize: 11, marginTop: 4 }}>Saved for everyone who uses the Contact button.</div>
+          </div>
+        )}
+        {!adding && addError && <div className="error-text">{addError}</div>}
       </div>
 
       {/* 2. HOW */}
@@ -163,14 +275,21 @@ export default function ContactPanel({
                 className={`contact-method${method === m.id ? ' is-on' : ''}`}
                 disabled={!has}
                 title={has ? '' : `No ${m.id === 'Email' ? 'email address' : 'phone number'} on this record`}
-                onClick={() => { setMethod(m.id); setError(''); if (m.id !== 'Call' && !body) pickTemplate(purpose || templates[0] || ''); }}
+                onClick={() => chooseMethod(m.id)}
               >
                 <span aria-hidden="true">{m.icon}</span> {m.label}
               </button>
             );
           })}
         </div>
-        {method && <div className="small-muted" style={{ marginTop: 6 }}>{method === 'Email' ? email : phone}</div>}
+        {method && method !== 'Call' && <div className="small-muted" style={{ marginTop: 6 }}>{method === 'Email' ? email : phone}</div>}
+        {/* A real link as well as the button: if the dialler did not open, or
+            the call dropped, this is one tap to try again. */}
+        {method === 'Call' && (
+          <div className="small-muted" style={{ marginTop: 6 }}>
+            Calling <a href={telHref(phone)}>{phone}</a> — not ringing? <a href={telHref(phone)}>Dial again</a>
+          </div>
+        )}
       </div>
 
       {/* 3a. CALL — the result is the record (§4). */}
@@ -210,10 +329,11 @@ export default function ContactPanel({
             <label>Message</label>
             <textarea rows="5" value={body} onChange={(e) => setBody(e.target.value)} />
           </div>
-          {simulated && (
+          {onDevice && (
             <div className="notice">
-              <b>Demo / Simulated.</b> No {method} provider is connected to this app, so this will be recorded on
-              the candidate&apos;s history but not transmitted.
+              This opens <b>your own {method === 'WhatsApp' ? 'WhatsApp' : 'messaging app'}</b> with the message
+              typed — press send there. It is logged on the follow-up history either way; the app can see that you
+              opened it, not whether it went.
             </div>
           )}
         </>

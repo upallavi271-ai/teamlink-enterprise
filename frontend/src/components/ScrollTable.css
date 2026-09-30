@@ -1,0 +1,10 @@
+/* ScrollTable — a top horizontal scrollbar synced with the table, and a
+   height-capped body with a sticky header (unique .att-wide prefix; used by
+   the Attendance tabs, Import History and Employee Management). Moved here
+   from pages/attendance/attendance-day.css with the component. */
+.att-wide{margin-bottom:10px}
+.att-wide-top{overflow-x:auto;overflow-y:hidden;height:14px;margin:0 0 2px}
+.att-wide-top > div{height:1px}
+.att-wide .att-wide-body{overflow:auto}
+.att-wide-body thead th{position:sticky;top:0;z-index:2}
+.att-wide-body tfoot td{position:sticky;bottom:0;z-index:1}

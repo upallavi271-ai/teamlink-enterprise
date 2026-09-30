@@ -2,6 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
+import { peopleMatches, peopleOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import MoreFilters from '../../components/ui/MoreFilters.jsx';
+import FilterChips from '../../components/FilterChips.jsx';
+import { ListEmpty } from '../../components/ui/ListFilters.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
+import '../../components/ui/ListFilters.css';
+import AudiencePicker, { DeliverVia, audienceReady } from '../../components/AudiencePicker.jsx';
+import { AiAssist } from '../../components/ComposeForm.jsx';
+import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
+import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 
 // Timesheet — "Track and assign work".
 //
@@ -38,6 +48,12 @@ function emptyForm(options) {
     endDate: '',
     dependent: false,
     dependsOnId: '',
+    // "Assign To" for a lead: myself, one person (the single select), or
+    // several at once through the shared Send-to picker — one or MANY
+    // departments or named people, one task per person.
+    assignMode: 'single',
+    audience: { mode: 'individuals', departments: [], employeeIds: [] },
+    channels: [],
   };
 }
 
@@ -103,7 +119,16 @@ function YesNo({ value, onChange }) {
 export default function Timesheet({ standalone = false }) {
   const [options, setOptions] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [filters, setFilters] = useState({ department: '', from: '', to: '' });
+  // department + assigneeId are the hrms-24 §8 picker: Department first, then
+  // an Employee list holding only that department's people IN THIS LOGIN'S
+  // SCOPE (GET /tasks/people). Both go to the server, which refuses anything
+  // outside the scope.
+  const [filters, setFilters] = useState({ department: '', assigneeId: '', from: '', to: '' });
+  const [pickPeople, setPickPeople] = useState([]);
+  // The ASSIGNEE's ID, name and role and the task's status, applied here over
+  // the rows the server returned; department and dates stay server-side.
+  const [pf, setPf] = useState({ q: '', code: '', name: '', role: '', status: '', review: '' });
+  const [sort, setSort] = useState('');
   const [form, setForm] = useState(null); // the New Task / Edit Task modal
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -131,6 +156,7 @@ export default function Timesheet({ standalone = false }) {
   const load = useCallback(() => {
     const params = {};
     if (filters.department) params.department = filters.department;
+    if (filters.assigneeId) params.assigneeId = filters.assigneeId;
     if (filters.from) params.from = filters.from;
     if (filters.to) params.to = filters.to;
     setLoading(true);
@@ -147,6 +173,16 @@ export default function Timesheet({ standalone = false }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // The Employee select refreshes whenever the Department changes: Medical
+  // -> only Medical employees. An Employee login has no picker at all.
+  const canPickEmployee = !!options?.canPickEmployee;
+  useEffect(() => {
+    if (!canPickEmployee) { setPickPeople([]); return; }
+    api.get('/tasks/people', { params: filters.department ? { department: filters.department } : {} })
+      .then((res) => setPickPeople(res.data.people || []))
+      .catch(() => setPickPeople([]));
+  }, [canPickEmployee, filters.department]);
+
   const people = options?.assignable || [];
   const canAssignOthers = !!options?.canAssignOthers;
   // Signing work off is its own permission (hrms / Employee Services /
@@ -156,6 +192,48 @@ export default function Timesheet({ standalone = false }) {
   // Who may drive Start / Complete: the person the work is for, the person who
   // handed it out, or a lead who may edit it. The API asks the same question.
   const mayWork = (t) => !!myId && (t.assigneeId === myId || t.assignedById === myId || canAssignOthers);
+  // The assignee as the filters read them — the name the task was given to,
+  // plus the employee ID and designation the list now carries.
+  const assigneeOf = (t) => ({ ...(t.assignee || {}), name: t.assigneeName });
+  const shown = tasks.filter((t) => textMatches(`${t.name || ''} ${t.subTaskName || ''} ${t.description || ''} ${t.assigneeName || ''} ${t.assignedByName || ''}`, pf.q)
+    && peopleMatches(t, pf, assigneeOf) && (!pf.review || (t.reviewState || 'Not Submitted') === pf.review));
+  const assigneeRoles = peopleOptions(tasks, assigneeOf).roles;
+  const reviewStates = [...new Set(tasks.map((t) => t.reviewState || 'Not Submitted'))].sort();
+  const setP = (k, v) => setPf((f) => ({ ...f, [k]: v }));
+  // Sort: as the server returned them (newest first), or by date / name.
+  const TASK_SORTS = {
+    start: (a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')),
+    due: (a, b) => String(a.endDate || '9999').localeCompare(String(b.endDate || '9999')),
+    name: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
+  };
+  const page = usePaged(TASK_SORTS[sort] ? [...shown].sort(TASK_SORTS[sort]) : shown);
+  const NO_SERVER = { department: '', assigneeId: '', from: '', to: '' };
+  const NO_CLIENT = { q: '', code: '', name: '', role: '', status: '', review: '' };
+  const clearTaskFilters = () => { setFilters(NO_SERVER); setPf(NO_CLIENT); };
+  const taskFiltersOn = Object.values(filters).some(Boolean) || Object.values(pf).some(Boolean);
+  const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
+  const pickedName = (pickPeople.find((p) => p.userId === filters.assigneeId) || {}).name || filters.assigneeId;
+  const taskChips = [
+    { key: 'q', label: 'Search', value: pf.q, onRemove: () => setP('q', '') },
+    { key: 'department', label: 'Department', value: filters.department, onRemove: () => setFilters((f) => ({ ...f, department: '', assigneeId: '' })) },
+    { key: 'assigneeId', label: 'Employee', value: filters.assigneeId ? pickedName : '', onRemove: () => setFilters((f) => ({ ...f, assigneeId: '' })) },
+    { key: 'status', label: 'Status', value: pf.status, onRemove: () => setP('status', '') },
+    { key: 'review', label: 'Review', value: pf.review, onRemove: () => setP('review', '') },
+    {
+      key: 'dates', label: 'Date range',
+      value: filters.from || filters.to ? (filters.from && filters.to ? `${dmy(filters.from)} → ${dmy(filters.to)}` : filters.from ? `from ${dmy(filters.from)}` : `to ${dmy(filters.to)}`) : '',
+      onRemove: () => setFilters((f) => ({ ...f, from: '', to: '' })),
+    },
+    { key: 'code', label: 'Employee ID', value: pf.code, onRemove: () => setP('code', '') },
+    { key: 'name', label: 'Assignee name', value: pf.name, onRemove: () => setP('name', '') },
+    { key: 'role', label: 'Role', value: pf.role, onRemove: () => setP('role', '') },
+  ];
+  const moreOn = [filters.from || filters.to, pf.review, pf.code, pf.name, pf.role].filter(Boolean).length;
+  // The Send-to picker lists exactly the people assignable() offers — the
+  // same set the API accepts — keyed by employee id.
+  const pickable = useMemo(() => people.filter((p) => p.employeeId).map((p) => ({
+    id: p.employeeId, name: p.name, employeeCode: p.designation || '', department: p.department || '',
+  })), [people]);
   const nameOf = useMemo(() => {
     const map = {};
     people.forEach((p) => { map[p.userId] = p.name; });
@@ -195,6 +273,8 @@ export default function Timesheet({ standalone = false }) {
     // empty or the dates are the wrong way round; the messages appear under
     // the boxes they belong to.
     const errors = validate(form);
+    const many = !form.id && canAssignOthers && form.assignMode === 'many';
+    if (many && !audienceReady(form.audience)) errors.assigneeId = form.audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one person.';
     if (Object.keys(errors).length) {
       setFieldErrors(errors);
       setError('Please correct the highlighted fields.');
@@ -219,6 +299,10 @@ export default function Timesheet({ standalone = false }) {
       if (form.id) {
         await api.put(`/tasks/${form.id}`, body);
         setNotice(`"${form.name}" updated.`);
+      } else if (many) {
+        const res = await api.post('/tasks', { ...body, assigneeId: undefined, audience: form.audience, channels: form.channels });
+        const d = res.data;
+        setNotice(`"${d.name}" created for ${d.label} — ${d.created} task(s).${d.skipped?.length ? ` Skipped (no login): ${d.skipped.join(', ')}.` : ''} ${d.deliveryText || ''}`);
       } else {
         const res = await api.post('/tasks', body);
         setNotice(`"${res.data.name}" created and assigned to ${res.data.assigneeName}.`);
@@ -326,37 +410,111 @@ export default function Timesheet({ standalone = false }) {
           </div>
           {reportsButton}
         </div>
-      ) : (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>{reportsButton}</div>
-      )}
+      ) : null}
 
       {error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
+      {/* hrms-24 §1 / §9 — hours worked (check-in to check-out) by period,
+          department and employee, and the tasks in the range, for the people
+          this Timesheet may show; with the per-employee export. */}
+      {/* Filters first: inside a tab strip the Task Reports button joins the
+          panel's filter row instead of sitting in a row of its own above it. */}
+      <InsightsPanel module="timesheet" storageKey="tl_range_timesheet">
+        {!standalone && reportsButton}
+      </InsightsPanel>
+
       <div className="panel">
         <div className="panel-head">
           <h3>My Tasks</h3>
-          <button className="btn btn-primary btn-sm" onClick={openNew} disabled={!options}>+ New Task</button>
+          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Tasks: export everyone in scope (these filters) / one employee,
+                and import with the compulsory sample (backend src/io/timesheet.js).
+                The hours summary keeps the Export above the charts. */}
+            <DataIoBar
+              ioKey="timesheet"
+              params={{ department: filters.department, from: filters.from, to: filters.to, status: pf.status }}
+              onImported={load}
+            />
+            <button className="btn btn-primary btn-sm" onClick={openNew} disabled={!options}>+ New Task</button>
+          </span>
         </div>
         <div className="panel-pad">
-          <div className="filter-row">
-            <Combo
-              value={filters.department}
-              onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))}
+          {/* The list filter standard: Search · Department · Employee · Status
+              on screen, the rest under More Filters, active filters as chips.
+              Department, Employee and the dates go to the server (GET /tasks);
+              the rest narrow the rows it returned. */}
+          <div className="lf" style={{ marginBottom: 10 }}>
+            <MoreFilters
+              storageKey="timesheet-tasks"
+              activeMore={moreOn}
+              onClearAll={taskFiltersOn ? clearTaskFilters : undefined}
+              primary={(
+                <>
+                  <input type="search" placeholder="Search task, sub task or person…" value={pf.q} onChange={(e) => setP('q', e.target.value)} aria-label="Search" style={{ minWidth: 220 }} />
+                  <Combo
+                    value={filters.department} title="Department"
+                    onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value, assigneeId: '' }))}
+                  >
+                    <option value="">{canPickEmployee && !(options?.viewDepartments || []).length ? 'My department' : 'All departments'}</option>
+                    {((canPickEmployee ? options?.viewDepartments : options?.departments) || []).map((d) => <option key={d}>{d}</option>)}
+                  </Combo>
+                  {canPickEmployee && (
+                    <Combo
+                      value={filters.assigneeId} title="Employee"
+                      onChange={(e) => setFilters((f) => ({ ...f, assigneeId: e.target.value }))}
+                    >
+                      <option value="">{filters.department ? `All ${filters.department} employees` : 'All employees'}</option>
+                      {pickPeople.map((p) => (
+                        <option key={p.userId} value={p.userId}>
+                          {p.name}{p.employeeCode ? ` · ${p.employeeCode}` : ''}{p.self ? ' (me)' : ''}{p.active === false ? ' — inactive' : ''}
+                        </option>
+                      ))}
+                    </Combo>
+                  )}
+                  <Combo value={pf.status} title="Status" onChange={(e) => setP('status', e.target.value)}>
+                    <option value="">All statuses</option>
+                    {(options?.statuses || []).map((s) => <option key={s}>{s}</option>)}
+                  </Combo>
+                </>
+              )}
+              extra={(
+                <>
+                  <label className="lf-sort">
+                    Sort
+                    <select value={sort} onChange={(e) => setSort(e.target.value)}>
+                      <option value="">Newest first</option>
+                      <option value="start">Start date (latest first)</option>
+                      <option value="due">End date (soonest first)</option>
+                      <option value="name">Task A–Z</option>
+                    </select>
+                  </label>
+                  <span className="small-muted lf-count">{taskFiltersOn ? `${shown.length} of ${tasks.length} tasks` : `${tasks.length} tasks`}</span>
+                </>
+              )}
             >
-              <option value="">All departments</option>
-              {(options?.departments || []).map((d) => <option key={d}>{d}</option>)}
-            </Combo>
-            <input
-              type="date" title="From date"
-              value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))}
-            />
-            <input
-              type="date" title="To date"
-              value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))}
-            />
-            <button className="btn btn-sm" onClick={() => setFilters({ department: '', from: '', to: '' })}>Clear</button>
-            <span className="small-muted">{tasks.length} task(s)</span>
+              <span className="lf-dates" title="Date range">
+                <span className="lf-dates-lbl">Date range</span>
+                <input type="date" aria-label="Date range from" value={filters.from} max={filters.to || undefined} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
+                <span aria-hidden="true">→</span>
+                <input type="date" aria-label="Date range to" value={filters.to} min={filters.from || undefined} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
+              </span>
+              <Combo value={pf.review} title="Review" onChange={(e) => setP('review', e.target.value)}>
+                <option value="">All review states</option>
+                {reviewStates.map((s) => <option key={s}>{s}</option>)}
+              </Combo>
+              {canAssignOthers && (
+                <>
+                  <input placeholder="Employee ID" aria-label="Employee ID" value={pf.code} onChange={(e) => setP('code', e.target.value)} />
+                  <input placeholder="Assignee name" aria-label="Assignee name" value={pf.name} onChange={(e) => setP('name', e.target.value)} />
+                  <Combo value={pf.role} title="Role" onChange={(e) => setP('role', e.target.value)}>
+                    <option value="">All roles</option>
+                    {assigneeRoles.map((r) => <option key={r}>{r}</option>)}
+                  </Combo>
+                </>
+              )}
+            </MoreFilters>
+            <FilterChips filters={taskChips} onClearAll={taskFiltersOn ? clearTaskFilters : undefined} />
           </div>
 
           <div className="tbl-wrap">
@@ -365,7 +523,7 @@ export default function Timesheet({ standalone = false }) {
                 <tr><th>Task</th><th>Start Date</th><th>End Date</th><th>Actions</th></tr>
               </thead>
               <tbody>
-                {tasks.map((t) => (
+                {page.slice.map((t) => (
                   <tr key={t.id}>
                     <td>
                       <b>{t.name}</b>{' '}
@@ -430,16 +588,17 @@ export default function Timesheet({ standalone = false }) {
                     </td>
                   </tr>
                 ))}
-                {!tasks.length && (
+                {!shown.length && (
                   <tr>
-                    <td colSpan="4" className="small-muted" style={{ padding: 16 }}>
-                      {loading ? 'Loading…' : 'No tasks yet. "+ New Task" creates the first one.'}
+                    <td colSpan="4" className="small-muted" style={{ padding: loading ? 16 : 0 }}>
+                      {loading ? 'Loading…' : <ListEmpty lf={{ activeCount: taskFiltersOn ? 1 : 0, clear: clearTaskFilters }} noun="tasks" title="No tasks yet." hint={'"+ New Task" creates the first one.'} />}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          {page.total > 0 && <Pager page={page} noun="tasks" />}
           {options?.scopeNote && <div className="small-muted" style={{ marginTop: 10 }}>{options.scopeNote}</div>}
         </div>
       </div>
@@ -451,10 +610,10 @@ export default function Timesheet({ standalone = false }) {
           size="wide"
           onClose={() => setForm(null)}
           foot={<>
-            <button className="btn" type="button" onClick={() => setForm(null)}>Cancel</button>
             <button className="btn btn-primary" type="submit" form="task-form" disabled={saving}>
-              {form.id ? 'Save' : '+ Create'}
+              {saving ? 'Saving…' : form.id ? 'Save' : '+ Create'}
             </button>
+            <button className="btn" type="button" onClick={() => setForm(null)}>Cancel</button>
           </>}
         >
           <form id="task-form" onSubmit={submit}>
@@ -475,30 +634,41 @@ export default function Timesheet({ standalone = false }) {
                 {fieldErrors.name && <p className="error-text">{fieldErrors.name}</p>}
               </label>
 
-              <label className="field"><span>Task Description</span>
+              <div className="field compose-form"><span>Task Description</span>
+                <AiAssist kind="task" title={form.name} text={form.description} onText={(description) => set({ description })} />
                 <textarea rows="3" value={form.description} onChange={(e) => set({ description: e.target.value })} />
-              </label>
+              </div>
               <label className="field"><span>Sub Task Name</span>
                 <input value={form.subTaskName} onChange={(e) => set({ subTaskName: e.target.value })} />
               </label>
 
               <label className="field"><span>Assign To</span>
+                {!form.id && canAssignOthers && (
+                  <Combo value={form.assignMode} onChange={(e) => set({ assignMode: e.target.value })}>
+                    <option value="single">One person</option>
+                    <option value="many">Several people / departments</option>
+                  </Combo>
+                )}
+                {form.assignMode === 'many' && !form.id && canAssignOthers ? null : (
                 <Combo
                   value={form.assigneeId}
                   onChange={(e) => set({ assigneeId: e.target.value })}
                   disabled={!canAssignOthers}
                 >
                   <option value="">Myself</option>
-                  {people.filter((p) => !p.self).map((p) => (
+                  {people.filter((p) => !p.self && (!form.department || form.id || p.department === form.department || !people.some((q) => !q.self && q.department === form.department))).map((p) => (
                     <option key={p.userId} value={p.userId}>
                       {p.name}{p.designation ? ` — ${p.designation}` : ''}
                     </option>
                   ))}
                 </Combo>
+                )}
                 <span className="small-muted">
-                  Optional — leave blank for yourself.
-                  {canAssignOthers ? '' : ' Your role assigns work to yourself only.'}
+                  {form.assignMode === 'many' && !form.id && canAssignOthers
+                    ? 'One task is created for each person picked below.'
+                    : <>Optional — leave blank for yourself.{canAssignOthers ? '' : ' Your role assigns work to yourself only.'}</>}
                 </span>
+                {fieldErrors.assigneeId && <p className="error-text">{fieldErrors.assigneeId}</p>}
               </label>
               <label className="field"><span>Status *</span>
                 <Combo value={form.status} onChange={(e) => set({ status: e.target.value })}>
@@ -526,6 +696,12 @@ export default function Timesheet({ standalone = false }) {
               {fieldErrors.endDate && <p className="error-text">{fieldErrors.endDate}</p>}
             </label>
 
+            {form.assignMode === 'many' && !form.id && canAssignOthers && (
+              <>
+                <AudiencePicker value={form.audience} onChange={(audience) => set({ audience })} people={pickable} label="Send to" required />
+                <DeliverVia value={form.channels} onChange={(channels) => set({ channels })} />
+              </>
+            )}
             <div className="field">
               <span>Dependent Task</span>
               <YesNo value={form.dependent} onChange={(v) => set({ dependent: v, dependsOnId: v ? form.dependsOnId : '' })} />

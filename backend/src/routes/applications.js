@@ -15,7 +15,29 @@ const { groupLabelOfStage } = require('../utils/pipelineView');
 const { recordStageCommunications } = require('../utils/candidateComms');
 // Hiring Type, the invoice-on-joining path and the internal-hire path all live
 // in ONE place so the pipeline and the Joining workspace cannot drift apart.
-const { hiringTypeOf, onApplicationJoined } = require('../utils/joining');
+const {
+  hiringTypeOf, onApplicationJoined, stageAllowedForHiringType,
+} = require('../utils/joining');
+const { REJECTED_BY, REJECTED_BY_LABEL, stageMoveProblem } = require('../utils/atsVocab');
+// §12 stage chain + §32 who hears about a move (utils/stageEvents.js).
+const { stageGlobal } = require('../utils/permissions');
+const { applicationInScope, OUT_OF_SCOPE } = require('../utils/scope');
+const { stageMoveAudience, stageMoveNotice } = require('../utils/stageEvents');
+const { hasPersonQuery, attributedApplications } = require('../utils/workers');
+// THE ACTUAL WORKFLOW (2026-09-29): Job Portal screening before the ATS, and
+// the internal chain's Dept Head / TL approval.
+const {
+  isPreAtsApplication, HR_SOURCING_SOURCE, STAGE_PHASE, stageLabelFor,
+} = require('../utils/atsVocab');
+const { stageRoleOf } = require('../utils/permissions');
+
+// The moves an application may make while it is still in the Job Portal
+// screening (portal / HR-sourced and not yet Sent to ATS): the screening steps
+// themselves, or out of the process (Hold / Reject).
+const PRE_ATS_MOVES = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED',
+  'RECRUITER_REVIEW', 'RECRUITER_APPROVED', 'HOLD', 'REJECTED'];
+// Who approves an INTERNAL candidate out of TL Review: the Dept Head / TL.
+const DEPT_HEAD_ROLES = ['TL', 'STL'];
 
 const router = express.Router();
 router.use(requireAuth);
@@ -58,6 +80,13 @@ router.get('/', async (req, res) => {
   if (req.query.requirementId) where.requirementId = req.query.requirementId;
   if (req.query.candidateId) where.candidateId = req.query.candidateId;
   if (req.query.stage && !where.stage) where.stage = req.query.stage;
+  // ?recruiter= / ?tl= / ?bde= ("id:<userId>" or "name:<name>") and
+  // ?positionCode= — the work attributed to that person or seat
+  // (utils/workers.js), former people included.
+  if (hasPersonQuery(req.query)) {
+    const att = await attributedApplications(req.user, req.query, { scope: applicationWhere(req.user) });
+    where.id = { in: [...att.ids] };
+  }
   const applications = await prisma.application.findMany({
     where,
     // recruiter and bde come along because utils/followups.js ownerOf() names
@@ -88,7 +117,17 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
     prisma.requirement.findUnique({ where: { id: requirementId } }),
   ]);
   if (!candidate || !requirement) return res.status(404).json({ error: 'Candidate or requirement not found' });
+  // Only onto a requirement this login may work (the same rule as the list).
+  const reqInScope = await prisma.requirement.count({ where: { AND: [{ id: requirementId }, require('../utils/scope').requirementWhere(req.user)] } });
+  if (!reqInScope) return res.status(403).json(OUT_OF_SCOPE);
   const match = computeMatch(candidate, requirement);
+  // INTERNAL REQUIREMENT → HR SOURCING → CANDIDATES → JOB PORTAL (the actual
+  // workflow). A candidate added to one of TeamLink's own openings lands in
+  // the Job Portal screening (source "HR Sourcing", not yet Sent to ATS) and
+  // reaches HR Review only through Duplicate Check → Resume Score → AI
+  // Interview → Recruiter Review → Send to ATS. A candidate added to a client
+  // requirement goes straight into the ATS as before.
+  const hrSourced = hiringTypeOf(null, requirement) === 'TeamLink Internal Hire';
 
   const application = await prisma.application.create({
     data: {
@@ -97,7 +136,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
       stage: 'NEW',
       matchScore: match.overall,
       resumeScore: candidate.resumeScore ?? null,
-      source: 'ATS Match',
+      source: hrSourced ? HR_SOURCING_SOURCE : 'ATS Match',
       applicationMethod: 'Manual',
       aiInterviewStatus: 'Required',
       // Client Placement vs TeamLink Internal Hire, decided once, here, from
@@ -112,7 +151,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
       candidateId,
       fromStage: null,
       toStage: 'NEW',
-      action: 'Added to pipeline',
+      action: hrSourced ? 'HR sourcing — added to the Job Portal screening' : 'Added to pipeline',
       comment: req.body.comment || null,
       actorUserId: req.user.id,
       actorName: req.user.name,
@@ -140,6 +179,35 @@ async function applyStageMove(user, applicationId, body = {}) {
   const { stage, interviewAt, comment } = body;
   if (!stage) return { status: 400, body: { error: 'stage is required' } };
 
+  // A REJECTION MUST SAY WHY, AND WHOSE DECISION IT WAS.
+  //
+  // Both used to be optional, on the grounds that the stage dropdowns and the
+  // AI assistant share this function with the Reject dialog. The result was
+  // 13,897 rejections that could not answer "why" or "who", which is the only
+  // thing anybody opens a rejected record to find out. So every caller now
+  // supplies them — the dialog asks, and the AI assistant has to ask the user
+  // rather than inventing one.
+  //
+  // The side is ASKED, not inferred from the actor's role: a BDE recording a
+  // client's "no" is recording the CLIENT's decision. A client login is the
+  // one case where the side is a fact about who is acting.
+  let rejectionSide = null;
+  if (stage === 'REJECTED') {
+    const clientLogin = [user.atsRole, user.role].includes('CLIENT');
+    rejectionSide = clientLogin ? 'Client' : String(body.rejectedBy || '').trim();
+    if (!REJECTED_BY.includes(rejectionSide)) {
+      return {
+        status: 400,
+        body: {
+          error: `Say whose decision the rejection was: ${REJECTED_BY.map((s) => REJECTED_BY_LABEL[s]).join(', ')}.`,
+        },
+      };
+    }
+    if (!String(body.reasonCategory || '').trim() && !String(body.reasonDetail || '').trim()) {
+      return { status: 400, body: { error: 'Give a reason for the rejection.' } };
+    }
+  }
+
   // BOTH HALVES, in the engine. Access first (may this login act on the
   // pipeline at all, resolved against its ATS product role), then WORKFLOW
   // OWNERSHIP (does its ATS role own this stage) — seeing a record has never
@@ -153,11 +221,80 @@ async function applyStageMove(user, applicationId, body = {}) {
   });
   if (!existing) return { status: 404, body: { error: 'Application not found' } };
 
+  // SCOPE FIRST: seeing the stage in your role is not reaching THIS candidate.
+  // The record was loaded by id alone, so a recruiter could move another
+  // team's candidate by id. Same rule as every list (utils/scope.js). Checked
+  // before anything else so an outsider learns nothing about the record.
+  if (!applicationInScope(user, existing)) return { status: 403, body: OUT_OF_SCOPE };
+
+  // THE HIRING-TYPE BRANCH. Checked here rather than in canMoveToStage()
+  // because that one is handed a user and a stage and nothing else, and this
+  // question cannot be answered without the requirement: the same move is
+  // right for an internal hire and wrong for a client placement.
+  const wrongBranch = stageAllowedForHiringType(stage, existing, existing.requirement);
+  if (wrongBranch) return { status: 409, body: { error: wrongBranch } };
+  // THE JOB PORTAL COMES FIRST. Still in the screening → only the screening
+  // steps, Hold or Reject. Send to ATS is the one way into the hiring chain.
+  if (isPreAtsApplication(existing) && !PRE_ATS_MOVES.includes(stage)) {
+    return {
+      status: 409,
+      body: { error: `${existing.candidate ? existing.candidate.name : 'This candidate'} is still in the Job Portal screening. Finish Duplicate Check → Resume Score → AI Interview → Recruiter Review and press Send to ATS first.` },
+    };
+  }
+  // THE AGREEMENT GATE, for sharing too. A requirement cannot go live until
+  // the client's agreement is Active (routes/requirements.js); a profile must
+  // not reach the client while it is not Active either (e.g. it expired, or
+  // was voided after the requirement opened). Internal hiring has no client.
+  if (stage === 'SHARED_WITH_CLIENT' && existing.stage !== 'SHARED_WITH_CLIENT' && existing.requirement
+    && !existing.requirement.internal && existing.requirement.client
+    && existing.requirement.client.clientType !== 'Internal'
+    // eslint-disable-next-line global-require
+    && !require('../utils/atsVocab').agreementIsActive(existing.requirement.client.agreementStatus)) {
+    // eslint-disable-next-line global-require
+    const label = require('../utils/atsVocab').agreementStatusLabel(existing.requirement.client.agreementStatus);
+    return {
+      status: 409,
+      body: { error: `Held at Agreement Check — the service agreement with ${existing.requirement.client.name} is ${label}, not Active. Profiles can be shared once it is Active.` },
+    };
+  }
+  // A client acts only on profiles that have actually been shared with them.
+  if ([user.atsRole, user.role].includes('CLIENT') && !CLIENT_SHARED_STAGES.includes(existing.stage)) {
+    return { status: 403, body: OUT_OF_SCOPE };
+  }
+
+  // §12 THE CHAIN: forward at most one phase (utils/atsVocab.js
+  // stageMoveProblem). Super Admin / Admin are exempt, for data correction.
+  if (!stageGlobal(user)) {
+    let resumeFrom = null;
+    if (['HOLD', 'REJECTED'].includes(existing.stage)) {
+      const parked = await prisma.applicationStageEvent.findFirst({
+        where: { applicationId: existing.id, toStage: existing.stage },
+        orderBy: { createdAt: 'desc' },
+        select: { fromStage: true },
+      });
+      resumeFrom = parked ? parked.fromStage : null;
+    }
+    const internal = hiringTypeOf(existing, existing.requirement) === 'TeamLink Internal Hire';
+    const chain = stageMoveProblem(existing.stage, stage, { internal, resumeFrom });
+    if (chain) return { status: 409, body: { error: chain } };
+    // INTERNAL HIRING: the Dept Head / TL approves (HR Review → Dept Head / TL
+    // → Interview). HR owns the other internal stages, but an internal
+    // candidate leaves TL Review forward only on a TL / STL's say-so.
+    if (internal && existing.stage === 'TL_REVIEW' && (STAGE_PHASE[stage] || 0) > STAGE_PHASE.TL_REVIEW
+      && !DEPT_HEAD_ROLES.includes(stageRoleOf(user))) {
+      return { status: 403, body: { error: `Only the Dept Head / TL approves an internal candidate out of ${stageLabelFor('TL_REVIEW', { internal: true })}.` } };
+    }
+  }
+
   const application = await prisma.application.update({
     where: { id: applicationId },
     data: {
       stage,
       interviewStatus: stage === 'INTERVIEW_SCHEDULED' ? 'SCHEDULED' : stage === 'INTERVIEW_COMPLETED' ? 'COMPLETED' : existing.interviewStatus,
+      // §34 — the AI interview's own status follows the AI stages, so the
+      // calendar's AI list does not keep saying "Required" after it was taken.
+      ...(stage === 'AI_INTERVIEW_SCHEDULED' && existing.aiInterviewStatus !== 'Completed' ? { aiInterviewStatus: 'Scheduled' } : {}),
+      ...(stage === 'AI_INTERVIEW_COMPLETED' ? { aiInterviewStatus: 'Completed' } : {}),
       interviewAt: interviewAt ? new Date(interviewAt) : existing.interviewAt,
       // Scheduling an interview stamps the calendar columns the Interview
       // Calendar reads (interview ID, type, who booked it) if they aren't set yet.
@@ -229,7 +366,9 @@ async function applyStageMove(user, applicationId, body = {}) {
       actorName: user.name,
       actorRole: user.atsRole || user.role,
       ...(await stampFor(user, 'actor')),
-      actorSide: ['CLIENT'].includes(user.atsRole || user.role) ? 'Client' : 'Internal',
+      // For a rejection, whose decision it was (asked above). For any other
+      // move, which side of the table the person moving it sits on.
+      actorSide: rejectionSide || (['CLIENT'].includes(user.atsRole || user.role) ? 'Client' : 'Internal'),
       requirementId: existing.requirementId,
       requirementTitle: existing.requirement ? existing.requirement.title : null,
       clientId: existing.requirement ? existing.requirement.clientId : null,
@@ -303,7 +442,8 @@ async function applyStageMove(user, applicationId, body = {}) {
   // Tell whoever owns this requirement that the pipeline moved — the
   // prototype's pushNotification() on every stage transition. Stages the
   // client acts on also notify that client's users.
-  const audience = [existing.requirement.recruiterId, existing.requirement.bdeId];
+  // The TL is in the audience too: a move INTO TL Review is the TL's work.
+  const audience = stageMoveAudience(existing.requirement);
   if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)) {
     const clientUsers = await prisma.user.findMany({
       where: { clientId: existing.requirement.clientId, role: 'CLIENT' },
@@ -312,13 +452,235 @@ async function applyStageMove(user, applicationId, body = {}) {
     audience.push(...clientUsers.map((u) => u.id));
   }
   await notifyUsers(audience, {
-    title: `${existing.candidate.name} moved to ${stageLabel(stage)}`,
-    message: `${existing.requirement.title} — ${existing.requirement.client.name}`,
+    ...stageMoveNotice(existing.candidate.name, stage, existing.requirement),
     exceptUserId: user.id,
   });
 
   return { status: 200, body: application };
 }
+
+// ---------------------------------------------------------------------------
+// BULK ACTIONS — POST /applications/bulk  (spec §25)
+//
+// The "N selected" bar on Candidates & Pipeline. Nothing here is a second
+// rule set:
+//   action 'stage'   every row goes through applyStageMove() above — the same
+//                    permission check, stage ownership, scope, chain rule,
+//                    reason requirement and side effects as a single move
+//                    (Change Stage, Put on Hold, Reject, Schedule Interview).
+//   action 'assign'  hands the application's current follow-up to a recruiter
+//                    (closes the open one, opens one owned by them, stamped
+//                    with their seat). Needs recruiterbde / Team View /
+//                    assign — the leads' assign right; a recruiter is refused.
+// Each row is checked on its own and reported on its own: one out-of-scope or
+// wrong-stage row never blocks the rest, and never passes silently.
+// Rows: applicationIds, or candidateIds (their CURRENT application — the one
+// the list shows). At most BULK_ROW_LIMIT per call; the screen sends batches.
+// ---------------------------------------------------------------------------
+const BULK_ROW_LIMIT = 100;
+
+router.post('/bulk', async (req, res, next) => {
+  try {
+    // eslint-disable-next-line global-require
+    const { can: canDo } = require('../utils/permissions');
+    // eslint-disable-next-line global-require
+    const { chainSnapshot, resolveNames, defaultNextAction, defaultDueDate } = require('../utils/followups');
+    // eslint-disable-next-line global-require
+    const { atsRoleLabel } = require('../utils/atsVocab');
+    const user = req.user;
+    const b = req.body || {};
+    const s = scopeOf(user);
+    if ([s.role, s.atsRole].some((r) => ['CLIENT', 'CANDIDATE'].includes(r))) {
+      return res.status(403).json({ error: 'Bulk actions are not available to this login' });
+    }
+    const action = String(b.action || '');
+    if (!['stage', 'assign'].includes(action)) return res.status(400).json({ error: 'action must be stage or assign' });
+    const appIds = [...new Set((Array.isArray(b.applicationIds) ? b.applicationIds : []).map(String).filter(Boolean))];
+    const candIds = [...new Set((Array.isArray(b.candidateIds) ? b.candidateIds : []).map(String).filter(Boolean))];
+    if (!appIds.length && !candIds.length) return res.status(400).json({ error: 'Select at least one candidate.' });
+    if (appIds.length + candIds.length > BULK_ROW_LIMIT) {
+      return res.status(400).json({ error: `At most ${BULK_ROW_LIMIT} rows per request — send them in batches.` });
+    }
+
+    // THE PERMISSION, ONCE, BEFORE ANY ROW: a login that may not do this at
+    // all is refused outright rather than handed N identical failures.
+    let target = null;
+    let targetSeat = {};
+    if (action === 'stage') {
+      if (!b.stage) return res.status(400).json({ error: 'Choose the stage.' });
+      const refusal = await canMoveToStage(user, b.stage);
+      if (refusal) return res.status(refusal.status).json(refusal.body);
+    } else {
+      if (!(await canDo(user, 'ats', 'recruiterbde', 'Team View', 'assign'))) {
+        return res.status(403).json({ error: "Assigning candidates isn't included in your role's permissions" });
+      }
+      target = b.recruiterId ? await prisma.user.findUnique({
+        where: { id: String(b.recruiterId) },
+        select: { id: true, name: true, status: true, atsAccess: true, atsRole: true, atsDepartment: true, atsScopeDepartments: true },
+      }) : null;
+      if (!target || target.status !== 'Active' || !target.atsAccess || !['RECRUITER', 'TL', 'STL'].includes(target.atsRole)) {
+        return res.status(400).json({ error: 'Choose an active recruiter.' });
+      }
+      // Only someone inside the assigner's own reach — the same bench the
+      // assign picker offers (a Medical TL cannot hand work to Education).
+      if (!s.global) {
+        const depts = [target.atsDepartment, ...String(target.atsScopeDepartments || '').split(',')].map((d) => String(d || '').trim()).filter(Boolean);
+        const inTeam = (s.teamUserIds || []).includes(target.id)
+          || (s.positions && (s.positions.holderUserIds || []).includes(target.id));
+        if (!inTeam && !depts.some((d) => s.departments.includes(d))) {
+          return res.status(403).json({ error: `${target.name} is outside your team, so work cannot be assigned to them.` });
+        }
+      }
+      targetSeat = await stampFor(target, 'owner');
+    }
+
+    // RESOLVE THE ROWS. A candidate id means their current application —
+    // the most recent one THIS login can see (the list's rule).
+    const results = [];
+    const rows = [];
+    if (appIds.length) rows.push(...appIds.map((id) => ({ applicationId: id })));
+    if (candIds.length) {
+      const cands = await prisma.candidate.findMany({
+        where: { id: { in: candIds } },
+        select: { id: true, name: true, applications: { include: { requirement: true } } },
+      });
+      const byId = new Map(cands.map((c) => [c.id, c]));
+      candIds.forEach((cid) => {
+        const c = byId.get(cid);
+        const visible = c ? c.applications.filter((a) => applicationInScope(user, a)) : [];
+        const latest = visible.sort((x, y) => String(y.id).localeCompare(String(x.id)))[0];
+        if (!c) results.push({ candidateId: cid, ok: false, error: 'Candidate not found' });
+        else if (!latest) {
+          results.push({
+            candidateId: cid,
+            candidateName: c.name,
+            ok: false,
+            error: c.applications.length ? 'Outside your access' : 'No application — nothing to act on',
+          });
+        } else rows.push({ applicationId: latest.id });
+      });
+    }
+
+    for (const row of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      const app = await prisma.application.findUnique({
+        where: { id: row.applicationId },
+        include: { candidate: { select: { id: true, name: true } }, requirement: { include: { client: true, recruiter: true, bde: true } } },
+      });
+      const base = {
+        applicationId: row.applicationId,
+        candidateId: app ? app.candidateId : null,
+        candidateName: app && app.candidate ? app.candidate.name : null,
+        fromStage: app ? app.stage : null,
+      };
+      if (!app) { results.push({ ...base, ok: false, error: 'Application not found' }); continue; }
+      if (!applicationInScope(user, app)) { results.push({ ...base, ok: false, error: 'Outside your access' }); continue; }
+
+      if (action === 'stage') {
+        if (app.stage === b.stage) { results.push({ ...base, ok: false, skipped: true, error: `Already at ${stageLabel(b.stage)}` }); continue; }
+        // eslint-disable-next-line no-await-in-loop
+        const out = await applyStageMove(user, app.id, {
+          stage: b.stage,
+          comment: b.comment,
+          rejectedBy: b.rejectedBy,
+          reasonCategory: b.reasonCategory,
+          reasonDetail: b.reasonDetail,
+          interviewAt: b.interviewAt,
+          interviewer: b.interviewer,
+          interviewMode: b.interviewMode,
+          interviewMeetingLink: b.interviewMeetingLink,
+        });
+        if (out.status === 200) results.push({ ...base, ok: true, toStage: b.stage });
+        else results.push({ ...base, ok: false, error: (out.body && out.body.error) || `Refused (${out.status})` });
+        continue;
+      }
+
+      // --- assign -----------------------------------------------------------
+      // eslint-disable-next-line no-await-in-loop
+      const open = await prisma.applicationFollowUp.findFirst({
+        where: { applicationId: app.id, completedAt: null }, orderBy: { createdAt: 'desc' },
+      });
+      if (open && open.ownerUserId === target.id) {
+        results.push({ ...base, ok: false, skipped: true, error: `Already with ${target.name}` });
+        continue;
+      }
+      if (open) {
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.applicationFollowUp.update({
+          where: { id: open.id },
+          data: { completedAt: new Date(), completedById: user.id, completedNote: `Reassigned to ${target.name} by ${user.name}.` },
+        });
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const names = await resolveNames([app.requirement]);
+      const snap = chainSnapshot(app, app.requirement, names);
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.applicationFollowUp.create({
+        data: {
+          applicationId: app.id,
+          candidateId: app.candidateId,
+          requirementId: app.requirementId,
+          ...snap,
+          ownerUserId: target.id,
+          ownerName: target.name,
+          ownerRole: atsRoleLabel(target.atsRole),
+          ...targetSeat,
+          nextAction: (open && open.nextAction) || defaultNextAction(app),
+          dueDate: (open && open.dueDate) || defaultDueDate(app),
+          dueTime: (open && open.dueTime) || null,
+          purpose: (open && open.purpose) || null,
+          notes: `Assigned to ${target.name} by ${user.name}${b.comment ? ` — ${String(b.comment).slice(0, 500)}` : ''}`,
+          createdById: user.id,
+          createdByName: user.name,
+        },
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await logAudit({
+        userId: user.id,
+        action: 'Candidate assigned to recruiter',
+        entity: 'Application',
+        entityId: app.id,
+        fromValue: open ? open.ownerName || '—' : '—',
+        toValue: target.name,
+      });
+      // Seen by the new owner only if their seat or the requirement reaches it
+      // — said, rather than left for them to discover.
+      const r = app.requirement || {};
+      const onRequirement = r.recruiterId === target.id || String(r.recruiterIds || '').split(',').includes(target.id)
+        || r.tlId === target.id || r.stlId === target.id;
+      results.push({
+        ...base,
+        ok: true,
+        note: onRequirement || targetSeat.ownerPositionCode ? null
+          : `${target.name} holds no seat and is not on this requirement, so it will not appear in their list until the requirement is assigned to them.`,
+      });
+    }
+
+    if (action === 'assign') {
+      const assigned = results.filter((x) => x.ok).map((x) => x.candidateName).filter(Boolean);
+      if (assigned.length) {
+        await notifyUsers([target.id], {
+          title: `${assigned.length} candidate(s) assigned to you`,
+          message: `${assigned.slice(0, 5).join(', ')}${assigned.length > 5 ? ` +${assigned.length - 5} more` : ''} — assigned by ${user.name}`,
+          exceptUserId: user.id,
+        });
+      }
+    }
+
+    const okCount = results.filter((x) => x.ok).length;
+    return res.json({
+      action,
+      stage: action === 'stage' ? b.stage : undefined,
+      recruiter: target ? { id: target.id, name: target.name } : undefined,
+      total: results.length,
+      ok: okCount,
+      failed: results.length - okCount,
+      results,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 router.patch('/:id/stage', async (req, res, next) => {
   try {

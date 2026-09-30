@@ -1,0 +1,96 @@
+/* ATS Dashboard (review #3 §3 / §22 / §23 / §24; round 2 §3 / §4 / §18). Everything scoped under .atsd.
+   Colours follow StatusChip: green = done/active, amber = pending, red = overdue, blue = new/info. */
+.atsd .atsd-filters{margin-bottom:8px}
+.atsd .atsd-note{margin:4px 2px 14px;font-size:11.5px}
+.atsd .atsd-kicker{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft)}
+.atsd .atsd-kicker-out{margin:2px 2px 6px}
+.atsd .atsd-hello{font-weight:600;color:var(--ink)}
+.atsd .atsd-red{color:var(--red)}
+.atsd .atsd-amber{color:var(--amber)}
+
+/* TILES */
+.atsd .atsd-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;background:var(--paper-raised);
+  border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm, none);overflow:hidden;margin-bottom:12px}
+.atsd .atsd-tiles-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.atsd .atsd-tiles-6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.atsd .atsd-tiles-7{grid-template-columns:repeat(7,minmax(0,1fr))}
+.atsd .atsd-tile{display:flex;flex-direction:column;gap:2px;padding:12px 16px;border-right:1px solid var(--line-soft);min-width:0}
+.atsd .atsd-tile:last-child{border-right:0}
+.atsd .atsd-tile.is-red{box-shadow:inset 0 3px 0 var(--red)}
+.atsd .atsd-tile-l{font-size:12px;font-weight:600;color:var(--ink-soft)}
+.atsd .atsd-tile-n{display:flex;align-items:baseline;gap:6px}
+.atsd .atsd-tile-a{font:inherit;font-size:22px;font-weight:700;color:var(--navy);text-decoration:none;line-height:1.15;
+  background:none;border:0;padding:0;cursor:pointer}
+.atsd .atsd-tile-a:hover{text-decoration:underline}
+.atsd .atsd-tile.is-red .atsd-tile-a{color:var(--red)}
+.atsd .atsd-tile-u{font-size:12px;color:var(--ink-soft)}
+.atsd .atsd-tile-of{font-size:12px;color:var(--ink-soft)}
+.atsd .atsd-tile-of a{color:var(--ink);font-weight:600;text-decoration:none}
+.atsd .atsd-tile-of a:hover{color:var(--navy);text-decoration:underline}
+.atsd .atsd-tile-row{display:block;font-size:12px;color:var(--ink);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.atsd .atsd-tile-row:hover{color:var(--navy)}
+
+/* NEEDS ACTION */
+.atsd #pending{scroll-margin-top:70px}
+.atsd .atsd-needs-head h3{display:flex;align-items:center;gap:6px}
+.atsd .atsd-needs-narrow{font-weight:500;color:var(--ink-soft)}
+.atsd .atsd-narrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 18px;border-bottom:1px solid var(--line-soft)}
+.atsd .atsd-narrow-sep{width:1px;height:18px;background:var(--line);margin:0 4px}
+.atsd .atsd-pill{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;border-radius:14px;padding:3px 10px;
+  font:inherit;font-size:12px;cursor:pointer}
+.atsd .atsd-pill:hover{filter:brightness(.96)}
+.atsd .atsd-pill.is-on{border-color:currentColor;box-shadow:0 0 0 1px currentColor inset}
+.atsd .atsd-pill-q{background:var(--line-soft);color:var(--ink)}
+.atsd .atsd-pill-q b{color:var(--amber)}
+.atsd .atsd-pill-q.is-on{background:var(--brand-tint, var(--blue-tint));color:var(--navy)}
+.atsd .atsd-table td{vertical-align:middle}
+.atsd .atsd-name{font-weight:600;color:var(--ink);text-decoration:none}
+.atsd .atsd-name:hover{color:var(--navy);text-decoration:underline}
+.atsd .atsd-sub-link{color:var(--ink);text-decoration:none}
+.atsd .atsd-sub-link:hover{color:var(--navy);text-decoration:underline}
+.atsd .atsd-act{white-space:nowrap;text-decoration:none}
+
+/* DEPARTMENT CARDS */
+.atsd .atsd-dcs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:14px}
+.atsd .atsd-dc{background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px}
+.atsd .atsd-dc-h{margin-bottom:6px}
+.atsd .atsd-dc-t{font-weight:700;font-size:14px;color:var(--ink);text-decoration:none}
+.atsd button.atsd-dc-t:hover{color:var(--navy);text-decoration:underline}
+.atsd .atsd-dc-g{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px}
+.atsd .atsd-dc-f{display:flex;flex-direction:column;min-width:0}
+.atsd .atsd-dc-n{font-size:17px;font-weight:700;color:var(--navy);text-decoration:none;line-height:1.2}
+.atsd a.atsd-dc-n:hover{text-decoration:underline}
+.atsd span.atsd-dc-n{color:var(--ink)}
+.atsd .atsd-dc-n.atsd-red{color:var(--red)}
+.atsd .atsd-dc-n.atsd-amber{color:var(--amber)}
+.atsd .atsd-dc-l{font-size:11px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* SUMMARY chips */
+.atsd .atsd-parts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px}
+.atsd .atsd-parts-in{margin:0;padding:10px 18px;border-bottom:1px solid var(--line-soft)}
+.atsd .atsd-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:3px 10px;border-radius:14px;text-decoration:none}
+.atsd a.atsd-chip:hover{filter:brightness(.96);text-decoration:none}
+.atsd .tone-red{background:var(--red-tint);color:var(--red)}
+.atsd .tone-amber{background:var(--amber-tint);color:var(--amber)}
+.atsd .tone-blue{background:var(--blue-tint);color:var(--blue)}
+.atsd .tone-green{background:var(--teal-tint);color:var(--teal)}
+.atsd .tone-zero{background:var(--line-soft);color:var(--ink-soft)}
+
+/* Reports link */
+.atsd .atsd-rep{margin:4px 2px 18px;font-size:12.5px}
+.atsd .atsd-rep a{color:var(--navy)}
+.atsd .atsd-rep-go{font-weight:600;margin-left:6px}
+
+@media (max-width: 1200px){
+  .atsd .atsd-tiles-6,.atsd .atsd-tiles-7{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .atsd .atsd-tiles-6 .atsd-tile,.atsd .atsd-tiles-7 .atsd-tile{border-bottom:1px solid var(--line-soft)}
+}
+@media (max-width: 1000px){
+  .atsd .atsd-tiles,.atsd .atsd-tiles-4,.atsd .atsd-tiles-6,.atsd .atsd-tiles-7{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .atsd .atsd-tile{border-bottom:1px solid var(--line-soft)}
+  .atsd .atsd-tile:nth-child(2n){border-right:0}
+}
+@media (max-width: 620px){
+  .atsd .atsd-tiles,.atsd .atsd-tiles-4,.atsd .atsd-tiles-6,.atsd .atsd-tiles-7{grid-template-columns:1fr}
+  .atsd .atsd-tile{border-right:0}
+}

@@ -6,9 +6,9 @@
 // file exists so the screen can draw the strip, the view tabs and the
 // "what's inside this stage" legend without a round trip.
 //
-// Twenty stage codes still exist and still drive the pipeline. Ten are shown:
+// Twenty stage codes still exist and still drive the pipeline. Eleven are shown:
 //
-//   New → AI Interview → Recruiter Review → BDE Review → Client Review
+//   New → AI Interview → Recruiter Review → TL Review → BDE Review → Client Review
 //       → Interview → Selected → Offer → Joining → Joined
 //
 // Hold and Rejected are VIEWS, not stages.
@@ -23,8 +23,11 @@ export const STAGE_GROUPS = [
     stages: ['AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'],
   },
   { id: 'recruiter_review', label: 'Recruiter Review', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  // Mirrors backend utils/pipelineView.js: without this group a candidate at
+  // TL Review had no place on the strip and fell back to the grey default.
+  { id: 'tl_review', label: 'TL Review', stages: ['TL_REVIEW'] },
   { id: 'bde_review', label: 'BDE Review', stages: ['WITH_BDE', 'BDE_APPROVED'] },
-  { id: 'client_review', label: 'Client Review', stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'] },
+  { id: 'client_review', label: 'Client Submission / Decision', stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'] },
   {
     id: 'interview',
     label: 'Interview',
@@ -34,7 +37,7 @@ export const STAGE_GROUPS = [
   },
   { id: 'selected', label: 'Selected', stages: ['SELECTED'] },
   { id: 'offer', label: 'Offer', stages: ['OFFER'] },
-  { id: 'joining', label: 'Joining', stages: ['OFFER_ACCEPTED'] },
+  { id: 'joining', label: 'Offer Accepted', stages: ['OFFER_ACCEPTED'] }, // mirrors the backend (the actual workflow)
   { id: 'joined', label: 'Joined', stages: ['JOINED', 'HIRED'] },
 ];
 
@@ -81,16 +84,20 @@ export function groupIndexById(id) {
 }
 
 // Pill colour per visible group, reusing the existing .status classes.
+// §30 status colours: a group the candidate is IN is the current workflow
+// stage — blue. Selected / Joined are outcomes — green. Hold amber and
+// Rejected red are handled below.
 const GROUP_BADGE = {
   new: 'new',
-  ai_interview: 'review',
-  recruiter_review: 'review',
-  bde_review: 'review',
-  client_review: 'shortlist',
-  interview: 'interview',
+  ai_interview: 'new',
+  recruiter_review: 'new',
+  tl_review: 'new',
+  bde_review: 'new',
+  client_review: 'new',
+  interview: 'new',
   selected: 'selected',
-  offer: 'offer',
-  joining: 'offer',
+  offer: 'new',
+  joining: 'new',
   joined: 'joined',
 };
 export function groupBadgeClass(stage, groupId) {

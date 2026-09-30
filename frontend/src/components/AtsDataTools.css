@@ -1,0 +1,31 @@
+/* AtsDataTools — Template · Import · Export ▾ on every ATS screen. Scoped under .atsio. */
+.atsio{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+.atsio-tpl{position:relative;display:inline-flex;align-items:center;gap:6px}
+.atsio-menu{position:absolute;top:calc(100% + 4px);right:0;z-index:40;min-width:190px;display:flex;flex-direction:column;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-md);padding:4px}
+.atsio-item{background:none;border:0;text-align:left;padding:7px 10px;border-radius:6px;font-size:13px;color:var(--ink);cursor:pointer}
+.atsio-item:hover,.atsio-item:focus-visible{background:var(--line-soft);outline:none}
+.atsio-err{font-size:12px;color:var(--red)}
+
+/* The import dialog */
+.atsio-dlg .atsio-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.atsio-dlg .atsio-totals{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.atsio-dlg .atsio-pill{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--line-soft);color:var(--ink)}
+.atsio-dlg .atsio-pill.create{background:rgba(13,148,136,.12);color:var(--teal)}
+.atsio-dlg .atsio-pill.update{background:rgba(30,58,95,.10);color:var(--navy)}
+.atsio-dlg .atsio-pill.skip{background:rgba(180,83,9,.10);color:var(--amber)}
+.atsio-dlg .atsio-pill.error{background:rgba(220,38,38,.10);color:var(--red)}
+.atsio-dlg .atsio-map{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px 12px;margin-top:8px}
+.atsio-dlg .atsio-map label{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.atsio-dlg .atsio-map label.req span{font-weight:600}
+.atsio-dlg .atsio-map select{font-size:12.5px}
+.atsio-dlg .atsio-res{max-height:320px;overflow:auto}
+.atsio-dlg .atsio-res td{font-size:12.5px;vertical-align:top}
+.atsio-dlg .atsio-act{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.atsio-dlg .atsio-act.create{color:var(--teal)}
+.atsio-dlg .atsio-act.update{color:var(--navy)}
+.atsio-dlg .atsio-act.skip{color:var(--amber)}
+.atsio-dlg .atsio-act.error{color:var(--red)}
+.atsio-dlg .atsio-check{display:flex;align-items:center;gap:6px;font-size:13px;margin:0}
+.atsio-dlg .atsio-check input{width:16px;height:16px;margin:0;flex:none}
+@media(max-width:640px){.atsio{justify-content:flex-start;margin-left:0}}

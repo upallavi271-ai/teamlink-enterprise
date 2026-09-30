@@ -26,6 +26,27 @@ const prisma = require('../db');
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+// A seat whose open tenure belongs to somebody who has LEFT is not really
+// held (user, 2026-09-29: seats stayed "held" by Exited people, so a new
+// person could never be given MED-1). These statuses mean the person is gone.
+const LEFT_STATUSES = ['relieved', 'exited', 'terminated', 'resigned', 'absconded', 'dropout'];
+const hasLeft = (status) => LEFT_STATUSES.includes(String(status || '').trim().toLowerCase());
+
+// The day a departed holder's tenure should end: their approved (else
+// requested) last working date from the resignation record, else today.
+async function lastWorkingDayOf(employeeId) {
+  try {
+    const r = await prisma.resignationDetail.findFirst({
+      where: { employeeId },
+      orderBy: { createdAt: 'desc' },
+      select: { approvedLastWorkingDate: true, requestedLastWorkingDate: true },
+    });
+    const d = r && (r.approvedLastWorkingDate || r.requestedLastWorkingDate);
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(String(d).slice(0, 10))) return String(d).slice(0, 10);
+  } catch (e) { /* no resignation record → today */ }
+  return today();
+}
+
 // The seat a USER holds right now, or null.
 //
 // Resolved through their employee record, because a seat is held by a person
@@ -149,5 +170,5 @@ async function holderOn(positionId, date) {
 
 module.exports = {
   currentPositionOf, positionOfEmployee, stampFor,
-  tenuresOf, holderOn, daysBetween, today,
+  tenuresOf, holderOn, daysBetween, today, hasLeft, lastWorkingDayOf,
 };

@@ -13,19 +13,24 @@ import { Link, NavLink } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+import AtsDataTools from '../../components/AtsDataTools.jsx';
 import Combo from '../../components/Combo.jsx';
+import Pager, { usePaged } from '../../components/Pager.jsx';
 import {
   INTERVIEW_RECOMMENDATIONS, FEEDBACK_CRITERIA, interviewStatusLabel, interviewStatusClass, resultClass,
+  REJECTED_BY_OPTIONS, REJECTION_REASONS_BY_SIDE, stageLabel,
 } from '../../atsVocab';
 import {
   fmtDate, fmtTime, useWorkspace, Banner, Panel, HiringTypeChip, IntJoinFilters,
   EMPTY_INTJOIN_FILTERS, matchesShared, INTJOIN_TABS,
+  usePersonApplicationIds, IntJoinEmpty, sortIntJoin,
 } from './intjoinShared.jsx';
 
 export default function InterviewFeedback() {
   const { user } = useAuth();
-  const { data, error, notice, act } = useWorkspace('/ats/feedback');
+  const { data, error, notice, act, load } = useWorkspace('/ats/feedback');
   const [filters, setFilters] = useState(EMPTY_INTJOIN_FILTERS);
+  const personIds = usePersonApplicationIds(filters);
   const [dialog, setDialog] = useState(null);
 
   const canInternal = can(user, 'ats', 'interviews', 'Interview Feedback', 'create');
@@ -34,9 +39,19 @@ export default function InterviewFeedback() {
 
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
   const rows = useMemo(
-    () => (data.rows || []).filter((r) => matchesShared(r, filters, r.interviewAt)),
-    [data.rows, filters],
+    () => sortIntJoin(
+      (data.rows || []).filter((r) => matchesShared(r, filters, r.interviewAt, personIds)
+        && (!filters.status || r.status === filters.status)),
+      filters.sort, (r) => r.interviewAt,
+    ),
+    [data.rows, filters, personIds],
   );
+  const statuses = useMemo(
+    () => [...new Set((data.rows || []).map((r) => r.status).filter(Boolean))]
+      .map((s) => ({ value: s, label: interviewStatusLabel(s) })),
+    [data.rows],
+  );
+  const page = usePaged(rows);
 
   return (
     <div>
@@ -49,6 +64,14 @@ export default function InterviewFeedback() {
             interview score.
           </div>
         </div>
+        {/* Template · Import · Export — the rows shown (server-scoped
+            /ats/feedback, narrowed to the filtered rows) and the matching import. */}
+        <AtsDataTools
+          module="feedback"
+          kinds={['interview-feedback']}
+          onImported={load}
+          body={() => ({ ids: rows.length === (data.rows || []).length ? null : rows.map((r) => r.id) })}
+        />
       </div>
 
       <div className="tabbar">
@@ -65,6 +88,11 @@ export default function InterviewFeedback() {
         opts={data.filterOptions || {}}
         onClear={() => setFilters(EMPTY_INTJOIN_FILTERS)}
         count={rows.length}
+        total={(data.rows || []).length}
+        noun="interviews"
+        storageKey="ivfeedback"
+        statuses={statuses}
+        dateLabel="Interview date"
       />
 
       <div className="tbl-wrap">
@@ -77,7 +105,7 @@ export default function InterviewFeedback() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {page.slice.map((r) => (
               <tr key={r.id}>
                 <td><b>{r.interviewCode}</b></td>
                 <td className="row-link"><Link to={`/candidates/${r.candidate.id}`}>{r.candidate.name}</Link></td>
@@ -112,11 +140,12 @@ export default function InterviewFeedback() {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan="11" className="small-muted" style={{ padding: 16 }}>No interviews are waiting on feedback.</td></tr>
+              <tr><td colSpan="11" style={{ padding: 0 }}><IntJoinEmpty loading={data.loading} filters={filters} onClear={() => setFilters(EMPTY_INTJOIN_FILTERS)} noun="interviews" title="No interviews are waiting on feedback." /></td></tr>
             )}
           </tbody>
         </table>
       </div>
+      <Pager page={page} noun="interviews" />
 
       {dialog?.kind === 'internal' && (
         <FeedbackForm
@@ -144,9 +173,9 @@ export default function InterviewFeedback() {
         <DecisionForm
           row={dialog.row}
           onClose={() => setDialog(null)}
-          onSubmit={(decision) => act(
-            () => api.post(`/ats/interviews/${dialog.row.id}/decision`, { decision }),
-            `Decision recorded — ${decision}.`,
+          onSubmit={(body) => act(
+            () => api.post(`/ats/interviews/${dialog.row.id}/decision`, body),
+            `Decision recorded — ${body.decision}.`,
           ).then((ok) => ok && setDialog(null))}
         />
       )}
@@ -235,28 +264,72 @@ function FeedbackForm({ kind, row, onClose, onSubmit }) {
 
 // The decision is the pipeline move, and it is deliberately a separate act
 // from recording feedback: the interview's STATUS stays Feedback Submitted.
+// A rejection says whose decision it was and why — the API refuses one that
+// does not (the same rule as the pipeline's own Reject).
 function DecisionForm({ row, onClose, onSubmit }) {
-  const [decision, setDecision] = useState(row.result !== '—' ? row.result : 'Selected');
+  const [decision, setDecision] = useState(INTERVIEW_RECOMMENDATIONS.includes(row.result) ? row.result : 'Selected');
+  const [rejectedBy, setRejectedBy] = useState(row.clientFeedback?.recommendation === 'Rejected' ? 'Client' : 'Internal');
+  const [reasonCategory, setReasonCategory] = useState('');
+  const [reasonDetail, setReasonDetail] = useState('');
+  const internal = row.hiringType === 'TeamLink Internal Hire';
+  const decided = !['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'HOLD'].includes(row.stage);
+  const reasons = REJECTION_REASONS_BY_SIDE[rejectedBy] || [];
   return (
     <Panel
       title={`Decision — ${row.candidate.name}`}
       subtitle={`Internal: ${row.internalFeedback?.recommendation || 'not submitted'} · Client: ${row.clientFeedback?.recommendation || 'not submitted'}`}
       onClose={onClose}
     >
-      <form onSubmit={(e) => { e.preventDefault(); onSubmit(decision); }}>
-        <label className="field" style={{ maxWidth: 280 }}>
-          <span>Decision</span>
-          <Combo value={decision} onChange={(e) => setDecision(e.target.value)}>
-            {INTERVIEW_RECOMMENDATIONS.map((r) => <option key={r}>{r}</option>)}
-          </Combo>
-        </label>
-        <div className="small-muted" style={{ marginBottom: 10 }}>
-          Selected moves the candidate on to Offers — as a {row.hiringType === 'TeamLink Internal Hire'
-            ? 'TeamLink internal hire (internal offer → hired → HRMS employee, never invoiced)'
-            : 'client placement (offer → joined client → invoice → receivable, never an HRMS employee)'}.
+      {decided ? (
+        <div className="small-muted">
+          The decision was already taken — this candidate is at <b>{stageLabel(row.stage)}</b>.
         </div>
-        <button className="btn btn-primary btn-sm" type="submit">Record decision</button>
-      </form>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(decision === 'Rejected'
+              ? { decision, rejectedBy, reasonCategory, reasonDetail }
+              : { decision, reasonDetail: reasonDetail || undefined });
+          }}
+        >
+          <div className="grid-3">
+            <label className="field">
+              <span>Decision</span>
+              <Combo value={decision} onChange={(e) => setDecision(e.target.value)}>
+                {INTERVIEW_RECOMMENDATIONS.map((r) => <option key={r}>{r}</option>)}
+              </Combo>
+            </label>
+            {decision === 'Rejected' && (
+              <>
+                <label className="field">
+                  <span>Whose decision *</span>
+                  <Combo value={rejectedBy} onChange={(e) => { setRejectedBy(e.target.value); setReasonCategory(''); }}>
+                    {REJECTED_BY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label} — {o.hint}</option>)}
+                  </Combo>
+                </label>
+                <label className="field">
+                  <span>Reason *</span>
+                  <Combo required value={reasonCategory} onChange={(e) => setReasonCategory(e.target.value)}>
+                    <option value="">Choose a reason</option>
+                    {reasons.map((r) => <option key={r}>{r}</option>)}
+                  </Combo>
+                </label>
+              </>
+            )}
+          </div>
+          <label className="field" style={{ marginBottom: 10 }}>
+            <span>{decision === 'Rejected' ? 'Details' : 'Comment'}</span>
+            <input value={reasonDetail} onChange={(e) => setReasonDetail(e.target.value)} placeholder="Optional" />
+          </label>
+          <div className="small-muted" style={{ marginBottom: 10 }}>
+            {internal
+              ? 'Selected moves this TeamLink internal hire to Offers: Selected → Offer → Offer Accepted → Joined → Hired → HRMS employee. Never invoiced.'
+              : 'Selected moves this client placement to Joining Confirmation: Selected → Client Joining → Accounts (invoice). No offer stage, and never an HRMS employee.'}
+          </div>
+          <button className="btn btn-primary btn-sm" type="submit">Record decision</button>
+        </form>
+      )}
     </Panel>
   );
 }

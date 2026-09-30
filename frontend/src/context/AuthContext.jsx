@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import api from '../api';
+import api, { viewAsToken } from '../api';
 
 const AuthContext = createContext(null);
 
@@ -8,7 +8,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('tl_token');
+    // A View-as tab (components/ViewAs.jsx) signs in with its own token.
+    const viewingAs = !!viewAsToken();
+    const token = viewAsToken() || localStorage.getItem('tl_token');
     if (!token) {
       setLoading(false);
       return;
@@ -16,7 +18,9 @@ export function AuthProvider({ children }) {
     api
       .get('/auth/me')
       .then((res) => setUser(res.data))
-      .catch(() => localStorage.removeItem('tl_token'))
+      // A failed View-as session is cleaned up by api.js; it must never sign
+      // the Super Admin's own login out.
+      .catch(() => { if (!viewingAs) localStorage.removeItem('tl_token'); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -38,6 +42,11 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    // Signing out of a View-as tab ends View as; the Super Admin stays signed in.
+    if (viewAsToken()) {
+      import('../components/ViewAs.jsx').then((m) => m.exitViewAs());
+      return;
+    }
     localStorage.removeItem('tl_token');
     setUser(null);
   }

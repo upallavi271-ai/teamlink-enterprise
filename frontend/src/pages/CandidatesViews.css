@@ -1,0 +1,30 @@
+/* Candidates & Pipeline — the three views (pages/Candidates.jsx). Scoped under .cviews-* */
+.cviews{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 12px;padding:4px;background:#f1f5fb;border:1px solid var(--line,#e3e8f0);border-radius:10px;width:fit-content;max-width:100%}
+.cviews-btn{display:inline-flex;align-items:center;gap:8px;border:0;background:transparent;padding:8px 16px;border-radius:7px;font:inherit;font-size:13.5px;font-weight:600;color:var(--ink-soft,#5b6478);cursor:pointer;white-space:nowrap}
+.cviews-btn:hover{color:var(--brand,#0a6fc2);background:#fff}
+.cviews-btn.is-on{background:#fff;color:var(--brand,#0a6fc2);box-shadow:0 1px 3px rgba(18,28,52,.12)}
+.cviews-n{font-size:11.5px;font-weight:700;background:#e3ecf8;color:var(--brand,#0a6fc2);border-radius:10px;padding:1px 8px}
+.cviews-btn.is-on .cviews-n{background:var(--brand,#0a6fc2);color:#fff}
+.cviews .cpl-moved{margin-left:8px}
+.cviews-qgroup{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px}
+.cviews-def{margin:-2px 0 8px;font-size:12px;max-width:980px;line-height:1.45}
+.cviews-code{font-size:11px;letter-spacing:.02em;margin-top:2px}
+.cviews-type{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#6a3fb5;background:#f1eafc;border:1px solid #dccdf5;border-radius:10px;padding:1px 8px}
+.cviews-late{color:#b3261e;font-weight:700}
+.cviews-email{max-width:240px;overflow-wrap:anywhere}
+@media (max-width:640px){
+  .cviews{width:100%;padding:3px}
+  .cviews-btn{flex:1 1 auto;justify-content:center;padding:8px 8px;font-size:12.5px}
+  .cviews .cpl-moved{display:none}
+}
+/* Filters on one line (spec: Search · Department · Section · Stage · Recruiter · More Filters) */
+.cpl .mf-row>.cpl-search{flex:2 1 280px;width:auto;min-width:220px}
+.cpl .mf-row .combo,.cpl .mf-panel .combo{flex:1 1 170px;width:auto;min-width:150px;max-width:260px}
+.cpl .mf-panel{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+@media (max-width:640px){.cpl .mf-row .combo,.cpl .mf-panel .combo{max-width:none;flex-basis:100%}.cpl .mf-row>.cpl-search{flex-basis:100%}}
+.cpl-table td.cviews-req{max-width:210px;min-width:140px;overflow-wrap:break-word}
+.cpl-table td.cviews-client{min-width:130px;max-width:180px;overflow-wrap:break-word}
+.cpl-table td.cpl-col-next{min-width:170px}
+.cpl-table .cpl-waiting{white-space:normal}
+/* Candidate Master has no checkbox column: the sticky name column starts at 0 */
+.cpl-table.cviews-master .cpl-sticky-1{left:0}

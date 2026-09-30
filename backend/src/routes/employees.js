@@ -1,4 +1,5 @@
 const express = require('express');
+const { HR_STATUSES } = require('../utils/hrStatus');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../db');
@@ -8,34 +9,51 @@ const {
   hrmsGlobal,
   scopeDepartments: scopeDepartmentsOf,
   employeeWhere: employeeWhereOf,
+  employeeInScope,
   scopeLabel: scopeLabelOf,
   clientWhere,
 } = require('../utils/scope');
+const attachments = require('../utils/attachments');
 const { atsRoleLabel } = require('../utils/atsVocab');
 const { logAudit, logFieldChanges, resolveFieldApprovals } = require('../utils/audit');
 const { sendCredentials, unguessablePasswordHash } = require('../utils/employeeInvite');
+const { strengthError, passwordEventData, passwordStatusOf } = require('../utils/passwordPolicy');
 // The designation -> role / product-access mapping. DATA in the
 // DesignationRole table, never a switch statement here: the same "TL" row
 // serves Medical, IT and everyone else, because the DEPARTMENT is the scope.
 const { mappingFor } = require('../utils/identity');
-const { toCsv, toXlsx, toPdf } = require('../utils/tabularExport');
+const { toCsv, toXlsx, toXlsxBook, toPdf } = require('../utils/tabularExport');
 // Employee administration — the shared vocabulary the Employee Management
 // surface below and the Administration → Users screen both read. Moved out of
 // routes/admin.js with the routes; see utils/employeeAdmin.js for why.
 const {
   ALL_ROLES, EMAIL_RE, normalEmail,
   designationRows, defaultProductAccessByRole, loginRoleFor, productRolesForDesignation,
-  EMP_MGMT_INCLUDE, shapeEmployeeMgmtRow,
+  EMP_MGMT_INCLUDE, shapeEmployeeMgmtRow, tlWiseGroups,
   OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS, OTP_PURPOSE, hashOtp, liveVerification,
   syncLoginToEmployee,
+  employeeListExtras, transferHistoryOf, isLead, OPEN_RESIGNATION,
 } = require('../utils/employeeAdmin');
 const { CATALOG_ROLES } = require('../utils/roleAccess');
+const {
+  listRoles, roleByCode, isPrivilegedRole, loginPatchForRole,
+} = require('../utils/roleRegistry');
 const {
   EMP_TYPES, EMP_STATUSES, EMP_GENDERS, EMP_MGMT_STATUS_FILTER,
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS } = require('../utils/atsVocab');
 const mailer = require('../utils/mailer');
 const { senderIdentity } = require('../utils/candidateComms');
+const { today: positionToday, hasLeft: seatHolderLeft, lastWorkingDayOf } = require('../utils/positions');
+const empVerify = require('../utils/employeeVerification');
+const emailVerify = require('../utils/employeeEmailVerification');
+// Super Admin is a system account, not an employee: it drops out of every
+// employee list, count, export and import below.
+const { withoutSystemAccounts } = require('../utils/systemAccounts');
+// Employee ID: the next TL<nnn> and the checks on a changed one.
+const employeeCodes = require('../utils/employeeCode');
+// Every export / import tells the Super Admin (in-app + throttled email).
+const { notifyDataIo } = require('../utils/dataIoNotify');
 
 const router = express.Router();
 
@@ -94,9 +112,11 @@ async function assertInScope(req, employee) {
   // the same helper utils/scope.js employeeWhere() uses for the list, so the
   // record check and the list query cannot disagree.
   if (hrmsGlobal(req.user)) return true;
-  const s = scopeOf(req.user);
-  if (!s.departments.length) return false;
-  return s.departments.includes(employee.department);
+  // EXACTLY the list's rule (employeeWhere): a TL reaches their own team only,
+  // never a peer team or anyone senior, even inside the same department.
+  if (!employee || !employee.id) return false;
+  const n = await prisma.employee.count({ where: { AND: [{ id: employee.id }, employeeWhereOf(req.user)] } });
+  return n > 0;
 }
 
 const DEFAULT_ONBOARDING_TASKS = [
@@ -296,7 +316,120 @@ router.get('/me/config', (req, res) => {
 router.get('/me', async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { userId: req.user.id }, include: { reportingManager: true } });
   if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
-  res.json(withComputed(employee));
+  // What is proved, what is outstanding, and whether a code can actually be
+  // delivered — so the screen never offers a button that cannot work.
+  // The seat, read-only on this screen. An employee may see which desk they
+  // hold; they may not change it.
+  const seat = await prisma.positionAssignment.findFirst({
+    where: { employeeId: employee.id, toDate: null },
+    include: { position: true },
+  });
+  res.json({
+    ...withComputed(employee),
+    position: seat ? seat.position.code : '',
+    verification: empVerify.verificationState(employee),
+    emailVerification: await emailVerify.emailState(employee),
+    channels: { sms: await empVerify.smsChannel() },
+  });
+});
+
+// =========================================================================
+// IDENTITY VERIFICATION — the employee proving their OWN mobile and Aadhaar.
+//
+// Both routes resolve the employee from the LOGIN, never from a parameter.
+// There is deliberately no :id form: "verify employee X" is not an action
+// anybody should be able to take on somebody else, and an id in the path is
+// how that ends up possible.
+// =========================================================================
+router.post('/me/verify/start', async (req, res, next) => {
+  try {
+    const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+
+    const started = await empVerify.startVerification(employee, {
+      kind: req.body.kind, mobile: req.body.mobile, aadhaar: req.body.aadhaar,
+    });
+    if (started.error) return res.status(400).json({ error: started.error });
+
+    // THE CODE IS DELIVERED, NEVER RETURNED. Returning it would let the
+    // holder of the session pass a check that is meant to prove a phone.
+    //
+    // And it is delivered by SMS or not at all: mailing a code to verify a
+    // MOBILE proves the mailbox, not the number. No SMS client exists yet,
+    // so today this always reports undelivered — and says why, rather than
+    // emailing it and calling the mobile verified.
+    let delivery = null;
+    if (started.sms.deliverable) {
+      delivery = `sent by SMS to ${started.masked}`;
+    }
+
+    await logAudit({
+      userId: req.user.id,
+      action: `Identity verification started (${started.kind})`,
+      entity: 'Employee', entityId: employee.id,
+    });
+
+    return res.json({
+      kind: started.kind,
+      mobile: started.masked,
+      ttlMinutes: started.ttlMinutes,
+      delivered: !!delivery,
+      delivery,
+      // Said plainly on the screen of the person who just pressed the button.
+      note: delivery ? null : started.sms.reason,
+      esign: started.esign ? started.esign.name : null,
+      esignNote: started.kind === "AADHAAR" && !started.esign
+        ? 'No Aadhaar eSign provider is connected, so this can only check the number offline — it will not be a UIDAI-authenticated verification.'
+        : null,
+    });
+  } catch (err) { return next(err); }
+});
+
+router.post('/me/verify/confirm', async (req, res, next) => {
+  try {
+    const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+
+    const done = await empVerify.confirmVerification(employee, { otp: req.body.otp });
+    if (done.error) return res.status(400).json({ error: done.error });
+
+    await logAudit({
+      userId: req.user.id,
+      action: `${done.kind} verified${done.kind === "AADHAAR" && !done.esign ? " (offline check only)" : ""}`,
+      entity: 'Employee', entityId: employee.id,
+    });
+
+    return res.json({
+      kind: done.kind,
+      verified: done.verified,
+      note: done.note,
+      verification: empVerify.verificationState(done.employee),
+    });
+  } catch (err) { return next(err); }
+});
+
+// EMAIL VERIFICATION — the employee proving the email on their own form.
+// The address comes in the body because the employee may be verifying the
+// NEW address they just typed, before submitting it; the code goes to that
+// address and nowhere else. See utils/employeeEmailVerification.js.
+router.get('/me/verify-email', async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+  if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+  res.json(await emailVerify.emailState(employee, req.query.email || employee.email));
+});
+router.post('/me/verify-email/start', async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+  if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+  const out = await emailVerify.start(employee, req.body.email, req.user);
+  const { status, ...body } = out;
+  res.status(status).json({ ...body, state: await emailVerify.emailState(employee, body.email || req.body.email || employee.email) });
+});
+router.post('/me/verify-email/confirm', async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+  if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+  const out = await emailVerify.confirm(employee, req.body.email, req.body.code, req.user);
+  const { status, ...body } = out;
+  res.status(status).json({ ...body, state: await emailVerify.emailState(employee, req.body.email || employee.email) });
 });
 
 // Employee self-service: fills in the rest of their own profile (everything HR
@@ -325,8 +458,10 @@ router.put('/me', async (req, res) => {
       changes.push({ field, label, from: current, to: req.body[field] });
     }
   }
-  if (changes.length === 0) return res.status(400).json({ error: 'No changes to submit' });
-
+  // SUBMITTING WITH NO FIELD CHANGES IS STILL A SUBMISSION. An employee whose
+  // record HR already filled in, or who was sent back only to upload a
+  // document, confirms the form as it stands — and it locks for them exactly
+  // as an edited one does. HR's review then sees "0 field(s)" and decides.
   const updated = await prisma.employee.update({
     where: { id: employee.id },
     data: {
@@ -341,8 +476,12 @@ router.put('/me', async (req, res) => {
   });
   await logAudit({
     userId: req.user.id, actorName: req.user.name, action: 'Profile submitted for review',
-    entity: 'Employee', entityId: employee.id, toValue: `${changes.length} field(s)`,
+    entity: 'Employee', entityId: employee.id,
+    toValue: changes.length ? `${changes.length} field(s)` : 'Confirmed as it stands — no field changes',
   });
+  // The email they are submitting (new or unchanged) — not verified? HR hears.
+  await emailVerify.notifyHrUnverified(employee, req.body.email !== undefined ? req.body.email : employee.email,
+    'they submitted their profile without verifying it').catch(() => null);
   // ONE AUDIT ROW PER FIELD, not one per submission: Employee · Field · Old
   // Value · New Value · Changed By · Changed At, with Approval Status set to
   // Pending until HR decides. resolveFieldApprovals() stamps the approver on
@@ -411,6 +550,8 @@ const EXPORT_COLUMNS = [
   ['dateOfJoining', 'Date of Joining'], ['reportingManagerName', 'Reporting Manager'],
   ['profileStatus', 'Profile Status'], ['profileCompletionPct', 'Profile Completion %'],
   ['credentialsSentStatus', 'Sign-in Email'],
+  ['seatCode', 'Position'], ['seatFrom', 'In Position From'], ['seatTo', 'In Position To'],
+  ['seatTookOverFrom', 'Took Over From'], ['seatHandedTo', 'Handed To'],
 ];
 
 // ONE query, ONE scope decision, THREE formats. CSV, Excel and PDF all come
@@ -420,12 +561,28 @@ async function buildExport(req) {
   const where = departmentWhere(req);
   if (scopeDepartments(req) === undefined && req.query.department) where.department = req.query.department;
   if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
+  // THE ROWS ON SCREEN. The list's filters (status, department, search …)
+  // run in the browser, so it sends the ids it is showing; they only narrow
+  // the scoped query, never widen it.
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : null;
+  const scoped = ids ? { AND: [where, { id: { in: ids } }] } : where;
 
-  const employees = await prisma.employee.findMany({
-    where, include: { reportingManager: { select: { name: true } } }, orderBy: { name: 'asc' },
-  });
+  const [employees, seats] = await Promise.all([
+    prisma.employee.findMany({
+      where: withoutSystemAccounts(scoped), include: { reportingManager: { select: { name: true } } }, orderBy: { name: 'asc' },
+    }),
+    seatTimelines(),
+  ]);
   const rows = employees.map((e) => {
     const c = withComputed(e);
+    const seat = seatSummary(seats.get(e.id));
+    if (seat) {
+      c.seatCode = seat.code;
+      c.seatFrom = seat.from;
+      c.seatTo = seat.current ? 'Present' : seat.to;
+      c.seatTookOverFrom = seat.tookOverFrom ? seat.tookOverFrom.name : '';
+      c.seatHandedTo = seat.handedTo ? `${seat.handedTo.name} (from ${seat.handedTo.from})` : '';
+    }
     c.reportingManagerName = e.reportingManager ? e.reportingManager.name : '';
     c.dateOfJoining = e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : '';
     return EXPORT_COLUMNS.map(([key]) => (c[key] === null || c[key] === undefined ? '' : c[key]));
@@ -443,6 +600,7 @@ async function buildExport(req) {
 async function sendExport(req, res, format) {
   const { headers, rows, count, scopeLabel: label, suffix } = await buildExport(req);
   const stamp = new Date().toISOString().slice(0, 10);
+  await notifyDataIo(req, { kind: 'export', module: 'Employee Management', count, what: 'employee records', format, detail: `list export · scope: ${label}` });
   await logAudit({
     userId: req.user.id, actorName: req.user.name,
     action: `Employee list exported (${format.toUpperCase()})`, entity: 'Employee',
@@ -471,6 +629,389 @@ async function sendExport(req, res, format) {
 router.get('/export.csv', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'csv'));
 router.get('/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'xlsx'));
 router.get('/export.pdf', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'pdf'));
+// The same, for exactly the rows the screen is showing (body: { ids }).
+router.post('/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => sendExport(req, res, 'xlsx'));
+
+// --- GLOBAL EXPORT with the Export Fields picker ----------------------------
+//
+// GET  /export/fields   every exportable field, from the ONE server-side
+//                       registry (utils/employeeExportFields.js, generated
+//                       from the Employee model), each marked allowed / locked
+//                       for THIS caller.
+// POST /export/global   { fields, format: xlsx|csv|pdf, filters }
+//
+// SCOPE: the same scoped query the list uses — departmentWhere() (role,
+// department and team scope) minus system accounts — then the SAME filters
+// the screen applies (search, department, designation, role, status, login,
+// position) plus a Date of Joining range. A TL exports their team, never the
+// company. An employee (self-only HRMS login) gets 403.
+//
+// FIELD-LEVEL PERMISSIONS: any field this caller may not export is STRIPPED
+// even when the request names it by hand (and reported back in
+// X-Export-Stripped); a request made only of such fields is refused (403).
+// Every export is audit-logged with its fields, row count and filters.
+const exportFields = require('../utils/employeeExportFields');
+const { formatOf } = require('../utils/exportKit');
+const { hrStatusOf: hrStatusOfExport } = require('../utils/hrStatus');
+
+const GLOBAL_EXPORT_FILTERS = ['q', 'dept', 'designation', 'role', 'status', 'login', 'position', 'joinedFrom', 'joinedTo'];
+
+function globalExportRefusal(req) {
+  if (req.user.caps && req.user.caps.hrmsSelfOnly) {
+    return 'Global Export is not available to an employee login — it reaches only your own record.';
+  }
+  return null;
+}
+
+function cleanExportFilters(raw) {
+  const f = {};
+  GLOBAL_EXPORT_FILTERS.forEach((k) => {
+    const v = raw && raw[k] !== undefined && raw[k] !== null ? String(raw[k]).trim().slice(0, 120) : '';
+    if (v) f[k] = v;
+  });
+  ['joinedFrom', 'joinedTo'].forEach((k) => { if (f[k] && !/^\d{4}-\d{2}-\d{2}$/.test(f[k])) delete f[k]; });
+  return f;
+}
+
+// Employees.jsx `filtered`, on the server. Kept identical on purpose.
+function matchesListFilters(e, f, seatList) {
+  const loginStatus = e.user ? (e.user.status || 'Active') : 'No login';
+  const employmentStatus = e.employmentStatus || 'Active';
+  if (f.position && !(seatList || []).some((t) => t.code === f.position)) return false;
+  const q = (f.q || '').toLowerCase();
+  if (q && !`${e.name} ${e.employeeCode} ${e.email || ''}`.toLowerCase().includes(q)) return false;
+  if (f.dept && e.department !== f.dept) return false;
+  if (f.designation && e.designation !== f.designation) return false;
+  if (f.role && ((e.user && e.user.role) || '') !== f.role) return false;
+  if (!f.position && f.status && hrStatusOfExport(employmentStatus, loginStatus) !== f.status) return false;
+  if (f.login && loginStatus !== f.login) return false;
+  const doj = e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : '';
+  if (f.joinedFrom && (!doj || doj < f.joinedFrom)) return false;
+  if (f.joinedTo && (!doj || doj > f.joinedTo)) return false;
+  return true;
+}
+
+router.get('/export/fields', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => {
+  const refusal = globalExportRefusal(req);
+  if (refusal) return res.status(403).json({ error: refusal });
+  return res.json({
+    fields: exportFields.fieldsFor(req.user),
+    sensitivity: Object.entries(exportFields.SENSITIVITY_ACCESS).map(([level, who]) => ({
+      level, label: exportFields.SENSITIVITY_LABEL[level], roles: who === 'any' ? 'any' : who,
+    })),
+    formats: [{ id: 'xlsx', label: 'Excel' }, { id: 'csv', label: 'CSV' }, { id: 'pdf', label: 'PDF' }],
+    filters: GLOBAL_EXPORT_FILTERS,
+    scope: scopeLabel(req),
+    // The "Include document files (ZIP)" switch: allowed / locked + the cap.
+    documentFiles: exportFields.documentFilesAccess(req.user),
+  });
+});
+
+// DOCUMENTS (the "Documents" group, HR / Super Admin / Admin only — see the
+// registry): the per-employee columns go into every format; an .xlsx also
+// gets a second sheet, "Documents", one row per document of exactly the
+// exported employees. `includeFiles: true` returns a .zip instead: the
+// spreadsheet plus "<EmployeeID> - <Name>/<DocType> - <original name>" for
+// every file, streamed (archiver), capped by DOCUMENT_ZIP_LIMITS, and
+// audit-logged with the file count and total size. A caller who may not
+// export documents gets 403 for the ZIP.
+const zipFs = require('fs');
+const DOCUMENTS_SHEET_HEADERS = [
+  'Employee ID', 'Employee Name', 'Department', 'Document Type', 'Document Name',
+  'File Name', 'File Type', 'Size (KB)', 'Uploaded By', 'Uploaded On',
+];
+const exportTs = (v) => (v ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) : '');
+// A name safe as a ZIP folder / file on Windows, macOS and Linux.
+const zipSafe = (s, max = 120) => String(s || '')
+  .replace(/[\\/:*?"<>|]/g, '_')
+  .split('').filter((ch) => ch.charCodeAt(0) >= 32).join('')
+  .replace(/[. ]+$/, '')
+  .trim()
+  .slice(0, max) || '_';
+
+router.post('/export/global', requirePerm(null, 'hrms', 'Employee Management', 'export'), async (req, res) => {
+  const refusal = globalExportRefusal(req);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const b = req.body || {};
+  const format = formatOf({ format: b.format || 'xlsx' });
+  if (!format) return res.status(400).json({ error: 'Format must be xlsx, csv or pdf.' });
+  const wantFiles = b.includeFiles === true || b.includeFiles === 'true';
+  const { allowed, stripped, unknown } = exportFields.authorise(req.user, b.fields);
+  if (wantFiles && !exportFields.mayExportDocuments(req.user)) {
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Employee Global Export refused', entity: 'Employee',
+      field: 'export', toValue: JSON.stringify({ refused: ['includeFiles', ...stripped.map((f) => f.key)] }),
+    });
+    return res.status(403).json({
+      error: exportFields.documentFilesAccess(req.user).lockedReason,
+      stripped: ['includeFiles', ...stripped.map((f) => f.key)],
+    });
+  }
+  if (!allowed.length) {
+    if (stripped.length) {
+      await logAudit({
+        userId: req.user.id, actorName: req.user.name, action: 'Employee Global Export refused', entity: 'Employee',
+        field: 'export', toValue: JSON.stringify({ refused: stripped.map((f) => f.key) }),
+      });
+      return res.status(403).json({
+        error: `You may not export ${stripped.map((f) => f.label).join(', ')}.`,
+        stripped: stripped.map((f) => f.key),
+      });
+    }
+    return res.status(400).json({ error: 'Pick at least one field to export.', unknown });
+  }
+  const filters = cleanExportFilters(b.filters || {});
+  const needSalary = allowed.some((f) => f.salary);
+  const needDocs = wantFiles || allowed.some((f) => f.documents);
+  const [employees, seats] = await Promise.all([
+    prisma.employee.findMany({
+      where: withoutSystemAccounts(departmentWhere(req)),
+      include: {
+        user: { select: { role: true, status: true } },
+        reportingManager: { select: { name: true } },
+        ...(needSalary ? { salaryStructure: true } : {}),
+      },
+      orderBy: { name: 'asc' },
+    }),
+    seatTimelines(),
+  ]);
+  const matched = employees.filter((e) => matchesListFilters(e, filters, seats.get(e.id)));
+
+  // Documents of EXACTLY the matched employees. docsOf() (what is on file)
+  // feeds the per-employee columns; copiesOf() — the Documents sheet rows and
+  // the ZIP files — also drops any Aadhaar / PAN copy this caller may not
+  // take under the registry's stricter rule.
+  const docsByEmp = new Map();
+  let uploaderName = new Map();
+  if (needDocs && matched.length) {
+    const docs = await prisma.employeeDocument.findMany({
+      where: { employeeId: { in: matched.map((e) => e.id) } },
+      select: {
+        id: true, employeeId: true, docType: true, docName: true, fileName: true, mime: true,
+        size: true, uploadedBy: true, uploadedAt: true, file: wantFiles,
+      },
+      orderBy: { uploadedAt: 'asc' },
+    });
+    const typeOrder = (t) => { const i = DOC_TYPES.indexOf(t); return i < 0 ? DOC_TYPES.length : i; };
+    docs.sort((x, y) => typeOrder(x.docType) - typeOrder(y.docType) || new Date(x.uploadedAt) - new Date(y.uploadedAt));
+    docs.forEach((d) => { if (!docsByEmp.has(d.employeeId)) docsByEmp.set(d.employeeId, []); docsByEmp.get(d.employeeId).push(d); });
+    const ids = [...new Set(docs.map((d) => d.uploadedBy).filter(Boolean))];
+    if (ids.length) {
+      const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+      uploaderName = new Map(users.map((u) => [u.id, u.name]));
+    }
+  }
+  const docsOf = (e) => docsByEmp.get(e.id) || [];
+  const copiesOf = (e) => docsOf(e).filter((d) => exportFields.mayExportDocumentType(req.user, d.docType));
+
+  const ctx = { hrStatusOf: hrStatusOfExport, seat: (e) => seatSummary(seats.get(e.id)), docsOf };
+  const headers = allowed.map((f) => f.label);
+  const rows = matched.map((e) => allowed.map((f) => {
+    const v = f.get(e, ctx);
+    return v === null || v === undefined ? '' : v;
+  }));
+  const label = scopeLabel(req);
+  const stamp = new Date().toISOString().slice(0, 10);
+  const baseName = `employees-global-export-${stamp}`;
+  const filterText = Object.entries(filters).map(([k, v]) => `${k}=${v}`).join(', ') || 'none';
+
+  // The spreadsheet itself, in the chosen format.
+  const buildSheet = () => {
+    if (format === 'csv') return Buffer.from(`﻿${toCsv(headers, rows)}`, 'utf8');
+    if (format === 'pdf') {
+      return toPdf(headers, rows, {
+        title: 'Employee Export',
+        subtitle: `${rows.length} employee(s) · scope: ${label} · filters: ${filterText} · exported ${new Date().toLocaleString('en-GB')} by ${req.user.name || 'user'}`,
+      });
+    }
+    if (!needDocs) return toXlsx(headers, rows, 'Employees');
+    const docRows = [];
+    matched.forEach((e) => copiesOf(e).forEach((d) => docRows.push([
+      e.employeeCode || '', e.name || '', e.department || '', d.docType,
+      exportFields.exportedDocName(d.docType, d.docName), exportFields.exportedDocName(d.docType, d.fileName),
+      (attachments.ALLOWED[d.mime] || d.mime || '').toUpperCase(),
+      d.size ? (d.size / 1024).toFixed(1) : '',
+      d.uploadedBy ? (uploaderName.get(d.uploadedBy) || 'Unknown user') : '',
+      exportTs(d.uploadedAt),
+    ])));
+    return toXlsxBook([
+      { name: 'Employees', headers, rows },
+      { name: 'Documents', headers: DOCUMENTS_SHEET_HEADERS, rows: docRows },
+    ]);
+  };
+
+  res.setHeader('X-Export-Rows', String(rows.length));
+  res.setHeader('X-Export-Stripped', stripped.map((f) => f.key).join(','));
+
+  if (wantFiles) {
+    // Plan every entry first: the cap is checked BEFORE a byte is sent.
+    const entries = [];
+    const missing = [];
+    let totalBytes = 0;
+    let sensitiveFiles = 0;
+    matched.forEach((e) => {
+      const folder = zipSafe(`${e.employeeCode || 'NO-ID'} - ${e.name || ''}`);
+      const usedNames = new Set();
+      copiesOf(e).forEach((d) => {
+        const full = attachments.resolveStored(d.file);
+        if (!full) { missing.push(`${folder}: ${d.docType}`); return; }
+        const first = zipSafe(`${d.docType} - ${exportFields.exportedDocName(d.docType, d.fileName) || 'file'}`);
+        const dot = first.lastIndexOf('.');
+        const stem = dot > 0 ? first.slice(0, dot) : first;
+        const ext = dot > 0 ? first.slice(dot) : '';
+        let name = first;
+        for (let n = 2; usedNames.has(name.toLowerCase()); n += 1) name = `${stem} (${n})${ext}`;
+        usedNames.add(name.toLowerCase());
+        const size = zipFs.statSync(full).size;
+        totalBytes += size;
+        if (exportFields.SENSITIVE_DOCUMENTS.types.includes(d.docType)) sensitiveFiles += 1;
+        entries.push({ full, name: `${folder}/${name}` });
+      });
+    });
+    const lim = exportFields.DOCUMENT_ZIP_LIMITS;
+    if (entries.length > lim.maxFiles || totalBytes > lim.maxBytes) {
+      const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+      return res.status(413).json({
+        error: `That export would pack ${entries.length.toLocaleString('en-IN')} file(s), ${mb(totalBytes)} MB — `
+          + `more than the ${lim.maxFiles.toLocaleString('en-IN')} files / ${mb(lim.maxBytes)} MB a single ZIP may hold. `
+          + 'Narrow the filters (department, status, joining dates) and export in parts, or export without the files.',
+        files: entries.length,
+        bytes: totalBytes,
+      });
+    }
+    const sheetBuf = buildSheet();
+    await notifyDataIo(req, { kind: 'export', module: 'Employee Management', count: rows.length, what: 'employee records (with document files)', format, detail: `global export ZIP · ${entries.length} file(s) · scope: ${label}` });
+    await logAudit({
+      userId: req.user.id,
+      actorName: req.user.name,
+      action: `Employee Global Export (ZIP with documents, ${format.toUpperCase()})`,
+      entity: 'Employee',
+      field: 'export',
+      fieldLabel: `${rows.length} row(s), ${entries.length} file(s), ${(totalBytes / 1024).toFixed(1)} KB`,
+      toValue: JSON.stringify({
+        rows: rows.length, format, zip: true, files: entries.length, totalBytes, sensitiveFiles,
+        missingFiles: missing.length, scope: label, fields: allowed.map((f) => f.key), filters,
+        stripped: stripped.map((f) => f.key),
+      }),
+    });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.zip"`);
+    res.setHeader('X-Export-Files', String(entries.length));
+    res.setHeader('X-Export-Bytes', String(totalBytes));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Rows, X-Export-Stripped, X-Export-Files, X-Export-Bytes');
+    const archiver = require('archiver');
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('warning', (err) => console.warn('[global-export zip]', err.message));
+    archive.on('error', (err) => { console.error('[global-export zip]', err); res.destroy(err); });
+    res.on('close', () => { if (!res.writableFinished) archive.abort(); });
+    archive.pipe(res);
+    archive.append(sheetBuf, { name: `${baseName}.${format}` });
+    // Images and PDFs are already compressed: stored as-is, read from disk
+    // one at a time as the stream drains.
+    entries.forEach((en) => archive.file(en.full, { name: en.name, store: true }));
+    if (missing.length) {
+      archive.append(`These documents are recorded but their files are no longer on the server:\r\n${missing.join('\r\n')}\r\n`, { name: 'MISSING FILES.txt' });
+    }
+    await archive.finalize();
+    return undefined;
+  }
+
+  await notifyDataIo(req, { kind: 'export', module: 'Employee Management', count: rows.length, what: 'employee records', format, detail: `global export · fields: ${allowed.map((f) => f.key).join(', ')} · scope: ${label}` });
+  await logAudit({
+    userId: req.user.id,
+    actorName: req.user.name,
+    action: `Employee Global Export (${format.toUpperCase()})`,
+    entity: 'Employee',
+    field: 'export',
+    fieldLabel: `${rows.length} row(s)`,
+    toValue: JSON.stringify({
+      rows: rows.length, format, scope: label, fields: allowed.map((f) => f.key), filters,
+      stripped: stripped.map((f) => f.key),
+    }),
+  });
+  res.setHeader('Content-Disposition', `attachment; filename="${baseName}.${format}"`);
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Rows, X-Export-Stripped');
+  if (format === 'csv') res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  else if (format === 'xlsx') res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  else res.setHeader('Content-Type', 'application/pdf');
+  return res.send(buildSheet());
+});
+
+// ONE EMPLOYEE'S FULL RECORD, AS EXCEL — the row action on Employee
+// Management. Sheet 1 is the record, section by section; sheet 2 every
+// position held with the handover; sheet 3 the documents on file. Aadhaar
+// goes out as its last four digits only, and nothing internal (OTP hashes,
+// pending-change drafts) is included.
+router.get('/:id/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), async (req, res) => {
+  const e = await prisma.employee.findUnique({
+    where: { id: req.params.id },
+    include: {
+      reportingManager: { select: { name: true } },
+      user: { select: { status: true } },
+      documents: { select: { docType: true, docName: true, fileName: true, uploadedBy: true, uploadedAt: true }, orderBy: { uploadedAt: 'desc' } },
+    },
+  });
+  if (!e) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, e))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const XLSX = require('xlsx');
+  const c = withComputed(e);
+  const d = (v) => (v ? new Date(v).toISOString().slice(0, 10) : '');
+  const aadhaar = e.aadhaarLast4 || (e.aadhaarNumber ? String(e.aadhaarNumber).slice(-4) : '');
+  const sections = [
+    ['Employment', [
+      ['Employee ID', e.employeeCode], ['Name', e.name], ['Department', e.department], ['Team', e.team],
+      ['Designation', e.designation], ['Reporting Manager', e.reportingManager && e.reportingManager.name], ['TL', e.tl], ['STL', e.stl],
+      ['Employment Status', e.employmentStatus], ['Employment Type', e.employeeType], ['Date of Joining', d(e.dateOfJoining)],
+      ['Location', e.location], ['Branch', e.branch], ['Shift', e.shift], ['Experience', e.employmentExperience],
+      ['Skills', e.skills], ['Education', e.educationDetails],
+    ]],
+    ['Contact', [
+      ['Email', e.email], ['Mobile', e.phone], ['Mobile Verified', e.mobileVerified],
+      ['Emergency Contact', e.emergencyContactName], ['Emergency Phone', e.emergencyContactPhone],
+      ['Emergency Relation', e.emergencyContactRelation],
+    ]],
+    ['Personal', [
+      ['Date of Birth', d(e.dateOfBirth)], ['Gender', e.gender], ['Blood Group', e.bloodGroup],
+    ]],
+    ['Address', [
+      ['Address Type', e.addressType], ['Line 1', e.addressLine1 || e.address], ['Line 2', e.addressLine2],
+      ['City', e.city], ['District', e.district], ['State', e.state], ['Country', e.country], ['PIN Code', e.postalCode],
+    ]],
+    ['Bank & Statutory', [
+      ['Bank Name', e.bankName], ['Account Number', e.bankAccountNumber], ['IFSC', e.ifscCode],
+      ['PAN', e.panNumber], ['Aadhaar (last 4)', aadhaar ? `XXXX XXXX ${aadhaar}` : ''],
+      ['UAN', e.uanNumber], ['PF Number', e.pfNumber], ['ESI Number', e.esiNumber],
+    ]],
+    ['Profile', [
+      ['Profile Status', c.profileStatus], ['Profile Completion %', c.profileCompletionPct],
+      ['Locked', e.isLocked ? 'Yes' : 'No'], ['Login', e.user ? (e.user.status || 'Active') : 'No login'],
+      ['Sign-in Email', e.credentialsSentStatus], ['Record Created', d(e.createdAt)], ['Last Updated', d(e.updatedAt)],
+    ]],
+  ];
+  const profile = [['Section', 'Field', 'Value']];
+  sections.forEach(([name, fields]) => fields.forEach(([k, v], i) => profile.push([i === 0 ? name : '', k, v == null ? '' : v])));
+  const seats = (await seatTimelines()).get(e.id) || [];
+  const positions = [['Position', 'Name', 'Department', 'From', 'To', 'Took Over From', 'Handed To', 'Handed Over On']]
+    .concat(seats.map((t) => [t.code, t.name || '', t.department || '', t.from, t.current ? 'Present' : t.to,
+      t.tookOverFrom ? t.tookOverFrom.name : '', t.handedTo ? t.handedTo.name : '', t.handedTo ? t.handedTo.from : '']));
+  const docs = [['Document Type', 'Document', 'File', 'Uploaded By', 'Uploaded On']]
+    .concat((e.documents || []).map((x) => [x.docType, x.docName || '', x.fileName || '', x.uploadedBy || '', d(x.uploadedAt)]));
+  const wb = XLSX.utils.book_new();
+  const sheet = (aoa, widths) => { const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = widths.map((w) => ({ wch: w })); return ws; };
+  XLSX.utils.book_append_sheet(wb, sheet(profile, [18, 24, 44]), 'Employee');
+  XLSX.utils.book_append_sheet(wb, sheet(positions, [12, 20, 14, 12, 12, 24, 24, 16]), 'Positions');
+  XLSX.utils.book_append_sheet(wb, sheet(docs, [20, 28, 30, 20, 14]), 'Documents');
+  await notifyDataIo(req, { kind: 'export', module: 'Employee Management', count: 1, what: `employee record (${e.employeeCode} ${e.name})`, format: 'xlsx' });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Employee record exported (XLSX)',
+    entity: 'Employee', entityId: e.id, toValue: e.employeeCode,
+  });
+  const filename = `${e.employeeCode}-${e.name}`.replace(/[^\w-]+/g, '_') + '.xlsx';
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  return res.send(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+});
 
 /* ==========================================================================
    EMPLOYEE MANAGEMENT — the administration surface for employee accounts.
@@ -504,13 +1045,66 @@ function assertDepartmentAllowed(req, department) {
   return { ok: true, department };
 }
 
+// THE HANDOVER, PER PERSON. Every seat somebody has held, oldest first, with
+// who sat in it before them and who took it after:
+//
+//   Keerthana   MED-2  Jan 2026 – Apr 2026   took over from Niveditha, handed to Renuka A
+//               MED-TL Apr 2026 – today      took over from Sannidhi
+//
+// Built from PositionAssignment in one read, so the Employee Management list
+// can say where a person sits — and a former employee where they sat and who
+// replaced them — without a request per row.
+async function seatTimelines() {
+  const rows = await prisma.positionAssignment.findMany({
+    select: {
+      employeeId: true, fromDate: true, toDate: true,
+      position: { select: { id: true, code: true, name: true, department: true } },
+      employee: { select: { name: true } },
+    },
+    orderBy: { fromDate: 'asc' },
+  });
+  const bySeat = new Map();
+  rows.forEach((r) => {
+    // Opened and closed the same day: never really held, so not a handover.
+    if (r.toDate && r.toDate <= r.fromDate) return;
+    if (!bySeat.has(r.position.id)) bySeat.set(r.position.id, []);
+    bySeat.get(r.position.id).push(r);
+  });
+  const byEmployee = new Map();
+  bySeat.forEach((list) => list.forEach((r, i) => {
+    const prev = list[i - 1];
+    const next = list[i + 1];
+    const t = {
+      code: r.position.code, name: r.position.name || null, department: r.position.department || null,
+      from: r.fromDate, to: r.toDate || null, current: !r.toDate,
+      tookOverFrom: prev && prev.employeeId !== r.employeeId ? { name: prev.employee.name, to: prev.toDate } : null,
+      handedTo: next && next.employeeId !== r.employeeId ? { name: next.employee.name, from: next.fromDate } : null,
+    };
+    if (!byEmployee.has(r.employeeId)) byEmployee.set(r.employeeId, []);
+    byEmployee.get(r.employeeId).push(t);
+  }));
+  byEmployee.forEach((list) => list.sort((a, b) => a.from.localeCompare(b.from)));
+  return byEmployee;
+}
+// The seat the list shows: the one held now, else the last one held.
+function seatSummary(list) {
+  if (!list || !list.length) return null;
+  return list.find((t) => t.current) || list[list.length - 1];
+}
+
 router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const where = departmentWhere(req);
   if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
   if (scopeDepartments(req) === undefined && req.query.department) where.department = req.query.department;
-  const employees = await prisma.employee.findMany({
-    where, include: EMP_MGMT_INCLUDE, orderBy: { name: 'asc' },
-  });
+  const [employees, seats, provedEmails] = await Promise.all([
+    prisma.employee.findMany({ where: withoutSystemAccounts(where), include: EMP_MGMT_INCLUDE, orderBy: { name: 'asc' } }),
+    seatTimelines(),
+    emailVerify.verifiedSet(),
+  ]);
+  // Photo id, document count and last working date — three reads for the
+  // whole list, never one per row.
+  const extras = await employeeListExtras(employees.map((e) => e.id));
+  const canEdit = await can(req.user, 'hrms', 'hrms', 'Employee Management', 'edit');
   res.json({
     scope: scopeLabel(req),
     // What this caller may actually do, so the screen offers exactly that and
@@ -525,9 +1119,73 @@ router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view
       approve: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'approve'),
       configure: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'configure'),
       delete: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'delete'),
+      // Reset Password / Send Password Reset — the HR desk (hrms-24 §12).
+      passwords: await mayManagePasswords(req.user),
+      // Change Employee ID — Super Admin / Admin / HR (see mayEditCode).
+      editCode: await mayEditCode(req.user),
+      // Manager / Assistant Manager: every department, nothing changed.
+      viewOnly: isViewOnlyAdmin(req.user) && !canEdit,
+      // Setting a notice-period employee's last working date is an edit.
+      lastWorkingDate: canEdit,
     },
-    rows: employees.map(shapeEmployeeMgmtRow),
+    rows: employees.map((e) => ({
+      ...shapeEmployeeMgmtRow(e),
+      ...(extras.get(e.id) || { photoDocId: null, docCount: 0, lastWorkingDate: null, lastWorkingDateSource: null }),
+      seat: seatSummary(seats.get(e.id)),
+      // Every seat they ever held — the Positions filter lists past holders too.
+      seats: seats.get(e.id) || [],
+      seatCount: (seats.get(e.id) || []).length,
+      emailVerified: !!(e.email && provedEmails.has(normalEmail(e.email))),
+    })),
   });
+});
+
+// TL-WISE — the same scoped list grouped by team lead (utils/employeeAdmin.js
+// tlWiseGroups). The screen's filters run in the browser, so it posts the ids
+// it is counting; like the list export they only narrow the scoped query,
+// never widen it. Without ids it is the caller's whole scope.
+async function tlWiseFor(req) {
+  const where = departmentWhere(req);
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : null;
+  const scoped = ids ? { AND: [where, { id: { in: ids } }] } : where;
+  const [members, directory] = await Promise.all([
+    prisma.employee.findMany({
+      where: withoutSystemAccounts(scoped),
+      include: { user: { select: { status: true } }, reportingManager: { select: { name: true } } },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.employee.findMany({
+      where: withoutSystemAccounts(departmentWhere(req)),
+      select: { name: true, employeeCode: true, designation: true, department: true },
+    }),
+  ]);
+  return { scope: scopeLabel(req), ...tlWiseGroups(members, directory) };
+}
+router.post('/management/tl-wise', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  res.json(await tlWiseFor(req));
+});
+router.post('/management/tl-wise.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), async (req, res) => {
+  const data = await tlWiseFor(req);
+  const t = data.totals;
+  const summary = data.groups.map((g) => [
+    g.tl, g.tlEmployeeCode || '', g.tlDesignation || '', g.department || '', g.teamSize, g.active, g.notice, g.relieved, g.other,
+  ]);
+  summary.push(['TOTAL', `${t.teams} TL(s)`, '', '', t.teamSize, t.active, t.notice, t.relieved, t.other]);
+  const members = data.groups.flatMap((g) => g.members.map((m) => [
+    g.tl, m.employeeCode, m.name, m.designation || '', m.department || '', m.employmentStatus, m.hrStatus, m.dateOfJoining || '',
+  ]));
+  await notifyDataIo(req, { kind: 'export', module: 'Employee Management', count: t.teamSize, what: 'employee records (TL-wise summary)', format: 'xlsx' });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Employee TL-wise summary exported (XLSX)', entity: 'Employee',
+    toValue: `${t.teamSize} employee(s) in ${data.groups.length} group(s), scope: ${data.scope}`,
+  });
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Disposition', `attachment; filename="employees-tl-wise-${stamp}.xlsx"`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(toXlsxBook([
+    { name: 'TL-wise summary', headers: ['TL', 'TL Employee ID', 'TL Designation', 'Department', 'Team size', 'Active', 'Notice Period', 'Relieved', 'Other'], rows: summary },
+    { name: 'Members', headers: ['TL', 'Employee ID', 'Name', 'Designation', 'Department', 'Employment Status', 'HR Status', 'Date of Joining'], rows: members },
+  ]));
 });
 
 // Every option list the Add Employee modal, the filter row and the Edit Scope
@@ -604,7 +1262,7 @@ function addEmployeeDesignations(req, rows) {
 }
 
 router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
-  const [employees, departments, rows, count, cfg, clients] = await Promise.all([
+  const [employees, departments, rows, nextEmployeeCode, cfg, clients, positions, seatHolders] = await Promise.all([
     prisma.employee.findMany({
       where: departmentWhere(req),
       select: { id: true, name: true, department: true, location: true },
@@ -620,9 +1278,25 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
       orderBy: { name: 'asc' },
     }),
     designationRows(),
-    prisma.employee.count(),
+    // The next TL<nnn> (utils/employeeCode.js) — TL516 on file gives TL517.
+    employeeCodes.nextEmployeeCode(),
     mailer.emailConfig(),
     prisma.client.findMany({ where: clientWhere(req.user), select: { id: true, name: true }, orderBy: { name: 'asc' } }).catch(() => []),
+    // THE SEATS. Held to the caller's departments like everything else here.
+    prisma.position.findMany({
+      where: {
+        active: true,
+        ...(scopeDepartments(req) === undefined ? {} : { department: { in: scopeDepartments(req) } }),
+      },
+      orderBy: [{ department: 'asc' }, { code: 'asc' }],
+    }),
+    // Who is sitting in one right now. An open-ended assignment IS the
+    // current tenure, so this is the whole occupancy picture in one query
+    // rather than one per seat.
+    prisma.positionAssignment.findMany({
+      where: { toDate: null },
+      select: { positionId: true, employee: { select: { name: true } } },
+    }),
   ]);
   // The department and location pickers are CREATABLE (both columns are plain
   // strings by design), so a value typed into Add Employee is not in the
@@ -632,19 +1306,28 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
   const masterDepts = departments.length ? departments.map((d) => d.name) : DEPTS;
   const allowed = scopeDepartments(req);
 
-  let nextEmployeeCode = `EMP-${String(count + 1).padStart(4, '0')}`;
-  // eslint-disable-next-line no-await-in-loop
-  while (await prisma.employee.findUnique({ where: { employeeCode: nextEmployeeCode } })) {
-    nextEmployeeCode = `EMP-${String(Number(nextEmployeeCode.slice(4)) + 1).padStart(4, '0')}`;
-  }
+
+  // A seat the form may offer, with its current holder if it has one. The
+  // picker needs to SAY a seat is taken rather than silently omit it — a
+  // missing MED-3 reads as "no such seat", which is a different fact.
+  const heldBy = new Map(seatHolders.map((a) => [a.positionId, a.employee ? a.employee.name : null]));
 
   res.json({
     nextEmployeeCode,
+    // Seats, for the Position picker on Add Employee. Grouped by the form.
+    positions: positions.map((r) => ({
+      id: r.id,
+      code: r.code,
+      name: r.name || null,
+      department: r.department || null,
+      team: r.team || null,
+      holder: heldBy.has(r.id) ? (heldBy.get(r.id) || 'somebody') : null,
+    })),
     scope: scopeLabel(req),
     empTypes: EMP_TYPES,
     empStatuses: EMP_STATUSES,
     genders: EMP_GENDERS,
-    statusFilter: EMP_MGMT_STATUS_FILTER,
+    statusFilter: HR_STATUSES,
     // A department-scoped caller is offered only the departments they hold —
     // the same list assertDepartmentAllowed() then enforces on the write.
     departments: allowed === undefined
@@ -658,7 +1341,17 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     locations: union(LOCS, inUse('location')),
     managerNames: [...new Set(employees.map((e) => e.name))],
     reportingManagers: employees.map((e) => ({ id: e.id, name: e.name })),
-    roles: CATALOG_ROLES,
+    // ROLES ARE DATA (utils/roleRegistry.js): active system + custom roles.
+    // `roles` stays a list of codes for the readers that expect one;
+    // `roleCatalog` is the Add Employee Role dropdown — only the roles this
+    // caller may hand out, never an external (Client / Candidate) kind.
+    roles: (await listRoles({ activeOnly: true })).map((r) => r.code).filter((c) => CATALOG_ROLES.includes(c) || c.startsWith('CUSTOM_')),
+    roleCatalog: (await listRoles({ activeOnly: true }))
+      .filter((r) => !r.external)
+      .filter((r) => scopeOf(req.user).global || ['SUPER_ADMIN', 'ADMIN'].includes(scopeOf(req.user).role) || !isPrivilegedRole(r))
+      .map((r) => ({
+        code: r.code, name: r.name, isSystem: r.isSystem, scopeLevel: r.scopeLevel, description: r.description, products: r.products,
+      })),
     // Straight off the DesignationRole table — this is the Role / Designation
     // picker, and each row says what that designation will actually grant.
     designations: addEmployeeDesignations(req, rows).map((r) => ({
@@ -675,8 +1368,26 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     designationRoles: rows,
     productAccess: await defaultProductAccessByRole(),
     email: { configured: cfg.configured, reason: cfg.configured ? null : cfg.reason },
+    // The Documents section of Add Employee (no employee yet, so it cannot ask
+    // GET /:id/documents). The upload itself goes through that route after the
+    // employee is created, under its usual rules.
+    documents: {
+      docTypes: DOC_TYPES,
+      requiredTypes: REQUIRED_DOC_TYPES,
+      maxBytes: attachments.MAX_BYTES,
+      allowedTypes: Object.keys(attachments.ALLOWED),
+    },
   });
 });
+
+// THE NEXT EMPLOYEE ID — what Add Employee pre-fills. The server still
+// allocates (and re-checks) it on create, so two people adding at once cannot
+// both get it.
+async function sendNextCode(req, res) {
+  res.json({ nextEmployeeCode: await employeeCodes.nextEmployeeCode() });
+}
+router.get('/next-code', requirePerm(null, 'hrms', 'Employee Management', 'create'), sendNextCode);
+router.get('/management/next-code', requirePerm(null, 'hrms', 'Employee Management', 'create'), sendNextCode);
 
 // --- The email one-time code that gates Add Employee -----------------------
 router.post('/management/email-otp/send', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
@@ -774,7 +1485,18 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   const b = req.body || {};
   const name = String(b.name || '').trim();
   const email = normalEmail(b.email);
-  const designation = String(b.designation || '').trim();
+  let designation = String(b.designation || '').trim();
+  // Add Employee no longer asks for a designation (user, 2026-09-29). It is
+  // taken from the chosen Role when the master has a matching designation
+  // (TL → TL, HR → HR, Accountant → Accountant …), otherwise "Employee"; the
+  // Role itself still sets the product roles. HR can change it later on Edit.
+  if (!designation) {
+    const code = String(b.roleCode || '').trim().toUpperCase();
+    const rows = await designationRows();
+    const match = code && rows.find((r) => (r.atsRole && r.atsRole === code)
+      || r.designation.toUpperCase().replace(/\s+/g, '_') === code);
+    designation = match ? match.designation : 'Employee';
+  }
   const phone = b.phone ? String(b.phone).trim() : '';
   const wantedCode = String(b.employeeId || b.employeeCode || '').trim();
   const password = String(b.password || '');
@@ -803,10 +1525,75 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     return res.status(400).json({ error: 'A login password must be at least 6 characters — or leave it empty for a set-password link.' });
   }
   if (b.role && !ALL_ROLES.includes(b.role)) return res.status(400).json({ error: 'Unknown role' });
+  // THE ROLE DROPDOWN (roles as data). Optional; when given it must be an
+  // ACTIVE, internal role, and a privileged one only for a global caller.
+  let chosenRole = null;
+  if (b.roleCode) {
+    chosenRole = await roleByCode(String(b.roleCode));
+    if (!chosenRole || chosenRole.external) return res.status(400).json({ error: 'Unknown role' });
+    if (!chosenRole.active) return res.status(400).json({ error: `The role "${chosenRole.name}" is inactive.` });
+    const sc = scopeOf(req.user);
+    if (isPrivilegedRole(chosenRole) && !(sc.global || ['SUPER_ADMIN', 'ADMIN'].includes(sc.role))) {
+      return res.status(403).json({ error: `You cannot give a new joiner the role "${chosenRole.name}".` });
+    }
+  }
 
   const deptCheck = assertDepartmentAllowed(req, String(b.department).trim());
   if (!deptCheck.ok) return res.status(403).json({ error: deptCheck.error });
   const department = deptCheck.department;
+  // THE DEPARTMENTS THEY WORK — Add Employee's checklist ("All departments",
+  // or two for a TL, three for an STL). The first is their home department
+  // (seat, team, employee record); ALL of them become the login's data scope.
+  // Each is held to the creator's own scope, like the home department.
+  const extraDepts = [...new Set((Array.isArray(b.departments) ? b.departments : String(b.departments || '').split(','))
+    .map((d) => String(d).trim()).filter(Boolean))];
+  for (const d of extraDepts) {
+    const c = assertDepartmentAllowed(req, d);
+    if (!c.ok) return res.status(403).json({ error: c.error });
+  }
+  const scopeDepts = [...new Set([department, ...extraDepts])].join(',');
+
+  // THE SEAT (optional). MED-1, EDU BDE 2 — the desk, not the person.
+  //
+  // Checked HERE, before the login and the employee row exist, because a
+  // seat clash discovered afterwards would leave a half-made employee behind
+  // and somebody would have to clean it up by hand. The picker offers the
+  // department's own seats and is creatable, exactly like Department itself,
+  // so a company can add MED-6 the moment it needs one without going to
+  // Administration first.
+  const seatCode = String(b.position || '').trim();
+  let seat = null;
+  if (seatCode) {
+    // Codes are unique and case matters to people, so a case-different
+    // spelling must REUSE the seat rather than mint a second one beside it.
+    const sameDept = await prisma.position.findMany({ where: { department } });
+    seat = sameDept.find((r) => r.code.toUpperCase() === seatCode.toUpperCase()) || null;
+    if (!seat) {
+      // A code that exists in ANOTHER department is not free to take.
+      const elsewhere = await prisma.position.findFirst({ where: { code: seatCode } });
+      if (elsewhere) {
+        return res.status(409).json({
+          error: `Position ${elsewhere.code} already belongs to ${elsewhere.department || 'another department'}. Use a code that is free, or move that seat on Administration → Positions.`,
+        });
+      }
+    } else if (!seat.active) {
+      return res.status(409).json({ error: `Position ${seat.code} is retired. Reactivate it on Administration → Positions before assigning it.` });
+    } else {
+      // ONE PERSON PER SEAT AT A TIME. An open-ended assignment means
+      // somebody is sitting in it right now.
+      const held = await prisma.positionAssignment.findFirst({
+        where: { positionId: seat.id, toDate: null },
+        include: { employee: { select: { name: true, employeeCode: true } } },
+      });
+      if (held) {
+        return res.status(409).json({
+          error: `${seat.code} is currently held by ${held.employee ? held.employee.name : 'somebody'}`
+            + `${held.employee && held.employee.employeeCode ? ` (${held.employee.employeeCode})` : ''}`
+            + '. Vacate it on Administration → Positions first, or pick another seat.',
+        });
+      }
+    }
+  }
 
   if (await prisma.user.findUnique({ where: { email } })) {
     return res.status(409).json({ error: 'That email already has a login.' });
@@ -820,34 +1607,39 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     });
   }
 
-  // THE EMAIL GATE. Where a channel exists the address must have been proved
-  // by a code; where none exists we say so and go ahead unverified rather than
-  // pretending a code was ever sent.
+  // NO EMAIL GATE ON CREATE.
+  //
+  // This used to require the address to be proved by a one-time code before
+  // the employee could be created, which meant HR typed an address, waited
+  // for a code they could not see, and could not finish without it. HR asked
+  // for the straight path: type the address and the password, press Create,
+  // and the welcome mail goes out on its own.
+  //
+  // The address is still checked for SHAPE above, and still has to be unique
+  // against every login and every employee. What is gone is the proof that
+  // somebody is reading that mailbox — so a typo now means a welcome mail
+  // that lands nowhere rather than a create that refuses. The send result is
+  // reported back and written onto the employee record either way, which is
+  // where HR sees that it did not arrive.
   const cfg = await mailer.emailConfig();
-  let verification = null;
-  if (cfg.configured) {
-    verification = await liveVerification(email);
-    if (!verification || !verification.verifiedAt) {
-      return res.status(400).json({
-        error: 'Verify this email first — send the code with Send OTP and enter it.',
-      });
-    }
-  }
+  // A code may still exist from an earlier flow; if it does it is consumed
+  // below rather than left live.
+  const verification = cfg.configured ? await liveVerification(email) : null;
+  const emailProved = !!(verification && verification.verifiedAt);
 
-  // Employee ID: the one typed, or the next free EMP-nnnn.
-  let employeeCode = wantedCode;
-  if (employeeCode) {
-    if (await prisma.employee.findUnique({ where: { employeeCode } })) {
-      return res.status(409).json({ error: `Employee ID ${employeeCode} is already taken.` });
-    }
-  } else {
-    const count = await prisma.employee.count();
-    employeeCode = `EMP-${String(count + 1).padStart(4, '0')}`;
-    // eslint-disable-next-line no-await-in-loop
-    while (await prisma.employee.findUnique({ where: { employeeCode } })) {
-      employeeCode = `EMP-${String(Number(employeeCode.slice(4)) + 1).padStart(4, '0')}`;
+  // Employee ID: the one typed (unique in ANY case), or the next TL<nnn> —
+  // utils/employeeCode.js. An auto code that loses a race to a simultaneous
+  // add is re-allocated below rather than failing the create.
+  const autoCode = !wantedCode;
+  if (wantedCode) {
+    const fmt = employeeCodes.checkFormat(wantedCode);
+    if (fmt.error) return res.status(400).json({ error: fmt.error });
+    const holder = await employeeCodes.codeHolder(wantedCode);
+    if (holder) {
+      return res.status(409).json({ error: `Employee ID ${holder.employeeCode} is already taken by ${holder.name}.` });
     }
   }
+  let employeeCode = wantedCode || await employeeCodes.nextEmployeeCode();
 
   // Role, product access and scope are DERIVED, never typed: designation ->
   // DesignationRole. An explicit `role` is honoured as an override, but the
@@ -861,46 +1653,89 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
       name,
       email,
       passwordHash: password ? await bcrypt.hash(password, 10) : await unguessablePasswordHash(),
+      // HR typed a first password: its owner must change it (hrms-24 §12).
+      ...(password ? passwordEventData('initial') : {}),
       role,
       username: email,
       status: 'Active',
-      branch: b.location || null,
+      branch: b.location || 'Hyderabad',
       team,
       atsDepartment: department,
       // All three product roles, derived from the designation mapping.
       ...productRolesForDesignation(mapping),
-      atsScopeDepartments: department,
+      atsScopeDepartments: scopeDepts,
       atsScopeTeams: team,
       hrmsAccess: mapping ? !!mapping.hrms : true,
       atsAccess: mapping ? !!mapping.ats : false,
       accountsAccess: mapping ? !!mapping.accounts : false,
       landingWorkspace: (mapping && mapping.landing) || null,
+      // The chosen Role fills the product role(s) it is for — its permissions
+      // apply from the first request (utils/roleRegistry.js).
+      ...loginPatchForRole(chosenRole),
     },
   });
 
-  const employee = await prisma.employee.create({
-    data: {
-      employeeCode,
-      name,
-      email,
-      phone: phone || null,
-      department,
-      designation,
-      team,
-      location: b.location || null,
-      stl: b.stl || null,
-      tl: b.tl || null,
-      reportingManagerId: b.reportingManagerId || null,
-      gender: b.gender && b.gender !== '—' ? b.gender : null,
-      employeeType: b.employeeType || null,
-      employmentStatus: b.employmentStatus || 'Active',
-      dateOfBirth: toDate(b.dateOfBirth),
-      dateOfJoining: toDate(b.dateOfJoining),
-      userId: user.id,
-      onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
-    },
-    include: EMP_MGMT_INCLUDE,
-  });
+  const employeeData = {
+    name,
+    email,
+    phone: phone || null,
+    department,
+    designation,
+    team,
+    // Every employee is Hyderabad branch (user, 2026-09-29) unless HR says otherwise.
+    location: b.location || 'Hyderabad',
+    branch: b.branch || b.location || 'Hyderabad',
+    stl: b.stl || null,
+    tl: b.tl || null,
+    reportingManagerId: b.reportingManagerId || null,
+    gender: b.gender && b.gender !== '—' ? b.gender : null,
+    employeeType: b.employeeType || null,
+    employmentStatus: b.employmentStatus || 'Active',
+    dateOfBirth: toDate(b.dateOfBirth),
+    dateOfJoining: toDate(b.dateOfJoining),
+    userId: user.id,
+    onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
+  };
+  let employee = null;
+  for (let attempt = 0; !employee; attempt += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      employee = await prisma.employee.create({ data: { ...employeeData, employeeCode }, include: EMP_MGMT_INCLUDE });
+    } catch (err) {
+      if (autoCode && employeeCodes.isCodeClash(err) && attempt < 5) {
+        // Somebody else took this code a moment ago: take the next one.
+        // eslint-disable-next-line no-await-in-loop
+        employeeCode = await employeeCodes.nextEmployeeCode(prisma, [employeeCode]);
+      } else {
+        // The login above was made for THIS create; it must not be left
+        // behind as a login with no employee.
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.user.delete({ where: { id: user.id } }).catch(() => {});
+        if (employeeCodes.isCodeClash(err)) {
+          return res.status(409).json({ error: `Employee ID ${employeeCode} was taken a moment ago — try again.` });
+        }
+        throw err;
+      }
+    }
+  }
+
+  // The seat, now that there is somebody to put in it. Created on the fly
+  // when the code is new — the validation above has already proved it is
+  // free and does not belong to another department.
+  if (seatCode) {
+    if (!seat) {
+      seat = await prisma.position.create({ data: { code: seatCode, department, team: team || null } });
+      await logAudit({ userId: req.user.id, action: `Position ${seatCode} created`, entity: 'Position', entityId: seat.id });
+    }
+    await prisma.positionAssignment.create({
+      data: { positionId: seat.id, employeeId: employee.id, fromDate: positionToday() },
+    });
+    await logAudit({
+      userId: req.user.id,
+      action: `${name} assigned to position ${seat.code}`,
+      entity: 'Employee', entityId: employee.id, toValue: seat.code,
+    });
+  }
 
   if (verification) {
     await prisma.emailVerification.update({ where: { id: verification.id }, data: { consumedAt: new Date() } });
@@ -908,7 +1743,7 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   // The password is never echoed back and never logged.
   await logAudit({
     userId: req.user.id,
-    action: `Employee and login created${verification ? ' (email verified by code)' : ' (email unverified — no SMTP channel)'}`,
+    action: `Employee and login created${emailProved ? ' (email verified by code)' : ' (email not verified — no code was required)'}`,
     entity: 'Employee',
     entityId: employee.id,
     toValue: `${employeeCode} · ${designation} · ${role} · scope ${department}`,
@@ -918,7 +1753,12 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   // HR user's own address. NEVER a password in a mail body. The result travels
   // back verbatim so the screen can say "not sent — no provider" rather than
   // implying the employee was told.
-  const credentials = await sendCredentials({ employee, userId: user.id, actingUser: req.user, req });
+  // The password travels straight into the welcome mail and nowhere else.
+  // Blank (the common case) means no password was set, and sendCredentials
+  // sends the set-password link instead.
+  const credentials = await sendCredentials({
+    employee, userId: user.id, actingUser: req.user, req, password,
+  });
   await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: employee.id });
 
   const fresh = await prisma.employee.findUnique({ where: { id: employee.id }, include: EMP_MGMT_INCLUDE });
@@ -930,10 +1770,13 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
       products: { hrms: user.hrmsAccess, ats: user.atsAccess, accounts: user.accountsAccess },
       scope: department,
     },
-    emailVerified: !!verification,
-    emailChannel: cfg.configured
+    emailVerified: emailProved,
+    // Says what actually happened, not what the old gate assumed.
+    emailChannel: emailProved
       ? 'verified by one-time code'
-      : `not verified — no email channel is configured (${cfg.reason})`,
+      : (cfg.configured
+        ? 'not verified — the welcome mail was sent to the address as typed'
+        : `not sent — no email channel is configured (${cfg.reason})`),
   });
 });
 
@@ -964,6 +1807,7 @@ router.post('/management/:id/create-login', requirePerm(null, 'hrms', 'Employee 
         passwordHash: password && String(password).length >= 6
           ? await bcrypt.hash(String(password), 10)
           : await unguessablePasswordHash(),
+        ...(password && String(password).length >= 6 ? passwordEventData('initial') : {}),
         role,
         username: employee.email,
         atsDepartment: employee.department,
@@ -1006,17 +1850,136 @@ router.post('/management/:id/toggle-login', requirePerm(null, 'hrms', 'Employee 
   res.json(shapeEmployeeMgmtRow(fresh));
 });
 
+// PASSWORD ACTIONS ARE THE HR DESK'S (hrms-24 §12): HR, Super Admin and Admin
+// — or whoever holds Employee Management / configure. A TL / STL may edit
+// their people's records but does not hand out their passwords.
+async function mayManagePasswords(user) {
+  if (['SUPER_ADMIN', 'ADMIN', 'HR'].includes(user.hrmsRole) || ['SUPER_ADMIN', 'ADMIN'].includes(user.role)) return true;
+  return can(user, 'hrms', 'hrms', 'Employee Management', 'configure');
+}
+const PASSWORD_DENIED = { error: 'Password reset is for HR and the Super Admin.' };
+
+// MANAGER / ASSISTANT MANAGER in HRMS — every department, VIEW ONLY
+// (utils/permissions.js can() / viewOnlyAllows). Used where a route's own
+// guard is broader than view (documents, Grant Edit Access).
+function isViewOnlyAdmin(user) {
+  // eslint-disable-next-line global-require
+  const { rolesFor } = require('../utils/permissions');
+  const roles = rolesFor(user, 'hrms') || [];
+  return roles.some((r) => ['MANAGER', 'ASSISTANT_MANAGER'].includes(r));
+}
+
+// CHANGING AN EMPLOYEE ID is the HR desk's (Super Admin, Admin, HR): it needs
+// BOTH `edit` (maintaining the record) and `create` (issuing IDs) on Employee
+// Management — the pair the permission matrix gives SET.HR_DESK. A lead who
+// may edit their people's records (STL) does not renumber them, and a
+// view-only Manager / Assistant Manager or a TL has no `edit` at all.
+async function mayEditCode(user) {
+  return (await can(user, 'hrms', 'hrms', 'Employee Management', 'edit'))
+    && can(user, 'hrms', 'hrms', 'Employee Management', 'create');
+}
+
+// PUT /management/:id/code { employeeCode } — change an Employee ID.
+//
+// Everything else in TeamLink points at an employee by its internal id, never
+// by the code string: attendance, punches, leave, payroll, documents (stored
+// under server-chosen names), seats and the audit trail all carry employeeId.
+// The code-keyed rows are deliberately left as they are:
+//   * Employee.biometricPin — the device PIN is its own field; a mapped PIN
+//     keeps working. (Admin → Biometric only SUGGESTS unmapped PINs that equal
+//     a code, so an unmapped PIN equal to the OLD code stops being suggested.)
+//   * AttendanceHistory / AttendanceHistorySummary.employeeRef — "the Employee
+//     ID as written in the file", linked by employeeId; kept as imported.
+//   * ResignationDetail.employeeCode — a snapshot of the form as filed.
+router.put('/management/:id/code', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  if (!(await mayEditCode(req.user))) {
+    return res.status(403).json({ error: 'Changing an Employee ID is for HR and the Super Admin.' });
+  }
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const wanted = String((req.body && req.body.employeeCode) || '').trim();
+  const fmt = employeeCodes.checkFormat(wanted);
+  if (fmt.error) return res.status(400).json({ error: fmt.error });
+  if (wanted === employee.employeeCode) return res.status(400).json({ error: `${employee.name} already has Employee ID ${wanted}.` });
+  const holder = await employeeCodes.codeHolder(wanted, employee.id);
+  if (holder) {
+    return res.status(409).json({ error: `Employee ID ${holder.employeeCode} already belongs to ${holder.name}.` });
+  }
+  try {
+    await prisma.employee.update({ where: { id: employee.id }, data: { employeeCode: wanted } });
+  } catch (err) {
+    if (employeeCodes.isCodeClash(err)) return res.status(409).json({ error: `Employee ID ${wanted} was taken a moment ago.` });
+    throw err;
+  }
+  await logAudit({
+    userId: req.user.id,
+    actorName: req.user.name,
+    action: 'Employee ID changed',
+    entity: 'Employee',
+    entityId: employee.id,
+    field: 'employeeCode',
+    fieldLabel: 'Employee ID',
+    fromValue: employee.employeeCode,
+    toValue: wanted,
+    reason: req.body && req.body.reason ? String(req.body.reason).slice(0, 300) : null,
+  });
+  const fresh = await prisma.employee.findUnique({ where: { id: employee.id }, include: EMP_MGMT_INCLUDE });
+  res.json({ ok: true, row: shapeEmployeeMgmtRow(fresh), from: employee.employeeCode, to: wanted, warning: fmt.warning || null });
+});
+
 router.post('/management/:id/reset-password', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
   const { password } = req.body || {};
-  if (!password || String(password).length < 6) return res.status(400).json({ error: 'A password of at least 6 characters is required' });
+  if (!(await mayManagePasswords(req.user))) return res.status(403).json(PASSWORD_DENIED);
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
-  await prisma.user.update({ where: { id: employee.user.id }, data: { passwordHash: await bcrypt.hash(String(password), 10) } });
+  const weak = strengthError(password, { email: employee.user.email, name: employee.user.name });
+  if (weak) return res.status(400).json({ error: weak });
+  // Live at once. The owner must change it at their next sign-in, any lock is
+  // lifted, and a pending set-password link stops working.
+  await prisma.user.update({
+    where: { id: employee.user.id },
+    data: {
+      passwordHash: await bcrypt.hash(String(password), 10),
+      ...passwordEventData('admin'),
+      setPasswordTokenHash: null, setPasswordExpiresAt: null,
+    },
+  });
   // The new password is never echoed back or logged.
-  await logAudit({ userId: req.user.id, action: 'Password reset', entity: 'User', entityId: employee.user.id, toValue: 'Reset' });
-  res.json({ ok: true });
+  await logAudit({ userId: req.user.id, action: 'Password reset', entity: 'User', entityId: employee.user.id, toValue: 'Reset — change required at next sign-in' });
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  res.json({ ok: true, row: shapeEmployeeMgmtRow(fresh), passwordStatus: passwordStatusOf(fresh.user) });
+});
+
+// SEND PASSWORD RESET — a fresh single-use set-password link, emailed from the
+// company mailbox (utils/employeeInvite.js sendCredentials). HR never learns
+// the new password. The current password keeps working until the link is
+// used; the row reads "Reset Required" meanwhile.
+router.post('/management/:id/send-password-reset', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  if (!(await mayManagePasswords(req.user))) return res.status(403).json(PASSWORD_DENIED);
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
+  const credentials = await sendCredentials({ employee, userId: employee.user.id, actingUser: req.user, req });
+  await prisma.user.update({ where: { id: employee.user.id }, data: { passwordResetRequired: true } });
+  await logAudit({
+    userId: req.user.id, action: 'Password reset link sent', entity: 'User', entityId: employee.user.id,
+    toValue: credentials.sent ? 'Emailed' : 'Not emailed', reason: credentials.sent ? null : (credentials.reason || null),
+  });
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  res.json({
+    ok: true,
+    sent: !!credentials.sent,
+    status: credentials.status,
+    // Handed back only when it could NOT be emailed, so HR can pass it on —
+    // the same rule as the sign-in details on Add Employee.
+    link: credentials.sent ? null : (credentials.link || null),
+    expiresAt: credentials.expiresAt || null,
+    row: shapeEmployeeMgmtRow(fresh),
+  });
 });
 
 // Assign Roles — product access on the SAME login, plus the reporting chain.
@@ -1027,6 +1990,26 @@ router.put('/management/:id/roles', requirePerm(null, 'hrms', 'Employee Manageme
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (!employee.user) return res.status(400).json({ error: 'Create a login for this employee first.' });
   if (role && !ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
+
+  // THE FULL EDIT FORM's Role dropdown (roles as data — system AND custom,
+  // exactly the Add Employee rules): an ACTIVE internal role from Role
+  // Catalog, a privileged one only for a company-wide caller.
+  if (req.body && req.body.roleCode) {
+    const chosen = await roleByCode(String(req.body.roleCode));
+    if (!chosen || chosen.external) return res.status(400).json({ error: 'Unknown role' });
+    if (!chosen.active) return res.status(400).json({ error: `The role "${chosen.name}" is inactive.` });
+    const sc = scopeOf(req.user);
+    if (isPrivilegedRole(chosen) && !(sc.global || ['SUPER_ADMIN', 'ADMIN'].includes(sc.role))) {
+      return res.status(403).json({ error: `You cannot give the role "${chosen.name}".` });
+    }
+    const patch = loginPatchForRole(chosen);
+    const prev = { role: employee.user.role, hrmsRole: employee.user.hrmsRole, atsRole: employee.user.atsRole, accountsRole: employee.user.accountsRole };
+    await prisma.user.update({ where: { id: employee.user.id }, data: patch });
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Role changed on the employee form', entity: 'User', entityId: employee.user.id,
+      fromValue: JSON.stringify(prev), toValue: `${chosen.name} (${chosen.code})`,
+    });
+  }
 
   const before = employee.user.role;
   if (role || atsDepartment !== undefined) {
@@ -1093,6 +2076,84 @@ router.put('/management/:id/scope', requirePerm(null, 'hrms', 'Employee Manageme
 });
 
 // The View modal: the employee's details, their login and their recent activity.
+// THE DESIGNATION MASTER for the Edit form's Designation dropdown — the same
+// DesignationRole rows Add Employee picks from, without the rest of /options.
+router.get('/management/designations', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const rows = await designationRows();
+  res.json({ designations: rows.map((r) => ({ designation: r.designation, ...designationLabel(r) })) });
+});
+
+// THE LIST AVATAR. The newest Photo document, for anybody who may see this
+// employee in Employee Management (a photo is not Aadhaar / PAN — those stay
+// behind the documents door). The list asks only for rows that HAVE a photo
+// (photoDocId), lazily, so a page of initials costs nothing.
+router.get('/management/:id/photo', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const doc = await prisma.employeeDocument.findFirst({
+    where: { employeeId: employee.id, docType: PHOTO_DOC_TYPE }, orderBy: { uploadedAt: 'desc' },
+  });
+  if (!doc) return res.status(404).json({ error: 'No photo' });
+  const full = attachments.resolveStored(doc.file);
+  if (!full || !['image/jpeg', 'image/png', 'image/webp'].includes(doc.mime)) return res.status(404).json({ error: 'No photo' });
+  res.setHeader('Content-Type', doc.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  return res.sendFile(full);
+});
+
+// LAST WORKING DATE for somebody on notice. The resignation record is the
+// source (EmployeeRecord type RESIGNATION, `date` = last working day — what
+// routes/resignations.js reads and writes). Where the person resigned outside
+// TeamLink and no record exists, HR records one here, already serving notice,
+// so the resignation module and this screen show the same date.
+router.put('/management/:id/last-working-date', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const date = String((req.body && req.body.lastWorkingDate) || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+    return res.status(400).json({ error: 'Last working date must be a date (YYYY-MM-DD).' });
+  }
+  const open = await prisma.employeeRecord.findFirst({
+    where: { type: 'RESIGNATION', employeeId: employee.id, status: { in: OPEN_RESIGNATION } },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (!open && !['Notice Period', 'Exit Process'].includes(employee.employmentStatus)) {
+    return res.status(400).json({ error: `${employee.name} is not on notice (status ${employee.employmentStatus}). Set the status to Notice Period first, or file the resignation in Employee Services.` });
+  }
+  let record;
+  if (open) {
+    record = await prisma.employeeRecord.update({ where: { id: open.id }, data: { date } });
+    const form = await prisma.resignationDetail.findUnique({ where: { recordId: open.id } });
+    if (form) {
+      await prisma.resignationDetail.update({
+        where: { id: form.id },
+        data: open.status === 'Pending' ? { requestedLastWorkingDate: date } : { approvedLastWorkingDate: date },
+      });
+    }
+  } else {
+    record = await prisma.employeeRecord.create({
+      data: {
+        type: 'RESIGNATION',
+        employeeId: employee.id,
+        title: 'Resignation recorded by HR',
+        detail: 'Recorded from Employee Management — no resignation was filed in TeamLink. Last working date set by HR.',
+        status: 'Notice Period',
+        date,
+        raisedBy: req.user.name || null,
+      },
+    });
+  }
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Last working date set',
+    entity: 'Employee', entityId: employee.id, field: 'lastWorkingDate', fieldLabel: 'Last working date',
+    fromValue: open ? (open.date || '') : '', toValue: date,
+  });
+  return res.json({ ok: true, lastWorkingDate: date, resignationId: record.id, created: !open });
+});
+
 router.get('/management/:id', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
@@ -1104,8 +2165,26 @@ router.get('/management/:id', requirePerm(null, 'hrms', 'Employee Management', '
     orderBy: { createdAt: 'desc' },
     take: 10,
   });
+  const seats = (await seatTimelines()).get(employee.id) || [];
+  // TRANSFER HISTORY — seats plus department / team / reporting changes from
+  // the audit trail, with who made each change. Same scope check as above.
+  const transferAudit = await prisma.auditLog.findMany({
+    where: { entity: 'Employee', entityId: employee.id },
+    include: { user: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  });
+  const extras = (await employeeListExtras([employee.id])).get(employee.id) || {};
   res.json({
     ...shapeEmployeeMgmtRow(employee),
+    photoDocId: extras.photoDocId || null,
+    docCount: extras.docCount || 0,
+    lastWorkingDate: extras.lastWorkingDate || null,
+    lastWorkingDateSource: extras.lastWorkingDateSource || null,
+    isLead: isLead(employee),
+    transferHistory: transferHistoryOf(transferAudit, seats),
+    seatHistory: seats,
+    emailVerification: await emailVerify.emailState(employee),
     activity: activity.map((a) => ({ action: a.action, date: new Date(a.createdAt).toLocaleString(), by: a.user?.name || 'System' })),
   });
 });
@@ -1118,7 +2197,7 @@ router.get('/', requirePerm(null, 'hrms', 'Employee Management', 'view'), async 
   if (scopeDepartments(req) === undefined && req.query.department) {
     where.department = req.query.department;
   }
-  const employees = await prisma.employee.findMany({ where, include: { reportingManager: true }, orderBy: { name: 'asc' } });
+  const employees = await prisma.employee.findMany({ where: withoutSystemAccounts(where), include: { reportingManager: true }, orderBy: { name: 'asc' } });
   res.json(employees.map(withComputed));
 });
 
@@ -1135,7 +2214,7 @@ router.put('/:id/manager', requirePerm(null, 'hrms', 'Employee Management', 'edi
 router.get('/:id', async (req, res) => {
   const employee = await prisma.employee.findUnique({
     where: { id: req.params.id },
-    include: { reportingManager: true, user: { select: { id: true, name: true, email: true, role: true } }, salaryStructure: true },
+    include: { reportingManager: true, user: { select: { id: true, name: true, email: true, role: true, hrmsRole: true, atsRole: true, accountsRole: true } }, salaryStructure: true },
   });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (req.user.caps.hrmsSelfOnly && employee.userId !== req.user.id) {
@@ -1144,7 +2223,46 @@ router.get('/:id', async (req, res) => {
   if (!(await assertInScope(req, employee))) {
     return res.status(403).json({ error: 'This record is outside your department scope' });
   }
-  res.json(withComputed(employee));
+
+  // THE SEAT, and the seats this person could be moved to. Sent with the
+  // record rather than fetched separately, because the form that edits the
+  // employee is the form that assigns the seat — one screen, one request.
+  const [heldNow, deptSeats, occupied] = await Promise.all([
+    prisma.positionAssignment.findFirst({
+      where: { employeeId: employee.id, toDate: null },
+      include: { position: true },
+    }),
+    prisma.position.findMany({
+      where: { active: true, department: employee.department },
+      orderBy: { code: 'asc' },
+    }),
+    prisma.positionAssignment.findMany({
+      where: { toDate: null },
+      select: { positionId: true, employeeId: true, employee: { select: { name: true, employmentStatus: true } } },
+    }),
+  ]);
+  // A seat whose holder has LEFT is offered as free (it is released on save).
+  const heldBy = new Map(occupied
+    .filter((a) => !(a.employee && seatHolderLeft(a.employee.employmentStatus)))
+    .map((a) => [a.positionId, a]));
+
+  res.json({
+    ...withComputed(employee),
+    position: heldNow ? heldNow.position.code : '',
+    positionSince: heldNow ? heldNow.fromDate : null,
+    // Free seats first; a taken one is listed and LABELLED rather than
+    // hidden, because a missing code reads as "no such seat".
+    positionOptions: deptSeats.map((r) => {
+      const a = heldBy.get(r.id);
+      return {
+        code: r.code,
+        name: r.name || null,
+        holder: a && a.employeeId !== employee.id ? (a.employee ? a.employee.name : 'somebody') : null,
+        mine: !!(a && a.employeeId === employee.id),
+      };
+    }).sort((a, b) => (a.holder ? 1 : 0) - (b.holder ? 1 : 0)
+      || a.code.localeCompare(b.code, undefined, { numeric: true })),
+  });
 });
 
 // ADD EMPLOYEE lives at POST /management above — ONE implementation, with the
@@ -1194,12 +2312,243 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
     'emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation', 'address', 'addressType',
     'addressLine1', 'addressLine2', 'city', 'district', 'state', 'country', 'postalCode', 'bloodGroup',
     'branch', 'shift', 'employmentExperience', 'educationDetails', 'skills',
-    'bankName', 'bankAccountNumber', 'ifscCode', 'panNumber', 'aadhaarNumber', 'uanNumber', 'pfNumber', 'esiNumber',
+    'bankName', 'bankAccountNumber', 'ifscCode', 'panNumber', 'uanNumber', 'pfNumber', 'esiNumber',
+    // Date of birth and gender were on the employee's own form but not on
+    // HR's, so the two forms could not be the same form. HR may now correct
+    // them too; the date is coerced exactly as the approve handler does.
+    'dateOfBirth', 'gender',
+    // THE FULL EDIT FORM (2026-09-29): every field the Add form and the
+    // profile show is now editable here too — joining date, the TL / STL
+    // names and the reporting manager.
+    'dateOfJoining', 'tl', 'stl', 'reportingManagerId',
   ];
   const data = {};
   editableFields.forEach((f) => { if (req.body[f] !== undefined) data[f] = req.body[f]; });
-  delete data.department; // move departments only via /transfer, which keeps an audit trail
+  if (data.dateOfBirth !== undefined) data.dateOfBirth = toDate(data.dateOfBirth);
+  if (data.dateOfJoining !== undefined) data.dateOfJoining = toDate(data.dateOfJoining);
+  // A masked account number (what a non-HR export shows) is never written back.
+  if (data.bankAccountNumber !== undefined && /[xX•*]{3,}/.test(String(data.bankAccountNumber))) delete data.bankAccountNumber;
+  // AADHAAR: the full number is never stored (see the schema). Twelve digits
+  // typed on the form keep only their last four; four digits are kept as-is.
+  if (req.body.aadhaarNumber !== undefined && req.body.aadhaarNumber !== null && String(req.body.aadhaarNumber).trim() !== '') {
+    const digits = String(req.body.aadhaarNumber).replace(/\D/g, '');
+    if (!/^\d{12}$/.test(digits) && !/^\d{4}$/.test(digits)) {
+      return res.status(400).json({ error: 'Aadhaar must be 12 digits (only the last four are kept) or the last four digits.' });
+    }
+    data.aadhaarLast4 = digits.slice(-4);
+  }
+  // Reporting manager: somebody in the caller's scope, never the employee.
+  if (data.reportingManagerId !== undefined) {
+    data.reportingManagerId = String(data.reportingManagerId || '').trim() || null;
+    if (data.reportingManagerId) {
+      if (data.reportingManagerId === existingForScope.id) return res.status(400).json({ error: 'An employee cannot report to themselves.' });
+      const mgr = await prisma.employee.findUnique({ where: { id: data.reportingManagerId } });
+      if (!mgr || !(await assertInScope(req, mgr))) return res.status(400).json({ error: 'Pick a reporting manager from the list (someone in your scope).' });
+    }
+  }
+
+  // DESIGNATION COMES FROM THE MASTER (DesignationRole). A legacy value already
+  // on the record is kept (warned, not blocked); CHANGING to a value that is
+  // not in the master is refused, because the login's roles derive from it.
+  let designationWarning = null;
+  if (data.designation !== undefined) {
+    data.designation = String(data.designation || '').trim() || null;
+    const master = (await designationRows()).map((r) => r.designation);
+    const inMaster = (v) => master.some((m) => m.toLowerCase() === String(v).toLowerCase());
+    if (data.designation && !inMaster(data.designation)) {
+      if (data.designation !== existingForScope.designation) {
+        return res.status(400).json({ error: `"${data.designation}" is not in the designation master. Choose one of: ${master.join(', ')} (Administration → Role mapping adds new ones).` });
+      }
+      designationWarning = `"${data.designation}" is a legacy designation that is not in the designation master — kept as it is.`;
+    } else if (data.designation) {
+      data.designation = master.find((m) => m.toLowerCase() === data.designation.toLowerCase());
+    }
+  }
+
+  // DEPARTMENT IS EDITABLE HERE, and it used to be deleted from this payload
+  // with "move departments only via /transfer". The reason was sound — a
+  // department move has to drag the ATS scope and the seat with it, and
+  // /transfer is where that was written — but the effect was a field sitting
+  // greyed out on the edit form with a note telling you to go somewhere else.
+  //
+  // So the field is live, and everything /transfer does happens here too:
+  // the login's atsDepartment and atsScopeDepartments follow (below), the
+  // seat follows (further below), and both are audited. The one thing
+  // /transfer still has that this does not is a REASON, which is why that
+  // route stays: a reorganisation wants a reason, a correction does not.
+  const departmentChanged = data.department !== undefined
+    && String(data.department).trim() !== ''
+    && data.department !== existingForScope.department;
+  if (data.department !== undefined && !String(data.department).trim()) {
+    return res.status(400).json({ error: 'An employee must belong to a department.' });
+  }
+  if (departmentChanged) {
+    // The caller must be allowed to put somebody INTO that department, not
+    // merely to edit this record — otherwise a department-scoped HR user could
+    // move people out of their own reach.
+    const allowed = assertDepartmentAllowed(req, String(data.department).trim());
+    if (!allowed.ok) return res.status(403).json({ error: allowed.error });
+    data.department = allowed.department;
+    // A team belongs to a department. Carrying "Team-A" from Education into
+    // Medical would name a team that does not exist there.
+    if (req.body.team === undefined) data.team = null;
+  }
+
+  // SEAT PRE-CHECK (user, 2026-09-29: "when I change the position it's not
+  // taken"). Decided BEFORE anything is saved, so a refused seat never leaves a
+  // half-applied change (the old code vacated the current seat first and then
+  // refused the new one). A seat whose open tenure belongs to somebody who has
+  // LEFT (Relieved / Exited …) counts as free: that tenure is closed on their
+  // last working day when the new holder takes it.
+  let seatPlan = null;
+  if (req.body.position !== undefined) {
+    const wanted = String(req.body.position || '').trim();
+    const seatDept = data.department || existingForScope.department;
+    const current = await prisma.positionAssignment.findFirst({
+      where: { employeeId: existingForScope.id, toDate: null },
+      include: { position: true },
+    });
+    const currentCode = current ? current.position.code : '';
+    if (wanted.toUpperCase() !== currentCode.toUpperCase()) {
+      let seat = null;
+      let departedHolder = null;
+      if (wanted) {
+        const inDept = await prisma.position.findMany({ where: { department: seatDept } });
+        seat = inDept.find((r) => r.code.toUpperCase() === wanted.toUpperCase()) || null;
+        if (!seat) {
+          const elsewhere = await prisma.position.findFirst({ where: { code: wanted } });
+          if (elsewhere) {
+            return res.status(409).json({ error: `Position ${elsewhere.code} belongs to ${elsewhere.department || 'another department'}.` });
+          }
+        } else if (!seat.active) {
+          return res.status(409).json({ error: `Position ${seat.code} is retired. Reactivate it on Administration → Positions first.` });
+        } else {
+          const held = await prisma.positionAssignment.findFirst({
+            where: { positionId: seat.id, toDate: null },
+            include: { employee: { select: { id: true, name: true, employmentStatus: true } } },
+          });
+          if (held && held.employeeId !== existingForScope.id) {
+            if (held.employee && seatHolderLeft(held.employee.employmentStatus)) departedHolder = held;
+            else {
+              return res.status(409).json({
+                error: `${seat.code} is held by ${held.employee ? held.employee.name : 'somebody else'} (${held.employee ? held.employee.employmentStatus : 'active'}). Vacate it first.`,
+              });
+            }
+          }
+        }
+      }
+      seatPlan = { wanted, current, currentCode, seat, departedHolder, seatDept };
+    }
+  }
+
   const employee = await prisma.employee.update({ where: { id: req.params.id }, data });
+
+  // THE LOGIN FOLLOWS THE DEPARTMENT, exactly as it does on /transfer.
+  if (departmentChanged) {
+    const moved = await syncLoginToEmployee(employee, existingForScope);
+    await logAudit({
+      userId: req.user.id,
+      actorName: req.user.name,
+      action: 'Department changed',
+      entity: 'Employee',
+      entityId: employee.id,
+      fromValue: existingForScope.department || '(none)',
+      toValue: employee.department,
+    });
+    if (moved) {
+      await logAudit({
+        userId: req.user.id,
+        actorName: req.user.name,
+        action: 'Login scope followed the department change',
+        entity: 'User',
+        entityId: employee.userId,
+        toValue: moved.changes.join('; ').slice(0, 200),
+      });
+    }
+    // AND THE SEAT. A seat belongs to a department, so HR-4 is wrong the
+    // moment somebody moves to Medical. The tenure is CLOSED, never deleted —
+    // the seat keeps what was done under it. No new seat is invented here:
+    // the caller picks one in the Position field, which is now showing the
+    // new department's seats.
+    const held = await prisma.positionAssignment.findFirst({
+      where: { employeeId: employee.id, toDate: null },
+      include: { position: true },
+    });
+    if (held && held.position.department && held.position.department !== employee.department) {
+      await prisma.positionAssignment.update({
+        where: { id: held.id },
+        data: { toDate: positionToday() },
+      });
+      await logAudit({
+        userId: req.user.id,
+        actorName: req.user.name,
+        action: `Vacated seat ${held.position.code} — it belongs to ${held.position.department}`,
+        entity: 'Employee',
+        entityId: employee.id,
+        fromValue: held.position.code,
+        toValue: '(none — pick a seat in the new department)',
+      });
+    }
+  }
+
+  // THE SEAT — settable here, by an admin, and nowhere else.
+  //
+  // Department, designation and position are the three fields the employee
+  // may never touch: department and designation are kept off
+  // SELF_SERVICE_FIELDS so PUT /me ignores them, and a position is not a
+  // column on Employee at all — it is a PositionAssignment, and the routes
+  // that write those need Employee Management / configure, which no employee
+  // holds. This is where an admin assigns one without going to another
+  // screen.
+  //
+  // `position` is a seat CODE. Empty string vacates; absent leaves it alone,
+  // so a form that does not send the field cannot silently unseat somebody.
+  if (seatPlan) {
+    const { wanted, current, currentCode, departedHolder } = seatPlan;
+    let { seat } = seatPlan;
+    // Leaving a seat ENDS the tenure, it does not delete it: the seat keeps
+    // what was done under it, which is the entire point of seats.
+    if (current) {
+      await prisma.positionAssignment.update({ where: { id: current.id }, data: { toDate: positionToday() } });
+    }
+    if (wanted) {
+      // The previous holder has LEFT: close their tenure on their last working
+      // day (never before it started), audited, so the seat history stays true.
+      let prevEnd = null;
+      if (departedHolder) {
+        prevEnd = await lastWorkingDayOf(departedHolder.employeeId);
+        if (prevEnd < departedHolder.fromDate) prevEnd = departedHolder.fromDate;
+        await prisma.positionAssignment.update({ where: { id: departedHolder.id }, data: { toDate: prevEnd } });
+        await logAudit({
+          userId: req.user.id, actorName: req.user.name,
+          action: `Seat ${seat.code} released — previous holder ${departedHolder.employee.name} is ${departedHolder.employee.employmentStatus}`,
+          entity: 'Position', entityId: seat.id, fromValue: departedHolder.employee.name, toValue: `tenure closed ${prevEnd}`,
+        });
+      }
+      if (!seat) {
+        seat = await prisma.position.create({ data: { code: wanted, department: employee.department } });
+        await logAudit({ userId: req.user.id, action: `Position ${wanted} created`, entity: 'Position', entityId: seat.id });
+      }
+      // START DATE (user: "calculate according to the employee's joining date"):
+      // a person's FIRST seat starts on their date of joining; a later move
+      // starts today. Never before the previous holder's tenure ended.
+      const hadSeatBefore = await prisma.positionAssignment.count({ where: { employeeId: employee.id } });
+      let fromDate = positionToday();
+      if (!hadSeatBefore && employee.dateOfJoining) {
+        const doj = new Date(employee.dateOfJoining).toISOString().slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(doj)) fromDate = doj;
+      }
+      if (prevEnd && fromDate < prevEnd) fromDate = prevEnd;
+      await prisma.positionAssignment.create({
+        data: { positionId: seat.id, employeeId: employee.id, fromDate },
+      });
+    }
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name,
+      action: 'Position changed', entity: 'Employee', entityId: employee.id,
+      fromValue: currentCode || '(none)', toValue: wanted || '(none)',
+    });
+  }
   // A DESIGNATION CHANGE IS A ROLE CHANGE. Promoting a Recruiter to TL used to
   // leave an ATS login that was still a RECRUITER, because the designation ->
   // role derivation only ever ran when the login was created.
@@ -1212,7 +2561,26 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
     });
   }
   await logAudit({ userId: req.user.id, action: 'Employee updated', entity: 'Employee', entityId: employee.id });
-  res.json(withComputed(employee));
+  // ONE AUDIT ROW PER CHANGED FIELD, old -> new (Employee -> History tab).
+  // Bank account numbers are recorded masked, never in full.
+  {
+    const show = (f, v) => {
+      if (v === null || v === undefined) return '';
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      if (f === 'bankAccountNumber') { const s = String(v); return s ? `${'X'.repeat(Math.max(4, s.length - 4))}${s.slice(-4)}` : ''; }
+      return String(v);
+    };
+    const changes = Object.keys(data)
+      .filter((f) => show(f, existingForScope[f]) !== show(f, employee[f]))
+      .map((f) => ({ field: f, label: SELF_SERVICE_FIELDS[f] || f.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()), from: show(f, existingForScope[f]), to: show(f, employee[f]) }));
+    if (changes.length) {
+      await logFieldChanges({
+        userId: req.user.id, actorName: req.user.name, entity: 'Employee', entityId: employee.id,
+        action: 'Employee edited (full form)', changes, approvalStatus: null,
+      });
+    }
+  }
+  res.json(designationWarning ? { ...withComputed(employee), designationWarning } : withComputed(employee));
 });
 
 // Permanently removes an employee record and everything hanging off it
@@ -1220,8 +2588,14 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
 router.delete('/:id', requirePerm(null, 'hrms', 'Employee Management', 'delete'), async (req, res) => {
   const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
+  // The document ROWS go with the transaction; their stored BYTES are removed
+  // once it has committed, so a rolled-back delete never loses a file.
+  const docFiles = (await prisma.employeeDocument.findMany({
+    where: { employeeId: req.params.id }, select: { file: true },
+  })).map((d) => d.file);
   await prisma.$transaction([
     prisma.employee.updateMany({ where: { reportingManagerId: req.params.id }, data: { reportingManagerId: null } }),
+    prisma.employeeDocument.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.employeeRecord.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.attendance.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.attendanceRegularization.deleteMany({ where: { employeeId: req.params.id } }),
@@ -1231,11 +2605,13 @@ router.delete('/:id', requirePerm(null, 'hrms', 'Employee Management', 'delete')
     prisma.fnfRequest.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.performanceReview.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.courseAssignment.deleteMany({ where: { employeeId: req.params.id } }),
+    prisma.courseMaterialProgress.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.projectAssignment.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.surveyResponse.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.acknowledgment.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.employee.delete({ where: { id: req.params.id } }),
   ]);
+  docFiles.forEach((f) => attachments.remove(f));
   await logAudit({ userId: req.user.id, action: 'Employee deleted', entity: 'Employee', entityId: req.params.id, fromValue: existing.name });
   res.json({ ok: true });
 });
@@ -1440,6 +2816,11 @@ router.patch('/:id/toggle-lock', requirePerm(null, 'hrms', 'Employee Management'
 // which section, the reason, when access starts, when it expires and who
 // granted it.
 router.post('/:id/grant-edit-access', requirePerm(null, 'hrms', 'Employee Management', 'approve'), async (req, res) => {
+  // Reopening a profile is not a turn on an approval chain: a view-only
+  // Manager / Assistant Manager may not do it.
+  if (isViewOnlyAdmin(req.user) && !(await can(req.user, 'hrms', 'hrms', 'Employee Management', 'edit'))) {
+    return res.status(403).json({ error: "This isn't included in your role's permissions" });
+  }
   const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, existing))) return res.status(403).json({ error: 'This record is outside your department scope' });
@@ -1505,6 +2886,208 @@ router.get('/:id/audit', requirePerm(null, 'hrms', 'Employee Management', 'view'
       approvedAt: r.approvedAt || null,
     })),
   });
+});
+
+// =========================================================================
+// EMPLOYEE DOCUMENTS — Aadhaar, PAN, certificates, joining paperwork.
+//
+// As many as needed per employee, several of one type if that is what the
+// person has. The bytes go through utils/attachments.js (allow-listed MIME,
+// magic-byte check, server-chosen name in the private upload directory);
+// EmployeeDocument keeps the stored name in `file` and the sanitised original
+// in `fileName`, for display only.
+//
+// WHO MAY TOUCH THEM — two doors and no third:
+//   * HR / Admin / Super Admin: Employee Management `edit` — the SAME grant
+//     that edits the employee — held to the caller's employee scope
+//     (utils/scope.js employeeWhere). View, upload and delete.
+//   * The employee, on THEIR OWN record only: view and upload always; delete
+//     only a document they uploaded themselves, and only while their profile
+//     is open to them (not locked, not awaiting review, window not expired).
+//     A submitted profile is a submitted profile — its evidence stays put.
+// A view-only Manager, a TL without `edit`, or anybody else gets a 403 —
+// Aadhaar and PAN copies are not "list" data.
+//
+// Nothing about a document's CONTENTS is ever logged. The audit row names the
+// type, never the file name or anything typed that might carry a number.
+// =========================================================================
+// The types ('Photo' = the profile photo, images only) live in ONE list,
+// shared with the Global Export registry: utils/employeeDocTypes.js.
+const {
+  PHOTO_DOC_TYPE, DOC_TYPES, OTHER_DOC_TYPE, SENSITIVE_DOC_TYPES, REQUIRED_DOC_TYPES,
+} = require('../utils/employeeDocTypes');
+
+// What this caller may do with this employee's documents.
+async function documentAccess(req, employee) {
+  const self = !!employee.userId && employee.userId === req.user.id;
+  const inScope = employeeInScope(req.user, employee);
+  const hr = inScope && await can(req.user, 'hrms', 'hrms', 'Employee Management', 'edit');
+  // Manager / Assistant Manager: every department, VIEW ONLY — they may open
+  // and download the documents on a record they can see, never upload or
+  // delete (the POST / DELETE handlers below require `allowed` / `hr`).
+  const viewer = !self && !hr && inScope && isViewOnlyAdmin(req.user)
+    && await can(req.user, 'hrms', 'hrms', 'Employee Management', 'view');
+  return { self, hr, viewer, allowed: self || hr };
+}
+
+// The audit wording for a document: its type, and for "Other" the name typed
+// for it with any long digit run masked. Never the file name.
+function docAuditLabel(doc) {
+  if (SENSITIVE_DOC_TYPES.has(doc.docType) || !doc.docName) return doc.docType;
+  return `${doc.docType}: ${String(doc.docName).replace(/\d{4,}/g, '••••').slice(0, 80)}`;
+}
+
+async function loadForDocuments(req, res, { read = false } = {}) {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) { res.status(404).json({ error: 'Employee not found' }); return null; }
+  const access = await documentAccess(req, employee);
+  if (!access.allowed && !(read && access.viewer)) { res.status(403).json({ error: "This isn't included in your role's permissions" }); return null; }
+  return { employee, access };
+}
+
+router.get('/:id/documents', async (req, res) => {
+  const ctx = await loadForDocuments(req, res, { read: true });
+  if (!ctx) return;
+  const { employee, access } = ctx;
+  const docs = await prisma.employeeDocument.findMany({
+    where: { employeeId: employee.id }, orderBy: { uploadedAt: 'desc' },
+  });
+  // `uploadedBy` holds the uploader's user id (so "their own upload" is a
+  // fact, not a name match); the screen is given the name.
+  const uploaderIds = [...new Set(docs.map((d) => d.uploadedBy).filter(Boolean))];
+  const uploaders = uploaderIds.length
+    ? await prisma.user.findMany({ where: { id: { in: uploaderIds } }, select: { id: true, name: true } })
+    : [];
+  const nameOf = new Map(uploaders.map((u) => [u.id, u.name]));
+  // Whether the employee's own form is still open — decides self-delete.
+  const selfOpen = !employee.isLocked && !employee.pendingChanges
+    && !(employee.unlockExpiresAt && new Date(employee.unlockExpiresAt) < new Date());
+  res.json({
+    docTypes: DOC_TYPES,
+    requiredTypes: REQUIRED_DOC_TYPES,
+    maxBytes: attachments.MAX_BYTES,
+    allowedTypes: Object.keys(attachments.ALLOWED),
+    canUpload: access.allowed,
+    documents: docs.map((d) => ({
+      id: d.id,
+      docType: d.docType,
+      docName: d.docName,
+      fileName: d.fileName,
+      mime: d.mime,
+      size: d.size,
+      uploadedAt: d.uploadedAt,
+      uploadedByName: d.uploadedBy ? (nameOf.get(d.uploadedBy) || 'Unknown user') : null,
+      uploadedBySelf: !!d.uploadedBy && d.uploadedBy === employee.userId,
+      canDelete: access.hr || (access.self && selfOpen && d.uploadedBy === req.user.id),
+    })),
+  });
+});
+
+// Multipart: docType, docName (required for "Other Documents"), file.
+router.post('/:id/documents', async (req, res) => {
+  const ctx = await loadForDocuments(req, res);
+  if (!ctx) return;
+  const { employee } = ctx;
+
+  let parsed;
+  try {
+    parsed = await attachments.parseMultipart(req);
+  } catch (err) {
+    return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'Could not read the upload.' });
+  }
+  const docType = String(parsed.fields.docType || '').trim();
+  const docName = String(parsed.fields.docName || '').trim().slice(0, 120) || null;
+  if (!DOC_TYPES.includes(docType)) {
+    return res.status(400).json({ error: `Choose a document type: ${DOC_TYPES.join(', ')}.` });
+  }
+  if (docType === OTHER_DOC_TYPE && !docName) {
+    return res.status(400).json({ error: 'Give the document a name when the type is Other Documents.' });
+  }
+  if (docType === PHOTO_DOC_TYPE && !['image/jpeg', 'image/png', 'image/webp'].includes(String((parsed.file && parsed.file.contentType) || ''))) {
+    return res.status(400).json({ error: 'A photo must be a JPEG, PNG or WebP image.' });
+  }
+  // Validated BEFORE anything is written, so a refused form leaves no file.
+  let stored;
+  try {
+    stored = attachments.store(parsed.file);
+  } catch (err) {
+    return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'Could not store the upload.' });
+  }
+  let doc;
+  try {
+    doc = await prisma.employeeDocument.create({
+      data: {
+        employeeId: employee.id,
+        docType,
+        docName,
+        file: stored.billFile,
+        fileName: stored.billName,
+        mime: stored.billMime,
+        size: stored.billSize,
+        uploadedBy: req.user.id,
+      },
+    });
+  } catch (err) {
+    // No row, no file: never leave bytes on disk that nothing points at.
+    attachments.remove(stored.billFile);
+    throw err;
+  }
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: 'Employee document uploaded', entity: 'Employee', entityId: employee.id,
+    toValue: docAuditLabel(doc),
+  });
+  return res.status(201).json({
+    id: doc.id, docType: doc.docType, docName: doc.docName, fileName: doc.fileName,
+    mime: doc.mime, size: doc.size, uploadedAt: doc.uploadedAt,
+  });
+});
+
+// ?disposition=inline (View) or attachment (Download, the default). The path
+// is rebuilt from the stored name only after utils/attachments.js has
+// re-validated it, so an id in the URL can never reach another file.
+router.get('/:id/documents/:docId/file', async (req, res) => {
+  const ctx = await loadForDocuments(req, res, { read: true });
+  if (!ctx) return;
+  const doc = await prisma.employeeDocument.findUnique({ where: { id: req.params.docId } });
+  if (!doc || doc.employeeId !== ctx.employee.id) return res.status(404).json({ error: 'Document not found' });
+  const full = attachments.resolveStored(doc.file);
+  if (!full) return res.status(404).json({ error: 'The file is no longer on the server' });
+  const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment';
+  // Only a type this module allow-listed is ever sent as itself.
+  const mime = attachments.ALLOWED[doc.mime] ? doc.mime : 'application/octet-stream';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${attachments.safeDisplayName(doc.fileName)}"`);
+  return res.sendFile(full);
+});
+
+router.delete('/:id/documents/:docId', async (req, res) => {
+  const ctx = await loadForDocuments(req, res);
+  if (!ctx) return;
+  const { employee, access } = ctx;
+  const doc = await prisma.employeeDocument.findUnique({ where: { id: req.params.docId } });
+  if (!doc || doc.employeeId !== employee.id) return res.status(404).json({ error: 'Document not found' });
+  if (!access.hr) {
+    // The employee's own door: their own upload, while the form is theirs.
+    if (doc.uploadedBy !== req.user.id) {
+      return res.status(403).json({ error: 'Only HR can remove a document HR added to your record.' });
+    }
+    if (employee.pendingChanges) {
+      return res.status(403).json({ error: 'Your profile is awaiting HR review, so its documents cannot be removed now.' });
+    }
+    const gate = await enforceEditWindow(employee);
+    if (!gate.allowed) return res.status(403).json({ error: gate.error });
+  }
+  await prisma.employeeDocument.delete({ where: { id: doc.id } });
+  attachments.remove(doc.file);
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: 'Employee document deleted', entity: 'Employee', entityId: employee.id,
+    fromValue: docAuditLabel(doc),
+  });
+  return res.json({ ok: true });
 });
 
 // Pause/resume — toggles Active <-> On Probation, mirroring the reference app's
@@ -1589,344 +3172,166 @@ router.patch('/:id/offboarding/:index', requirePerm(null, 'hrms', 'Employee Mana
   res.json(withComputed(updated));
 });
 
-// --- Bulk import: Validate -> Preview -> Confirm -> Import -------------------
+// --- Bulk import: Sample Excel -> Upload -> Check -> Import VALID rows -------
 //
-// THREE STEPS, NOT ONE.
-//   1. VALIDATE  every row, against the database and against the rest of the
-//      file, before anything is written.
-//   2. PREVIEW   the split: Valid Records and Invalid Records, each invalid
-//      row naming the Row number, the Field, the Error and what was expected
-//      (e.g. "Row 8 - Department - Invalid department - one of IT, HR, ...").
-//      HR sees exactly what will land before agreeing to it.
-//   3. CONFIRM   and import, in ONE transaction. Still all-or-nothing: a
-//      half-applied employee master is worse than a rejected file.
+// The file, the sample workbook and every check are defined ONCE, in
+// utils/employeeBulkImport.js (IMPORT_FIELDS), so "Download Sample Excel"
+// can never ask for a column the importer ignores.
 //
-// The importer's data scope is enforced here too: a department-scoped caller
-// (TL/STL) may only create employees in a department they hold, and a row
-// naming another one is an ERROR rather than being silently rewritten —
-// quietly moving somebody's department is exactly the kind of thing an import
-// should not do behind your back.
+//   1. SAMPLE   GET  /bulk-import/sample.xlsx — the Employees sheet with the
+//               real headers and two EXAMPLE- rows (always skipped), and an
+//               Instructions sheet: required marks, the departments in the
+//               importer's scope, the ACTIVE roles (Role & Permission
+//               Management), designations, employment types, statuses and
+//               the date format.
+//   2. CHECK    POST /bulk-import/preview — the uploaded .xlsx / .csv (raw
+//               body) or pasted CSV rows (JSON). Row-wise errors; writes
+//               nothing.
+//   3. IMPORT   POST /bulk-import — imports ONLY the rows that pass. Each row
+//               is its own transaction, so one bad row never takes the others
+//               with it. Returns imported / failed / skipped counts and a
+//               downloadable summary workbook (failed rows + reasons).
 //
-// LOGINS. The lifecycle requires an imported employee to keep the
-//   Employee -> User -> Login -> Product Access -> Role -> Scope
-// relationship wherever the workflow needs login access, so the import DOES
-// create logins when asked (`createLogins`). It does it the same way the Add
-// Employee form does and with the same safety:
-//   * role and product access are DERIVED from the designation through the
-//     DesignationRole table — never typed, never department-qualified;
-//   * data scope is the employee's department;
-//   * NO PASSWORD IS EVER GENERATED OR EMAILED. Each new login gets an
-//     unguessable hash and a single-use, expiring set-password link, exactly
-//     like POST /employees.
-// A caller who cannot see a department cannot import into it, so a CSV can
-// never mint accounts somewhere the importer has no reach.
-const IMPORT_COLUMNS = ['name', 'email', 'phone', 'department', 'designation', 'location'];
+// Scope: a department-scoped importer may only import into their own
+// departments, and a reporting manager must be somebody they can see.
+// ONE PERSON = ONE LOGIN: an email already on an employee or a login is
+// refused. NO PASSWORD is generated: logins (only when asked) get a
+// single-use set-password link, exactly like Add Employee.
+const bulkImport = require('../utils/employeeBulkImport');
 
-function normalizeImportRow(raw) {
-  const row = {};
-  IMPORT_COLUMNS.forEach((k) => { row[k] = raw[k] === undefined || raw[k] === null ? '' : String(raw[k]).trim(); });
-  return row;
-}
-
-async function validateImport(rows, { allowedDepartments, scopeDepts, createLogins, designations }) {
-  const errors = [];
-  const emailsSeen = new Map();
-  const phonesSeen = new Map();
-  const prepared = [];
-
-  const fileEmails = rows.map((r) => r.email).filter(Boolean);
-  const filePhones = rows.map((r) => r.phone).filter(Boolean);
-  const [emailClashes, phoneClashes, userClashes] = await Promise.all([
-    fileEmails.length ? prisma.employee.findMany({ where: { email: { in: fileEmails } }, select: { email: true, name: true, employeeCode: true } }) : [],
-    filePhones.length ? prisma.employee.findMany({ where: { phone: { in: filePhones } }, select: { phone: true, name: true, employeeCode: true } }) : [],
-    fileEmails.length ? prisma.user.findMany({ where: { email: { in: fileEmails } }, select: { email: true, name: true } }) : [],
-  ]);
-  const byEmail = new Map(emailClashes.map((e) => [String(e.email).toLowerCase(), e]));
-  const byPhone = new Map(phoneClashes.map((e) => [String(e.phone), e]));
-  const byUser = new Map(userClashes.map((u) => [String(u.email).toLowerCase(), u]));
-
-  const deptList = allowedDepartments.join(', ');
-
-  rows.forEach((row, i) => {
-    // Line 1 is the header, so the first data row is line 2 — which is the
-    // line number the person's spreadsheet is showing them.
-    const line = i + 2;
-    const before = errors.length;
-    // Field + expected value, so the preview can say
-    // "Row 8 — Department — Invalid department — one of IT, HR, ...".
-    const fail = (field, message, expected) => errors.push({
-      line, row: line, field, message, expected: expected || '', name: row.name || '',
-    });
-
-    if (!row.name) fail('Name', 'Name is required.', 'a full name');
-    if (row.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(row.email)) {
-      fail('Email', `"${row.email}" is not a valid email address.`, 'name@example.com');
-    }
-    if (row.phone && !/^\d{10}$/.test(row.phone.replace(/\s/g, ''))) {
-      fail('Mobile', `Mobile "${row.phone}" should be 10 digits.`, '10 digits, e.g. 9876543210');
-    }
-
-    if (row.email) {
-      const key = row.email.toLowerCase();
-      if (emailsSeen.has(key)) fail('Email', `Email ${row.email} also appears on line ${emailsSeen.get(key)} of this file.`, 'a unique email address');
-      else emailsSeen.set(key, line);
-      const clash = byEmail.get(key);
-      if (clash) fail('Email', `Email ${row.email} already belongs to ${clash.name} (${clash.employeeCode}).`, 'an email not already on an employee');
-      const userClash = byUser.get(key);
-      if (userClash && createLogins) fail('Email', `${row.email} already has a login (${userClash.name}).`, 'an email with no existing login');
-    }
-    if (row.phone) {
-      if (phonesSeen.has(row.phone)) fail('Mobile', `Mobile ${row.phone} also appears on line ${phonesSeen.get(row.phone)} of this file.`, 'a unique mobile number');
-      else phonesSeen.set(row.phone, line);
-      const clash = byPhone.get(row.phone);
-      if (clash) fail('Mobile', `Mobile ${row.phone} already belongs to ${clash.name} (${clash.employeeCode}).`, 'a mobile not already on an employee');
-    }
-
-    let department = row.department || null;
-    if (scopeDepts !== undefined) {
-      if (department && !scopeDepts.includes(department)) {
-        fail('Department', `Outside your scope — you can only import into ${scopeDepts.join(', ')}.`, scopeDepts.join(' or '));
-      }
-      if (!department) department = scopeDepts[0];
-    } else if (department && allowedDepartments.length && !allowedDepartments.includes(department)) {
-      fail('Department', 'Invalid department', `one of ${deptList}`);
-    }
-
-    // A login needs an email and a designation the DesignationRole table
-    // knows, because that is what supplies the role and the product access.
-    let mapping = null;
-    if (createLogins) {
-      if (!row.email) fail('Email', 'A login cannot be created without an email address.', 'name@example.com');
-      if (!row.designation) fail('Designation', 'A designation is required to derive the role and product access.', `one of ${designations.join(', ')}`);
-      else {
-        mapping = designations.find((d) => d.toLowerCase() === row.designation.toLowerCase()) || null;
-        if (!mapping) fail('Designation', `"${row.designation}" is not a designation this organisation maps to a role.`, `one of ${designations.join(', ')}`);
-      }
-    }
-
-    prepared.push({ ...row, department, line, valid: errors.length === before });
-  });
-
-  return { errors, prepared };
-}
-
-// Shared by the preview and the import, so the preview can never describe a
-// different file from the one that lands.
-async function readImportRequest(req) {
-  const raw = req.body.rows;
-  if (!Array.isArray(raw)) return { error: 'rows must be an array' };
-  if (!raw.length) return { error: 'That file has no data rows.' };
-  if (raw.length > 1000) return { error: 'Import at most 1000 rows at a time.' };
-
-  const rows = raw.map(normalizeImportRow);
-  const scopeDepts = scopeDepartments(req);
-  const [departments, designationRows] = await Promise.all([
-    prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
-    prisma.designationRole.findMany({ select: { designation: true }, orderBy: { designation: 'asc' } }),
-  ]);
-  const createLogins = req.body.createLogins === true;
-  const { errors, prepared } = await validateImport(rows, {
-    allowedDepartments: departments.map((d) => d.name),
-    scopeDepts,
-    createLogins,
-    designations: designationRows.map((d) => d.designation),
-  });
-  return { rows, errors, prepared, createLogins, scopeDepts };
-}
-
-function previewPayload({ rows, errors, prepared, createLogins, scopeDepts }) {
-  const invalidLines = new Set(errors.map((e) => e.line));
-  const valid = prepared.filter((r) => !invalidLines.has(r.line)).map((r) => ({
-    row: r.line,
-    name: r.name,
-    email: r.email || '',
-    phone: r.phone || '',
-    department: r.department || '',
-    designation: r.designation || '',
-    location: r.location || '',
-    willCreateLogin: createLogins && !!r.email,
-  }));
-  return {
-    ok: errors.length === 0,
-    rowCount: rows.length,
-    validCount: valid.length,
-    invalidCount: invalidLines.size,
-    valid,
-    invalid: errors,
-    errors, // the older shape, kept so nothing that already reads it breaks
-    createLogins,
-    scope: scopeDepts === undefined ? 'All departments' : scopeDepts.join(', '),
-    canImport: errors.length === 0 && valid.length > 0,
-    message: errors.length
-      ? `${errors.length} problem(s) across ${rows.length} row(s). Nothing will be imported until every row passes.`
-      : `${valid.length} row(s) ready to import${createLogins ? ' with logins' : ''}.`,
-  };
-}
-
-// STEP 2 — the preview. Read-only: it writes nothing, ever.
-router.post('/bulk-import/preview', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
-  const parsed = await readImportRequest(req);
-  if (parsed.error) return res.status(400).json({ error: parsed.error });
-  res.json({ ...previewPayload(parsed), preview: true });
+const rawUpload = express.raw({
+  type: ['application/octet-stream', 'text/csv', 'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  limit: '10mb',
 });
 
-// STEP 3 — confirm and import.
-router.post('/bulk-import', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+function importContext(req, createLogins) {
+  const scopeDepts = scopeDepartments(req);
+  return {
+    scopeDepts,
+    globalImporter: scopeDepts === undefined,
+    createLogins,
+    // Reporting managers: people this importer can see, never Super Admin.
+    managerWhere: withoutSystemAccounts(departmentWhere(req)),
+    designationFilter: (rows) => addEmployeeDesignations(req, rows),
+  };
+}
+
+async function readImportRequest(req) {
+  const isFile = Buffer.isBuffer(req.body) && req.body.length > 0;
+  const createLogins = isFile ? String(req.query.createLogins) === 'true' : !!(req.body && req.body.createLogins === true);
+  let rows;
+  let fileName = '';
+  if (isFile) {
+    fileName = String(req.query.fileName || 'upload.xlsx').slice(0, 200);
+    const parsed = bulkImport.parseUpload(req.body, fileName);
+    if (parsed.error) return { error: parsed.error };
+    rows = parsed.rows;
+  } else if (req.body && Array.isArray(req.body.rows)) {
+    rows = bulkImport.rowsFromObjects(req.body.rows);
+  } else {
+    return { error: 'Upload an .xlsx or .csv file (or paste CSV rows).' };
+  }
+  if (!rows.length) return { error: 'That file has no data rows.' };
+  if (rows.length > bulkImport.MAX_ROWS) return { error: `Import at most ${bulkImport.MAX_ROWS} rows at a time.` };
+  const { errors, prepared, skipped } = await bulkImport.validateRows(rows, importContext(req, createLogins));
+  return { rows, errors, prepared, skipped, createLogins, fileName, scopeLabel: scopeLabel(req) };
+}
+
+// The fields and option lists, for the screen's own instructions.
+router.get('/bulk-import/fields', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const opts = await bulkImport.optionLists(importContext(req, false));
+  res.json({
+    fields: bulkImport.IMPORT_FIELDS.map(({ key, label, required, rule }) => ({ key, label, required, rule })),
+    examplePrefix: bulkImport.EXAMPLE_PREFIX,
+    maxRows: bulkImport.MAX_ROWS,
+    departments: opts.departments,
+    roles: opts.roles,
+    designations: opts.designations,
+    employmentTypes: opts.employmentTypes,
+    statuses: opts.statuses,
+  });
+});
+
+// STEP 1 — the sample workbook, built from IMPORT_FIELDS and the live masters.
+router.get('/bulk-import/sample.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const opts = await bulkImport.optionLists(importContext(req, false));
+  const buf = bulkImport.sampleWorkbook(opts);
+  res.setHeader('Content-Disposition', 'attachment; filename="employee-import-sample.xlsx"');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+
+// STEP 2 — the check. Read-only: it writes nothing, ever.
+router.post('/bulk-import/preview', rawUpload, requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
   const parsed = await readImportRequest(req);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
-  const { rows, errors, prepared, createLogins } = parsed;
+  res.json({ ...bulkImport.previewPayload(parsed), preview: true });
+});
 
-  // `validateOnly` is the old dry-run flag; it now returns the full preview.
-  if (req.body.validateOnly === true) {
-    return res.json({ ...previewPayload(parsed), validateOnly: true, preview: true, written: 0 });
-  }
+// STEP 3 — import the valid rows.
+router.post('/bulk-import', rawUpload, requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  const parsed = await readImportRequest(req);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const preview = bulkImport.previewPayload(parsed);
+  // `validateOnly` is the old dry-run flag; it returns the preview.
+  if (req.body && req.body.validateOnly === true) return res.json({ ...preview, validateOnly: true, preview: true, written: 0 });
 
-  if (errors.length) {
-    await logAudit({
-      userId: req.user.id, actorName: req.user.name, action: 'Bulk import rejected', entity: 'Employee',
-      toValue: `${rows.length} row(s) read, ${errors.length} error(s), nothing written`,
-    });
-    return res.status(422).json({
-      ...previewPayload(parsed),
-      written: 0,
-      message: `Nothing was imported. ${errors.length} problem(s) across ${rows.length} row(s) — fix the file and try again.`,
-    });
-  }
+  const { imported, failedRows, invites, skipped } = preview.validCount > 0
+    ? await bulkImport.importRows({
+      prepared: parsed.prepared,
+      errors: parsed.errors,
+      skipped: parsed.skipped,
+      createLogins: parsed.createLogins,
+      req,
+      profileIncomplete: PROFILE_STATUS.INCOMPLETE,
+      onboardingTasks: DEFAULT_ONBOARDING_TASKS,
+    })
+    : {
+      imported: [],
+      failedRows: parsed.prepared.filter((p) => !p.valid).map((p) => ({
+        row: p.line,
+        values: bulkImport.IMPORT_FIELDS.reduce((o, f) => ({ ...o, [f.key]: String(p.raw[f.key] || '') }), {}),
+        reasons: parsed.errors.filter((e) => e.line === p.line).map((e) => `${e.field}: ${e.message}`),
+      })),
+      invites: [],
+      skipped: parsed.skipped,
+    };
 
-  // Employee codes are allocated up front and checked against the database,
-  // so a gap in the sequence cannot collide with an existing record.
-  const taken = new Set((await prisma.employee.findMany({ select: { employeeCode: true } })).map((e) => e.employeeCode));
-  let next = taken.size + 1;
-  const codeFor = () => {
-    let code = `EMP-${String(next).padStart(4, '0')}`;
-    while (taken.has(code)) { next += 1; code = `EMP-${String(next).padStart(4, '0')}`; }
-    taken.add(code);
-    next += 1;
-    return code;
-  };
-  const plan = prepared.map((r) => ({ ...r, employeeCode: codeFor() }));
-
-  // Role and product access are DERIVED from the designation, so an imported
-  // "TL" in Medical is role TL scoped to Medical — never a "Medical TL".
-  const mappings = new Map();
-  if (createLogins) {
-    // eslint-disable-next-line no-restricted-syntax
-    for (const r of plan) {
-      if (!mappings.has(r.designation)) {
-        // eslint-disable-next-line no-await-in-loop
-        mappings.set(r.designation, await mappingFor(r.designation));
-      }
-    }
-  }
-
-  let created = [];
-  try {
-    // ONE transaction: either every row lands or none does. Interactive,
-    // because a login and its employee record must be created together and
-    // the employee needs the user's id.
-    created = await prisma.$transaction(async (tx) => {
-      const out = [];
-      // eslint-disable-next-line no-restricted-syntax
-      for (const r of plan) {
-        let userId = null;
-        if (createLogins && r.email) {
-          const mapping = mappings.get(r.designation) || null;
-          const atsRole = mapping && mapping.atsRole ? mapping.atsRole : null;
-          const role = atsRole || (mapping && mapping.accounts && !mapping.ats ? 'ACCOUNTANT' : 'EMPLOYEE');
-          // eslint-disable-next-line no-await-in-loop
-          const user = await tx.user.create({
-            data: {
-              name: r.name,
-              email: r.email,
-              // NEVER a generated password that somebody then has to email.
-              // eslint-disable-next-line no-await-in-loop
-              passwordHash: await unguessablePasswordHash(),
-              role,
-              username: r.email,
-              status: 'Active',
-              atsDepartment: r.department || null,
-              ...productRolesForDesignation(mapping),
-              atsScopeDepartments: r.department || null,
-              hrmsAccess: mapping ? !!mapping.hrms : true,
-              atsAccess: mapping ? !!mapping.ats : false,
-              accountsAccess: mapping ? !!mapping.accounts : false,
-              landingWorkspace: (mapping && mapping.landing) || null,
-            },
-          });
-          userId = user.id;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        const employee = await tx.employee.create({
-          data: {
-            employeeCode: r.employeeCode,
-            name: r.name,
-            email: r.email || null,
-            phone: r.phone || null,
-            department: r.department,
-            designation: r.designation || null,
-            location: r.location || null,
-            userId,
-            profileStage: PROFILE_STATUS.INCOMPLETE,
-            onboardingTasks: JSON.stringify(DEFAULT_ONBOARDING_TASKS.map((task) => ({ task, completed: false }))),
-          },
-        });
-        out.push({ employee, userId });
-      }
-      return out;
-    }, { timeout: 120000 });
-  } catch (err) {
-    await logAudit({
-      userId: req.user.id, actorName: req.user.name, action: 'Bulk import failed — rolled back',
-      entity: 'Employee', toValue: String(err.message || err).slice(0, 200),
-    });
-    return res.status(409).json({
-      ok: false, written: 0, rowCount: rows.length, validCount: 0, invalidCount: rows.length, valid: [],
-      invalid: [{ line: 0, row: 0, field: '', message: `The database refused the file, so nothing was written: ${String(err.message || err).slice(0, 200)}`, expected: '' }],
-      errors: [{ line: 0, message: `The database refused the file, so nothing was written: ${String(err.message || err).slice(0, 200)}` }],
-      message: 'Nothing was imported.',
-    });
-  }
-
-  // The invitations go out AFTER the transaction commits, one at a time and
-  // each one guarded: a mail failure must not roll back employees that are
-  // already saved, and it must not reject into the process.
-  const invites = [];
-  if (createLogins) {
-    // eslint-disable-next-line no-restricted-syntax
-    for (const { employee, userId } of created) {
-      if (!userId) continue;
-      let outcome;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        outcome = await sendCredentials({ employee, userId, actingUser: req.user, req });
-      } catch (err) {
-        outcome = { sent: false, status: `Failed: ${String(err.message || err).slice(0, 200)}` };
-      }
-      invites.push({ name: employee.name, email: employee.email, status: outcome.status, sent: !!outcome.sent, link: outcome.link || null });
-    }
-  }
-
+  const summary = bulkImport.summaryWorkbook({
+    imported, failedRows, skipped, fileName: parsed.fileName, by: req.user.name || req.user.email,
+  });
+  await notifyDataIo(req, { kind: 'import', module: 'Employee Management', count: parsed.rows.length, created: imported.length, updated: 0, skipped: failedRows.length + skipped.length, what: 'employee records (bulk create)', detail: `file ${parsed.fileName || 'pasted CSV'}` });
   await logAudit({
     userId: req.user.id, actorName: req.user.name, action: 'Bulk import run', entity: 'Employee',
-    toValue: `${created.length} imported${createLogins ? `, ${invites.length} login(s) created` : ''}, scope: ${scopeLabel(req)}`,
+    toValue: `${imported.length} imported, ${failedRows.length} failed, ${skipped.length} skipped`
+      + `${parsed.createLogins ? `, ${invites.length} login(s) created` : ''}; file: ${parsed.fileName || 'pasted CSV'}; scope: ${scopeLabel(req)}`,
   });
-  res.json({
-    ok: true,
-    written: created.length,
-    rowCount: rows.length,
-    validCount: created.length,
-    invalidCount: 0,
-    valid: [],
-    invalid: [],
-    errors: [],
-    // Kept for older callers that read `imported`.
-    imported: created.length,
-    skipped: 0,
-    createLogins,
+  const status = imported.length ? 200 : 422;
+  res.status(status).json({
+    ok: imported.length > 0,
+    written: imported.length,
+    imported: imported.length,
+    failed: failedRows.length,
+    skipped: skipped.length,
+    rowCount: parsed.rows.length,
+    importedRows: imported.map(({ row, employeeCode, name, email, userId }) => ({ row, employeeCode, name, email, loginCreated: !!userId })),
+    failedRows,
+    skippedRows: skipped,
+    invalid: parsed.errors,
+    errors: parsed.errors,
+    createLogins: parsed.createLogins,
     invites,
-    message: createLogins
-      ? `${created.length} employee(s) imported with logins. ${invites.filter((i) => i.sent).length} sign-in link(s) emailed — no password was generated or sent.`
-      : `${created.length} employee(s) imported. No logins were created — send sign-in details per employee once you've checked the records.`,
+    summaryFile: {
+      name: `employee-import-summary-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      base64: summary.toString('base64'),
+    },
+    message: `${imported.length} employee(s) imported, ${failedRows.length} row(s) failed`
+      + `${skipped.length ? `, ${skipped.length} example row(s) skipped` : ''}.`
+      + (parsed.createLogins
+        ? ` ${invites.filter((i) => i.sent).length} sign-in link(s) emailed — no password was generated or sent.`
+        : (imported.length ? ' No logins were created — send sign-in details per employee once you have checked the records.' : '')),
   });
 });
 

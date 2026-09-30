@@ -25,3 +25,5 @@ TeamLink-BATCH2-converted.xlsx
 # Generated from live data, for the user to fill in.
 TeamLink-DATA-NEEDED.xlsx
 TeamLink-BATCH3-converted.xlsx
+omnichannel-web/node_modules/
+omnichannel-web/dist/

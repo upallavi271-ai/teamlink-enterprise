@@ -24,8 +24,11 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { can } = require('../utils/permissions');
-const { scopeOf, employeeWhere, OUT_OF_SCOPE } = require('../utils/scope');
+const { scopeOf, employeeWhere, hrmsGlobal, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
+const {
+  parseAudience, parseChannels, resolveAudience, deliver, describeDelivery,
+} = require('../utils/audience');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -151,16 +154,63 @@ async function assignable(me) {
   };
 }
 
+// --- Whose timesheets this user may SEE (hrms-24 §8) -----------------------
+//
+// SEEING is not ASSIGNING. assignable() above asks the create permission,
+// which a Manager / Assistant Manager does not hold (view-only, §3/§4) — so
+// the list used to shrink them to their own tasks, the opposite of "Manager /
+// AM: their permitted departments". The READ set is the HRMS data scope
+// itself (utils/scope.js employeeWhere), exactly as every other HRMS list:
+//
+//   Super Admin / Admin / HR   every employee (HR: HRMS-wide)
+//   Manager / AM / STL         their departments
+//   TL                         their team (or department) + direct reports
+//   Employee                   themselves only — no picker at all
+//
+// A login with an explicit team scope is held to it, as assignable() does.
+async function viewable(me) {
+  const self = {
+    userId: me.id, employeeId: me.employeeId, name: me.name, employeeCode: null,
+    department: me.department || null, designation: me.designation || null, active: true, self: true,
+  };
+  if (me.caps && me.caps.hrmsSelfOnly) return { selfOnly: true, global: false, people: [self] };
+  const s = scopeOf(me);
+  const where = { ...employeeWhere(me), userId: { not: null } };
+  const explicitTeams = csv(me.atsScopeTeams);
+  if (!s.global && explicitTeams.length) {
+    where.AND = [{ OR: [{ team: { in: explicitTeams } }, { id: me.employeeId || '__none__' }] }];
+  }
+  const employees = await prisma.employee.findMany({
+    where,
+    select: {
+      id: true, userId: true, name: true, employeeCode: true, department: true, designation: true,
+      employmentStatus: true, user: { select: { status: true } },
+    },
+    orderBy: { name: 'asc' },
+  });
+  const people = employees.map((e) => ({
+    userId: e.userId,
+    employeeId: e.id,
+    name: e.name,
+    employeeCode: e.employeeCode,
+    department: e.department || null,
+    designation: e.designation || null,
+    active: (e.user?.status || 'Active') === 'Active',
+    self: e.userId === me.id,
+  }));
+  if (!people.some((p) => p.self)) people.unshift(self);
+  // HR is HRMS-wide (utils/scope.js hrmsGlobal), so it reads every department.
+  return { selfOnly: false, global: !!s.global || hrmsGlobal(me), people };
+}
+
 // The tasks this user may READ: their own, the ones they handed out, and — for
-// a lead — everyone in their scope. Built from the same assignable() set, so
-// the list and the Assign To picker can never drift apart.
+// anyone with an HRMS scope — everyone viewable() returns.
 async function visibleWhere(me) {
-  const { canAssignOthers, people } = await assignable(me);
-  if (!canAssignOthers) {
+  const { selfOnly, global, people } = await viewable(me);
+  if (selfOnly) {
     return { OR: [{ assigneeId: me.id }, { assignedById: me.id }] };
   }
-  const s = scopeOf(me);
-  if (s.global) return {};
+  if (global) return {};
   const ids = people.map((p) => p.userId);
   return { OR: [{ assigneeId: { in: ids } }, { assignedById: me.id }] };
 }
@@ -183,7 +233,9 @@ async function reachable(me, id) {
   if (task.assigneeId === me.id || task.assignedById === me.id) return { task };
   const s = scopeOf(me);
   if (s.global) return { task };
-  const { people } = await assignable(me);
+  // READ reach follows the view scope (a Manager may open, not change, a task
+  // in their departments); mayEdit() still asks assignable() for changes.
+  const { people } = await viewable(me);
   if (people.some((p) => p.userId === task.assigneeId)) return { task };
   return { status: 403, error: OUT_OF_SCOPE };
 }
@@ -207,8 +259,17 @@ router.get('/options', VIEW, async (req, res, next) => {
       ? all
       : [...new Set([...s.departments, ...people.map((p) => p.department).filter(Boolean)])].sort();
 
+    // THE EMPLOYEE PICKER (hrms-24 §8): the departments this login may look
+    // into, and whether it gets a picker at all — an Employee sees only their
+    // own timesheet and gets none. The people come from /tasks/people.
+    const view = await viewable(me);
+    const viewDepartments = view.selfOnly
+      ? []
+      : (view.global ? all : [...new Set(view.people.map((p) => p.department).filter(Boolean))].sort());
     res.json({
       departments,
+      viewDepartments,
+      canPickEmployee: !view.selfOnly,
       statuses: TASK_STATUSES,
       reviewStates: REVIEW_STATES,
       assignable: people,
@@ -224,12 +285,53 @@ router.get('/options', VIEW, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// --- Employee picker (hrms-24 §8) --------------------------------------------
+// GET /tasks/people?department=Medical — the people in THIS login's scope, in
+// that department. A department outside the scope is refused, not answered
+// with an empty list, so the picker cannot be used to probe other departments.
+router.get('/people', VIEW, async (req, res, next) => {
+  try {
+    const view = await viewable(req.user);
+    if (view.selfOnly) return res.json({ selfOnly: true, people: view.people });
+    const dept = String(req.query.department || '').trim();
+    if (dept && !view.global && !view.people.some((p) => p.department === dept)) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    const people = dept ? view.people.filter((p) => p.department === dept) : view.people;
+    return res.json({ selfOnly: false, department: dept || null, people });
+  } catch (err) { return next(err); }
+});
+
 // --- List -------------------------------------------------------------------
 router.get('/', VIEW, async (req, res, next) => {
   try {
     const where = await visibleWhere(req.user);
     const and = [];
-    if (req.query.department) and.push({ department: req.query.department });
+    // THE PICKER'S TWO HALVES ARE CHECKED HERE TOO. An employee id or a
+    // department outside this login's scope is refused (403) rather than
+    // quietly returning nothing — the browser only offers in-scope choices,
+    // and this is what holds when a URL is edited by hand.
+    if (req.query.assigneeId || req.query.department) {
+      const view = await viewable(req.user);
+      const aid = req.query.assigneeId ? String(req.query.assigneeId) : '';
+      if (aid && aid !== req.user.id && (view.selfOnly || (!view.global && !view.people.some((p) => p.userId === aid)))) {
+        return res.status(403).json(OUT_OF_SCOPE);
+      }
+      if (req.query.department) {
+        const dept = String(req.query.department);
+        // The department is the TASK's department or the ASSIGNEE's — pick
+        // Medical and every Medical employee's timesheet is in the list.
+        let members;
+        if (view.global) {
+          members = (await prisma.employee.findMany({ where: { department: dept, userId: { not: null } }, select: { userId: true } })).map((m) => m.userId);
+        } else {
+          members = view.people.filter((p) => p.department === dept).map((p) => p.userId);
+          // A lead naming a department nobody in their scope works in.
+          if (!view.selfOnly && !members.length) return res.status(403).json(OUT_OF_SCOPE);
+        }
+        and.push({ OR: [{ department: dept }, { assigneeId: { in: members } }] });
+      }
+    }
     if (req.query.status) and.push({ status: req.query.status });
     if (req.query.reviewState) and.push({ reviewState: String(req.query.reviewState) });
     if (req.query.assigneeId) and.push({ assigneeId: req.query.assigneeId });
@@ -256,7 +358,14 @@ router.get('/', VIEW, async (req, res, next) => {
       _count: { _all: true },
     });
     const commentCount = Object.fromEntries(counts.map((c) => [c.taskId, c._count._all]));
-    res.json(tasks.map((t) => ({ ...t, commentCount: commentCount[t.id] || 0 })));
+    // The assignee's employee ID and designation, so the list can be filtered
+    // by the person. Read-only, and only for the tasks already let through.
+    const assignees = await prisma.employee.findMany({
+      where: { userId: { in: [...new Set(tasks.map((t) => t.assigneeId))] } },
+      select: { userId: true, employeeCode: true, name: true, department: true, designation: true, employmentStatus: true },
+    });
+    const assigneeOf = Object.fromEntries(assignees.map((e) => [e.userId, e]));
+    res.json(tasks.map((t) => ({ ...t, commentCount: commentCount[t.id] || 0, assignee: assigneeOf[t.assigneeId] || null })));
   } catch (err) { next(err); }
 });
 
@@ -431,6 +540,46 @@ async function createTask(me, input = {}) {
 
 router.post('/', VIEW, async (req, res, next) => {
   try {
+    // AUDIENCE (utils/audience.js): assign the same task to one or MANY
+    // departments or one or MANY people at once. It resolves inside the
+    // caller's scope (403 for anything outside it), then keeps only the people
+    // assignable() offers — a task goes to a LOGIN, so someone with no account
+    // is reported as skipped, never silently given a task nobody can open —
+    // and runs createTask() once per person, so each copy passes exactly the
+    // same validation and audit as a single create.
+    const aud = parseAudience(req.body);
+    if (aud) {
+      const { canAssignOthers, people } = await assignable(req.user);
+      if (!canAssignOthers) return res.status(403).json(DENIED);
+      const out = await resolveAudience(req.user, aud);
+      if (!out.ok) return res.status(out.status).json({ error: out.error });
+      const byEmployee = new Map(people.map((p) => [p.employeeId, p]));
+      const targets = out.employees.map((e) => byEmployee.get(e.id)).filter(Boolean);
+      const skipped = out.employees.filter((e) => !byEmployee.has(e.id)).map((e) => e.name);
+      if (!targets.length) return res.status(400).json({ error: 'None of the selected people has a login to receive a task.' });
+      // Validate once before writing anything, so a bad field is one 400, not
+      // a half-created batch.
+      const first = await createTask(req.user, { ...req.body, assigneeId: targets[0].userId });
+      if (first.status !== 201) return res.status(first.status).json(first.body);
+      const created = [first.body];
+      for (const t of targets.slice(1)) {
+        // eslint-disable-next-line no-await-in-loop
+        const o = await createTask(req.user, { ...req.body, assigneeId: t.userId });
+        if (o.status === 201) created.push(o.body);
+      }
+      const delivery = await deliver({
+        employees: out.employees.filter((e) => byEmployee.has(e.id)),
+        channels: parseChannels(req.body.channels),
+        title: `New task: ${String(req.body.name || '').trim()}`,
+        message: req.body.description || null,
+        by: req.user,
+        exceptUserId: req.user.id,
+      });
+      return res.status(201).json({
+        created: created.length, label: out.label, skipped, ids: created.map((t) => t.id),
+        name: first.body.name, assigneeName: out.label, delivery, deliveryText: describeDelivery(delivery),
+      });
+    }
     const out = await createTask(req.user, req.body);
     return res.status(out.status).json(out.body);
   } catch (err) { return next(err); }
@@ -682,3 +831,4 @@ module.exports.REVIEW_STATES = REVIEW_STATES;
 module.exports.createTask = createTask;
 module.exports.assignable = assignable;
 module.exports.visibleWhere = visibleWhere;
+module.exports.viewable = viewable;

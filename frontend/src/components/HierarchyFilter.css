@@ -1,0 +1,60 @@
+/* HierarchyFilter + FilterChips — scoped under .hier-filter / .filter-chips.
+   Colours come from the app's own tokens (styles.css), so the blue/white
+   theme carries through. */
+
+/* The dropdowns flow straight into the page's .filter-row, like any other
+   filter there (Combo already takes .filter-row .combo sizing). */
+.hier-filter { display: contents; }
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 12px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.filter-chips-lead { font-weight: 600; color: var(--ink); margin-right: 2px; }
+.filter-chips-item { display: inline-flex; align-items: center; gap: 6px; }
+.filter-chips-sep { color: var(--ink-faint); }
+.filter-chips-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: var(--navy-tint, #e7edf7);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  max-width: 100%;
+}
+.filter-chips-k { color: var(--ink-soft); }
+.filter-chips-eq { color: var(--ink-faint); white-space: pre; }
+.filter-chips-v { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.filter-chips-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  padding: 0;
+  margin-left: 2px;
+}
+.filter-chips-x:hover { background: var(--line); color: var(--red, #b02318); }
+.filter-chips-x:focus-visible { outline: 2px solid var(--brand-ring, rgba(27, 88, 192, .35)); outline-offset: 1px; }
+.filter-chips-clear {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--blue, #1b58c0);
+  font-weight: 600;
+  font-size: 12.5px;
+  padding: 2px 6px;
+  margin-left: 4px;
+}
+.filter-chips-clear:hover { text-decoration: underline; }

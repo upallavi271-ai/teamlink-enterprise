@@ -1,0 +1,146 @@
+/* The invoice table (Accounts spec 2): one box that scrolls both ways, with
+   Invoice No + Client pinned left, Actions pinned right, the header pinned to
+   the top and the totals row pinned to the bottom. Every rule is scoped under
+   .inv-grid-wrap / .inv-grid so nothing here reaches another table.
+
+   Sticky cells need a solid background of their own, or the scrolling cells
+   show through them — so every row state (plain, striped, hover, highlighted)
+   sets the background on ALL its cells, pinned ones included. */
+
+.inv-grid-wrap {
+  max-height: 70vh;
+  overflow: auto;
+  position: relative;
+  background: var(--paper-raised, #fff);
+  border-top: 1px solid var(--line);
+  overscroll-behavior: contain;
+}
+.inv-grid-wrap:focus-visible { outline: 2px solid var(--brand-ring, rgba(31, 56, 100, .3)); outline-offset: -2px; }
+
+.inv-grid {
+  --inv-c1: 150px;            /* Invoice No width = the Client column's left offset */
+  --inv-c2: 240px;            /* Client width */
+  --inv-row: var(--paper-raised, #fff);
+  --inv-stripe: #FAFBFD;
+  --inv-hover: var(--line-soft, #EDF1F6);
+  --inv-head: var(--card2, #F0F3F8);
+  --inv-total: var(--brand-tint, #E7EDF7);
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 2600px;
+  font-variant-numeric: tabular-nums;
+}
+.inv-grid th,
+.inv-grid td { white-space: nowrap; background: var(--inv-row); }
+.inv-grid td { vertical-align: middle; }
+.inv-grid th.num, .inv-grid td.num { text-align: right; }
+
+/* Column widths — the totals row reuses the same columns, so it lines up. */
+.inv-grid th.c-date, .inv-grid th.c-due { min-width: 110px; }
+.inv-grid th.c-btype { min-width: 150px; }
+.inv-grid th.c-cgstin { min-width: 170px; }
+.inv-grid th.c-dept, .inv-grid th.c-rec { min-width: 150px; }
+.inv-grid th.c-before, .inv-grid th.c-gst, .inv-grid th.c-after, .inv-grid th.c-tds,
+.inv-grid th.c-receivable, .inv-grid th.c-received, .inv-grid th.c-pending { min-width: 128px; }
+.inv-grid th.c-pays { min-width: 90px; }
+.inv-grid th.c-proof { min-width: 70px; }
+.inv-grid th.c-tdscert { min-width: 90px; }
+.inv-grid th.c-age { min-width: 80px; }
+.inv-grid th.c-sent { min-width: 150px; }
+.inv-grid th.c-act { min-width: 280px; }
+
+/* Rows: striped, hover, just-paid highlight — on every cell. */
+.inv-grid tbody tr:nth-child(even) > td { background: var(--inv-stripe); }
+.inv-grid tbody tr.inv-row:hover > td { background: var(--inv-hover); }
+.inv-grid tbody tr.inv-row.hot > td { background: #FFF6DC; transition: background .4s; }
+.inv-grid tbody tr.inv-row:focus { outline: none; }
+.inv-grid tbody tr.inv-grp > td { background: var(--line-soft, #EDF1F6); }
+
+/* Header on top of everything in the body. */
+.inv-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--inv-head);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+/* Pinned columns. */
+.inv-grid .stk-l1 {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: var(--inv-c1);
+  min-width: var(--inv-c1);
+  max-width: var(--inv-c1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inv-grid .stk-l2 {
+  position: sticky;
+  left: var(--inv-c1);
+  z-index: 2;
+  width: var(--inv-c2);
+  min-width: var(--inv-c2);
+  max-width: var(--inv-c2);
+  /* the inner edge (towards the scrolling columns) */
+  box-shadow: inset -1px 0 0 var(--line), 6px 0 8px -6px rgba(22, 32, 43, .22);
+}
+.inv-grid .stk-r {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  box-shadow: inset 1px 0 0 var(--line), -6px 0 8px -6px rgba(22, 32, 43, .22);
+}
+.inv-grid thead th.stk-l1,
+.inv-grid thead th.stk-l2,
+.inv-grid thead th.stk-r { z-index: 5; }
+.inv-grid thead th.stk-l2 { box-shadow: inset -1px 0 0 var(--line), inset 0 -1px 0 var(--line), 6px 0 8px -6px rgba(22, 32, 43, .22); }
+.inv-grid thead th.stk-r { box-shadow: inset 1px 0 0 var(--line), inset 0 -1px 0 var(--line), -6px 0 8px -6px rgba(22, 32, 43, .22); }
+
+/* Totals row: pinned to the bottom, bold, its own fill; its pinned cells sit
+   above both the body and the other totals cells. */
+.inv-grid tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: var(--inv-total);
+  font-weight: 700;
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--line), inset 0 2px 0 var(--line);
+  border-bottom: 0;
+}
+.inv-grid tfoot td.stk-l1,
+.inv-grid tfoot td.stk-l2,
+.inv-grid tfoot td.stk-r { z-index: 6; }
+.inv-grid tfoot td.stk-l1 { white-space: normal; line-height: 1.25; }
+.inv-grid tfoot td.stk-l2 { box-shadow: inset 0 2px 0 var(--line), inset -1px 0 0 var(--line), 6px 0 8px -6px rgba(22, 32, 43, .22); }
+.inv-grid tfoot td.stk-r { box-shadow: inset 0 2px 0 var(--line), inset 1px 0 0 var(--line), -6px 0 8px -6px rgba(22, 32, 43, .22); }
+
+/* Cells */
+.inv-grid .inv-cell-ellip { overflow: hidden; text-overflow: ellipsis; max-width: calc(var(--inv-c2) - 24px); }
+.inv-grid .inv-no a { color: var(--navy); font-weight: 600; }
+.inv-grid .inv-proof { text-decoration: none; font-weight: 600; }
+.inv-grid .inv-acts { justify-content: flex-start; }
+/* A group heading spans the whole table; its content stays at the left edge. */
+.inv-grid .inv-grp > td { padding: 0; }
+.inv-grid .inv-grp .inv-grp-in {
+  position: sticky;
+  left: 0;
+  width: min(100%, calc(100vw - 120px));
+  max-width: 1100px;
+  padding: 9px 12px;
+  box-sizing: border-box;
+}
+.inv-grid td > .inv-grp-in { position: sticky; left: 0; max-width: 1100px; }
+/* A narrow window keeps the pinned columns slimmer, so the scrolling middle
+   still has room to show the money columns. */
+@media (max-width: 1100px) {
+  .inv-grid { --inv-c1: 118px; --inv-c2: 170px; }
+  .inv-grid th, .inv-grid td { padding-left: 9px; padding-right: 9px; }
+  .inv-grid th.c-act { min-width: 0; }
+  .inv-grid .inv-acts { gap: 4px; }
+  .inv-grid .inv-acts .btn { padding: 3px 7px; font-size: 11.5px; }
+}
+.inv-grid .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

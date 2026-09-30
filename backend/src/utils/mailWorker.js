@@ -1,28 +1,31 @@
 // ---------------------------------------------------------------------------
-// The sending worker.
+// The sending worker for candidate messages (stage-change notices).
 //
 // It picks up CandidateMessage rows that are waiting to go out, hands them to
-// the SMTP provider, and writes back what the provider actually said.
+// the channel's provider — SMTP for Email, the SMS gateway, the WhatsApp Cloud
+// API (utils/messaging.js) — and writes back what the provider actually said.
 //
 // THE STATUS VOCABULARY IS HONEST. A row is only SENT when the provider
 // accepted it, and it carries the provider's own message id as proof.
 //
 //   NOT_SENT_NO_PROVIDER  recorded, not transmitted. The correct state when
-//                         no SMTP channel is configured — it is NOT an error
-//                         and the worker leaves such rows exactly as they are.
+//                         the row's channel is not configured — NOT an error;
+//                         the worker leaves such rows as they are.
 //   QUEUED                a provider exists and this row is waiting its turn.
 //   RETRY                 the provider failed temporarily; nextAttemptAt says
 //                         when to try again.
 //   SENT                  the provider accepted it. providerRef + sentAt set.
-//   FAILED                the provider refused it, or the retries ran out.
-//                         lastError carries the provider's reason.
+//   FAILED                the provider refused it, the address is unusable,
+//                         or the retries ran out. lastError says why.
 //
-// SMS and WhatsApp rows are untouched: there is still no gateway for either,
-// so they keep NOT_SENT_NO_PROVIDER, which remains true.
+// SMS / WHATSAPP ROWS recorded while no provider existed are NOT swept up and
+// sent days later when one is configured — only rows from the last day are
+// re-queued (requeueHeldMessages). A stale "your interview is tomorrow" text
+// is worse than none. Email keeps its original behaviour.
 // ---------------------------------------------------------------------------
 
 const prisma = require('../db');
-const { emailConfig, sendMail } = require('./mailer');
+const { emailConfig } = require('./mailer');
 const { NOT_SENT, NOT_SENT_DETAIL } = require('./candidateComms');
 
 const QUEUED = 'QUEUED';
@@ -30,13 +33,16 @@ const RETRY = 'RETRY';
 const SENT = 'SENT';
 const FAILED = 'FAILED';
 
-// The statuses the worker will look at. Anything else (SENT, FAILED) is final.
-const PICKUP_STATUSES = [NOT_SENT, QUEUED, RETRY];
+const CHANNELS = ['Email', 'SMS', 'WhatsApp'];
+// Email also picks up NOT_SENT (its long-standing behaviour); SMS / WhatsApp
+// only rows that were queued while their provider was configured.
+const PICKUP = { Email: [NOT_SENT, QUEUED, RETRY], SMS: [QUEUED, RETRY], WhatsApp: [QUEUED, RETRY] };
 
 const MAX_ATTEMPTS = Number(process.env.MAIL_MAX_ATTEMPTS || 5);
 const BATCH = Number(process.env.MAIL_BATCH_SIZE || 10);
 // Exponential-ish backoff, in minutes, indexed by attempt number.
 const BACKOFF_MINUTES = [1, 5, 15, 60, 180];
+const FRESH_MS = 24 * 3600 * 1000;
 
 function backoffFor(attempt) {
   const m = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)];
@@ -47,114 +53,110 @@ let running = false;
 let timer = null;
 let lastRun = null;
 
+async function configuredChannels() {
+  // eslint-disable-next-line global-require
+  const status = await require('./messaging').channelStatus().catch(() => null);
+  if (status) return status;
+  const cfg = await emailConfig().catch(() => ({ configured: false }));
+  return { Email: { configured: cfg.configured }, SMS: { configured: false }, WhatsApp: { configured: false } };
+}
+
+async function processRow(row, summary) {
+  if (!row.recipient || !String(row.recipient).trim()) {
+    await prisma.candidateMessage.update({
+      where: { id: row.id },
+      data: {
+        status: FAILED,
+        statusDetail: `No ${row.channel === 'Email' ? 'email address' : 'mobile number'} on this candidate's record.`,
+        lastError: 'No recipient address', lastAttemptAt: new Date(), nextAttemptAt: null,
+      },
+    });
+    summary.failed += 1;
+    return;
+  }
+  // eslint-disable-next-line global-require
+  const result = await require('./messaging').send(row.channel, {
+    to: row.recipient,
+    kind: 'bulk',
+    subject: row.subject || row.templateLabel || 'A message about your application',
+    text: row.body || '',
+    vars: [row.body || ''],
+    senderEmail: row.senderEmail,
+    senderName: row.senderName,
+  });
+  const attempts = (row.attempts || 0) + 1;
+  if (result.ok) {
+    await prisma.candidateMessage.update({
+      where: { id: row.id },
+      data: {
+        status: SENT,
+        statusDetail: `Accepted by the provider${result.response ? ` — ${result.response}` : ''}`.slice(0, 500),
+        providerRef: result.providerRef, sentAt: new Date(), attempts,
+        lastAttemptAt: new Date(), nextAttemptAt: null, lastError: null,
+      },
+    });
+    summary.sent += 1;
+    return;
+  }
+  if (result.notConfigured) { summary.held += 1; return; }
+  const retryable = result.transient && attempts < MAX_ATTEMPTS;
+  await prisma.candidateMessage.update({
+    where: { id: row.id },
+    data: {
+      status: retryable ? RETRY : FAILED,
+      statusDetail: retryable
+        ? `Temporary provider failure — attempt ${attempts} of ${MAX_ATTEMPTS}. ${result.error}`.slice(0, 500)
+        : `Not delivered: ${result.error}`.slice(0, 500),
+      lastError: String(result.error || '').slice(0, 500),
+      attempts, lastAttemptAt: new Date(), nextAttemptAt: retryable ? backoffFor(attempts) : null,
+    },
+  });
+  if (retryable) summary.retried += 1; else summary.failed += 1;
+}
+
 // One pass. Returns a small summary so the route and the tests can assert on
 // it without reading the log.
 async function runOnce({ limit = BATCH } = {}) {
   if (running) return { skipped: 'already running' };
   running = true;
   const summary = {
-    considered: 0, sent: 0, retried: 0, failed: 0, held: 0, configured: false,
+    considered: 0, sent: 0, retried: 0, failed: 0, held: 0, configured: false, channels: {},
   };
   try {
-    const cfg = await emailConfig();
-    summary.configured = cfg.configured;
-
-    if (!cfg.configured) {
-      // No provider. "Recorded, not transmitted" is the TRUE state, so every
-      // waiting row goes back to it rather than sitting in a fake queue.
-      const held = await prisma.candidateMessage.updateMany({
-        where: { channel: 'Email', status: { in: [QUEUED, RETRY] } },
-        data: { status: NOT_SENT, statusDetail: NOT_SENT_DETAIL, nextAttemptAt: null },
-      });
-      summary.held = held.count;
-      return summary;
-    }
-
+    const status = await configuredChannels();
+    summary.configured = !!status.Email.configured;
     const now = new Date();
-    const due = await prisma.candidateMessage.findMany({
-      where: {
-        channel: 'Email',
-        status: { in: PICKUP_STATUSES },
-        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
-      },
-      orderBy: { createdAt: 'asc' },
-      take: limit,
-    });
-    summary.considered = due.length;
-
-    for (const row of due) {
-      // A row with nobody to send to can never succeed — that is a hard
-      // failure with an honest reason, not something to retry forever.
-      if (!row.recipient || !String(row.recipient).trim()) {
+    // eslint-disable-next-line no-restricted-syntax
+    for (const channel of CHANNELS) {
+      summary.channels[channel] = !!status[channel].configured;
+      if (!status[channel].configured) {
+        // No provider: "recorded, not transmitted" is the TRUE state, so every
+        // waiting row goes back to it rather than sitting in a fake queue.
         // eslint-disable-next-line no-await-in-loop
-        await prisma.candidateMessage.update({
-          where: { id: row.id },
-          data: {
-            status: FAILED,
-            statusDetail: "No email address on this candidate's record.",
-            lastError: 'No recipient address',
-            lastAttemptAt: new Date(),
-            nextAttemptAt: null,
-          },
+        const held = await prisma.candidateMessage.updateMany({
+          where: { channel, status: { in: [QUEUED, RETRY] } },
+          data: { status: NOT_SENT, statusDetail: NOT_SENT_DETAIL, nextAttemptAt: null },
         });
-        summary.failed += 1;
+        summary.held += held.count;
         // eslint-disable-next-line no-continue
         continue;
       }
-
       // eslint-disable-next-line no-await-in-loop
-      const result = await sendMail({
-        to: row.recipient,
-        subject: row.subject || row.templateLabel || 'A message about your application',
-        text: row.body || '',
-        senderEmail: row.senderEmail,
-        senderName: row.senderName,
-      });
-
-      const attempts = (row.attempts || 0) + 1;
-      if (result.ok) {
-        // eslint-disable-next-line no-await-in-loop
-        await prisma.candidateMessage.update({
-          where: { id: row.id },
-          data: {
-            status: SENT,
-            statusDetail: `Accepted by the provider${result.response ? ` — ${result.response}` : ''}`.slice(0, 500),
-            providerRef: result.providerRef,
-            sentAt: new Date(),
-            attempts,
-            lastAttemptAt: new Date(),
-            nextAttemptAt: null,
-            lastError: null,
-          },
-        });
-        summary.sent += 1;
-        // eslint-disable-next-line no-continue
-        continue;
-      }
-
-      if (result.notConfigured) {
-        // The channel went away between the check above and this row.
-        summary.held += 1;
-        // eslint-disable-next-line no-continue
-        continue;
-      }
-
-      const retryable = result.transient && attempts < MAX_ATTEMPTS;
-      // eslint-disable-next-line no-await-in-loop
-      await prisma.candidateMessage.update({
-        where: { id: row.id },
-        data: {
-          status: retryable ? RETRY : FAILED,
-          statusDetail: retryable
-            ? `Temporary provider failure — attempt ${attempts} of ${MAX_ATTEMPTS}. ${result.error}`.slice(0, 500)
-            : `Not delivered: ${result.error}`.slice(0, 500),
-          lastError: String(result.error || '').slice(0, 500),
-          attempts,
-          lastAttemptAt: new Date(),
-          nextAttemptAt: retryable ? backoffFor(attempts) : null,
+      const due = await prisma.candidateMessage.findMany({
+        where: {
+          channel,
+          status: { in: PICKUP[channel] },
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
         },
+        orderBy: { createdAt: 'asc' },
+        take: limit,
       });
-      if (retryable) summary.retried += 1; else summary.failed += 1;
+      summary.considered += due.length;
+      // eslint-disable-next-line no-restricted-syntax
+      for (const row of due) {
+        // eslint-disable-next-line no-await-in-loop
+        await processRow(row, summary);
+      }
     }
     return summary;
   } catch (err) {
@@ -193,12 +195,17 @@ function stop() {
 }
 
 // When a provider is configured, waiting rows should say "queued", not
-// "recorded, not transmitted". Called by Integrations on save.
-async function requeueHeldMessages() {
-  const cfg = await emailConfig();
-  if (!cfg.configured) return { requeued: 0 };
+// "recorded, not transmitted". Called by Integrations on save. `channel`
+// limits it to one channel; SMS / WhatsApp only re-queue the last day's rows.
+async function requeueHeldMessages(channel = 'Email') {
+  const status = await configuredChannels();
+  if (!status[channel] || !status[channel].configured) return { requeued: 0 };
   const r = await prisma.candidateMessage.updateMany({
-    where: { channel: 'Email', status: NOT_SENT },
+    where: {
+      channel,
+      status: NOT_SENT,
+      ...(channel === 'Email' ? {} : { createdAt: { gte: new Date(Date.now() - FRESH_MS) } }),
+    },
     data: { status: QUEUED, statusDetail: 'Queued for sending.', nextAttemptAt: null },
   });
   return { requeued: r.count };

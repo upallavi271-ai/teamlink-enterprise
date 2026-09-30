@@ -360,9 +360,36 @@ router.get('/followups', requirePerm(null, 'reports', 'ATS Reports', 'view'), as
 // The prototype's Job Portal Reports: four synced-from-the-integration counts
 // above the source table. "Synced" means the record reached us through the
 // connected Job Portal rather than being keyed in here.
+// OPTIONAL DATE RANGE on the Job Portal and Accounts reports (the list filter
+// standard, user notes #1 / #11): ?from=YYYY-MM-DD&to=YYYY-MM-DD, both
+// inclusive, either may be left out. A report without them reads exactly as
+// before. A malformed date is a 400, never silently ignored.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+function reportRange(q) {
+  const from = q.from ? String(q.from) : '';
+  const to = q.to ? String(q.to) : '';
+  const bad = (d) => d && (!ISO_DAY.test(d) || Number.isNaN(new Date(`${d}T00:00:00.000Z`).getTime()));
+  if (bad(from) || bad(to)) return { error: 'from / to must be YYYY-MM-DD' };
+  if (from && to && from > to) return { error: 'from must be on or before to' };
+  return { from, to, on: !!(from || to) };
+}
+// Is a YYYY-MM-DD… string (or Date) inside the range? No date = outside a set range.
+function inReportRange(r, v) {
+  if (!r.on) return true;
+  const d = v instanceof Date ? v.toISOString().slice(0, 10) : String(v || '').slice(0, 10);
+  if (!ISO_DAY.test(d)) return false;
+  return (!r.from || d >= r.from) && (!r.to || d <= r.to);
+}
+
 router.get('/job-portal', requirePerm(null, 'reports', 'Job Portal Reports', 'view'), async (req, res) => {
+  const range = reportRange(req.query);
+  if (range.error) return res.status(400).json({ error: range.error });
+  // Registered in the range: the candidate's createdAt (when it was synced in).
+  const createdAt = {};
+  if (range.from) createdAt.gte = new Date(`${range.from}T00:00:00.000Z`);
+  if (range.to) createdAt.lte = new Date(`${range.to}T23:59:59.999Z`);
   const [candidates, applications] = await Promise.all([
-    prisma.candidate.findMany({ select: { id: true, source: true } }),
+    prisma.candidate.findMany({ where: range.on ? { createdAt } : undefined, select: { id: true, source: true } }),
     prisma.application.findMany({ select: { candidateId: true } }),
   ]);
   const sources = ['Job Portal', 'Naukri', 'Indeed', 'LinkedIn', 'TeamLink Website'];
@@ -373,15 +400,24 @@ router.get('/job-portal', requirePerm(null, 'reports', 'Job Portal Reports', 'vi
     fromNaukri: candidates.filter((c) => c.source === 'Naukri').length,
     fromLinkedIn: candidates.filter((c) => c.source === 'LinkedIn').length,
     rows: sources.map((s) => ({ source: s, candidates: candidates.filter((c) => c.source === s).length })),
+    range: { from: range.from || null, to: range.to || null },
   });
 });
 
 router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view'), async (req, res) => {
-  const [invoices, expenses, transactions] = await Promise.all([
+  const range = reportRange(req.query);
+  if (range.error) return res.status(400).json({ error: range.error });
+  const [allInvoices, allExpenses, allTransactions] = await Promise.all([
     prisma.invoice.findMany({ include: { client: true } }),
     prisma.officeExpense.findMany(),
     prisma.bankTransaction.findMany(),
   ]);
+  // The date range narrows each source by its own date: an invoice by its
+  // invoice date, a bill by its expense date (else when it was entered), a
+  // statement line by its date.
+  const invoices = allInvoices.filter((i) => inReportRange(range, i.invoiceDate));
+  const expenses = allExpenses.filter((e) => inReportRange(range, e.expenseDate || e.createdAt));
+  const transactions = allTransactions.filter((t) => inReportRange(range, t.date));
   const rows = invoices.map((i) => ({
     ...i,
     derived: deriveInvoiceStatus(i),
@@ -458,6 +494,7 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
       reconciled: transactions.filter((t) => txnState(t) === 'Reconciled').length,
       ignored: transactions.filter((t) => txnState(t) === 'Ignored').length,
     },
+    range: { from: range.from || null, to: range.to || null },
   });
 });
 

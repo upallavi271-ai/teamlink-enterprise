@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Shell from './components/Shell.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Login from './pages/Login.jsx';
@@ -6,13 +6,14 @@ import Dashboard from './pages/Dashboard.jsx';
 
 import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
-import JobPortalWorkspace from './pages/ats/JobPortalWorkspace.jsx';
 import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
+import ClientDuplicates from './pages/ClientDuplicates.jsx';
 import Agreements from './pages/Agreements.jsx';
 import Candidates from './pages/Candidates.jsx';
 import CandidateDetail from './pages/CandidateDetail.jsx';
+import CandidateDuplicates from './pages/CandidateDuplicates.jsx';
 import CandidateHome from './pages/CandidateHome.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
@@ -21,7 +22,7 @@ import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
 import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
 import Offers from './pages/ats/Offers.jsx';
 import Joining from './pages/ats/Joining.jsx';
-import InternalHiring from './pages/ats/InternalHiring.jsx';
+import AtsWorkflow from './pages/ats/AtsWorkflow.jsx';
 import Search from './pages/ats/Search.jsx';
 import AccountsDashboard from './pages/AccountsDashboard.jsx';
 
@@ -41,8 +42,9 @@ import Invoices from './pages/Invoices.jsx';
 import InvoiceDetail from './pages/InvoiceDetail.jsx';
 import Bank from './pages/Bank.jsx';
 import Office from './pages/Office.jsx';
+import JournalLedger from './pages/accounts/JournalLedger.jsx';
 
-import AtsReports from './pages/reports/AtsReports.jsx';
+import AtsReports, { AtsReportsRedirect } from './pages/reports/AtsReports.jsx';
 import JobPortalReports from './pages/reports/JobPortalReports.jsx';
 import AccountsReports from './pages/reports/AccountsReports.jsx';
 
@@ -61,12 +63,22 @@ import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
 import JobDetail from './pages/JobDetail.jsx';
 import MyApplications from './pages/MyApplications.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
+import AgreementView from './pages/AgreementView.jsx';
 import SetPassword from './pages/SetPassword.jsx';
+import HomeRoute from './pages/home/HomeRoute.jsx';
+// Super Admin "View as" (read-only): the picker and the banner on every page.
+import ViewAsPicker from './pages/admin/ViewAsPicker.jsx';
+import { ViewAsBanner } from './components/ViewAs.jsx';
 
 export default function App() {
   return (
+    <>
+    <ViewAsBanner />
     <Routes>
       <Route path="/login" element={<Login />} />
+
+      {/* Public home page. A logged-out "/" shows it too (ProtectedRoute). */}
+      <Route path="/home" element={<HomeRoute />} />
 
       {/* Public Job Portal — no login required.
           /job-portal/ is the stable route for the real TeamLink Job Portal (the
@@ -102,6 +114,8 @@ export default function App() {
             sub-features lives as tabs inside Performance & Development and
             Employee Services (see those two pages). */}
         <Route path="hrms" element={<HrmsDashboard />} />
+        {/* Moved to Administration -> Positions & Seat History (Seat History tab). */}
+        <Route path="hrms/seat-history" element={<Navigate to="/admin/positions?tab=history" replace />} />
         <Route path="employees" element={<Employees />} />
         <Route path="employees/:id" element={<EmployeeDetail />} />
         <Route path="attendance" element={<Attendance />} />
@@ -118,11 +132,11 @@ export default function App() {
 
         {/* ATS */}
         <Route path="requirements" element={<Requirements />} />
-        {/* The INTERNAL Job Portal workspace, inside Jobs / Requirements.
-            A static segment, so it is matched ahead of requirements/:id.
-            Reaching it without requirements/Job Portal Workspace/view gets an
-            empty screen and a 403 from every call it makes. */}
-        <Route path="requirements/job-portal" element={<JobPortalWorkspace />} />
+        {/* The Job Portal is candidate INTAKE (2026-09-29): its applications /
+            screening / Send to ATS view is Candidates & Pipeline → Job Portal
+            Candidates. The old workspace URL redirects there. A static
+            segment, so it is matched ahead of requirements/:id. */}
+        <Route path="requirements/job-portal" element={<Navigate to="/candidates?view=job-portal" replace />} />
         <Route path="requirements/:id" element={<RequirementDetail />} />
         {/* The CLIENT-facing view is a DIFFERENT screen on a different route
             with a different permission (requirements/Client Job Portal), so a
@@ -132,9 +146,13 @@ export default function App() {
             each tab keeps its own route so it stays bookmarkable. Job Portal
             is another agent's screen — see components/ClientModuleTabs.jsx. */}
         <Route path="clients" element={<Clients />} />
+        <Route path="clients/duplicates" element={<ClientDuplicates />} />
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="agreements" element={<Agreements />} />
+        {/* One agreement: client login, its BDE, Accounts, Admin (routes/agreementSeal.js decides). */}
+        <Route path="agreements/:clientId" element={<AgreementView />} />
         <Route path="candidates" element={<Candidates />} />
+        <Route path="candidates/duplicates" element={<CandidateDuplicates />} />
         <Route path="candidates/:id" element={<CandidateDetail />} />
         {/* Where a signed-in candidate lands (identity.js WORKSPACE_HOME).
             The route did not exist, so logging in as one hit a dead page. */}
@@ -150,9 +168,17 @@ export default function App() {
         <Route path="ats/interview-feedback" element={<InterviewFeedback />} />
         <Route path="ats/offers" element={<Offers />} />
         <Route path="ats/joining" element={<Joining />} />
-        <Route path="ats/internal-hiring" element={<InternalHiring />} />
+        {/* Internal Hiring is NOT a separate module (the user's rule, 2026-09-29):
+            it runs inside Jobs / Requirements and Candidates. Old links land on
+            the internal requirements. */}
+        <Route path="ats/internal-hiring" element={<Navigate to="/requirements?type=internal" replace />} />
+        {/* The actual workflow with live counts per box (ATS Dashboard "See workflow"). */}
+        <Route path="ats/workflow" element={<AtsWorkflow />} />
         <Route path="ats/search" element={<Search />} />
         <Route path="ats/dashboard" element={<AtsDashboard />} />
+        {/* An ATS-side address for the reports, kept working: it lands on
+            Reports -> ATS Reports with its ?tab= intact. */}
+        <Route path="ats/reports" element={<AtsReportsRedirect />} />
 
         {/* These three tabs have real screens now: Agreements ships with the
             Clients & Requirements module, Job Portal / Integrations is the
@@ -166,8 +192,12 @@ export default function App() {
         <Route path="bank" element={<Bank />} />
         <Route path="office" element={<Office />} />
         <Route path="accounts/dashboard" element={<AccountsDashboard />} />
+        <Route path="accounts/journal" element={<JournalLedger />} />
+        {/* Signed client agreements for the accounts desk (read-only). */}
+        <Route path="accounts/agreements" element={<Agreements />} />
 
         {/* Reports */}
+        {/* ATS Reports: every ATS report is a tab inside this one page. */}
         <Route path="reports/ats" element={<AtsReports />} />
         <Route path="reports/job-portal" element={<JobPortalReports />} />
         <Route path="reports/accounts" element={<AccountsReports />} />
@@ -177,6 +207,7 @@ export default function App() {
         <Route path="admin/departments" element={<Departments />} />
         <Route path="admin/positions" element={<Positions />} />
         <Route path="admin/users" element={<Users />} />
+        <Route path="admin/view-as" element={<ViewAsPicker />} />
         <Route path="admin/roles" element={<RoleCatalog />} />
         <Route path="admin/integrations" element={<Integrations />} />
         {/* The prototype files Organization Structure under Administration; it
@@ -185,7 +216,14 @@ export default function App() {
         <Route path="admin/notifications" element={<Notifications />} />
         <Route path="admin/audit" element={<AuditLogs />} />
         <Route path="admin/profile" element={<Profile />} />
+        {/* A section's bare address opens its dashboard, and an address that
+            matches nothing goes home instead of drawing an empty page. */}
+        <Route path="ats" element={<Navigate to="/ats/dashboard" replace />} />
+        <Route path="accounts" element={<Navigate to="/accounts/dashboard" replace />} />
+        <Route path="reports" element={<Navigate to="/reports/ats" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </>
   );
 }

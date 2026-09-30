@@ -1,0 +1,53 @@
+/* Super Admin "View as" (components/ViewAs.jsx). Everything scoped under
+   .tl-viewas-* / html.tl-viewas-on so nothing else in the app changes. */
+.tl-viewas-banner{
+  position:fixed;top:0;left:0;right:0;z-index:1000;
+  display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 14px;
+  padding:7px 16px;background:#8A5206;color:#fff;font-size:13px;line-height:1.35;
+  box-shadow:0 2px 6px rgba(0,0,0,.18);
+}
+.tl-viewas-text{min-width:0;text-align:center;overflow-wrap:anywhere}
+.tl-viewas-left{opacity:.9;white-space:nowrap}
+.tl-viewas-exit{
+  background:#fff;color:#8A5206;border:0;border-radius:6px;padding:4px 12px;
+  font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;
+}
+.tl-viewas-exit:hover{background:#fbf0de}
+.tl-viewas-exit:focus-visible{outline:2px solid #fff;outline-offset:2px}
+
+/* Room for the fixed banner: its measured height, set by the component. */
+html.tl-viewas-on body{padding-top:var(--tl-viewas-h,38px)}
+html.tl-viewas-on .sidebar{top:var(--tl-viewas-h,38px);height:calc(100vh - var(--tl-viewas-h,38px))}
+html.tl-viewas-on .topbar{top:var(--tl-viewas-h,38px)}
+
+.tl-viewas-toast{
+  position:fixed;left:50%;transform:translateX(-50%);
+  top:calc(var(--tl-viewas-h,0px) + 12px);z-index:1001;
+  max-width:min(560px, calc(100vw - 32px));
+  background:#1A2830;color:#fff;border-left:4px solid #e0a34a;
+  padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;
+  box-shadow:0 6px 20px rgba(0,0,0,.25);
+}
+.tl-viewas-toast-info{border-left-color:#5b8def;cursor:pointer}
+
+@media (max-width:600px){
+  .tl-viewas-banner{font-size:12px;padding:6px 12px}
+}
+
+/* The picker page (pages/admin/ViewAsPicker.jsx). */
+.tl-viewas-page .tl-va-filters{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px}
+.tl-viewas-page .tl-va-filters input,.tl-viewas-page .tl-va-filters select{min-width:0;flex:1 1 180px;max-width:280px}
+.tl-viewas-page .tl-va-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.tl-viewas-page .tl-va-chip{border:1px solid var(--line,#d9dee3);background:#fff;border-radius:999px;padding:3px 11px;font-size:12.5px;cursor:pointer}
+.tl-viewas-page .tl-va-chip.on{background:var(--navy,#22333B);border-color:var(--navy,#22333B);color:#fff}
+.tl-viewas-page .tl-va-group{margin-bottom:18px}
+.tl-viewas-page .tl-va-group h3{font-size:13.5px;margin:0 0 6px;display:flex;gap:8px;align-items:baseline}
+.tl-viewas-page .tl-va-group h3 small{font-weight:400;opacity:.7}
+.tl-viewas-page .tl-va-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:8px}
+.tl-viewas-page .tl-va-person{border:1px solid var(--line,#d9dee3);border-radius:8px;padding:9px 11px;background:#fff;display:flex;gap:10px;align-items:flex-start;justify-content:space-between;min-width:0}
+.tl-viewas-page .tl-va-person .who{min-width:0}
+.tl-viewas-page .tl-va-person .nm{font-weight:600;font-size:13.5px;overflow-wrap:anywhere}
+.tl-viewas-page .tl-va-person .meta{font-size:12px;opacity:.78;margin-top:2px;overflow-wrap:anywhere}
+.tl-viewas-page .tl-va-person .seat{display:inline-block;font-size:11.5px;background:var(--navy-tint,#e3eae8);border-radius:4px;padding:1px 6px;margin:3px 4px 0 0}
+.tl-viewas-page .tl-va-person .btn{flex-shrink:0}
+@media (max-width:600px){ .tl-viewas-page .tl-va-list{grid-template-columns:1fr} }

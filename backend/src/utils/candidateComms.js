@@ -234,11 +234,24 @@ async function recordStageCommunications({
   let emailLive = false;
   try { emailLive = (await emailConfig()).configured; } catch { emailLive = false; }
 
+  const liveCache = {};
+  async function channelLive(ch) {
+    if (liveCache[ch] === undefined) {
+      try {
+        // eslint-disable-next-line global-require
+        liveCache[ch] = !!(await require('./messaging').channelStatus())[ch].configured;
+      } catch { liveCache[ch] = false; }
+    }
+    return liveCache[ch];
+  }
   const rows = [];
   let queuedAnEmail = false;
   for (const channel of template.channels) {
     const recipient = recipientFor(channel, candidate);
-    const live = channel === 'Email' && emailLive && !!recipient;
+    // SMS / WhatsApp are real channels too now (utils/messaging.js): a row is
+    // QUEUED when ITS channel is configured, and the worker sends it.
+    // eslint-disable-next-line no-await-in-loop
+    const live = !!recipient && (channel === 'Email' ? emailLive : await channelLive(channel));
     const detail = live
       ? 'Queued for sending.'
       : (recipient
@@ -285,10 +298,18 @@ async function commsNote() {
     // eslint-disable-next-line global-require
     email = await require('./mailer').emailConfig();
   } catch { email = { configured: false, reason: '' }; }
+  let status = null;
+  try {
+    // eslint-disable-next-line global-require
+    status = await require('./messaging').channelStatus();
+  } catch { status = null; }
+  const live = status ? ['SMS', 'WhatsApp'].filter((c) => status[c].configured) : [];
+  const off = ['SMS', 'WhatsApp'].filter((c) => !live.includes(c));
+  const others = `${live.length ? ` ${live.join(' and ')} ${live.length > 1 ? 'are' : 'is'} connected and sent the same way.` : ''}${off.length ? ` ${off.join(' and ')} ${off.length > 1 ? 'have' : 'has'} no provider configured, so those rows stay recorded but not transmitted.` : ''}`;
   if (email.configured) {
-    return `Email is connected (${email.host}) and these messages are really sent — a row reaches "Sent" only when the provider accepted it, and carries the provider's message id. SMS and WhatsApp have no provider, so those rows stay recorded but not transmitted.`;
+    return `Email is connected (${email.host}) and these messages are really sent — a row reaches "Sent" only when the provider accepted it, and carries the provider's message id.${others}`;
   }
-  return NOT_SENT_DETAIL;
+  return live.length ? `Email has no provider configured.${others}` : NOT_SENT_DETAIL;
 }
 
 // How a status code reads on screen. One place, so no screen can invent a

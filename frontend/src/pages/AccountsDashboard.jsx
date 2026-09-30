@@ -2,6 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import Combo from '../components/Combo.jsx';
+import MoreFilters from '../components/ui/MoreFilters.jsx';
+import FilterChips from '../components/FilterChips.jsx';
+import Pager, { usePaged } from '../components/Pager.jsx';
+import AccountsImport from '../components/AccountsImport.jsx';
+import DeskBoard from '../components/dashboard/DeskBoard.jsx';
+import OutflowCard from './office/OutflowCard.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../permissions';
 import {
   statusClass, money, money2, fmtD, Stat,
 } from './Invoices.jsx';
@@ -17,14 +25,26 @@ export { money };
 export default function AccountsDashboard() {
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState('');
-  const [f, setF] = useState({ client: 'All', department: 'All', status: 'All', q: '' });
+  const BLANK = { client: 'All', department: 'All', status: 'All', q: '' };
+  const [f, setF] = useState(BLANK);
+  // The search box is sent to the API a moment after typing stops, not per key.
+  const [qDeb, setQDeb] = useState('');
+  useEffect(() => { const t = setTimeout(() => setQDeb(f.q), 300); return () => clearTimeout(t); }, [f.q]);
+  const { user } = useAuth();
+  // Offered when the login may add at least one of the three things a file can
+  // hold; the dialog itself says which one this file is and whether it may.
+  const canImport = [['Bank & Reconciliation', 'edit'], ['Office & Expenses', 'edit'], ['Invoices', 'create']]
+    .some(([feature, action]) => can(user, 'accounts', 'accounts', feature, action));
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(() => {
-    api.get('/dashboard/accounts', { params: { ...(period ? { period } : {}), ...f } })
+    api.get('/dashboard/accounts', { params: { ...(period ? { period } : {}), ...f, q: qDeb } })
       .then((res) => setData(res.data))
       .catch(() => setData(null));
-  }, [period, f]);
+  }, [period, f.client, f.department, f.status, qDeb]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);
+  // Row-level pending can run long: paged 25 / 50 / 100.
+  const pendingPage = usePaged(data?.pendingMatrix?.rows || []);
 
   if (!data) return null;
   const m = data.money;
@@ -38,6 +58,19 @@ export default function AccountsDashboard() {
   const totalReceived = data.byClient.reduce((s, c) => s + c.received, 0);
   const totalPending = owing.reduce((s, c) => s + c.pending, 0);
   const missingProof = data.byClient.reduce((s, c) => s + (c.noProof || 0), 0);
+  const filtersOn = f.client !== 'All' || f.department !== 'All' || f.status !== 'All' || !!f.q.trim();
+  const clearFilters = () => setF(BLANK);
+  const chips = [
+    f.q.trim() && { key: 'q', label: 'Search', value: f.q.trim(), onRemove: () => setF({ ...f, q: '' }) },
+    f.client !== 'All' && { key: 'client', label: 'Client', value: f.client, onRemove: () => setF({ ...f, client: 'All' }) },
+    f.status !== 'All' && { key: 'status', label: 'Status', value: f.status, onRemove: () => setF({ ...f, status: 'All' }) },
+    f.department !== 'All' && { key: 'department', label: 'Department', value: f.department, onRemove: () => setF({ ...f, department: 'All' }) },
+  ].filter(Boolean);
+  const noneHere = (what) => (
+    <span className="small-muted">
+      {filtersOn ? <>No {what} match these filters. <button type="button" className="link-btn" onClick={clearFilters}>Clear filters</button></> : `Nothing ${what === 'invoices' ? 'pending' : 'outstanding'}.`}
+    </span>
+  );
 
   const clientRow = (c) => (
     <tr key={c.client}>
@@ -64,36 +97,52 @@ export default function AccountsDashboard() {
             half, quarter or month you pick. Dropped candidates are excluded from every money column.
           </div>
         </div>
+        <div className="qa-row">{canImport && <button className="btn btn-primary btn-sm" onClick={() => setImporting(true)}>⬆ Import</button>}</div>
       </div>
+      {importing && <AccountsImport onClose={() => setImporting(false)} onDone={load} />}
 
-      <div className="filter-row">
-        <label className="field"><span>Client · {data.filterOptions.clients.length} of {data.filterOptions.clientsEver}</span>
-          <Combo value={f.client} onChange={(e) => setF({ ...f, client: e.target.value })}>
-            <option>All</option>{data.filterOptions.clients.map((c) => <option key={c}>{c}</option>)}
-          </Combo>
-        </label>
-        <label className="field" style={{ minWidth: 230 }}><span>Period</span>
-          <Combo value={period || p.sel} onChange={(e) => setPeriod(e.target.value)}>
-            {p.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </Combo>
-        </label>
+      {/* The Accounts desk (dashboard spec 2026-09-29 §4): what needs doing now —
+          joinings to invoice, overdue payments by age, replacement cases —
+          above the period figures below. */}
+      <DeskBoard url="/dashboard/accounts/desk" title="Accounts desk — today" sub="Every number opens its list" />
+
+      {/* The list filter standard: Search · Period · Client · Status always on
+          screen, Department under More Filters, the active ones as chips. */}
+      <MoreFilters
+        storageKey="accounts-dashboard"
+        activeMore={f.department !== 'All' ? 1 : 0}
+        onClearAll={filtersOn ? clearFilters : undefined}
+        primary={(
+          <>
+            <label className="field" style={{ minWidth: 220 }}><span>Search</span>
+              <input type="search" value={f.q} placeholder="Client, invoice no, GSTIN…" onChange={(e) => setF({ ...f, q: e.target.value })} />
+            </label>
+            <label className="field" style={{ minWidth: 230 }}><span>Period</span>
+              <Combo value={period || p.sel} onChange={(e) => setPeriod(e.target.value)}>
+                {p.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Combo>
+            </label>
+            <label className="field"><span>Client · {data.filterOptions.clients.length} of {data.filterOptions.clientsEver}</span>
+              <Combo value={f.client} onChange={(e) => setF({ ...f, client: e.target.value || 'All' })}>
+                <option value="All">All clients</option>{data.filterOptions.clients.map((c) => <option key={c}>{c}</option>)}
+              </Combo>
+            </label>
+            <label className="field"><span>Status</span>
+              <Combo title="Received and Paid mean the same thing — the whole invoice is in" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value || 'All' })}>
+                {data.filterOptions.statuses.map((s) => <option key={s} value={s}>{s === 'All' ? 'All statuses' : s}</option>)}
+              </Combo>
+            </label>
+          </>
+        )}
+        extra={<span className="small-muted" style={{ marginLeft: 'auto' }}>showing <b>{data.showing.invoices}</b> of {data.showing.of} invoices</span>}
+      >
         <label className="field"><span>Department</span>
-          <Combo value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>
-            <option>All</option>{data.filterOptions.departments.map((d) => <option key={d}>{d}</option>)}
+          <Combo value={f.department} onChange={(e) => setF({ ...f, department: e.target.value || 'All' })}>
+            <option value="All">All departments</option>{data.filterOptions.departments.map((d) => <option key={d}>{d}</option>)}
           </Combo>
         </label>
-        <label className="field"><span>Status</span>
-          <Combo title="Received and Paid mean the same thing — the whole invoice is in" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
-            {data.filterOptions.statuses.map((s) => <option key={s}>{s}</option>)}
-          </Combo>
-        </label>
-        <label className="field" style={{ minWidth: 220 }}><span>Search anything</span>
-          <input value={f.q} placeholder="Client, invoice no, GSTIN…" onChange={(e) => setF({ ...f, q: e.target.value })} />
-        </label>
-        {(f.client !== 'All' || f.department !== 'All' || f.status !== 'All' || f.q.trim())
-          && <button className="btn btn-sm" onClick={() => setF({ client: 'All', department: 'All', status: 'All', q: '' })}>Reset all</button>}
-        <span className="small-muted">showing <b>{data.showing.invoices}</b> of {data.showing.of} invoices</span>
-      </div>
+      </MoreFilters>
+      <FilterChips filters={chips} onClearAll={filtersOn ? clearFilters : undefined} />
 
       <div className="notice">
         <span>
@@ -122,6 +171,9 @@ export default function AccountsDashboard() {
           tone={m.profitAfterExpenses >= 0 ? 'good' : 'bad'}
         />
       </div>
+
+      {/* Office & Expenses spec A: salary + office outflow for a month. */}
+      <OutflowCard period={period || p.sel} />
 
       <div className="card section">
         <h3>Office spend</h3>
@@ -185,7 +237,7 @@ export default function AccountsDashboard() {
             </thead>
             <tbody>
               {owing.map(clientRow)}
-              {owing.length === 0 && <tr><td colSpan="10" className="small-muted">Nothing outstanding.</td></tr>}
+              {owing.length === 0 && <tr><td colSpan="10">{noneHere('clients')}</td></tr>}
               {settled.length > 0 && (
                 <tr><td colSpan="10" className="section-label">Fully settled · {settled.length} client(s)</td></tr>
               )}
@@ -263,7 +315,7 @@ export default function AccountsDashboard() {
                 </tr>
               ))}
               {pm.clients.length === 0 && (
-                <tr><td colSpan={10 + pm.months.length} className="small-muted">Nothing pending for these filters.</td></tr>
+                <tr><td colSpan={10 + pm.months.length}>{noneHere('clients')}</td></tr>
               )}
             </tbody>
             <tfoot>
@@ -298,7 +350,7 @@ export default function AccountsDashboard() {
               </tr>
             </thead>
             <tbody>
-              {pm.rows.map((r) => (
+              {pendingPage.slice.map((r) => (
                 <tr key={r.id}>
                   <td><b>{r.candidate}</b></td>
                   <td>{r.client}</td>
@@ -327,10 +379,11 @@ export default function AccountsDashboard() {
                   <td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
                 </tr>
               ))}
-              {pm.rows.length === 0 && <tr><td colSpan="15" className="small-muted">Nothing pending for these filters.</td></tr>}
+              {pm.rows.length === 0 && <tr><td colSpan="15">{noneHere('invoices')}</td></tr>}
             </tbody>
           </table>
         </div>
+        {pm.rows.length > 25 && <Pager page={pendingPage} noun="pending rows" />}
       </div>
 
       <div className="card section">
@@ -404,7 +457,7 @@ export default function AccountsDashboard() {
                   <td><span className={`status ${statusClass(i.status)}`}>{i.status}</span></td>
                 </tr>
               ))}
-              {data.needsAttention.length === 0 && <tr><td colSpan="5" className="small-muted">Nothing pending.</td></tr>}
+              {data.needsAttention.length === 0 && <tr><td colSpan="5">{noneHere('invoices')}</td></tr>}
             </tbody>
           </table>
         </div>

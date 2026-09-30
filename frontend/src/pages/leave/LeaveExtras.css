@@ -1,0 +1,35 @@
+/* Leave extras — scoped under lvx- */
+.lvx-muted{color:var(--muted, #8A94A6);font-size:11.5px}
+.lvx-comment{font-size:11px;color:var(--muted, #8A94A6);font-style:italic}
+.lvx-table table{font-size:12.5px}
+.lvx-table td{vertical-align:top}
+.lvx-reason{display:inline-block;max-width:280px}
+.lvx-link{background:none;border:0;padding:0;color:var(--blue, #2563EB);cursor:pointer;font-size:11.5px;text-decoration:underline}
+.lvx-comments{white-space:pre-wrap;font-size:11.5px;background:var(--card2, #F1F4F9);border-radius:6px;padding:6px 8px;margin-top:4px}
+.lvx-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;margin:6px 0 12px;font-size:12.5px}
+.lvx-facts > div{display:flex;flex-direction:column;gap:2px}
+.lvx-facts > div > span:first-child{font-size:11px;color:var(--muted, #8A94A6);text-transform:uppercase;letter-spacing:.02em}
+.lvx-facts .lvx-wide{grid-column:1 / -1}
+.lvx-pre{white-space:pre-wrap;font-weight:400}
+.lvx-decide{border:1px solid var(--line, #DDE3EC);border-radius:8px;padding:10px 12px;margin-top:12px;background:var(--card, #fff)}
+.lvx-decide.lvx-direct{border-color:var(--amber, #B7791F)}
+.lvx-decide textarea{width:100%}
+.lvx-decide-title{font-weight:600;font-size:13px;margin-bottom:6px}
+.lvx-decide-row{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.lvx-tl{font-size:12px;padding:6px 8px;border-radius:6px;background:var(--card2, #F1F4F9);margin-bottom:6px}
+.lvx-tl.blocked{background:#FDECEA;color:#9B2C2C}
+.lvx-month{margin:10px 0 16px}
+.lvx-month-head{margin-bottom:4px}
+.lvx-note{font-size:11.5px;color:var(--amber, #B7791F);margin:2px 0 6px}
+.lvx-mtable{font-size:12.5px}
+.lvx-mtable td,.lvx-mtable th{text-align:right}
+.lvx-mtable td:first-child,.lvx-mtable th:first-child{text-align:left}
+.lvx-mtable tfoot td{font-weight:600;border-top:2px solid var(--line, #DDE3EC)}
+.lvx-quiet td{color:var(--muted, #8A94A6)}
+.lvx-neg{color:#C0392B}
+.lvx-halfday{display:flex;gap:14px;align-items:center;margin:2px 0 8px}
+.lvx-halfday label{display:flex;gap:6px;align-items:center;font-weight:400}
+.lvx-halfday input{width:auto}
+.lvx-avail{font-size:12px;margin:4px 0 8px}
+.lvx-avail.bad{color:#C0392B}
+@media (max-width: 700px){ .lvx-facts{grid-template-columns:1fr} }

@@ -2,114 +2,138 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
-import Modal from '../components/Modal.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
-import {
-  agreementStatusLabel, agreementBadgeClass, deptOptions, LOCS, INDIAN_STATES, CLIENT_INDUSTRIES, CLIENT_STATUSES,
-  CLIENT_TYPES, CLIENT_PRIORITIES, COMM_MODES, BUSINESS_TYPES, PAYMENT_TERMS,
-  INVOICE_TRIGGERS, AGREEMENT_TEMPLATES, RISK_FLAGS, requirementIsLive,
-} from '../atsVocab';
+import { agreementStatusLabel } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
-import ClientModuleTabs from '../components/ClientModuleTabs.jsx';
 import Combo from '../components/Combo.jsx';
+import AtsDataTools from '../components/AtsDataTools.jsx';
+import FilterChips from '../components/FilterChips.jsx';
+import '../components/jobs/jobs.css';
+import ClientDuplicatesButton from '../components/ClientDuplicatesButton.jsx';
+import ColumnChooser, { useColumns } from '../components/jobs/ColumnChooser.jsx';
+import { RelNum, lastActivityText } from '../components/clients/relationship.jsx';
+import { inr } from '../utils/csv';
+import '../components/clients/clients.css';
+import '../components/clients/clientsrole.css';
+import MoreFilters from '../components/ui/MoreFilters.jsx';
+import StatusChip from '../components/ui/StatusChip.jsx';
+import EmptyState from '../components/ui/EmptyState.jsx';
+import ScrollTable from '../components/ScrollTable.jsx';
+import ClientsTabs from '../components/clients/ClientsTabs.jsx';
+import ClientEditModal from '../components/clients/ClientEditModal.jsx';
+import AddClientWizard from '../components/clients/AddClientWizard.jsx';
+import ClientRowActions, { NoteModal, ReassignModal } from '../components/clients/ClientRowActions.jsx';
+import { useClientsMeta, HEALTH_HINT } from '../components/clients/clientsMeta.js';
 
-// The prototype's Add Client modal (openAddClientModal, line 7296) is five
-// tabs; switchAddClientTab() names them in this order.
-const TABS = [
-  ['basic', 'Basic Info'],
-  ['legal', 'Legal & Finance'],
-  ['agreement', 'Agreement'],
-  ['ownership', 'Ownership & Communication'],
-  ['risk', 'Risk Monitoring'],
-];
+// ---------------------------------------------------------------------------
+// ATS → CLIENTS — the one place clients live (clients role spec 2026-09-29).
+//
+// WHAT a login sees is the server's: GET /clients returns exactly the
+// caller's scope (utils/scope.js clientWhere — Admin / Management all, a BDE
+// their own, a TL their team's, Accounts the billing clients), every row cut
+// to the caller's field level and carrying only the numbers that role may
+// have (no amounts for a BDE, no pipeline for Accounts, no commercial terms
+// for a TL). GET /clients/meta says which columns, filters, views and
+// buttons to draw for that role (§1–§4, §7, §8), so hiding here matches what
+// the API would honour. A Recruiter never reaches this screen (the API
+// answers 403 and the page says so).
+// ---------------------------------------------------------------------------
 
-const today = () => new Date().toISOString().slice(0, 10);
-const nextYear = () => {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() + 1);
-  return d.toISOString().slice(0, 10);
+// Every column the list can draw; /clients/meta decides which a role gets.
+const COL_LABELS = {
+  code: 'Client ID', industry: 'Industry', location: 'Location', legal: 'Legal Name', tax: 'GSTIN / PAN',
+  contact: 'Contact Person', bde: 'Owner BDE', activeReqs: 'Open Reqs', candidates: 'Candidates',
+  submitted: 'Submissions', interviews: 'Interviews', selected: 'Selected', joined: 'Joined',
+  pending: 'Pending Decisions', agreement: 'Agreement Status', status: 'Status', health: 'Health',
+  fee: 'Fee %', terms: 'Payment Terms', guarantee: 'Guarantee', invoiced: 'Invoiced', received: 'Received',
+  outstanding: 'Outstanding', overdueDays: 'Overdue Days', revenue: 'Revenue', invoiceStatus: 'Invoice Status',
+  lastActivity: 'Last Activity', owner: 'Account Manager', next: 'Next Action',
+};
+const labelFor = (key, role) => {
+  if (key === 'submitted') return role === 'tl' ? 'Team Submissions' : 'Submissions';
+  if (key === 'joined' && role === 'accounts') return 'Joined Count';
+  return COL_LABELS[key] || key;
+};
+const NUM_COLS = ['activeReqs', 'candidates', 'submitted', 'interviews', 'selected', 'joined', 'pending'];
+const MONEY_COLS = ['invoiced', 'received', 'outstanding', 'revenue', 'overdueDays'];
+const agreementTone = (code) => (code === 'ACTIVE' ? 'green' : ['EXPIRED', 'REJECTED'].includes(code) ? 'red' : 'amber');
+
+// §4 BDE status filter: Active / Inactive / Prospect. "Prospect" — a client
+// on file with no requirement yet and no Active agreement (or stored as one).
+function statusOf(c) {
+  const s = String(c.status || '').trim();
+  if (['Inactive', 'Suspended'].includes(s)) return 'Inactive';
+  if (s === 'Prospect') return 'Prospect';
+  if (!(c.totalRequirements > 0) && c.agreementStatus !== 'ACTIVE') return 'Prospect';
+  return 'Active';
+}
+
+// §1 — views per role; the first is the role's default.
+const VIEWS = {
+  admin: [['active', 'All Active'], ['all', 'All Clients']],
+  mgmt: [['active', 'All Active'], ['all', 'All Clients']],
+  bde: [['mine', 'My Clients'], ['active', 'Active only']],
+  tl: [['team', "My Team's Clients"]],
+  accounts: [['billing', 'Billing / Outstanding'], ['outstanding', 'Outstanding only']],
+  client: [['all', 'My Company']],
 };
 
-const EMPTY = {
-  name: '', legalName: '', website: '', industry: '', ownerDepartment: 'IT',
-  yearEstablished: '', landline: '', status: 'Active', activeDate: today(),
-  contactName: '', contactDesignation: '', contactPhone: '', contactEmail: '', contactWhatsApp: '',
-  secondaryContactName: '', secondaryContactDesignation: '', secondaryContactPhone: '', secondaryContactEmail: '',
-  houseNumber: '', street: '', landmark: '', area: '', pincode: '', country: 'India',
-  state: '', location: LOCS[0],
-  clientType: '', priority: 'High', commPrimary: '', commSecondary: '',
-  gst: '', pan: '', tan: '', businessType: 'Private Limited',
-  agreementFeePercent: 8.33, tdsPercent: 10, paymentTerms: PAYMENT_TERMS[0],
-  guaranteePeriod: '30 Days', gstPercent: 18, invoiceTrigger: 'Candidate Joining',
-  paymentDue: '6 days after invoice', commercialNotes: '',
-  accountManager: '', bdeOwner: '',
-  agreementRequired: 'Yes', agreementTemplate: AGREEMENT_TEMPLATES[0],
-  agreementStart: today(), agreementEnd: nextYear(),
-  commChannels: 'Email,WhatsApp',
-  riskFlag: 'None', riskNotes: '',
-  // Client Code is assigned by the server (CLI0001 …) when left blank.
-  clientCode: '',
-  billingContactName: '', billingContactDesignation: '', billingContactEmail: '', billingContactPhone: '',
-  recruitmentContactName: '', recruitmentContactDesignation: '', recruitmentContactEmail: '', recruitmentContactPhone: '',
+const SORTS = {
+  name: ['Name (A–Z)', (a, b) => a.name.localeCompare(b.name)],
+  activeReqs: ['Open requirements', (a, b) => (b.activeRequirements || 0) - (a.activeRequirements || 0)],
+  submitted: ['Submissions', (a, b) => (b.candidatesSubmitted || 0) - (a.candidatesSubmitted || 0)],
+  joined: ['Joined', (a, b) => (b.joinedCount || 0) - (a.joinedCount || 0)],
+  lastActivity: ['Last activity', (a, b) => String(b.lastActivityAt || '').localeCompare(String(a.lastActivityAt || ''))],
+  outstanding: ['Outstanding', (a, b) => (b.invoiceSummary?.outstanding || 0) - (a.invoiceSummary?.outstanding || 0)],
+  overdue: ['Overdue days', (a, b) => (b.invoiceSummary?.overdueDays || 0) - (a.invoiceSummary?.overdueDays || 0)],
 };
+const EMPTY_FILTERS = {
+  search: '', industry: '', status: '', owner: '', expiring: '', unassigned: '', department: '', location: '',
+  agreement: '', hasOpen: '', outstanding: '', overdue: '',
+};
+const ymd = (d) => d.toISOString().slice(0, 10);
 
 export default function Clients() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const allowed = can(user, 'ats', 'clients', 'Client List', 'view');
+  const { meta, error: metaError } = useClientsMeta(user, allowed);
+  const role = meta?.role || null;
   const [clients, setClients] = useState([]);
-  const [requirements, setRequirements] = useState([]);
-  const [form, setForm] = useState(EMPTY);
-  const [tab, setTab] = useState('basic');
-  const [showForm, setShowForm] = useState(false);
-  const [error, setError] = useState('');
-  const [agreementPreview, setAgreementPreview] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [flash, setFlash] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [noteFor, setNoteFor] = useState(null);
+  const [reassignFor, setReassignFor] = useState(null);
 
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  function load() {
+    api.get('/clients')
+      .then((res) => { setClients(res.data); setLoadError(''); })
+      .catch((err) => setLoadError(err.response?.data?.error || 'Could not load clients'))
+      .finally(() => setLoaded(true));
+  }
+  useEffect(() => { if (allowed) load(); }, [allowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The preview pane refreshes from the fields that actually drive the
-  // document, debounced so typing a company name does not spam the API.
-  useEffect(() => {
-    if (!showForm) return undefined;
-    const t = setTimeout(() => {
-      api.get('/clients/agreement-preview', {
-        params: {
-          name: form.name,
-          location: form.location,
-          feePercent: form.agreementFeePercent,
-          gst: form.gst,
-          tdsPercent: form.tdsPercent,
-          paymentTerms: form.paymentTerms,
-          guaranteePeriod: form.guaranteePeriod,
-        },
-      }).then((res) => setAgreementPreview(res.data.document)).catch(() => setAgreementPreview(''));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [showForm, form.name, form.location, form.agreementFeePercent, form.gst, form.tdsPercent, form.paymentTerms, form.guaranteePeriod]);
+  // Columns: only what this role may see (§4); defaults are the spec's list.
+  const allowedCols = meta?.columns || [];
+  const defaultCols = meta?.defaultColumns || [];
+  const [cols, setCols] = useColumns(`tl.clientcols3.${user?.id || 'anon'}.${role || 'x'}`, allowedCols, defaultCols);
+  const visibleCols = allowedCols.filter((k) => cols.includes(k));
 
-  // 624 clients came in with the real data, so the table shows a page at a
-  // time. The full list still feeds every count and dropdown above it.
-  // FIT THE WINDOW, DO NOT SCROLL SIDEWAYS. Thirteen columns overflowed any
-  // laptop, and on this data Client Code, Business Type, GST, TDS, Account
-  // Manager, BDE and Expiry are almost all blank — the source sheets never
-  // recorded them. They are off by default and one click brings them back;
-  // the client detail page shows everything regardless.
-  const [wideCols, setWideCols] = useState(false);
-
-  // FILTERS, so 905 clients can be narrowed to the ones you are looking at.
-  // The screen had none at all: the only way to find a client was to page
-  // through them alphabetically.
-  //
-  // Applied HERE rather than on the server because /clients already returns
-  // exactly the viewer's scope in one payload — so a filter can only ever
-  // narrow what they are already allowed to see, never widen it.
-  const [filters, setFilters] = useState({ search: '', industry: '', department: '', location: '', agreement: '', hasOpen: '' });
+  const views = VIEWS[role] || [['all', 'All Clients']];
+  const [view, setView] = useState('');
+  const currentView = view || meta?.defaultView || views[0][0];
+  const [sortBy, setSortBy] = useState('');
+  const currentSort = sortBy || (role === 'accounts' ? 'outstanding' : 'name');
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
-  const clearFilters = () => setFilters({ search: '', industry: '', department: '', location: '', agreement: '', hasOpen: '' });
+  const clearFilters = () => setFilters(EMPTY_FILTERS);
+  const has = (k) => (meta?.filters || []).includes(k);
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
-  // The options come from the DATA, not from a fixed list, so every value
-  // that actually appears is offered and nothing that does not is.
   const opts = useMemo(() => {
     const uniq = (f) => [...new Set(clients.map(f).filter(Boolean))].sort();
     return {
@@ -117,49 +141,165 @@ export default function Clients() {
       department: uniq((c) => c.ownerDepartment),
       location: uniq((c) => c.location),
       agreement: uniq((c) => c.agreementStatus),
+      owner: uniq((c) => c.bdeOwner || c.bdeName),
     };
   }, [clients]);
 
+  const expiringIds = useMemo(() => new Set(meta?.expiring?.ids || []), [meta]);
+  const today = ymd(new Date());
+
   const filtered = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
+    const sortFn = (SORTS[currentSort] || SORTS.name)[1];
     return clients.filter((c) => {
-      if (q && !`${c.name || ''} ${c.clientCode || ''} ${c.contactName || ''} ${c.gst || ''}`.toLowerCase().includes(q)) return false;
+      // The view (§1) — the scope itself is already the server's.
+      if (currentView === 'active' && statusOf(c) === 'Inactive') return false;
+      if (currentView === 'outstanding' && !(c.invoiceSummary?.outstanding > 0.5)) return false;
+      if (q && !`${c.name || ''} ${c.legalName || ''} ${c.clientCode || ''} ${c.displayCode || ''} ${c.contactName || ''} ${c.gst || ''}`.toLowerCase().includes(q)) return false;
       if (filters.industry && c.industry !== filters.industry) return false;
+      if (filters.status && statusOf(c) !== filters.status) return false;
+      if (filters.owner && (c.bdeOwner || c.bdeName) !== filters.owner) return false;
+      if (filters.unassigned && String(c.bdeOwner || '').trim()) return false;
+      if (filters.expiring === '30' && !(expiringIds.has(c.id) || (c.agreementEnd && c.agreementEnd >= today && c.agreementEnd <= ymd(new Date(Date.now() + 30 * 86400000))))) return false;
+      if (filters.expiring === 'expired' && !(c.agreementStatus === 'EXPIRED' || (c.agreementEnd && c.agreementEnd < today))) return false;
       if (filters.department && c.ownerDepartment !== filters.department) return false;
       if (filters.location && c.location !== filters.location) return false;
       if (filters.agreement && c.agreementStatus !== filters.agreement) return false;
-      if (filters.hasOpen === 'yes' && openCount(c.id) === 0) return false;
-      if (filters.hasOpen === 'no' && openCount(c.id) > 0) return false;
+      if (filters.hasOpen === 'yes' && !(c.openRequirements > 0)) return false;
+      if (filters.hasOpen === 'no' && c.openRequirements > 0) return false;
+      if (filters.outstanding && !(c.invoiceSummary?.outstanding > 0.5)) return false;
+      if (filters.overdue && !((c.invoiceSummary?.overdueDays || 0) >= Number(filters.overdue))) return false;
       return true;
-    });
-  }, [clients, filters, requirements]);
+    }).sort(sortFn);
+  }, [clients, filters, currentView, currentSort, expiringIds, today]);
+  const paged = usePaged(filtered);
 
-  const pagedClients = usePaged(filtered);
-
-  function load() {
-    api.get('/clients').then((res) => setClients(res.data));
+  if (!allowed) {
+    return (
+      <div className="notice clrole-denied">
+        The Clients module is not part of your role. You see each client&apos;s name on the requirements you work on.
+      </div>
+    );
   }
-  useEffect(() => {
-    load();
-    api.get('/requirements').then((res) => setRequirements(res.data)).catch(() => setRequirements([]));
-  }, []);
 
-  // "Open" means live — past the agreement gate, neither parked nor closed.
-  const openCount = (clientId) =>
-    requirements.filter((r) => r.clientId === clientId && requirementIsLive(r.status)).length;
+  const chips = [
+    { key: 'search', label: 'Search', value: filters.search, onRemove: () => setFilter({ search: '' }) },
+    { key: 'industry', label: 'Industry', value: filters.industry, onRemove: () => setFilter({ industry: '' }) },
+    { key: 'status', label: 'Status', value: filters.status, onRemove: () => setFilter({ status: '' }) },
+    { key: 'owner', label: 'Owner BDE', value: filters.owner, onRemove: () => setFilter({ owner: '' }) },
+    { key: 'unassigned', label: 'Owner', value: filters.unassigned ? 'Unassigned' : '', onRemove: () => setFilter({ unassigned: '' }) },
+    { key: 'expiring', label: 'Agreement', value: filters.expiring === '30' ? 'Expiring in 30 days' : filters.expiring === 'expired' ? 'Expired' : '', onRemove: () => setFilter({ expiring: '' }) },
+    { key: 'department', label: 'Department', value: filters.department, onRemove: () => setFilter({ department: '' }) },
+    { key: 'location', label: 'Location', value: filters.location, onRemove: () => setFilter({ location: '' }) },
+    { key: 'agreement', label: 'Agreement status', value: filters.agreement ? agreementStatusLabel(filters.agreement) : '', onRemove: () => setFilter({ agreement: '' }) },
+    { key: 'hasOpen', label: 'Open requirements', value: filters.hasOpen === 'yes' ? 'Has open' : filters.hasOpen === 'no' ? 'None open' : '', onRemove: () => setFilter({ hasOpen: '' }) },
+    { key: 'outstanding', label: 'Outstanding', value: filters.outstanding ? '> 0' : '', onRemove: () => setFilter({ outstanding: '' }) },
+    { key: 'overdue', label: 'Overdue', value: filters.overdue ? `${filters.overdue}+ days` : '', onRemove: () => setFilter({ overdue: '' }) },
+  ];
 
-  async function save(createAgreement) {
-    setError('');
-    try {
-      await api.post('/clients', { ...form, createAgreement, asDraft: !createAgreement });
-    } catch (err) {
-      return setError(err.response?.data?.error || 'Could not save this client');
+  const a = meta?.actions || {};
+  const showMini = role && role !== 'accounts';
+  const money = (v, bad = false) => (v == null ? '—' : <span className={`clrole-money${bad && v > 0 ? ' bad' : ''}`}>{inr(v)}</span>);
+
+  const cell = (key, c) => {
+    const to = (t) => `/clients/${c.id}?tab=${t}`;
+    const inv = c.invoiceSummary;
+    switch (key) {
+      case 'code': return <td key={key}><span className="clrel-code">{c.displayCode || '—'}</span></td>;
+      case 'industry': return <td key={key} className="cell-muted">{c.industry || '—'}</td>;
+      case 'location': return <td key={key} className="cell-muted clrel-wrap">{c.location || '—'}{c.state && c.state !== c.location ? <span className="clrel-sub">{c.state}</span> : null}</td>;
+      case 'legal': return <td key={key} className="cell-muted">{c.legalName || '—'}</td>;
+      case 'tax': return <td key={key} className="cell-muted">{c.gst || '—'}<span className="clrel-sub">{c.pan ? `PAN ${c.pan}` : ''}</span></td>;
+      case 'contact':
+        return (
+          <td key={key} className="cell-muted clrel-wrap">
+            {c.contactName || '—'}
+            <span className="clrel-sub">{[c.contactPhone, c.contactEmail].filter(Boolean).join(' · ')}</span>
+          </td>
+        );
+      case 'bde':
+        return (
+          <td key={key} className="cell-muted">
+            {c.bdeOwner || (c.bdeName ? <span title="From its requirements — no Owner BDE set">{c.bdeName}</span> : null)}
+            {!String(c.bdeOwner || '').trim() && (role === 'admin' || role === 'mgmt')
+              ? <span className="clrel-sub"><span className="clrel-pill warn">Unassigned</span></span> : null}
+            {!c.bdeOwner && !c.bdeName && !(role === 'admin' || role === 'mgmt') ? '—' : null}
+          </td>
+        );
+      case 'activeReqs': return <td key={key} className="clrel-num"><RelNum value={c.activeRequirements} to={to('requirements')} title={`${c.totalRequirements || 0} requirement(s) in total`} /></td>;
+      case 'candidates': return <td key={key} className="clrel-num"><RelNum value={c.candidatesTotal} to={to('candidates')} /></td>;
+      case 'submitted': return <td key={key} className="clrel-num"><RelNum value={c.candidatesSubmitted} to={to('candidates')} /></td>;
+      case 'interviews': return <td key={key} className="clrel-num"><RelNum value={c.clientInterviews} to={to('interviews')} /></td>;
+      case 'selected': return <td key={key} className="clrel-num"><RelNum value={c.selectedCount} to={to('selected')} /></td>;
+      case 'joined': return <td key={key} className="clrel-num"><RelNum value={c.joinedCount} to={role === 'accounts' ? to('invoices') : to('selected')} /></td>;
+      case 'pending': return <td key={key} className="clrel-num"><RelNum value={c.pendingDecisions} to={to('candidates')} /></td>;
+      case 'agreement':
+        return (
+          <td key={key}>
+            <StatusChip status={agreementStatusLabel(c.agreementStatus)} tone={agreementTone(c.agreementStatus)} />
+            {c.agreementEnd ? <span className="clrel-sub">{`to ${c.agreementEnd}`}{expiringIds.has(c.id) ? ' · expiring' : ''}</span> : null}
+          </td>
+        );
+      case 'status': return <td key={key}><StatusChip status={statusOf(c)} tone={statusOf(c) === 'Active' ? 'green' : statusOf(c) === 'Prospect' ? 'blue' : 'grey'} title={c.workStatus || c.status || ''} /></td>;
+      case 'health':
+        return (
+          <td key={key}>
+            {c.health ? <span className={`clrole-health ${c.health}`} title={`${HEALTH_HINT[c.health] || ''}${c.healthDays != null ? ` — last activity ${c.healthDays} day(s) ago` : ''}`}>{c.healthLabel}</span> : '—'}
+          </td>
+        );
+      case 'fee': return <td key={key} className="clrel-num">{c.agreementFeePercent != null ? `${c.agreementFeePercent}%` : '—'}</td>;
+      case 'terms': return <td key={key} className="cell-muted clrel-wrap">{c.paymentTerms || '—'}</td>;
+      case 'guarantee':
+        return (
+          <td key={key} className="cell-muted clrel-wrap">
+            {c.guaranteePeriod || '—'}
+            {c.inGuarantee ? <span className="clrel-sub"><span className="clrel-pill warn">{`${c.inGuarantee} in guarantee`}</span></span> : null}
+          </td>
+        );
+      case 'invoiced': return <td key={key}>{inv ? money(inv.invoiced) : '—'}</td>;
+      case 'received': return <td key={key}>{inv ? money(inv.received) : '—'}</td>;
+      case 'revenue': return <td key={key}>{c.revenue != null ? money(c.revenue) : '—'}</td>;
+      case 'outstanding':
+        return (
+          <td key={key}>
+            {inv ? money(inv.outstanding, true) : '—'}
+            {inv && inv.overdue ? <span className="clrel-sub" style={{ textAlign: 'right' }}>{`${inv.overdue} overdue`}</span> : null}
+          </td>
+        );
+      case 'overdueDays':
+        return <td key={key} className={`clrole-money${inv && inv.overdueDays ? ' bad' : ''}`}>{inv && inv.overdueDays ? `${inv.overdueDays} d` : '—'}</td>;
+      case 'invoiceStatus':
+        return (
+          <td key={key}>
+            {inv && inv.status
+              ? <StatusChip status={inv.status} tone={inv.status === 'Paid' ? 'green' : inv.status === 'Overdue' ? 'red' : 'amber'} title={`${inv.count} invoice(s) · ${inv.paid} paid · ${inv.pending} pending`} />
+              : <span className="cell-muted">—</span>}
+          </td>
+        );
+      case 'lastActivity':
+        return (
+          <td key={key} className="cell-muted clrel-wrap" title={c.lastActivityWhat || ''}>
+            {lastActivityText(c) || '—'}
+            {c.lastActivityWhat ? <span className="clrel-sub">{c.lastActivityWhat}</span> : null}
+          </td>
+        );
+      case 'owner': return <td key={key} className="cell-muted clrel-wrap">{c.accountManager || '—'}<span className="clrel-sub">{c.ownerDepartment || ''}</span></td>;
+      case 'next':
+        return (
+          <td key={key} className="clrel-next">
+            <span className="cell-muted" style={{ fontSize: 12 }}>
+              {c.nextAction || c.workStatus || '—'}
+              {c.nextActionOwner ? ` · ${c.nextActionOwner}` : ''}
+              {c.nextActionDue ? ` · due ${c.nextActionDue}` : ''}
+            </span>
+          </td>
+        );
+      default: return <td key={key} />;
     }
-    setForm(EMPTY);
-    setTab('basic');
-    setShowForm(false);
-    load();
-  }
+  };
+
+  const viewLabel = (views.find(([k]) => k === currentView) || views[0])[1];
+  const narrowed = filtered.length !== clients.length;
 
   return (
     <div>
@@ -167,490 +307,254 @@ export default function Clients() {
         <div>
           <h1>Clients</h1>
           <div className="page-sub">
-            Clients · Requirements · Agreements · Job Portal — <ScopeLine user={user} count={clients.length} noun="client account" inline />
+            {`${viewLabel} — `}
+            <ScopeLine user={user} count={clients.length} noun="client account" inline />
           </div>
         </div>
-        {can(user, 'ats', 'clients', 'Add Client', 'create') && (
-          <button className="btn btn-primary" onClick={() => { setError(''); setShowForm(true); }}>Add Client</button>
-        )}
-      </div>
-
-      {/* Clients and Requirements are one module now — this is its tab strip. */}
-      <ClientModuleTabs active="clients" />
-
-      <div className="filter-row">
-        <input
-          type="text"
-          placeholder="Search client, code, contact or GST…"
-          value={filters.search}
-          onChange={(e) => setFilter({ search: e.target.value })}
-        />
-        <Combo value={filters.industry} onChange={(e) => setFilter({ industry: e.target.value })}>
-          <option value="">All industries</option>
-          {opts.industry.map((v) => <option key={v} value={v}>{v}</option>)}
-        </Combo>
-        <Combo value={filters.department} onChange={(e) => setFilter({ department: e.target.value })}>
-          <option value="">All departments</option>
-          {opts.department.map((v) => <option key={v} value={v}>{v}</option>)}
-        </Combo>
-        <Combo value={filters.location} onChange={(e) => setFilter({ location: e.target.value })}>
-          <option value="">All locations</option>
-          {opts.location.map((v) => <option key={v} value={v}>{v}</option>)}
-        </Combo>
-        <Combo value={filters.agreement} onChange={(e) => setFilter({ agreement: e.target.value })}>
-          <option value="">Any agreement status</option>
-          {opts.agreement.map((v) => <option key={v} value={v}>{agreementStatusLabel(v)}</option>)}
-        </Combo>
-        <Combo value={filters.hasOpen} onChange={(e) => setFilter({ hasOpen: e.target.value })}>
-          <option value="">Open requirements?</option>
-          <option value="yes">Has open requirements</option>
-          <option value="no">None open</option>
-        </Combo>
-        {activeFilterCount > 0 && (
-          <button className="btn btn-sm btn-ghost" onClick={clearFilters}>{`Clear ${activeFilterCount} filter(s)`}</button>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setWideCols((v) => !v)}>
-          {wideCols ? 'Fewer columns' : 'All columns'}
-        </button>
-      </div>
-
-      {showForm && (
-      <Modal
-        title="Add Client"
-        size="xwide"
-        onClose={() => setShowForm(false)}
-        bodyStyle={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}
-        footer={(
-          <>
-            <button className="btn" type="button" onClick={() => setShowForm(false)}>Cancel</button>
-            <button className="btn" type="button" onClick={() => save(false)}>Save</button>
-            <button className="btn btn-primary" type="submit" form="addClientForm">Save &amp; Create Agreement</button>
-          </>
-        )}
-      >
-        <form id="addClientForm" style={{ flex: 1, minWidth: 320 }} onSubmit={(e) => { e.preventDefault(); save(true); }}>
-          <div className="tabs" style={{ marginBottom: 12 }}>
-            {TABS.map(([key, label]) => (
-              <div key={key} className={`tab${tab === key ? ' active' : ''}`} onClick={() => setTab(key)}>{label}</div>
-            ))}
-          </div>
-
-          {tab === 'basic' && (
-            <>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Company Name *</span>
-                  <input required value={form.name} onChange={(e) => set({ name: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Legal Company Name *</span>
-                  <input value={form.legalName} onChange={(e) => set({ legalName: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Company Website</span>
-                  <input placeholder="https://…" value={form.website} onChange={(e) => set({ website: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Industry</span>
-                  <Combo creatable value={form.industry} onChange={(e) => set({ industry: e.target.value })}>
-                    <option value="">— Select —</option>
-                    {CLIENT_INDUSTRIES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Owner Department</span>
-                  <Combo creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
-                    {deptOptions(user).map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Year of Establishment</span>
-                  <input placeholder="e.g. 2014" value={form.yearEstablished} onChange={(e) => set({ yearEstablished: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Landline Number</span>
-                  <input value={form.landline} onChange={(e) => set({ landline: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Status</span>
-                  <Combo value={form.status} onChange={(e) => set({ status: e.target.value })}>
-                    {CLIENT_STATUSES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Active date (added on) *</span>
-                  <input type="date" value={form.activeDate} onChange={(e) => set({ activeDate: e.target.value })} />
-                </label>
-              </div>
-
-              <h3>Primary Contact</h3>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Primary Name *</span>
-                  <input value={form.contactName} onChange={(e) => set({ contactName: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Primary Designation</span>
-                  <input placeholder="e.g. HR Manager" value={form.contactDesignation} onChange={(e) => set({ contactDesignation: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Primary Contact (Phone) *</span>
-                  <input value={form.contactPhone} onChange={(e) => set({ contactPhone: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Primary Mail *</span>
-                  <input value={form.contactEmail} onChange={(e) => set({ contactEmail: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Primary WhatsApp</span>
-                  <input value={form.contactWhatsApp} onChange={(e) => set({ contactWhatsApp: e.target.value })} />
-                </label>
-              </div>
-
-              <h3>Secondary Contact</h3>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Secondary Name</span>
-                  <input value={form.secondaryContactName} onChange={(e) => set({ secondaryContactName: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Secondary Designation</span>
-                  <input value={form.secondaryContactDesignation} onChange={(e) => set({ secondaryContactDesignation: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Secondary Contact</span>
-                  <input value={form.secondaryContactPhone} onChange={(e) => set({ secondaryContactPhone: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Secondary Mail</span>
-                  <input value={form.secondaryContactEmail} onChange={(e) => set({ secondaryContactEmail: e.target.value })} />
-                </label>
-              </div>
-
-              <h3>Client Address</h3>
-              <div className="grid-2">
-                <label className="field">
-                  <span>House Number</span>
-                  <input value={form.houseNumber} onChange={(e) => set({ houseNumber: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Street</span>
-                  <input value={form.street} onChange={(e) => set({ street: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Landmark</span>
-                  <input value={form.landmark} onChange={(e) => set({ landmark: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Area</span>
-                  <input value={form.area} onChange={(e) => set({ area: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Pin code</span>
-                  <input value={form.pincode} onChange={(e) => set({ pincode: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Country</span>
-                  <input value={form.country} onChange={(e) => set({ country: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>State *</span>
-                  <Combo value={form.state} onChange={(e) => set({ state: e.target.value })}>
-                    <option value="">State</option>
-                    {INDIAN_STATES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>City *</span>
-                  <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
-                    {LOCS.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-              </div>
-
-              <h3>Classification &amp; Communication</h3>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Client Type</span>
-                  <Combo value={form.clientType} onChange={(e) => set({ clientType: e.target.value })}>
-                    <option value="">— Select —</option>
-                    {CLIENT_TYPES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Client Priority</span>
-                  <Combo value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
-                    {CLIENT_PRIORITIES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Primary Comm Mode</span>
-                  <Combo value={form.commPrimary} onChange={(e) => set({ commPrimary: e.target.value })}>
-                    <option value="">— Select —</option>
-                    {COMM_MODES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Secondary Comm Mode</span>
-                  <Combo value={form.commSecondary} onChange={(e) => set({ commSecondary: e.target.value })}>
-                    <option value="">— Select —</option>
-                    {COMM_MODES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-              </div>
-            </>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* §3 — Import (Admin) · Export (Admin, Management, BDE own,
+              Accounts): /ats-io/access decides, the ats-io routes enforce.
+              The export sends the ids of the rows shown when narrowed; the
+              server keeps only those of its own scoped GET /clients. */}
+          {meta && (a.import || a.export) && (
+            <AtsDataTools
+              module="clients"
+              kinds={a.import ? ['clients'] : []}
+              onImported={load}
+              body={() => ({ ids: narrowed ? filtered.map((c) => c.id) : null })}
+            />
           )}
-
-          {tab === 'legal' && (
-            <>
-              <div className="grid-2">
-                <label className="field">
-                  <span>GSTIN</span>
-                  <input placeholder="36AAAAA0000A1Z5" value={form.gst} onChange={(e) => set({ gst: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>PAN</span>
-                  <input placeholder="AAAAA0000A" value={form.pan} onChange={(e) => set({ pan: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>TAN</span>
-                  <input value={form.tan} onChange={(e) => set({ tan: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Business Type</span>
-                  <Combo value={form.businessType} onChange={(e) => set({ businessType: e.target.value })}>
-                    {BUSINESS_TYPES.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Recruitment Fee % *</span>
-                  <input type="number" step="0.01" value={form.agreementFeePercent} onChange={(e) => set({ agreementFeePercent: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>TDS %</span>
-                  <input type="number" step="0.01" value={form.tdsPercent} onChange={(e) => set({ tdsPercent: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Payment Terms</span>
-                  <Combo value={form.paymentTerms} onChange={(e) => set({ paymentTerms: e.target.value })}>
-                    {PAYMENT_TERMS.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Replacement / Guarantee Period</span>
-                  <input value={form.guaranteePeriod} onChange={(e) => set({ guaranteePeriod: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>GST %</span>
-                  <input type="number" step="0.01" value={form.gstPercent} onChange={(e) => set({ gstPercent: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Invoice Trigger</span>
-                  <Combo value={form.invoiceTrigger} onChange={(e) => set({ invoiceTrigger: e.target.value })}>
-                    {INVOICE_TRIGGERS.map((x) => <option key={x}>{x}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Payment Due</span>
-                  <input value={form.paymentDue} onChange={(e) => set({ paymentDue: e.target.value })} />
-                </label>
-              </div>
-              <label className="field">
-                <span>Commercial Terms / Notes</span>
-                <textarea rows="2" placeholder="Any additional commercial terms agreed with this client" value={form.commercialNotes} onChange={(e) => set({ commercialNotes: e.target.value })} />
-              </label>
-            </>
+          {a.merge && <ClientDuplicatesButton />}
+          {a.add && (
+            <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>+ Add Client</button>
           )}
-
-          {tab === 'agreement' && (
-            <div className="grid-2">
-              <label className="field">
-                <span>Agreement Required</span>
-                <Combo value={form.agreementRequired} onChange={(e) => set({ agreementRequired: e.target.value })}>
-                  <option>Yes</option>
-                  <option>No</option>
-                </Combo>
-              </label>
-              <label className="field">
-                <span>Agreement Template</span>
-                <Combo value={form.agreementTemplate} onChange={(e) => set({ agreementTemplate: e.target.value })}>
-                  {AGREEMENT_TEMPLATES.map((x) => <option key={x}>{x}</option>)}
-                </Combo>
-              </label>
-              <label className="field">
-                <span>Agreement Start Date</span>
-                <input type="date" value={form.agreementStart} onChange={(e) => set({ agreementStart: e.target.value })} />
-              </label>
-              <label className="field">
-                <span>Agreement End Date</span>
-                <input type="date" value={form.agreementEnd} onChange={(e) => set({ agreementEnd: e.target.value })} />
-              </label>
-              <label className="field">
-                <span>Agreement Status</span>
-                <input disabled value="Draft (until generated and signed)" />
-              </label>
-            </div>
-          )}
-
-          {tab === 'ownership' && (
-            <>
-              <div className="grid-2">
-                <label className="field">
-                  <span>BDE / Client Owner</span>
-                  <input value={form.bdeOwner} onChange={(e) => set({ bdeOwner: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Account Manager</span>
-                  <input value={form.accountManager} onChange={(e) => set({ accountManager: e.target.value })} />
-                </label>
-              </div>
-              <label className="field">
-                <span>Communication Preferences (comma separated)</span>
-                <input value={form.commChannels} onChange={(e) => set({ commChannels: e.target.value })} />
-              </label>
-
-              {/* The two contacts the client profile carries besides the
-                  primary/secondary commercial contacts: who is invoiced, and
-                  who the recruitment conversation actually runs through. */}
-              <div className="section-label">Billing Contact</div>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Name</span>
-                  <input value={form.billingContactName} onChange={(e) => set({ billingContactName: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Designation</span>
-                  <input value={form.billingContactDesignation} onChange={(e) => set({ billingContactDesignation: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Email</span>
-                  <input type="email" value={form.billingContactEmail} onChange={(e) => set({ billingContactEmail: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Phone</span>
-                  <input value={form.billingContactPhone} onChange={(e) => set({ billingContactPhone: e.target.value })} />
-                </label>
-              </div>
-              <div className="section-label">Recruitment Contact</div>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Name</span>
-                  <input value={form.recruitmentContactName} onChange={(e) => set({ recruitmentContactName: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Designation</span>
-                  <input value={form.recruitmentContactDesignation} onChange={(e) => set({ recruitmentContactDesignation: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Email</span>
-                  <input type="email" value={form.recruitmentContactEmail} onChange={(e) => set({ recruitmentContactEmail: e.target.value })} />
-                </label>
-                <label className="field">
-                  <span>Phone</span>
-                  <input value={form.recruitmentContactPhone} onChange={(e) => set({ recruitmentContactPhone: e.target.value })} />
-                </label>
-              </div>
-            </>
-          )}
-
-          {tab === 'risk' && (
-            <>
-              <label className="field">
-                <span>Payment Risk Flag</span>
-                <Combo value={form.riskFlag} onChange={(e) => set({ riskFlag: e.target.value })}>
-                  {RISK_FLAGS.map((x) => <option key={x}>{x}</option>)}
-                </Combo>
-              </label>
-              <label className="field">
-                <span>Risk Notes</span>
-                <textarea rows="3" placeholder="Any credit/collections history worth flagging" value={form.riskNotes} onChange={(e) => set({ riskNotes: e.target.value })} />
-              </label>
-            </>
-          )}
-
-          {error && <div className="error-text">{error}</div>}
-        </form>
-
-        {/* The prototype's live "Agreement Template Preview" pane — the same
-            master template, filled with this client's values as they are typed. */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 320,
-            background: 'var(--paper)',
-            border: '1px solid var(--line)',
-            borderRadius: 8,
-            padding: 14,
-            maxHeight: 520,
-            overflowY: 'auto',
-          }}
-        >
-          <h4 style={{ fontSize: 13, marginBottom: 4 }}>Agreement Template Preview</h4>
-          <div className="small-muted" style={{ fontSize: 11, marginBottom: 10 }}>
-            Updates live from the fields on the left — same master template used everywhere, just filled with
-            this client&apos;s values.
-          </div>
-          <div className="small-muted" style={{ whiteSpace: 'pre-line', fontSize: 10.5, lineHeight: 1.5 }}>
-            {agreementPreview || 'Enter a company name to see the agreement.'}
-          </div>
         </div>
-      </Modal>
+      </div>
+
+      {/* The Clients module's own strip: Clients | Agreements. */}
+      <ClientsTabs active="clients" />
+
+      {metaError && <div className="notice red">{metaError}</div>}
+      {loadError && <div className="notice red">{loadError}</div>}
+      {flash && <div className="notice">{flash}</div>}
+
+      {/* §8.3 — agreement expiry alert (Admin, BDE). */}
+      {meta?.expiring?.count > 0 && (
+        <div className="clrole-alert">
+          <span>
+            <b>{meta.expiring.count}</b>
+            {` client${meta.expiring.count === 1 ? "'s agreement expires" : "s' agreements expire"} in ${meta.expiring.days} days.`}
+          </span>
+          <button type="button" className="btn btn-sm" onClick={() => setFilter({ expiring: '30' })}>Show them</button>
+        </div>
       )}
 
-      <div className="tbl-wrap tbl-fit">
-        <table>
+      <div className="clrole-viewbar">
+        {views.length > 1 && (
+          <div className="clrole-view" role="tablist" aria-label="View">
+            {views.map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={currentView === k} className={currentView === k ? 'on' : ''} onClick={() => setView(k)}>{label}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="jobsws-mf">
+        <MoreFilters
+          storageKey="clients-role"
+          activeMore={['department', 'location', 'agreement', 'hasOpen'].filter((k) => filters[k]).length}
+          onClearAll={activeFilterCount ? clearFilters : undefined}
+          primary={(
+            <>
+              <input
+                type="text"
+                placeholder={role === 'tl' || role === 'accounts' ? 'Search client…' : 'Search client, code, contact or GST…'}
+                value={filters.search}
+                onChange={(e) => setFilter({ search: e.target.value })}
+                style={{ minWidth: 220 }}
+              />
+              {has('industry') && (
+                <Combo value={filters.industry} title="Industry" onChange={(e) => setFilter({ industry: e.target.value })}>
+                  <option value="">All industries</option>
+                  {opts.industry.map((v) => <option key={v} value={v}>{v}</option>)}
+                </Combo>
+              )}
+              {has('status') && (
+                <Combo value={filters.status} title="Status" onChange={(e) => setFilter({ status: e.target.value })}>
+                  <option value="">Any status</option>
+                  {['Active', 'Inactive', 'Prospect'].map((v) => <option key={v} value={v}>{v}</option>)}
+                </Combo>
+              )}
+              {has('owner') && (
+                <Combo value={filters.owner} title="Owner BDE" onChange={(e) => setFilter({ owner: e.target.value })}>
+                  <option value="">{role === 'bde' ? 'Any owner' : 'All Owner BDEs'}</option>
+                  {opts.owner.map((v) => <option key={v} value={v}>{v}</option>)}
+                </Combo>
+              )}
+              {has('unassigned') && (
+                <label className="clrole-check">
+                  <input type="checkbox" checked={!!filters.unassigned} onChange={(e) => setFilter({ unassigned: e.target.checked ? '1' : '' })} style={{ width: 'auto' }} />
+                  Unassigned (no Owner BDE)
+                </label>
+              )}
+              {has('expiring') && (
+                <Combo value={filters.expiring} title="Agreement expiring" onChange={(e) => setFilter({ expiring: e.target.value })}>
+                  <option value="">Agreement expiry — any</option>
+                  <option value="30">Expiring in 30 days</option>
+                  <option value="expired">Expired</option>
+                </Combo>
+              )}
+              {has('outstanding') && (
+                <Combo value={filters.outstanding} title="Outstanding" onChange={(e) => setFilter({ outstanding: e.target.value })}>
+                  <option value="">Outstanding — any</option>
+                  <option value="1">Outstanding &gt; 0</option>
+                </Combo>
+              )}
+              {has('overdue') && (
+                <Combo value={filters.overdue} title="Overdue" onChange={(e) => setFilter({ overdue: e.target.value })}>
+                  <option value="">Overdue — any</option>
+                  <option value="30">Overdue 30+ days</option>
+                  <option value="60">Overdue 60+ days</option>
+                  <option value="90">Overdue 90+ days</option>
+                </Combo>
+              )}
+            </>
+          )}
+        >
+          {has('department') && (
+            <Combo value={filters.department} title="Department" onChange={(e) => setFilter({ department: e.target.value })}>
+              <option value="">All departments</option>
+              {opts.department.map((v) => <option key={v} value={v}>{v}</option>)}
+            </Combo>
+          )}
+          {has('location') && (
+            <Combo value={filters.location} title="Location" onChange={(e) => setFilter({ location: e.target.value })}>
+              <option value="">All locations</option>
+              {opts.location.map((v) => <option key={v} value={v}>{v}</option>)}
+            </Combo>
+          )}
+          {has('agreement') && (
+            <Combo value={filters.agreement} title="Agreement status" onChange={(e) => setFilter({ agreement: e.target.value })}>
+              <option value="">Any agreement status</option>
+              {opts.agreement.map((v) => <option key={v} value={v}>{agreementStatusLabel(v)}</option>)}
+            </Combo>
+          )}
+          {has('hasOpen') && (
+            <Combo value={filters.hasOpen} title="Open requirements" onChange={(e) => setFilter({ hasOpen: e.target.value })}>
+              <option value="">Open requirements?</option>
+              <option value="yes">Has open requirements</option>
+              <option value="no">None open</option>
+            </Combo>
+          )}
+        </MoreFilters>
+      </div>
+
+      <FilterChips filters={chips} onClearAll={activeFilterCount ? clearFilters : undefined} />
+
+      <div className="clrel-toolbar">
+        <span className="small-muted" style={{ marginRight: 'auto', fontSize: 12 }}>
+          {narrowed ? `${filtered.length.toLocaleString('en-IN')} of ${clients.length.toLocaleString('en-IN')} clients` : `${clients.length.toLocaleString('en-IN')} clients`}
+        </span>
+        <label>
+          Sort
+          <select value={currentSort} onChange={(e) => setSortBy(e.target.value)}>
+            {Object.entries(SORTS)
+              .filter(([k]) => (!['outstanding', 'overdue'].includes(k) || meta?.invoiceMode === 'amounts')
+                && (k !== 'submitted' || allowedCols.includes('submitted')))
+              .map(([k, [label]]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </label>
+        {allowedCols.length > 0 && (
+          <ColumnChooser
+            columns={allowedCols.map((k) => ({ key: k, label: labelFor(k, role) }))}
+            value={cols}
+            onChange={setCols}
+            defaults={defaultCols}
+          />
+        )}
+      </div>
+
+      <ScrollTable maxHeight={null} bodyClassName="tbl-fit">
+        <table className="clrel-table">
           <thead>
             <tr>
-              {wideCols && <th>Client Code</th>}
-              <th>Client</th><th>Industry</th>
-              {wideCols && <><th>Business Type</th><th>GST</th><th>TDS</th><th>Account Manager</th><th>BDE</th></>}
-              <th>Location</th><th>Agreement</th>
-              {wideCols && <th>Expiry</th>}
-              <th>Open Requirements</th>{/* §12 */}<th>Next Action</th>
+              <th className="clrel-sticky">Client</th>
+              {visibleCols.map((k) => (
+                <th key={k} className={NUM_COLS.includes(k) ? 'clrel-num' : MONEY_COLS.includes(k) ? 'clrole-money' : undefined}>{labelFor(k, role)}</th>
+              ))}
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            {pagedClients.slice.map((c) => (
+            {paged.slice.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
-                {wideCols && <td><b>{c.clientCode || '—'}</b></td>}
-                <td>{c.name}</td>
-                <td className="cell-muted">{c.industry || '—'}</td>
-                {wideCols && (
-                  <>
-                    <td className="cell-muted">{c.businessType || '—'}</td>
-                    <td className="cell-muted">{c.gst || '—'}</td>
-                    <td className="cell-muted">{c.tdsPercent != null ? `${c.tdsPercent}%` : '—'}</td>
-                    <td className="cell-muted">{c.accountManager || '—'}</td>
-                    <td className="cell-muted">{c.bdeOwner || '—'}</td>
-                  </>
-                )}
-                <td className="cell-muted">{c.location || '—'}</td>
-                <td><span className={`status ${agreementBadgeClass(c.agreementStatus)}`}>{agreementStatusLabel(c.agreementStatus)}</span></td>
-                {wideCols && <td className="cell-muted">{c.agreementEnd || '—'}</td>}
-                <td>{openCount(c.id)}</td>
-                {/* §12 — what is owed on this client, and by whom. Without it
-                    the Clients screen is a directory rather than a worklist. */}
-                <td>
-                  {c.workStatus && <span className="status pending">{c.workStatus}</span>}
-                  {c.nextAction && <div style={{ fontSize: 12, marginTop: 3 }}>{c.nextAction}</div>}
-                  {(c.nextActionOwner || c.nextActionDue) && (
-                    <div className="small-muted" style={{ fontSize: 11 }}>
-                      {c.nextActionOwner || "—"}{c.nextActionDue ? ` · due ${c.nextActionDue}` : ""}
-                    </div>
+                <td className="clrel-sticky">
+                  <b>{c.name}</b>
+                  {!visibleCols.includes('code') && <span className="clrel-sub clrel-code">{c.displayCode}</span>}
+                  {/* §8.2 — mini stats: Open Reqs · Submitted · Selected · Joined. */}
+                  {showMini && (
+                    <span className="clrole-mini" title="Open requirements · Submitted to the client · Selected · Joined (in your scope)">
+                      <span><b>{c.activeRequirements || 0}</b> open</span>
+                      <span><b>{c.candidatesSubmitted || 0}</b> submitted</span>
+                      <span><b>{c.selectedCount || 0}</b> selected</span>
+                      <span><b>{c.joinedCount || 0}</b> joined</span>
+                    </span>
                   )}
+                </td>
+                {visibleCols.map((k) => cell(k, c))}
+                <td className="clrole-act" onClick={(e) => e.stopPropagation()}>
+                  <ClientRowActions
+                    c={c}
+                    meta={meta}
+                    onChanged={() => { setFlash(''); load(); }}
+                    onEdit={(row) => setEditing(row)}
+                    onNote={(row) => setNoteFor(row)}
+                    onReassign={(row) => setReassignFor(row)}
+                  />
                 </td>
               </tr>
             ))}
-            {clients.length === 0 && (
-              <tr><td colSpan={wideCols ? 13 : 6} className="small-muted" style={{ padding: 16 }}>{clients.length ? 'No clients match these filters.' : 'No clients in your scope.'}</td></tr>
+            {loaded && filtered.length === 0 && (
+              <tr>
+                <td colSpan={visibleCols.length + 2}>
+                  {clients.length
+                    ? <EmptyState compact title="No clients match this view and filters." hint="Remove a filter chip above, switch the view, or Clear All." action={<button type="button" className="btn btn-sm" onClick={() => { clearFilters(); setView(views[views.length > 1 ? 1 : 0][0]); }}>Show all</button>} />
+                    : <EmptyState compact title="No clients in your scope." hint={role === 'tl' ? "Clients appear here once your team works one of their requirements." : role === 'accounts' ? 'Clients appear here once they have a joined candidate or an invoice.' : 'Clients you own or are assigned to appear here.'} />}
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
-      </div>
-      <Pager page={pagedClients} noun="clients" />
+      </ScrollTable>
+      <Pager page={paged} noun="clients" />
+
+      {adding && (
+        <AddClientWizard
+          user={user}
+          meta={meta}
+          onClose={() => setAdding(false)}
+          onSaved={(created, warning) => {
+            setAdding(false);
+            setFlash(warning || `${created.name} added.`);
+            load();
+          }}
+        />
+      )}
+      {editing && (
+        <ClientEditModal
+          client={editing}
+          canCommercial={!!a.commercial && !!editing.permissions?.commercialTerms}
+          canReassign={!!a.reassign}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); setFlash('Client saved.'); load(); }}
+        />
+      )}
+      {noteFor && (
+        <NoteModal client={noteFor} onClose={() => setNoteFor(null)} onSaved={() => { setNoteFor(null); setFlash(`Note added to ${noteFor.name}.`); load(); }} />
+      )}
+      {reassignFor && (
+        <ReassignModal client={reassignFor} onClose={() => setReassignFor(null)} onSaved={() => { setReassignFor(null); setFlash(`Owner BDE of ${reassignFor.name} updated.`); load(); }} />
+      )}
     </div>
   );
 }

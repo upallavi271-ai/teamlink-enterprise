@@ -19,7 +19,10 @@ export default function JobDetail() {
     setStatus('submitting');
     setError('');
     try {
-      await api.post(`/public/jobs/${id}/apply`, form);
+      // ?src=Shine (or Naukri, LinkedIn …) on the link they followed tells the
+      // recruiter which posting brought this applicant in.
+      const src = new URLSearchParams(window.location.search).get('src') || undefined;
+      await api.post(`/public/jobs/${id}/apply`, { ...form, src });
       setStatus('done');
     } catch (err) {
       setStatus('error');

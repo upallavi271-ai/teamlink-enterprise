@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
+import { useAuth } from '../context/AuthContext.jsx';
 
 // ---------------------------------------------------------------------------
 // The employee's own profile state, said out loud.
@@ -42,9 +43,16 @@ export function statusLabel(status) {
 export default function ProfileStatusBanner({ variant = 'landing', employee: given = null }) {
   const [employee, setEmployee] = useState(given);
   const [loaded, setLoaded] = useState(!!given);
+  // SUPER ADMIN IS A SYSTEM ACCOUNT, NOT AN EMPLOYEE (identity.systemAccount,
+  // backend utils/systemAccounts.js). "Complete Your Employee Profile" stacked
+  // on top of the admin dashboard was the "double screen" at login — a system
+  // account is never prompted through the employee onboarding flow.
+  const { user } = useAuth() || {};
+  const systemAccount = !!(user && user.systemAccount) && variant !== 'page';
 
   useEffect(() => {
-    if (given) { setEmployee(given); setLoaded(true); return; }
+    if (systemAccount) { setEmployee(null); setLoaded(true); return undefined; }
+    if (given) { setEmployee(given); setLoaded(true); return undefined; }
     let alive = true;
     api.get('/employees/me')
       .then((res) => { if (alive) { setEmployee(res.data); setLoaded(true); } })
@@ -52,9 +60,9 @@ export default function ProfileStatusBanner({ variant = 'landing', employee: giv
       // admin service account) simply gets no banner.
       .catch(() => { if (alive) { setEmployee(null); setLoaded(true); } });
     return () => { alive = false; };
-  }, [given]);
+  }, [given, systemAccount]);
 
-  if (!loaded || !employee) return null;
+  if (systemAccount || !loaded || !employee) return null;
   const status = employee.profileStatus || employee.profileStage;
   const onForm = variant === 'page';
   const SHELL_STATES = ['Profile Incomplete', 'Change Requested'];

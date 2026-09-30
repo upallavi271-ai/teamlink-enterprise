@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isSuperAdmin as hasSuperAdmin } from '../../permissions';
+import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
+import { invalidateMasters } from '../../utils/masters';
 
 export default function Departments() {
   const { user } = useAuth();
@@ -14,6 +16,20 @@ export default function Departments() {
   function load() {
     api.get('/admin/departments').then((res) => setDepts(res.data));
   }
+
+  // THE FILTER STANDARD: Search (department or team) · Teams, and a Sort.
+  const lf = useListFilters(depts, [
+    { key: 'q', type: 'search', placeholder: 'Search department or team…',
+      get: (d) => `${d.name} ${(d.teams || []).map((t) => t.name).join(' ')}` },
+    { key: 'teams', label: 'Teams', allLabel: 'With or without teams', primary: true,
+      options: [{ value: 'with', label: 'With teams' }, { value: 'none', label: 'No teams yet' }],
+      match: (d, v) => (v === 'with') === ((d.teams || []).length > 0) },
+  ], {
+    sorts: [
+      { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name).localeCompare(String(b.name)) },
+      { key: 'teams', label: 'Most teams', cmp: (a, b) => (b.teams || []).length - (a.teams || []).length },
+    ],
+  });
   useEffect(load, []);
 
   async function addDepartment(e) {
@@ -23,6 +39,7 @@ export default function Departments() {
     try {
       await api.post('/admin/departments', { name: newDept.trim() });
       setNewDept('');
+      invalidateMasters(); // the new department joins every Department dropdown now
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not add department.');
@@ -32,6 +49,7 @@ export default function Departments() {
   async function removeDepartment(id, name) {
     if (!confirm(`Remove department "${name}" and all its teams? Employees already assigned to it keep the department name on their record.`)) return;
     await api.delete(`/admin/departments/${id}`);
+    invalidateMasters();
     load();
   }
 
@@ -43,6 +61,7 @@ export default function Departments() {
     try {
       await api.post(`/admin/departments/${deptId}/teams`, { name });
       setNewTeam({ ...newTeam, [deptId]: '' });
+      invalidateMasters();
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not add team.');
@@ -52,6 +71,7 @@ export default function Departments() {
   async function removeTeam(id, name) {
     if (!confirm(`Remove team "${name}"?`)) return;
     await api.delete(`/admin/teams/${id}`);
+    invalidateMasters();
     load();
   }
 
@@ -71,7 +91,9 @@ export default function Departments() {
         </form>
       )}
 
-      {depts.map((d) => (
+      <ListFilterBar lf={lf} storageKey="admin-departments" noun="departments" />
+
+      {lf.rows.map((d) => (
         <div className="card section" key={d.id}>
           <div className="page-head" style={{ marginBottom: 8 }}>
             <h3 style={{ fontSize: 14 }}>{d.name}</h3>
@@ -101,7 +123,7 @@ export default function Departments() {
         </div>
       ))}
 
-      {depts.length === 0 && <div className="small-muted">No departments yet.</div>}
+      {lf.rows.length === 0 && <ListEmpty lf={lf} noun="departments" />}
     </div>
   );
 }

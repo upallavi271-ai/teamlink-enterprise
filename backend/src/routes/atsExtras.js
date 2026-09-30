@@ -1,15 +1,25 @@
 const express = require('express');
 const prisma = require('../db');
-const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
-const { applicationWhere, requirementWhere, scopeOf } = require('../utils/scope');
+const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
+const {
+  applicationWhere, requirementWhere, candidateWhere, clientWhere, scopeOf, CLIENT_SHARED_STAGES,
+} = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const {
   INTERVIEW_STATUS_CODES, INTERVIEW_NEXT, INTERVIEW_TERMINAL,
-  INTERVIEW_MODES, INTERVIEW_TYPES, INTERVIEW_RESULTS,
+  INTERVIEW_MODES, INTERVIEW_TYPES, INTERVIEW_RESULTS, INTERVIEW_KINDS, INTERVIEW_SLOT_TYPES,
   INTERVIEW_RECOMMENDATIONS, normalizeRecommendation,
   interviewStatusLabel, REQUIREMENT_LIVE_STATUSES,
 } = require('../utils/atsVocab');
 const { hiringTypeOf, HIRING_TYPES } = require('../utils/joining');
+const { recordWorkflowMove } = require('../utils/stageEvents');
+const {
+  hasPersonQuery, attributedApplications, listWorkers, attributedCounts,
+} = require('../utils/workers');
+const {
+  teamWorkloadRows, isAdminViewer, formerWorkloadRows, teamAccess,
+  teamMemberDetail, memberMetricList, assignmentRows, pendingActionRows,
+} = require('../utils/teamWorkload');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -19,51 +29,62 @@ router.use(requireAuth);
 router.use(requireProduct('ats'));
 router.use(requirePerm('ats', 'interviews', 'Calendar View', 'view'));
 
-// Recruiter & BDE workload view — the prototype's teamView() (line 9154):
-// Name / Role / Open Requirements / Active Pipeline, recruiters first, then
-// BDEs, then the TLs who oversee them.
-//
-// "Active pipeline" is every application on that person's requirements that
-// has not yet reached Joined or Rejected. (The prototype hardcodes a BDE's
-// number to the count of applications sitting at "With BDE", and a second
-// BDE's to a literal 0 — computing it the same way for everyone is the fix.)
-const TEAM_ROLE_ORDER = { RECRUITER: 0, BDE: 1, TL: 2, STL: 3 };
-const TEAM_ROLE_LABELS = { RECRUITER: 'Recruiter', BDE: 'BDE', TL: 'TL', STL: 'STL' };
-const CLOSED_PIPELINE_STAGES = ['JOINED', 'HIRED', 'REJECTED'];
+// RECRUITER & BDE (the user's spec 2026-09-29) — People & Workload,
+// Assignments, Pending Actions, the 360s and the list behind every number.
+// Rows, scope and what every number means: utils/teamWorkload.js.
+//   GET /team                     People & Workload rows (an array — the
+//                                 export reads this shape)
+//   GET /team?shape=v2            { rows, helperReady }
+//   GET /team?view=assignments    one row per requirement in scope
+//   GET /team?view=pending        one row per active ATS application
+//   GET /team/:userId             Recruiter / BDE / TL 360
+//   GET /team/:userId?metric=m    the exact rows behind one number
+// Accounts / client / candidate / roleless logins are refused (spec: hide).
+// HR reaches it only where the role matrix grants Recruiter & BDE (then:
+// internal hiring only — utils/teamWorkload.js).
+async function teamGate(req, res) {
+  const access = teamAccess(req.user);
+  if (!access.ok || !(await can(req.user, 'ats', 'recruiterbde', 'Team View', 'view'))) {
+    res.status(403).json({ error: access.error || 'Recruiter & BDE is not part of your role.' });
+    return false;
+  }
+  return true;
+}
+router.get('/team', async (req, res, next) => {
+  try {
+    if (!(await teamGate(req, res))) return undefined;
+    const fresh = req.query.fresh === '1';
+    if (req.query.view === 'assignments') return res.json({ rows: await assignmentRows(req.user, { fresh }) });
+    if (req.query.view === 'pending') return res.json(await pendingActionRows(req.user, { fresh }));
+    // Active logins only, as always; ?includeLeft=1 (and the screen's v2
+    // shape, for its Status filter) also returns people who have left.
+    const includeLeft = req.query.includeLeft === '1' || req.query.shape === 'v2';
+    const { rows, helperReady } = await teamWorkloadRows(req.user, { includeLeft, fresh });
+    // ?former=1 — former seat holders with their HISTORICAL counts. Super
+    // Admin / Admin only; anyone else asking gets the current rows alone.
+    if ((req.query.former === '1' || req.query.former === 'true') && isAdminViewer(req.user)) {
+      const currentIds = new Set(rows.map((r) => r.id));
+      rows.push(...await formerWorkloadRows(req.user, currentIds));
+    }
+    if (req.query.shape === 'v2') return res.json({ rows, helperReady });
+    return res.json(rows);
+  } catch (err) {
+    return next(err);
+  }
+});
 
-router.get('/team', async (req, res) => {
-  // A TL sees their own team; a recruiter sees themselves; admins see all.
-  const s = scopeOf(req.user);
-  const people = await prisma.user.findMany({
-    where: {
-      role: { in: ['RECRUITER', 'BDE', 'TL', 'STL'] },
-      ...(s.global ? {} : s.departments.length
-        ? { OR: [{ atsDepartment: { in: s.departments } }, { id: s.userId }] }
-        : { id: s.userId }),
-    },
-  });
-  const rows = await Promise.all(
-    people.map(async (u) => {
-      const ownRequirements = { OR: [{ recruiterId: u.id }, { bdeId: u.id }] };
-      const [openRequirements, activePipeline] = await Promise.all([
-        prisma.requirement.count({ where: { ...ownRequirements, status: { in: REQUIREMENT_LIVE_STATUSES } } }),
-        prisma.application.count({
-          where: { requirement: ownRequirements, stage: { notIn: CLOSED_PIPELINE_STAGES } },
-        }),
-      ]);
-      return {
-        id: u.id,
-        name: u.name,
-        role: u.role,
-        roleLabel: TEAM_ROLE_LABELS[u.role] || u.role,
-        oversight: ['TL', 'STL'].includes(u.role),
-        openRequirements,
-        activePipeline,
-      };
-    })
-  );
-  rows.sort((a, b) => (TEAM_ROLE_ORDER[a.role] - TEAM_ROLE_ORDER[b.role]) || a.name.localeCompare(b.name));
-  res.json(rows);
+router.get('/team/:userId', async (req, res, next) => {
+  try {
+    if (!(await teamGate(req, res))) return undefined;
+    const clientDesk = await can(req.user, 'ats', 'clients', 'Client List', 'view');
+    const fresh = req.query.fresh === '1';
+    const out = req.query.metric
+      ? await memberMetricList(req.user, req.params.userId, String(req.query.metric), { clientDesk, fresh })
+      : await teamMemberDetail(req.user, req.params.userId, { clientDesk, fresh });
+    return res.status(out.status).json(out.body);
+  } catch (err) {
+    return next(err);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -105,6 +126,27 @@ function derivedResult(app) {
   return '—';
 }
 
+// Review #2 §16 — the interview TYPE: AI Interview (its own tab) · Recruiter
+// Interview · TL Interview · Client Interview, stored in the existing
+// interviewType string (no schema change). Older rows carry "Client Interview",
+// "Internal Panel" or nothing: nothing on a client requirement is a Client
+// Interview; an internal panel is a Recruiter / TL Interview only when the
+// interviewer IS the requirement's recruiter / TL — otherwise it stays
+// "Internal Panel", because guessing would be worse than saying so.
+function interviewTypeOf(app) {
+  const t = String(app.interviewType || '').trim();
+  if (INTERVIEW_SLOT_TYPES.includes(t)) return t;
+  const r = app.requirement || {};
+  if (t && t !== 'Internal Panel') return t;
+  if (!t && !r.internal && r.client) return 'Client Interview';
+  const who = String(app.interviewer || '').trim().toLowerCase();
+  if (who) {
+    if (r.recruiter && String(r.recruiter.name || '').trim().toLowerCase() === who) return 'Recruiter Interview';
+    if (r.tl && String(r.tl).trim().toLowerCase() === who) return 'TL Interview';
+  }
+  return 'Internal Panel';
+}
+
 function shapeRecruitment(app) {
   return {
     id: app.id,
@@ -120,7 +162,10 @@ function shapeRecruitment(app) {
       bde: app.requirement.bde ? { id: app.requirement.bde.id, name: app.requirement.bde.name } : null,
     },
     round: app.interviewRound,
-    type: app.interviewType || (app.requirement.client ? 'Client Interview' : 'Internal Panel'),
+    type: interviewTypeOf(app),
+    // What is actually stored (null on older rows), so the calendar can offer
+    // "set the type" only where it was never recorded.
+    storedType: app.interviewType || null,
     interviewer: app.interviewer,
     interviewAt: app.interviewAt,
     mode: app.interviewMode,
@@ -155,6 +200,9 @@ function shapeAi(app) {
     deadline: app.aiInterviewDeadline,
     score: app.aiInterviewScore,
     feedback: app.aiInterviewFeedback,
+    // Where the candidate is, so the calendar can tell 'AI done, awaiting
+    // Recruiter Review' from 'AI done, already moved on'.
+    stage: app.stage,
   };
 }
 
@@ -170,31 +218,90 @@ function withExpiry(row) {
 }
 
 router.get('/calendar', async (req, res) => {
-  const scope = calendarScope(req.user);
-  const [recruitmentApps, aiApps] = await Promise.all([
+  let scope = calendarScope(req.user);
+  // ?recruiter= / ?tl= / ?bde= ("id:<userId>" or "name:<name>") and
+  // ?positionCode=: the interviews on work attributed to that person or seat
+  // (utils/workers.js) — a recruiter who has left is found by name.
+  if (hasPersonQuery(req.query)) {
+    const att = await attributedApplications(req.user, req.query, { scope });
+    scope = { AND: [scope, { id: { in: [...att.ids] } }] };
+  }
+  // AND, never a spread: a seat-scoped lead's scope is itself an `OR`, and
+  // spreading the AI list's own OR over it dropped the scope entirely.
+  const [recruitmentApps, aiApps, shortlistedApps] = await Promise.all([
     prisma.application.findMany({
-      where: { ...scope, interviewStatus: { not: null } },
+      where: { AND: [scope, { interviewStatus: { not: null } }] },
       include: CALENDAR_INCLUDE,
       orderBy: { interviewAt: 'asc' },
     }),
     prisma.application.findMany({
-      where: { ...scope, OR: [{ aiInterviewStatus: { not: null } }, { aiInterviewScore: { not: null } }] },
-      include: { candidate: true, requirement: true },
+      where: { AND: [scope, { OR: [{ aiInterviewStatus: { not: null } }, { aiInterviewScore: { not: null } }] }] },
+      // Only what shapeAi() reads — every application carries an AI status
+      // ("Required" by default), so this list is the whole scope (23k rows for
+      // a global login) and whole candidate / requirement rows made it slow.
+      select: {
+        id: true, stage: true, aiInterviewStatus: true, aiInterviewDeadline: true, aiInterviewScore: true, aiInterviewFeedback: true,
+        candidate: { select: { id: true, name: true } },
+        requirement: { select: { id: true, title: true } },
+      },
       orderBy: { createdAt: 'asc' },
+    }),
+    // Review #2 §17 — the lifecycle starts at CLIENT SHORTLISTED: shortlisted
+    // by the client, no interview booked yet.
+    prisma.application.findMany({
+      where: { AND: [scope, { stage: 'CLIENT_SHORTLISTED', interviewStatus: null }] },
+      select: {
+        id: true, updatedAt: true, stage: true,
+        candidate: { select: { id: true, name: true } },
+        requirement: { select: { id: true, title: true, department: true, internal: true, hiringType: true, client: { select: { id: true, name: true } } } },
+      },
+      orderBy: { updatedAt: 'asc' },
     }),
   ]);
 
   const recruitment = recruitmentApps.map(shapeRecruitment);
   const ai = aiApps.map(shapeAi).map(withExpiry);
+  // Review #3 §11 — "AI Interview · Score 82% · Completed 27 Sep": WHEN the AI
+  // interview was completed, from the pipeline history (the move into AI
+  // Interview Completed). No new column: the stage event is the record.
+  const aiDoneIds = ai.filter((r) => r.status === 'Completed').map((r) => r.id);
+  if (aiDoneIds.length) {
+    const doneAt = new Map();
+    for (let i = 0; i < aiDoneIds.length; i += 500) {
+      // eslint-disable-next-line no-await-in-loop
+      const evs = await prisma.applicationStageEvent.findMany({
+        where: { applicationId: { in: aiDoneIds.slice(i, i + 500) }, toStage: 'AI_INTERVIEW_COMPLETED' },
+        select: { applicationId: true, createdAt: true },
+      });
+      evs.forEach((e) => {
+        const prev = doneAt.get(e.applicationId);
+        if (!prev || e.createdAt > prev) doneAt.set(e.applicationId, e.createdAt);
+      });
+    }
+    ai.forEach((r) => { r.completedAt = doneAt.get(r.id) || null; });
+  }
 
   // Filter option lists, built from what is actually on the calendar — the
   // prototype derives its client/date dropdowns the same way.
   const uniq = (xs) => [...new Set(xs.filter(Boolean))].sort();
+  const shortlisted = shortlistedApps.map((a) => ({
+    id: a.id,
+    candidate: a.candidate,
+    requirement: {
+      id: a.requirement.id, title: a.requirement.title, department: a.requirement.department,
+      client: a.requirement.client ? { id: a.requirement.client.id, name: a.requirement.client.name } : null,
+    },
+    shortlistedAt: a.updatedAt,
+    hiringType: hiringTypeOf(a, a.requirement),
+  }));
   res.json({
     recruitment,
     ai,
+    shortlisted,
     statuses: INTERVIEW_STATUS_CODES,
     types: INTERVIEW_TYPES,
+    kinds: INTERVIEW_KINDS,
+    slotTypes: INTERVIEW_SLOT_TYPES,
     modes: INTERVIEW_MODES,
     recommendations: INTERVIEW_RECOMMENDATIONS,
     hiringTypes: HIRING_TYPES,
@@ -219,13 +326,22 @@ async function loadInterview(req, res) {
     res.status(403).json({ error: "This action isn't included in your role's permissions" });
     return null;
   }
-  const app = await prisma.application.findUnique({
-    where: { id: req.params.id },
+  // SCOPE: acting needs the record to be in YOUR scope, the same fragment the
+  // calendar list uses — loading by id alone let any recruiter cancel or
+  // reschedule another team's interview.
+  const app = await prisma.application.findFirst({
+    where: { AND: [{ id: req.params.id }, calendarScope(req.user)] },
     include: { candidate: true, requirement: { include: { client: true } } },
   });
-  if (!app) { res.status(404).json({ error: 'Application not found' }); return null; }
+  if (!app) { await notFoundOrOutOfScope(req, res); return null; }
   if (!app.interviewStatus) { res.status(400).json({ error: 'No interview on this application' }); return null; }
   return app;
+}
+
+async function notFoundOrOutOfScope(req, res) {
+  const exists = await prisma.application.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (exists) res.status(403).json({ error: 'This record is outside your access scope' });
+  else res.status(404).json({ error: 'Application not found' });
 }
 
 async function recordEvent(applicationId, status, extra = {}) {
@@ -265,6 +381,26 @@ router.patch('/interviews/:id/advance', async (req, res) => {
     entity: 'Application', entityId: app.id,
     fromValue: interviewStatusLabel(app.interviewStatus), toValue: interviewStatusLabel(updated.interviewStatus),
   });
+  await respondWith(res, app.id);
+});
+
+// Review #2 §16 — record which kind of interview this is (Recruiter / TL /
+// Client Interview) in the existing interviewType column. The AI interview is
+// its own record and is never set here.
+router.patch('/interviews/:id/type', async (req, res) => {
+  const app = await loadInterview(req, res);
+  if (!app) return;
+  const type = String(req.body.interviewType || req.body.type || '').trim();
+  if (!INTERVIEW_SLOT_TYPES.includes(type)) {
+    return res.status(400).json({ error: `Interview type must be one of: ${INTERVIEW_SLOT_TYPES.join(', ')}` });
+  }
+  if (app.interviewType !== type) {
+    await prisma.application.update({ where: { id: app.id }, data: { interviewType: type } });
+    await logAudit({
+      userId: req.user.id, action: `Interview type set — ${type}`, entity: 'Application',
+      entityId: app.id, fromValue: app.interviewType || '—', toValue: type,
+    });
+  }
   await respondWith(res, app.id);
 });
 
@@ -386,6 +522,13 @@ router.post('/interviews/:id/feedback', async (req, res) => {
     update: data,
   });
   await recordEvent(app.id, 'FEEDBACK_SUBMITTED', { reason: `Feedback recorded — ${result}`, by: req.user.name });
+  // §32 — Interview Scheduled -> Interview Completed is a stage move: history,
+  // follow-ups and the next person's notification (utils/stageEvents.js).
+  if (app.stage === 'INTERVIEW_SCHEDULED') {
+    await recordWorkflowMove({
+      user: req.user, existing: app, toStage: 'INTERVIEW_COMPLETED', action: 'Interview feedback recorded',
+    });
+  }
   await logAudit({
     userId: req.user.id, action: `Interview feedback recorded — ${result}`, entity: 'Application',
     entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'Feedback Submitted',
@@ -402,8 +545,11 @@ async function loadAi(req, res) {
     res.status(403).json({ error: "This action isn't included in your role's permissions" });
     return null;
   }
-  const app = await prisma.application.findUnique({ where: { id: req.params.id }, include: { candidate: true } });
-  if (!app) { res.status(404).json({ error: 'Application not found' }); return null; }
+  const app = await prisma.application.findFirst({
+    where: { AND: [{ id: req.params.id }, calendarScope(req.user)] },
+    include: { candidate: true },
+  });
+  if (!app) { await notFoundOrOutOfScope(req, res); return null; }
   return app;
 }
 
@@ -446,16 +592,183 @@ router.post('/ai-interviews/:id/manual-review', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Global search across candidates, clients and requirements.
+// GLOBAL SEARCH — "Search TeamLink" (review #3 §13; spec §24 before it). One
+// box: candidate name / phone / email / Candidate ID, client name / code /
+// GSTIN, requirement ID / title, employee name / Employee ID. Results come back
+// grouped and TYPED — CANDIDATE · CLIENT · REQUIREMENT · EMPLOYEE — each row
+// with its ID (`code`) and the page it opens (`to`). `counts` are the full
+// totals, each list its first `limit` rows (?limit=5 for the top-bar dropdown,
+// SEARCH_TAKE for the results page).
+//
+// SCOPED like every list it links to:
+//   Candidates    the caller's candidate scope (a client: only candidates
+//                 SHARED with them); contact details for internal users only
+//   Requirements  the caller's requirement scope — matched on title, code or
+//                 the client's name, and each carries its client's NAME, which
+//                 is all a non-client-desk role ever sees of a client
+//   Clients       the client desk only (SA / Admin / Manager / Asst Manager /
+//                 BDE — permissions "Client List"); `clientsAllowed` says so.
+//                 Everyone else gets NO client records, only the name on a
+//                 requirement row.
+//   Employees     only a login that may view employee records (HRMS ->
+//                 Employee Management / view — HR, the leads, SA / Admin) and
+//                 only inside their employee scope (utils/scope.js
+//                 employeeWhere: a TL their team, an STL their departments …).
+//                 A recruiter, a BDE, a client: none. `employeesAllowed` says so.
+//
+// Candidate ID is printed as Candidate 360 prints it — "ID 4UKHHT91", the
+// record id's last eight characters, upper-case — and
+// a client with no stored Client ID CL-XXXXXX (utils/clientDuplicates
+// displayCode) — both are accepted back as search terms.
+const SEARCH_TAKE = 50;
 router.get('/search', async (req, res) => {
-  const q = (req.query.q || '').trim();
-  if (!q) return res.json({ candidates: [], clients: [], requirements: [] });
-  const [candidates, clients, requirements] = await Promise.all([
-    prisma.candidate.findMany({ where: { name: { contains: q } } }),
-    prisma.client.findMany({ where: { name: { contains: q } } }),
-    prisma.requirement.findMany({ where: { title: { contains: q } }, include: { client: true } }),
+  // eslint-disable-next-line global-require
+  const { employeeWhere } = require('../utils/scope');
+  // eslint-disable-next-line global-require
+  const { displayCode } = require('../utils/clientDuplicates');
+  // eslint-disable-next-line global-require
+  const { stageLabel } = require('../utils/atsVocab');
+  const q = String(req.query.q || '').trim().slice(0, 100);
+  const take = Math.min(SEARCH_TAKE, Math.max(1, Number(req.query.limit) || SEARCH_TAKE));
+  const s = scopeOf(req.user);
+  const external = ['CLIENT', 'CANDIDATE'].includes(s.atsRole) || ['CLIENT', 'CANDIDATE'].includes(s.role);
+  const [clientDesk, employeeView] = await Promise.all([
+    can(req.user, 'ats', 'clients', 'Client List', 'view'),
+    external ? false : can(req.user, 'hrms', 'hrms', 'Employee Management', 'view'),
   ]);
-  res.json({ candidates, clients, requirements });
+  const empty = {
+    q, candidates: [], requirements: [], clients: [], employees: [],
+    counts: { candidates: 0, requirements: 0, clients: 0, employees: 0 },
+    clientsAllowed: !!clientDesk, employeesAllowed: !!employeeView,
+  };
+  if (!q) return res.json(empty);
+  const isClient = s.atsRole === 'CLIENT' || s.role === 'CLIENT';
+  // A client's candidates are only those SHARED with them (same gate as
+  // routes/candidates.js); everyone else uses the ordinary candidate scope.
+  const appScope = isClient
+    ? { AND: [applicationWhere(req.user), { stage: { in: CLIENT_SHARED_STAGES } }] }
+    : applicationWhere(req.user);
+  const candScope = isClient ? { applications: { some: appScope } } : candidateWhere(req.user);
+  // A phone number is typed with spaces, dashes or +91 — match on its digits.
+  const digits = q.replace(/\D/g, '');
+  // A record id, or its last 6-10 characters as the screens print it — with
+  // or without the CAN- / CL- prefix.
+  const bare = q.replace(/^(id|can|cand|cl)[-\s#:]*/i, '');
+  const idLike = /^[a-z0-9]{6,}$/i.test(bare) ? bare.toLowerCase() : '';
+  const idArms = idLike ? [{ id: idLike }, ...(idLike.length <= 10 ? [{ id: { endsWith: idLike } }] : [])] : [];
+  const candMatch = {
+    OR: [
+      { name: { contains: q } },
+      ...idArms,
+      ...(isClient ? [] : [{ email: { contains: q } }, { phone: { contains: q } }]),
+      ...(!isClient && digits.length >= 4 && digits !== q ? [{ phone: { contains: digits.slice(-10) } }] : []),
+    ],
+  };
+  const reqMatch = {
+    OR: [
+      { title: { contains: q } },
+      { reqCode: { contains: q } },
+      { id: q },
+      { client: { is: { name: { contains: q } } } },
+    ],
+  };
+  const candWhere = { AND: [candScope, candMatch] };
+  const reqWhere = { AND: [requirementWhere(req.user), reqMatch] };
+  // A client by name, legal name, GSTIN, stored client code or display code.
+  const clientWhereQ = {
+    AND: [clientWhere(req.user), {
+      OR: [
+        { name: { contains: q } }, { legalName: { contains: q } },
+        { gst: { contains: q.toUpperCase() } }, { clientCode: { contains: q } },
+        ...(/^cl[-\s#:]/i.test(q) ? idArms : []),
+      ],
+    }],
+  };
+  const empWhere = employeeView
+    ? { AND: [employeeWhere(req.user), { OR: [{ name: { contains: q } }, { employeeCode: { contains: q } }] }] }
+    : null;
+  const [candidates, candCount, requirements, reqCount, clients, clientCount, employees, empCount] = await Promise.all([
+    prisma.candidate.findMany({
+      where: candWhere,
+      select: {
+        id: true,
+        name: true,
+        ...(isClient ? {} : { email: true, phone: true }),
+        applications: {
+          where: appScope,
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+          select: { stage: true, requirementId: true, requirement: { select: { title: true, reqCode: true } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+      take,
+    }),
+    prisma.candidate.count({ where: candWhere }),
+    prisma.requirement.findMany({
+      where: reqWhere,
+      select: {
+        id: true, title: true, reqCode: true, status: true, department: true,
+        client: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    }),
+    prisma.requirement.count({ where: reqWhere }),
+    clientDesk
+      ? prisma.client.findMany({ where: clientWhereQ, select: { id: true, name: true, clientCode: true, gst: true, location: true }, orderBy: { name: 'asc' }, take })
+      : [],
+    clientDesk ? prisma.client.count({ where: clientWhereQ }) : 0,
+    empWhere
+      ? prisma.employee.findMany({
+        where: empWhere,
+        select: { id: true, name: true, employeeCode: true, department: true, designation: true, employmentStatus: true },
+        orderBy: { name: 'asc' },
+        take,
+      })
+      : [],
+    empWhere ? prisma.employee.count({ where: empWhere }) : 0,
+  ]);
+  const candidateCode = (id) => `ID ${String(id).slice(-8).toUpperCase()}`;
+  res.json({
+    ...empty,
+    candidates: candidates.map((c) => {
+      const last = c.applications[0];
+      return {
+        type: 'CANDIDATE',
+        id: c.id,
+        code: candidateCode(c.id),
+        name: c.name,
+        email: c.email || null,
+        phone: c.phone || null,
+        requirement: last && last.requirement ? last.requirement.title : null,
+        requirementCode: last && last.requirement ? last.requirement.reqCode || null : null,
+        stageLabel: last ? stageLabel(last.stage) : null,
+        to: `/candidates/${c.id}`,
+      };
+    }),
+    requirements: requirements.map((r) => ({
+      type: 'REQUIREMENT',
+      id: r.id, code: r.reqCode || null, title: r.title, reqCode: r.reqCode, status: r.status, department: r.department,
+      // The client's NAME only — never the client record — for every role.
+      client: r.client ? { id: r.client.id, name: r.client.name } : null,
+      to: `/requirements/${r.id}`,
+    })),
+    clients: clients.map((c) => ({
+      type: 'CLIENT', ...c, code: displayCode(c), to: `/clients/${c.id}`,
+    })),
+    employees: employees.map((e) => ({
+      type: 'EMPLOYEE',
+      id: e.id,
+      code: e.employeeCode,
+      name: e.name,
+      roleLabel: e.designation || null,
+      department: e.department || null,
+      status: e.employmentStatus || null,
+      to: `/employees/${e.id}`,
+    })),
+    counts: { candidates: candCount, requirements: reqCount, clients: clientCount, employees: empCount },
+  });
 });
 
 module.exports = router;

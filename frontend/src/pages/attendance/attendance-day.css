@@ -1,0 +1,37 @@
+/* Attendance day report (Dashboard / Biometric list / Punch Log) — scoped under .att-day */
+.att-day .att-day-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.att-day .att-day-bar input[type=date]{width:auto}
+.att-day .att-day-bar .att-day-name{font-weight:600;font-size:13.5px;margin:0 6px}
+.att-day .att-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:8px}
+.att-day .att-kpi{border:1px solid var(--line);background:var(--paper-raised);border-radius:9px;padding:10px 12px;text-align:left;cursor:pointer;
+  font:inherit;color:inherit;transition:background .12s,border-color .12s}
+.att-day .att-kpi:hover{background:var(--navy-tint);border-color:var(--navy)}
+.att-day .att-kpi.on{border-color:var(--navy);box-shadow:inset 0 0 0 1px var(--navy);background:var(--navy-tint)}
+.att-day .att-kpi.total{cursor:default;background:var(--paper)}
+.att-day .att-kpi .v{font-family:'Newsreader',serif;font-size:21px;font-weight:600;line-height:1.1}
+.att-day .att-kpi .l{font-size:11.5px;color:var(--ink-soft);margin-top:2px;line-height:1.3}
+.att-day .att-kpi .h{font-size:10.5px;color:var(--ink-soft);margin-top:3px;line-height:1.3;opacity:.85}
+.att-day .att-kpis.info .att-kpi .v{font-size:17px}
+.att-day .att-kpi-sep{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);margin:8px 0 6px}
+.att-day .att-eq{font-size:12px;color:var(--ink-soft);margin:2px 0 10px;line-height:1.5}
+.att-day .att-eq b{color:var(--ink)}
+.att-day .att-date-row td{background:var(--paper);font-size:12.5px;border-top:2px solid var(--line)}
+.att-day .att-date-row b{font-size:13px}
+.att-day .att-times{font-size:12px;line-height:1.45;max-width:260px}
+.att-day .att-sub{font-size:11px;color:var(--ink-soft);margin-top:2px}
+.att-day .att-num{text-align:center}
+.att-day tfoot td{font-weight:600;background:var(--paper);border-top:2px solid var(--line)}
+.att-day .att-empty-hint{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.att-day .att-group-head{background:var(--paper);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:center}
+.att-day .notice.att-notice{display:block}
+/* ScrollTable styles moved to components/ScrollTable.css with the component. */
+.att-day .att-imp-tag{display:inline-block;font-size:10px;font-weight:600;padding:0 5px;border-radius:8px;background:var(--navy-tint);color:var(--navy);margin-left:4px;vertical-align:middle}
+.att-hist-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0 8px}
+.att-hist-chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 8px;border-radius:12px;border:1px solid var(--line);background:var(--paper-raised)}
+.att-hist-chip button{border:0;background:none;cursor:pointer;padding:0 2px;color:var(--ink-soft)}
+.att-day tr.att-emp-first td{border-top:2px solid var(--line)}
+/* Import History — sample files (unique .att-samples prefix) */
+.att-samples{border:1px solid var(--line);border-radius:10px;background:var(--paper);padding:12px 14px;margin:6px 0 12px}
+.att-samples-head{font-weight:700;font-size:13px;margin-bottom:8px}
+.att-samples-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.att-sample code{font-size:11px;background:var(--paper-raised);padding:0 3px;border-radius:3px}

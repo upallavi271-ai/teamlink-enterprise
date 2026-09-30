@@ -1,0 +1,34 @@
+/* Employee Management — Bulk Import and Global Export (scoped under .empio). */
+.empio .empio-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.empio .empio-lead { margin: 6px 0 10px; }
+.empio .empio-fields { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.empio .empio-chip {
+  display: inline-block; font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--bg, transparent); color: var(--ink-soft, inherit);
+}
+.empio .empio-chip.req { border-color: var(--amber, #d97706); font-weight: 600; }
+.empio .empio-check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin-bottom: 10px; }
+.empio .empio-check input { width: auto; margin-top: 2px; }
+.empio .empio-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.empio .empio-row input[type='date'] { width: auto; }
+.empio .empio-radio { display: inline-flex; gap: 4px; align-items: center; font-size: 12.5px; }
+.empio .empio-radio input { width: auto; }
+.empio .empio-paste { margin-bottom: 10px; font-size: 12.5px; }
+.empio .empio-paste textarea {
+  width: 100%; margin-top: 6px; padding: 8px; border-radius: 7px; border: 1px solid var(--line);
+  font-family: monospace; font-size: 12px;
+}
+.empio .empio-out { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.empio .empio-counts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.empio .empio-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.empio .empio-group { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin: 0 0 10px; }
+.empio .empio-group.sensitive { border-style: dashed; }
+.empio .empio-group legend { font-size: 12px; font-weight: 600; padding: 0 6px; display: flex; gap: 8px; align-items: center; }
+.empio .empio-group legend .link-btn { background: none; border: 0; cursor: pointer; font-size: 11.5px; font-weight: 400; }
+.empio .empio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+.empio .empio-field { display: flex; gap: 6px; align-items: center; font-size: 12.5px; cursor: pointer; }
+.empio .empio-field input { width: auto; }
+.empio .empio-field.locked { opacity: 0.55; cursor: not-allowed; }
+@media (max-width: 640px) {
+  .empio .empio-grid { grid-template-columns: 1fr; }
+}

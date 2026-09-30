@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
@@ -7,6 +7,7 @@ import {
 } from './Invoices.jsx';
 import { canManageAccounts } from '../permissions';
 import Combo from '../components/Combo.jsx';
+import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -63,15 +64,45 @@ export default function InvoiceDetail() {
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null); // 'client' | 'internal'
   const [send, setSend] = useState(null);
+  const [showAccount, setShowAccount] = useState(false);
   const [form, setForm] = useState({
     amount: '', date: today(), method: 'Bank Transfer', reference: '', notes: '',
   });
 
+  const location = useLocation();
   const load = useCallback(() => {
-    api.get(`/invoices/${id}`).then((res) => setInvoice(res.data));
+    api.get(`/invoices/${id}`).then((res) => setInvoice(res.data))
+      .catch((e) => setError(e.response?.data?.error || 'This invoice could not be loaded.'));
     api.get(`/invoices/${id}/document`).then((res) => setDoc(res.data)).catch(() => setDoc(null));
   }, [id]);
   useEffect(load, [load]);
+  // /invoices/:id#proof and #tds (the register's Proof and TDS Cert links)
+  // land on their own section once the invoice has loaded.
+  const loaded = !!invoice;
+  useEffect(() => {
+    if (!loaded || !location.hash) return;
+    const el = document.getElementById(location.hash.slice(1));
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }, [loaded, location.hash]);
+
+  // The Form 16A file — upload, view (fetched with the login's token), remove.
+  const uploadTdsCert = (file) => run(async () => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) throw new Error('That file is larger than 5MB.');
+    const fd = new FormData();
+    fd.append('file', file);
+    await api.post(`/invoices/${id}/tds-certificate/file`, fd);
+  });
+  const viewTdsCert = async () => {
+    try {
+      const res = await api.get(`/invoices/${id}/tds-certificate/file`, { params: { inline: 1 }, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      setError('The TDS certificate file could not be opened.');
+    }
+  };
 
   async function run(fn) {
     setError('');
@@ -79,7 +110,7 @@ export default function InvoiceDetail() {
       await fn();
       load();
     } catch (e) {
-      setError(e.response?.data?.error || 'That did not work.');
+      setError(e.response?.data?.error || e.message || 'That did not work.');
     }
   }
 
@@ -91,7 +122,11 @@ export default function InvoiceDetail() {
     });
   };
 
-  if (!invoice) return <div className="small-muted">Loading…</div>;
+  if (!invoice) {
+    return error
+      ? <div><Link className="small-muted" to="/invoices">← Back to invoices</Link><div className="notice red" style={{ marginTop: 10 }}><span>{error}</span></div></div>
+      : <div className="small-muted">Loading…</div>;
+  }
 
   const payments = invoice.payments || [];
   const billing = Number(invoice.amount || 0);
@@ -106,6 +141,11 @@ export default function InvoiceDetail() {
   const tdsPct = invoice.tdsPercent ?? invoice.client?.tdsPercent ?? null;
   const modes = [...new Set(payments.map((p) => p.method || '—'))];
   const noProof = payments.filter((p) => !p.reference);
+  const proofLines = invoice.proofLines || [];
+  // Where the invoice stands by what has been matched against it.
+  const settleWord = invoice.status === 'Cancelled' ? 'Cancelled'
+    : pending <= 0.5 ? 'Settled' : (received > 0 ? 'Partially paid' : 'Pending');
+  const settleTone = settleWord === 'Settled' ? 'priority-low' : settleWord === 'Partially paid' ? 'priority-medium' : '';
 
   const printDoc = (mode) => {
     if (!doc) return;
@@ -131,7 +171,7 @@ export default function InvoiceDetail() {
           </div>
         </div>
         <div className="qa-row">
-          {invoice.clientId && <Link className="btn btn-sm" to={`/clients/${invoice.clientId}`}>Client statement</Link>}
+          {invoice.clientId && <button type="button" className="btn btn-sm" onClick={() => setShowAccount(true)}>Client account</button>}
           <button className="btn btn-sm" onClick={() => setPreview('client')} disabled={!doc}>👁 View invoice</button>
           {canManage && <button className="btn btn-sm" onClick={() => setSend('email')} disabled={!doc}>✉ Send invoice</button>}
         </div>
@@ -287,6 +327,52 @@ export default function InvoiceDetail() {
         )}
       </div>
 
+      {/* The bank statement lines that prove the money arrived — linked on
+          Bank & Reconciliation, automatically when the narration names this
+          invoice or client clearly, otherwise once someone confirms it. */}
+      <div className="card section" id="proof">
+        <h3>Bank statement proof</h3>
+        <div className="small-muted" style={{ marginBottom: 10 }}>
+          {proofLines.length
+            ? `${proofLines.length} statement line(s) · ${money2(proofLines.reduce((s, l) => s + Number(l.applied || 0), 0))} applied to this invoice · `
+            : 'No bank statement line is linked to this invoice yet · '}
+          <span className={`status ${settleTone}`}>{settleWord}</span>
+        </div>
+        <div className="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Statement date</th><th>Reference</th><th className="num">Line amount</th>
+                <th className="num">Applied to this invoice</th><th>Bank</th><th>Narration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proofLines.map((l) => (
+                <tr key={l.txnId}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtD(l.date)}</td>
+                  <td className="inv-mono">{l.reference || '—'}</td>
+                  <td className="num">{money2(l.amount)}</td>
+                  <td className="num" style={{ fontWeight: 600 }}>
+                    {money2(l.applied)}
+                    {l.linkedOnly && <div className="small-muted">linked to a receipt recorded by hand</div>}
+                  </td>
+                  <td className="small-muted">{l.bank || '—'}</td>
+                  <td className="small-muted" style={{ maxWidth: 420 }}>{String(l.description || '').slice(0, 160)}</td>
+                </tr>
+              ))}
+              {!proofLines.length && (
+                <tr>
+                  <td colSpan="6" className="small-muted">
+                    When a bank statement is imported, a credit that names this invoice number or this client (with an amount that fits)
+                    is linked here automatically; anything less certain waits under “Possible matches” on Bank &amp; Reconciliation.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="card section">
         <h3>Candidates on this invoice</h3>
         <div className="small-muted" style={{ marginBottom: 10 }}>{invoice.candidate ? 1 : 0} line(s)</div>
@@ -338,7 +424,7 @@ export default function InvoiceDetail() {
             )}
           </span>
         </div>
-        <div className="kv">
+        <div className="kv" id="tds">
           <span className="k">TDS certificate (Form 16A)</span>
           <span>
             {tds <= 0.5
@@ -357,6 +443,27 @@ export default function InvoiceDetail() {
               )}
           </span>
         </div>
+        {tds > 0.5 && (
+          <div className="kv">
+            <span className="k">Certificate file</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {invoice.tdsCertHasFile
+                ? (
+                  <>
+                    <button type="button" className="btn btn-sm" onClick={viewTdsCert}>View {invoice.tdsCertName || 'file'}</button>
+                    {canManage && <button type="button" className="btn btn-sm" onClick={() => run(() => api.delete(`/invoices/${id}/tds-certificate/file`))}>Remove file</button>}
+                  </>
+                )
+                : <span className="small-muted">No file uploaded</span>}
+              {canManage && (
+                <label className="btn btn-sm" style={{ margin: 0, cursor: 'pointer' }}>
+                  {invoice.tdsCertHasFile ? 'Replace file' : 'Upload Form 16A'}
+                  <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={(e) => { uploadTdsCert(e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+              )}
+            </span>
+          </div>
+        )}
       </div>
 
       {invoice.candidate && (
@@ -413,6 +520,10 @@ export default function InvoiceDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {showAccount && (
+        <ClientAccountModal clientId={invoice.clientId} clientName={invoice.client?.name} onClose={() => setShowAccount(false)} />
       )}
 
       {send && doc && (

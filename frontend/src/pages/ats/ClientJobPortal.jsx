@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
-import ClientModuleTabs from '../../components/ClientModuleTabs.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { can, canDecideAsClient, canSeeClientPortal } from '../../permissions';
+import { can, canDecideAsClient, canSeeClientPortal, isClientUser } from '../../permissions';
+import ClientPortal from '../portal/ClientPortal.jsx';
+import { Modal } from '../../components/proto.jsx';
+import Combo from '../../components/Combo.jsx';
+import AtsDataTools from '../../components/AtsDataTools.jsx';
+import { REJECTION_REASONS_BY_SIDE } from '../../atsVocab';
 
 // ---------------------------------------------------------------------------
 // C. The CLIENT portal view.
@@ -36,13 +40,25 @@ const stageBadge = (s) => {
 
 const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
-export default function ClientJobPortal() {
+// User notes #4 — a CLIENT login gets the full client portal (profile,
+// requirements, candidates for review, interviews, selected & joined,
+// agreement). Anyone else holding Client Job Portal (Super Admin) keeps the
+// cross-client view below.
+export default function ClientJobPortalRoute() {
+  const { user } = useAuth();
+  return isClientUser(user) ? <ClientPortal /> : <ClientJobPortal />;
+}
+
+function ClientJobPortal() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState('');
+  // A client's Reject asks WHY first. The recruiter who has to find this
+  // candidate another role needs the reason; a bare 'rejected' tells them nothing.
+  const [rejecting, setRejecting] = useState(null);
   const [view, setView] = useState('requirements');
 
   const load = useCallback(() => {
@@ -57,9 +73,9 @@ export default function ClientJobPortal() {
   // The confirmation must not claim a move that did not happen: Request
   // Interview records the ask and changes no stage, so it says so instead of
   // reading back whatever stage the candidate was already sitting at.
-  function decide(app, decision, label) {
+  function decide(app, decision, label, extra) {
     setBusy(app.applicationId); setError(''); setNotice('');
-    Promise.resolve(api.post(`/job-portal/client/applications/${app.applicationId}/decision`, { decision }))
+    Promise.resolve(api.post(`/job-portal/client/applications/${app.applicationId}/decision`, { decision, ...(extra || {}) }))
       .then((r) => {
         setNotice(decision === 'REQUEST_INTERVIEW'
           ? `${app.name}: interview requested. The recruiter has been notified and will schedule it — the candidate stays at ${r.data.stageLabel}.`
@@ -102,13 +118,13 @@ export default function ClientJobPortal() {
             your requirements, whether each is published, and the candidates shared with you
           </div>
         </div>
+        {/* Export only: the client's own requirements / shared candidates. */}
+        <AtsDataTools module="client-portal" kinds={[]} body={() => ({ view: view === 'candidates' ? 'candidates' : 'requirements' })} />
       </div>
 
-      {/* The same Clients · Requirements · Agreements · Job Portal strip the
-          rest of the module shows, so a client lands here from Jobs /
-          Requirements and can get back. The strip picks THIS screen for them
-          because they hold Client Job Portal and not Job Portal Workspace. */}
-      <ClientModuleTabs active="jobportal" />
+      {/* No Clients · Requirements · Agreements · Job Portal strip any more
+          (2026-09-29): the Job Portal is candidate intake, not a Requirements
+          tab, so this page is simply the client's own portal. */}
 
       {/* .notice is display:flex — one child, or every phrase becomes a column. */}
       {error && <div className="notice red"><span>{error}</span></div>}
@@ -214,7 +230,7 @@ export default function ClientJobPortal() {
                               <button
                                 className="btn btn-sm btn-ghost"
                                 disabled={busy === c.applicationId}
-                                onClick={() => decide(c, 'REJECT', 'Reject')}
+                                onClick={() => setRejecting({ app: c, reasonCategory: '', reasonDetail: '' })}
                               >Reject</button>
                             </>
                           )}
@@ -238,6 +254,39 @@ export default function ClientJobPortal() {
             that no one arranged. Interview feedback stays on the interview record itself.
           </div>
         </>
+      )}
+
+      {rejecting && (
+        <Modal
+          title={`Reject — ${rejecting.app.name}`}
+          onClose={() => setRejecting(null)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setRejecting(null)}>Cancel</button>
+              <button
+                className="btn btn-danger"
+                disabled={!rejecting.reasonCategory && !rejecting.reasonDetail.trim()}
+                onClick={() => {
+                  const r = rejecting;
+                  setRejecting(null);
+                  decide(r.app, 'REJECT', 'Reject', { reasonCategory: r.reasonCategory, reasonDetail: r.reasonDetail });
+                }}
+              >Reject candidate</button>
+            </>
+          )}
+        >
+          <label className="field">
+            <span>Why? *</span>
+            <Combo creatable value={rejecting.reasonCategory} onChange={(e) => setRejecting({ ...rejecting, reasonCategory: e.target.value })}>
+              <option value="">— Select —</option>
+              {REJECTION_REASONS_BY_SIDE.Client.map((x) => <option key={x} value={x}>{x}</option>)}
+            </Combo>
+          </label>
+          <label className="field">
+            <span>Anything more specific</span>
+            <textarea rows="3" value={rejecting.reasonDetail} onChange={(e) => setRejecting({ ...rejecting, reasonDetail: e.target.value })} />
+          </label>
+        </Modal>
       )}
     </div>
   );

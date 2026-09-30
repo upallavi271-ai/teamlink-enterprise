@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { workRoleLabel } from '../../permissions';
+import ChangePasswordCard from '../../components/ChangePasswordCard.jsx';
 
 // Profile — the prototype's adminProfileView() (line 10593) is a single card
 // with Name and Role. Main's editable form is kept below it: changing your own
@@ -11,7 +12,6 @@ import { workRoleLabel } from '../../permissions';
 export default function Profile() {
   const { user } = useAuth();
   const [name, setName] = useState(user?.name || '');
-  const [password, setPassword] = useState('');
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
@@ -19,10 +19,8 @@ export default function Profile() {
     e.preventDefault();
     setError(''); setSaved(false);
     try {
-      const payload = { name };
-      if (password) payload.password = password;
-      await api.put('/auth/me', payload);
-      setPassword('');
+      // The password has its own form below (current + new + confirm).
+      await api.put('/auth/me', { name });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -38,12 +36,18 @@ export default function Profile() {
         <div className="kv"><span className="k">Name</span><span>{user?.name}</span></div>
         <div className="kv"><span className="k">Role</span><span>{workRoleLabel(user)}</span></div>
         <div className="kv"><span className="k">Employee profile</span>
-          <span>
-            <Link to="/my-profile">Open your employee profile</Link>
-            <span className="small-muted" style={{ marginLeft: 8 }}>
-              Personal, bank and document details, and the review lifecycle.
+          {user?.systemAccount ? (
+            <span className="small-muted">
+              Super Admin is a system account, not an employee — there is no employee profile to complete.
             </span>
-          </span>
+          ) : (
+            <span>
+              <Link to="/my-profile">Open your employee profile</Link>
+              <span className="small-muted" style={{ marginLeft: 8 }}>
+                Personal, bank and document details, and the review lifecycle.
+              </span>
+            </span>
+          )}
         </div>
       </div>
 
@@ -54,11 +58,11 @@ export default function Profile() {
           <input value={name} onChange={(e) => setName(e.target.value)} /></div>
         <div className="field"><label>Email</label>
           <input value={user?.email || ''} disabled /></div>
-        <div className="field"><label>New password (optional)</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} type="submit">Save</button>
         {saved && <span className="small-muted" style={{ marginLeft: 10 }}>Saved.</span>}
       </form>
+
+      <ChangePasswordCard style={{ marginTop: 14 }} />
     </div>
   );
 }

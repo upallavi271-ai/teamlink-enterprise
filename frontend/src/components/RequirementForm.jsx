@@ -3,6 +3,10 @@ import api from '../api';
 import Modal, { SectionHead } from './Modal.jsx';
 import Combo from './Combo.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { can, productRole, canPublishToPortal } from '../permissions';
+import { PRIORITY_CHOICES, priorityLabel } from './jobs/reqFormat.jsx';
+import { useHierarchy } from './HierarchyFilter.jsx';
+import { assignCascade } from './jobs/assignCascade.js';
 import {
   DEPTS, deptOptions, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
   JOINING_TIMELINES, NOTICE_PERIODS_MAX, JOB_PREFERENCES, SALARY_TYPES, CURRENCIES,
@@ -95,7 +99,42 @@ function splitExperience(value, fallback) {
 function splitSalary(value) {
   const nums = String(value || '').match(/\d+(?:\.\d+)?/g);
   if (!nums || !nums.length) return ['', ''];
+  // "up to ₹15L" is a maximum only.
+  if (/up to/i.test(String(value))) return ['', nums[0]];
   return [nums[0], nums[1] !== undefined ? nums[1] : ''];
+}
+// The stored salary band. Either end may be left blank — a one-sided band
+// used to be thrown away as "—".
+function salaryBand(min, max) {
+  if (min && max) return `₹${min}L - ₹${max}L`;
+  if (min) return `₹${min}L+`;
+  if (max) return `up to ₹${max}L`;
+  return '—';
+}
+
+// Everything the server would refuse, said up front and all at once.
+// kind: 'draft' | 'activate' | 'post' | 'edit'.
+export function formProblems(form, { kind, internal, editing }) {
+  const out = [];
+  if (!String(form.title || '').trim()) out.push('Job Title is required.');
+  const openings = Number(form.openings);
+  if (!Number.isInteger(openings) || openings < 1 || openings > 999) out.push('Number of Openings must be a whole number from 1 to 999.');
+  if (!editing && !internal && !form.clientId) out.push('Select a Client (or change Requirement Type to Internal Requirement).');
+  if (kind !== 'draft') {
+    if (!String(form.department || '').trim()) out.push('Department is required.');
+    if (!String(form.jobDescription || '').trim()) out.push('Full Job Description is required (use Save Draft to finish it later).');
+    if (!String(form.skills || '').trim()) out.push('Enter at least one Mandatory Skill (comma separated).');
+  }
+  const min = Number(form.expMin); const max = Number(form.expMax);
+  if (form.expMin !== '' && form.expMax !== '' && min > max) out.push('Minimum Experience cannot be more than Maximum Experience.');
+  const sMin = Number(form.salaryMin); const sMax = Number(form.salaryMax);
+  if (form.salaryMin !== '' && form.salaryMax !== '' && sMin > sMax) out.push('Minimum Salary cannot be more than Maximum Salary.');
+  if (!editing) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (form.closingDate && form.closingDate < today) out.push('Closing Date is in the past.');
+    if (form.targetDate && form.targetDate < today) out.push('Target Date is in the past.');
+  }
+  return out;
 }
 
 // A saved requirement, read back into the form's shape. Every field the form
@@ -154,6 +193,8 @@ export default function RequirementForm({
   clients = [],
   team = [],
   canAssign = true,
+  // ?new=1&clientId= (Clients → + New Requirement) pre-selects the client.
+  initialClientId = '',
   onClose,
   onSaved,
 }) {
@@ -162,11 +203,28 @@ export default function RequirementForm({
   const { user } = useAuth();
   const departments = deptOptions(user);
   const editing = mode === 'edit';
+  const atsRole = productRole(user, 'ats');
+  // Agreement steps are the Admin's (clients / Agreement Lifecycle); the
+  // client record is the client desk's. The gate message says who does what.
+  const canRunAgreement = can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit');
+  const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   const [form, setForm] = useState(() => (editing
     ? formFromRequirement(requirement)
     // EMPTY.department is DEPTS[0] ('IT'), which a Medical TL may not raise
-    // for — start them on the first department they actually hold.
-    : { ...EMPTY, department: departments[0] || EMPTY.department }));
+    // for — start them on the first department they actually hold. A TL / STL
+    // / BDE raising a requirement starts on its chain in their own role (the
+    // server does the same), so it never vanishes from their own list.
+    : {
+      ...EMPTY,
+      department: departments[0] || EMPTY.department,
+      tlId: atsRole === 'TL' ? (user?.id || '') : '',
+      tl: atsRole === 'TL' ? (user?.name || '') : '',
+      stlId: atsRole === 'STL' ? (user?.id || '') : '',
+      stl: atsRole === 'STL' ? (user?.name || '') : '',
+      bdeId: atsRole === 'BDE' ? (user?.id || '') : '',
+      clientId: initialClientId || '',
+    }));
+  const [problems, setProblems] = useState([]);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -179,10 +237,53 @@ export default function RequirementForm({
 
   const selectedClient = clients.find((c) => c.id === form.clientId);
   const roleOf = (t) => t.atsRole || t.role;
-  const recruiters = useMemo(() => team.filter((t) => roleOf(t) === 'RECRUITER'), [team]);
   const bdes = useMemo(() => team.filter((t) => roleOf(t) === 'BDE'), [team]);
-  const tls = useMemo(() => team.filter((t) => roleOf(t) === 'TL'), [team]);
+  // TLs sorted by department and labelled with it — "Medical TL", "IT TL" —
+  // so the right desk is picked first.
+  const deptOf = (t) => t.atsDepartment || t.department || '';
+  const tls = useMemo(() => team.filter((t) => roleOf(t) === 'TL')
+    .sort((a, b) => deptOf(a).localeCompare(deptOf(b)) || a.name.localeCompare(b.name)), [team]);
   const stls = useMemo(() => team.filter((t) => roleOf(t) === 'STL'), [team]);
+  const allRecruiters = useMemo(() => team.filter((t) => roleOf(t) === 'RECRUITER'), [team]);
+  // CASCADE (review #3 §10): Department → Section → TL → Recruiter. The TL
+  // list follows the requirement's department (and Section, where the
+  // department splits — Education A / B); the recruiter list follows the
+  // chosen TL's section, else the section / department. If that leaves
+  // nobody, everyone assignable is offered rather than an empty list; the
+  // people already on the record are always kept (components/jobs/assignCascade.js).
+  const tree = useHierarchy();
+  const [assignSection, setAssignSection] = useState('');
+  const selectedTl = tls.find((t) => t.id === form.tlId);
+  const recruiterDept = (selectedTl && deptOf(selectedTl)) || form.department || '';
+  const keepIds = editing ? [requirement?.tlId, requirement?.recruiterId, ...((requirement?.coRecruiters || []).map((c) => c.id))].filter(Boolean) : [];
+  const cascade = useMemo(
+    () => assignCascade(tree.data, team, { department: form.department, section: assignSection, tlId: form.tlId, keep: [...keepIds, form.tlId, form.recruiterId, ...form.recruiterIds].filter(Boolean), keepTlId: editing ? (requirement?.tlId || '') : form.tlId }),
+    [tree.data, team, form.department, assignSection, form.tlId, form.recruiterId, form.recruiterIds.join(',')], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const cascadeTls = cascade.tls.slice().sort((a, b) => deptOf(a).localeCompare(deptOf(b)) || a.name.localeCompare(b.name));
+  const recruiters = cascade.recruiters.length ? cascade.recruiters : allRecruiters;
+  const pickTl = (tlId) => {
+    const tl = tls.find((t) => t.id === tlId);
+    const next = assignCascade(tree.data, team, { department: form.department, section: assignSection, tlId });
+    const fits = (id) => !id || next.recruiters.some((r) => r.id === id);
+    set({
+      tlId,
+      tl: tl?.name || '',
+      recruiterId: fits(form.recruiterId) ? form.recruiterId : '',
+      recruiterIds: form.recruiterIds.filter(fits),
+    });
+  };
+  const pickSection = (section) => {
+    setAssignSection(section);
+    if (!section) return;
+    const next = assignCascade(tree.data, team, { department: form.department, section, tlId: '' });
+    const fits = (id) => !id || next.recruiters.some((r) => r.id === id);
+    set({
+      ...(form.tlId && !next.tls.some((t) => t.id === form.tlId) ? { tlId: '', tl: '' } : {}),
+      recruiterId: fits(form.recruiterId) ? form.recruiterId : '',
+      recruiterIds: form.recruiterIds.filter(fits),
+    });
+  };
 
   // The same body both modes send. On an edit the server drops status and
   // clientId itself, and drops the assignment fields for anyone without
@@ -196,7 +297,8 @@ export default function RequirementForm({
       experience: `${form.expMin}-${form.expMax} yrs`,
       relevantExperience: `${form.relevantExperience} yrs`,
       preferredLocation: form.preferredLocation || 'Any',
-      salary: form.salaryMin && form.salaryMax ? `₹${form.salaryMin}L - ₹${form.salaryMax}L` : '—',
+      salary: salaryBand(form.salaryMin, form.salaryMax),
+      openings: Number(form.openings),
       bdeId: internal ? '' : form.bdeId,
       description: form.jobDescription,
       postingSources: form.postingSources.join(', '),
@@ -204,20 +306,56 @@ export default function RequirementForm({
   }
 
   async function save(kind) {
+    if (saving) return;
     setError('');
+    const found = formProblems(form, { kind, internal, editing: false });
+    setProblems(found);
+    if (found.length) return;
     setSaving(true);
     try {
       const res = await api.post('/requirements', payload(kind === 'draft' ? 'DRAFT' : 'OPEN'));
-      onSaved?.(res.data, { created: true });
+      // SAVE & POST really posts to the one channel this app publishes to: the
+      // TeamLink Job Portal, when it is ticked. The other sources have no live
+      // connection — the requirement page says so, source by source.
+      let posting = null;
+      const live = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].includes(res.data?.status);
+      const others = form.postingSources.filter((x) => x !== 'TeamLink Job Portal');
+      if (kind === 'post' && !live) {
+        posting = 'Not posted anywhere yet — only a live requirement can be posted. Post it from the requirement page once it is Active.';
+      } else if (kind === 'post' && !form.postingSources.length) {
+        posting = 'Not posted — no posting source was ticked. Tick sources in Edit Requirement, then post from the requirement page.';
+      } else if (kind === 'post' && !form.postingSources.includes('TeamLink Job Portal')) {
+        posting = `Not published automatically — ${others.join(', ')} have no live connection. Use "Copy posting text" and "Mark as posted" for each on the requirement page.`;
+      }
+      if (kind === 'post' && live && form.postingSources.includes('TeamLink Job Portal') && !canPublishToPortal(user)) {
+        posting = 'Saved. Publishing on the TeamLink Job Portal is done by the assigned TL / recruiter / BDE — your role can view it but not publish.';
+      } else if (kind === 'post' && live && form.postingSources.includes('TeamLink Job Portal')) {
+        try {
+          const pub = await api.post(`/job-portal/jobs/${res.data.id}/publish`, { published: true });
+          // Published here either way; portalError says the portal itself could
+          // not be reached, and Sync (or the hourly sync) will retry.
+          posting = pub.data?.portalError
+            ? `Published, but the TeamLink Job Portal could not be updated yet: ${pub.data.portalError}`
+            : 'Published on the TeamLink Job Portal.';
+          if (others.length) posting += ` ${others.join(', ')}: no live connection — post each from the requirement page ("Copy posting text", then "Mark as posted").`;
+        } catch (e) {
+          posting = `Saved, but not published on the TeamLink Job Portal: ${e.response?.data?.error || 'the publish step failed'}`;
+        }
+      }
+      onSaved?.(res.data, { created: true, posting });
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not save this requirement');
+      setError(err.response?.data?.error || 'Could not save this requirement — check your connection and try again.');
     } finally {
       setSaving(false);
     }
   }
 
   async function saveEdit() {
+    if (saving) return;
     setError('');
+    const found = formProblems(form, { kind: requirement?.status === 'DRAFT' ? 'draft' : 'edit', internal, editing: true });
+    setProblems(found);
+    if (found.length) return;
     setSaving(true);
     const body = payload(undefined);
     // Never send a field the user is not allowed to change: the server
@@ -271,7 +409,7 @@ export default function RequirementForm({
           </div>
         )}
         <div className="kv"><span className="k">Department</span><span>{form.department}</span></div>
-        <div className="kv"><span className="k">Openings / Priority</span><span>{`${form.openings} · ${form.priority}`}</span></div>
+        <div className="kv"><span className="k">Openings / Priority</span><span>{`${form.openings} · ${priorityLabel(form.priority)}`}</span></div>
         <div className="kv"><span className="k">Closing Date</span><span>{form.closingDate || '—'}</span></div>
         <div className="section-label">Job Description</div>
         <div className="cell-muted" style={{ fontSize: 12.5, whiteSpace: 'pre-line' }}>{form.jobDescription || '—'}</div>
@@ -299,14 +437,14 @@ export default function RequirementForm({
         <div className="section-label">Compensation</div>
         <div className="kv">
           <span className="k">{`${form.salaryType} (${form.currency})`}</span>
-          <span>{form.salaryMin && form.salaryMax ? `₹${form.salaryMin}L - ₹${form.salaryMax}L` : '—'}</span>
+          <span>{salaryBand(form.salaryMin, form.salaryMax)}</span>
         </div>
         <div className="section-label">Assignment</div>
         <div className="kv">
           <span className="k">{`Recruiter / TL / STL${internal ? '' : ' / BDE'}`}</span>
           <span>
             {[
-              recruiters.find((r) => r.id === form.recruiterId)?.name || '—',
+              allRecruiters.find((r) => r.id === form.recruiterId)?.name || '—',
               form.tl || '—',
               form.stl || '—',
               ...(internal ? [] : [bdes.find((b) => b.id === form.bdeId)?.name || '—']),
@@ -324,21 +462,38 @@ export default function RequirementForm({
         title={editing ? `Edit Requirement — ${requirement.reqCode || requirement.title}` : 'Create Requirement'}
         size="xwide"
         onClose={onClose}
-        footer={editing ? (
+        footer={(
           <>
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn" onClick={() => setPreview(true)}>Preview</button>
-            <button className="btn btn-primary" disabled={saving} onClick={saveEdit}>
-              {saving ? 'Saving…' : 'Save Changes'}
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn" onClick={() => setPreview(true)}>Preview</button>
-            <button className="btn" onClick={() => save('draft')}>Save Draft</button>
-            <button className="btn" onClick={() => save('activate')}>Save &amp; Activate</button>
-            <button className="btn btn-primary" onClick={() => save('post')}>Save &amp; Post</button>
+            {(problems.length > 0 || error) && (
+              <div className="error-text" role="alert" style={{ flex: '1 1 100%', margin: '0 0 6px', textAlign: 'left' }}>
+                {problems.length > 0 && (
+                  <>
+                    <b>{problems.length === 1 ? 'Fix this before saving:' : `Fix these ${problems.length} things before saving:`}</b>
+                    <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>{problems.map((x) => <li key={x}>{x}</li>)}</ul>
+                  </>
+                )}
+                {error && <div>{error}</div>}
+              </div>
+            )}
+            {editing ? (
+              <>
+                <button className="btn" onClick={onClose}>Cancel</button>
+                <button className="btn" onClick={() => setPreview(true)}>Preview</button>
+                <button className="btn btn-primary" disabled={saving} onClick={saveEdit}>
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn" disabled={saving} onClick={onClose}>Cancel</button>
+                <button className="btn" onClick={() => setPreview(true)}>Preview</button>
+                <button className="btn" disabled={saving} onClick={() => save('draft')} title="Saved as Draft — nothing is live or posted">Save Draft</button>
+                <button className="btn" disabled={saving} onClick={() => save('activate')} title="Opens it now if the client agreement is Active; otherwise it waits at Agreement Check">Save &amp; Activate</button>
+                <button className="btn btn-primary" disabled={saving} onClick={() => save('post')} title="Activate, then publish on the TeamLink Job Portal when it is ticked">
+                  {saving ? 'Saving…' : 'Save & Post'}
+                </button>
+              </>
+            )}
           </>
         )}
       >
@@ -371,7 +526,8 @@ export default function RequirementForm({
             <label className="field">
               <span>Priority *</span>
               <Combo value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
-                {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+                {/* Stored values unchanged; "Urgent" reads Critical (review #2 §6). */}
+                {PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_CHOICES.find((c) => c.value === p)?.label || p}</option>)}
               </Combo>
             </label>
             <label className="field">
@@ -418,8 +574,22 @@ export default function RequirementForm({
                   ? <div className="notice">Agreement is Active — this requirement can be activated and posted.</div>
                   : (
                     <div className="notice amber">
-                      Agreement is <b>{agreementStatusLabel(selectedClient.agreementStatus)}</b>. You can save this
-                      requirement as Draft, but it cannot be activated or posted until the agreement is Active.
+                      <div>
+                        {'The service agreement with '}
+                        <b>{selectedClient.name}</b>
+                        {' is '}
+                        <b>{agreementStatusLabel(selectedClient.agreementStatus)}</b>
+                        {', so this requirement cannot go live or be posted yet. You can still save it: Save & Activate / Save & Post park it at '}
+                        <b>Agreement Check</b>
+                        {'; Save Draft keeps it as a Draft.'}
+                      </div>
+                      <div style={{ marginTop: 6 }}>
+                        {canRunAgreement
+                          ? `To make it live: Clients → ${selectedClient.name} → Agreement tab → Generate / Send to Client → the client signs → Activate Agreement. Then open the requirement and press Activate Requirement.`
+                          : clientDesk
+                            ? `An Admin must complete the agreement (Clients → ${selectedClient.name} → Agreement tab). Then open the requirement and press Activate Requirement.`
+                            : `Ask the BDE or an Admin who owns ${selectedClient.name} to complete the agreement; then open the requirement and press Activate Requirement.`}
+                      </div>
                     </div>
                   )
               )}
@@ -556,19 +726,33 @@ export default function RequirementForm({
             a BDE their clients&apos;.
           </div>
           <div className="grid-2">
+            {cascade.sections.length > 0 && (
+              <label className="field">
+                <span>{`Section · ${form.department}`}</span>
+                <Combo disabled={lockAssign} value={cascade.section} onChange={(e) => pickSection(e.target.value)}>
+                  <option value="">All sections</option>
+                  {cascade.sections.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </Combo>
+              </label>
+            )}
             <label className="field">
               <span>Assigned TL</span>
               <Combo
                 disabled={lockAssign}
                 value={form.tlId}
-                onChange={(e) => set({ tlId: e.target.value, tl: tls.find((t) => t.id === e.target.value)?.name || '' })}
+                onChange={(e) => pickTl(e.target.value)}
               >
                 <option value="">— Not assigned —</option>
-                {tls.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {cascadeTls.map((t) => <option key={t.id} value={t.id}>{deptOf(t) ? `${t.name} — ${deptOf(t)} TL` : t.name}</option>)}
               </Combo>
             </label>
             <label className="field">
-              <span>Assigned Recruiter *</span>
+              <span>
+                Assigned Recruiter *
+                {recruiterDept && (recruiters.some((r) => deptOf(r) === recruiterDept)
+                  ? ` · ${recruiterDept}`
+                  : ` · no ${recruiterDept} recruiters — showing everyone`)}
+              </span>
               <Combo disabled={lockAssign} value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
                 <option value="">— Not assigned —</option>
                 {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -654,7 +838,6 @@ export default function RequirementForm({
             page after saving.
           </div>
 
-          {error && <div className="error-text">{error}</div>}
         </Modal>
   );
 }

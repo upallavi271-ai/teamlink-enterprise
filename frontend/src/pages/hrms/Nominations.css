@@ -1,0 +1,31 @@
+/* Rewards & Recognition -> Nominations (hrms-24 §13). Scoped under .nom-* */
+.nom-compose { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.nom-form .field { margin-bottom: 10px; }
+.nom-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nom-auto { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; background: var(--brand-tint); border-radius: 8px; padding: 8px 10px; margin: -2px 0 12px; }
+.nom-auto div { display: flex; flex-direction: column; min-width: 0; }
+.nom-auto span { font-size: 10.5px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .3px; }
+.nom-auto b { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nom-ref { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--paper); font-size: 12.5px; }
+.nom-ref-empty { color: var(--ink-faint); text-align: center; padding: 28px 12px; }
+.nom-ref-head { font-weight: 600; margin-bottom: 8px; }
+.nom-ref-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.nom-kpi { background: var(--paper-raised); border: 1px solid var(--line-soft); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; }
+.nom-kpi b { font-size: 16px; }
+.nom-kpi span { font-size: 11px; color: var(--ink-soft); }
+.nom-ref-line { margin-top: 8px; color: var(--ink-soft); }
+.nom-ref-sec, .nom-sec { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--ink-soft); margin: 12px 0 4px; }
+.nom-ref-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px dashed var(--line-soft); }
+.nom-detail-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; font-size: 15px; }
+.nom-kv { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.nom-kv > span { color: var(--ink-soft); }
+.nom-kv p { margin: 0; white-space: pre-wrap; }
+.nom-timeline { margin: 4px 0 10px 18px; padding: 0; font-size: 12.5px; }
+.nom-timeline li { margin-bottom: 4px; }
+.nom-action { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+@media (max-width: 760px) {
+  .nom-compose { grid-template-columns: 1fr; }
+  .nom-auto { grid-template-columns: 1fr 1fr; }
+  .nom-kv { grid-template-columns: 1fr; gap: 2px; }
+  .nom-ref-grid { grid-template-columns: 1fr 1fr; }
+}

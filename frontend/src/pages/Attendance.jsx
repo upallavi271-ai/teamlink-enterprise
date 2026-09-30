@@ -1,16 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
 import { downloadCsv, to12h } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow, Status } from '../components/proto.jsx';
-import { isAdmin, isHR as hasHrmsAdmin, canEditAttendance, canDecideAttendance } from '../permissions';
+import { can, isAdmin, isSuperAdmin, isHR as hasHrmsAdmin, canEditAttendance, canDecideAttendance } from '../permissions';
+import HistoryImport from './attendance/HistoryImport.jsx';
 import Combo from '../components/Combo.jsx';
+import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+import { ApprovalChainModal, ApprovalChainLine } from '../components/ApprovalChain.jsx';
+// HRMS-24 §4/§5/§10/§11 — My Attendance (live face + location check-in), team
+// attendance, the monthly summary and the check-in settings live in their own files.
+import MyAttendance, { downloadFrom } from './attendance/MyAttendance.jsx';
+// The Monthly Summary also carries the old "Reports (Monthly)" figures; the
+// Team Attendance tab is gone — the Biometric list is the day-by-day view.
+import { MonthlySummaryTab, PunchImageButton } from './attendance/TeamAttendance.jsx';
+import { DayKpis, RangeBar, RangeKpis, DateTotalsTable, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
+import { DayStatus } from './attendance/MyAttendance.jsx';
+import CheckinSettings from './attendance/CheckinSettings.jsx';
+import AlertSettings from './attendance/AlertSettings.jsx';
+import ExportMenu from '../components/ExportMenu.jsx';
+import InsightsPanel from '../components/charts/InsightsPanel.jsx';
+import DataIoBar from '../components/dataio/DataIoBar.jsx';
+import Pager, { usePaged } from '../components/Pager.jsx';
+import PeopleFilterBar from '../components/PeopleFilterBar.jsx';
+import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 
-const METHODS = ['Web Check-in', 'Mobile App', 'Biometric (Fingerprint)'];
+// The daily-marking status filter. "On Leave" is stored as Leave; "Not marked"
+// is a row with no attendance yet for the day.
+const MARK_STATUSES = ['Present', 'Absent', 'Late', 'Half Day', 'On Leave', 'Not marked'];
+const markStatusOf = (s) => (!s ? 'Not marked' : s === 'Leave' ? 'On Leave' : s);
+const EMPTY_MARK = { q: '', department: '', empStatus: '', status: '' };
 
-const today = () => new Date().toISOString().slice(0, 10);
-const thisMonth = () => new Date().toISOString().slice(0, 7);
+// The office's local calendar day (toISOString() would be UTC, and put the
+// early morning on the previous day).
+const today = () => localToday();
 
 // The code/name/department/role filters shared by the Biometric, Punch Log and
 // Reports tabs — kept in one place so all three read the same way.
@@ -18,15 +42,6 @@ function filterQuery(filters) {
   const params = new URLSearchParams();
   Object.keys(filters).forEach((k) => { if (filters[k]) params.set(k, filters[k]); });
   return params.toString();
-}
-
-function useDepartments(enabled) {
-  const [departments, setDepartments] = useState([]);
-  useEffect(() => {
-    if (!enabled) return;
-    api.get('/admin/departments').then((res) => setDepartments(res.data.map((d) => d.name))).catch(() => setDepartments([]));
-  }, [enabled]);
-  return departments;
 }
 
 // The prototype's role select lists every designation actually on file.
@@ -49,49 +64,193 @@ function StatusPill({ status }) {
 
 // ---- Tab 1: Dashboard -------------------------------------------------------
 
-function DashboardTab({ isHR, canMark, goTab }) {
-  const [date, setDate] = useState(today());
-  const [data, setData] = useState(null);
-  const [showMarking, setShowMarking] = useState(true);
+const TREND_RANGE_KEY = 'tl_range_attendance_trend';
 
+// Per-person day counts for a range (Dashboard / Biometric list in range mode).
+function PeopleInRange({ rows, kpi, onClearKpi, title }) {
+  const [q, setQ] = useState('');
+  const shown = rows.filter((r) => matchesKpi(r, kpi)
+    && (!q || `${r.employeeCode} ${r.name} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
+  const page = usePaged(shown);
+  return (
+    <Panel style={{ marginTop: 16 }}>
+      <PanelHead title={`${title}${kpi ? ` · ${KPI_NAME[kpi] || kpi}` : ''}`} />
+      <div className="filter-row" style={{ margin: '12px 18px' }}>
+        {kpi && <button className="btn btn-sm" onClick={onClearKpi} title="Show everyone again">✕ {KPI_NAME[kpi] || kpi}</button>}
+        <input type="search" placeholder="Search code, name, department…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
+        <span className="small-muted" style={{ alignSelf: 'center' }}>{shown.length} of {rows.length} people</span>
+      </div>
+      <ScrollTable>
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th><th>Name</th><th>Department</th><th title="Days on the rolls in the range">Days</th><th>Working days</th><th>Present</th><th>Late</th>
+              <th>Half Day</th><th>Absent</th><th>On Leave</th><th>No record</th><th>Week-off / Holiday</th>
+            </tr>
+          </thead>
+          <tbody>
+            {page.slice.map((r) => (
+              <tr key={r.employeeId}>
+                <td><b>{r.employeeCode}</b></td>
+                <td>{r.name}<div className="att-sub">{r.role || ''}</div></td>
+                <td className="cell-muted">{r.department || '—'}</td>
+                <td className="att-num">{r.days}</td>
+                <td className="att-num">{r.workingDays}</td>
+                <td className="att-num"><b>{r.present}</b></td>
+                <td className="att-num">{r.late}</td>
+                <td className="att-num">{r.halfDay}</td>
+                <td className="att-num">{r.absent}</td>
+                <td className="att-num">{r.onLeave}</td>
+                <td className="att-num">{r.noRecord + r.notYet}</td>
+                <td className="att-num">{r.offDay}</td>
+              </tr>
+            ))}
+            {shown.length === 0 && <tr><td colSpan="12"><ListEmpty lf={{ activeCount: q || kpi ? 1 : 0, clear: () => { setQ(''); onClearKpi(); } }} noun="people" title="No one on the rolls in this period." /></td></tr>}
+          </tbody>
+        </table>
+      </ScrollTable>
+      {page.total > 0 && <Pager page={page} noun="people" />}
+    </Panel>
+  );
+}
+
+const KPI_NAME = {
+  ...BUCKET_LABEL,
+  late: 'Late arrivals', checkedIn: 'Checked in', checkedOut: 'Checked out', missingCheckOut: 'Missing check-out', punched: 'People with punches',
+  presentAny: 'Present on ≥ 1 day', presentAll: 'Present every working day', halfDayAny: 'Half day on ≥ 1 day', absentAny: 'Absent on ≥ 1 day',
+  onLeaveAny: 'On leave on ≥ 1 day', noRecordAny: 'No record on ≥ 1 day', lateAny: 'Late on ≥ 1 day',
+};
+
+function NoDataNotice({ data, to }) {
+  if (!data || !data.latestDataDate || !(to > data.latestDataDate) || to > data.today) return null;
+  return (
+    <div className="notice att-notice">
+      No punch or marked attendance has been recorded after <b>{fmtDay(data.latestDataDate)}</b> — past working days since then show as
+      <b> No record</b> (not Absent) until the device punches or an import arrive.
+    </div>
+  );
+}
+
+function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
+  const [range, setRange] = useState({ from: today(), to: today() });
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [showMarking, setShowMarking] = useState(true);
+  const [mf, setMf] = useState(EMPTY_MARK);
+  // A KPI card clicked = the list below narrowed to those people.
+  const [kpi, setKpi] = useState('');
+  // The trend charts start on This Month (a one-day trend says nothing);
+  // a period the user picked before is kept.
+  useState(() => {
+    try {
+      if (!localStorage.getItem(TREND_RANGE_KEY)) localStorage.setItem(TREND_RANGE_KEY, JSON.stringify({ range: 'this_month', from: '', to: '' }));
+    } catch { /* private window */ }
+    return null;
+  });
+  const single = range.from === range.to;
+  const date = range.to;
+
+  // Only the latest request may land (a quick ◀ ▶ must not show an older day).
+  const seq = useRef(0);
   function load() {
-    api.get(`/attendance/dashboard?date=${date}`).then((res) => setData(res.data));
+    const mine = ++seq.current;
+    setError('');
+    api.get('/attendance/dashboard', { params: single ? { date } : range })
+      .then((res) => { if (mine === seq.current) setData(res.data); })
+      .catch((e) => { if (mine === seq.current) setError(e.response?.data?.error || 'Could not load the dashboard.'); });
   }
-  useEffect(load, [date]);
+  useEffect(() => { if (isHR) load(); }, [range.from, range.to, isHR]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function mark(employeeId, status) {
     await api.post('/attendance', { employeeId, date, status });
     load();
   }
+  const pickRange = (from, to) => { setRange({ from, to }); setKpi(''); };
 
-  if (!isHR) return <SelfServiceTab />;
+  // Mark Attendance filters — all of them work together, with the KPI card.
+  // Worked out before the early returns so the pager hook below always runs.
+  const markingAll = (data && data.marking) || [];
+  const markDepts = [...new Set(markingAll.map((r) => r.department).filter(Boolean))].sort();
+  const marking = markingAll.filter((r) => {
+    if (mf.q && !`${r.employeeCode || ''} ${r.name || ''}`.toLowerCase().includes(mf.q.trim().toLowerCase())) return false;
+    if (mf.department && r.department !== mf.department) return false;
+    if (mf.empStatus && r.hrStatus !== mf.empStatus) return false;
+    if (mf.status && markStatusOf(r.status) !== mf.status) return false;
+    if (!matchesKpi(r, kpi)) return false;
+    return true;
+  });
+  const markPage = usePaged(marking, 100);
+
+  if (!isHR) return <MyAttendance />;
+  if (error && !data) return <div className="notice red">{error}</div>;
   if (!data) return <div className="small-muted">Loading…</div>;
+  // The response in hand may still be the previous choice for a moment.
+  const isRange = !!data.range;
   const k = data.kpis;
 
   return (
-    <div>
-      <StatRow cells={[
-        { value: k.presentToday, label: 'Present Today' },
-        { value: k.absentToday, label: 'Absent Today' },
-        { value: k.lateCheckIn, label: 'Late Check-in' },
-        { value: k.halfDayCut, label: 'Half-day Cut' },
-        { value: k.missingPunchIn, label: 'Missing Punch-in' },
-      ]} />
+    <div className="att-day">
+      {/* PEOPLE, NOT RECORDS. One day: the people on the rolls that day, each
+          in exactly one bucket. A range: people with at least one such day
+          and per-day averages, plus the date-wise totals. The same
+          computation as the Biometric list and the Punch Log
+          (routes/attendance.js dayReport()). */}
+      <Panel>
+        <PanelHead title={isRange ? `Attendance ${fmtDay(data.from)} → ${fmtDay(data.to)}` : `Attendance on ${fmtDay(data.date)}`}>
+          {/* Data I/O for the chosen period: Export all (a summary row per
+              person) · Export one employee (every day) — GET
+              /api/insights/attendance/export. Attendance is imported with the
+              existing Import History (old-HRMS CSV files and their samples),
+              so the shared bar's own Import stays off and points there. */}
+          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <DataIoBar ioKey="attendance" exportUrl="/insights/attendance/export" params={{ from: range.from, to: range.to }} showImport={false} />
+            {canImportHistory && <button type="button" className="btn btn-sm" onClick={() => goTab('history')} title="Import past attendance from the old HRMS's CSV exports — sample files are on that tab">Import History →</button>}
+            <button type="button" className="btn btn-sm" onClick={() => goTab('biometric')}>Open date-wise list →</button>
+          </span>
+        </PanelHead>
+        <div style={{ padding: '12px 18px 6px' }}>
+          <RangeBar from={range.from} to={range.to} onChange={pickRange} latest={data.latestDataDate} today={data.today} />
+          {range.from > data.today && <div className="notice">This period is in the future — nobody can have attendance yet.</div>}
+          <NoDataNotice data={data} to={range.to} />
+          {isRange ? (
+            <>
+              <RangeKpis summary={data.summary} from={data.from} to={data.to} active={kpi} onPick={setKpi} />
+              <div className="att-kpi-sep">Date-wise totals — click a date to open that day</div>
+              <DateTotalsTable days={data.days} onPickDay={(d) => pickRange(d, d)} />
+            </>
+          ) : (
+            <DayKpis
+              kpis={k}
+              date={data.date}
+              headcount={data.headcount}
+              active={kpi}
+              onPick={(key) => { setKpi(key); setShowMarking(true); }}
+              extra={[{ key: 'halfDayCut', value: k.halfDayCut, label: `Late half-day cuts (${data.month})`, hint: 'Payroll: late days beyond the free allowance, this month' }]}
+            />
+          )}
+        </div>
+      </Panel>
+
+      {isRange && <PeopleInRange rows={data.summary.rows} kpi={kpi} onClearKpi={() => setKpi('')} title="People — days in the period" />}
 
       <TwoCol>
-        <PanelPad>
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>① Biometric Reports — Check-in / Check-out</h3>
-          <StatRow columns={2} cells={[
-            { value: k.totalCheckedIn, label: 'Total Checked In' },
-            { value: k.totalCheckedOut, label: 'Total Checked Out' },
-          ]} />
-          {data.byMethod.map((m) => (
-            <AssignRow flush key={m.method}>
-              <span>{m.method}</span>
-              <span className="cell-muted" style={{ fontSize: 12 }}>In: {m.in} · Out: {m.out}</span>
-            </AssignRow>
-          ))}
-        </PanelPad>
+        {!isRange ? (
+          <PanelPad>
+            <h3 style={{ fontSize: 14, marginBottom: 10 }}>① Check-in / Check-out by method</h3>
+            <div className="cell-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>People on {data.date}, by the method of their first check-in / last check-out</div>
+            {data.byMethod.map((m) => (
+              <AssignRow flush key={m.method}>
+                <span>{m.method}</span>
+                <span className="cell-muted" style={{ fontSize: 12 }}>In: {m.in} · Out: {m.out}</span>
+              </AssignRow>
+            ))}
+          </PanelPad>
+        ) : (
+          <PanelPad>
+            <h3 style={{ fontSize: 14, marginBottom: 10 }}>① Check-in / Check-out by method</h3>
+            <EmptyMini>Pick a single day to see the check-ins by method.</EmptyMini>
+          </PanelPad>
+        )}
         <div>
           <PanelPad>
             <h3 style={{ fontSize: 14, marginBottom: 10 }}>② Regularization Requests</h3>
@@ -110,7 +269,7 @@ function DashboardTab({ isHR, canMark, goTab }) {
           <PanelPad>
             <h3 style={{ fontSize: 14, marginBottom: 10 }}>③ Quick Actions</h3>
             <QaRow>
-              <button className="btn btn-sm" onClick={() => setShowMarking((s) => !s)}>{showMarking ? '− Hide daily marking' : '+ Show daily marking'}</button>
+              {!isRange && <button className="btn btn-sm" onClick={() => setShowMarking((s) => !s)}>{showMarking ? '− Hide daily marking' : '+ Show daily marking'}</button>}
               <button className="btn btn-sm" onClick={() => goTab('regularization')}>+ Request Regularization</button>
               <button className="btn btn-sm" onClick={() => goTab('methods')}>+ Configure Policies</button>
             </QaRow>
@@ -118,22 +277,29 @@ function DashboardTab({ isHR, canMark, goTab }) {
         </div>
       </TwoCol>
 
-      {showMarking && (
+      {!isRange && showMarking && (
         <Panel style={{ marginTop: 16 }}>
-          <PanelHead title={`Daily marking — ${date}`}>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </PanelHead>
-          <div className="tbl-wrap">
+          <PanelHead title={`Daily marking — ${fmtDay(data.date)}${kpi ? ` · ${KPI_NAME[kpi] || kpi}` : ''}`} />
+          <PeopleFilterBar
+            filters={mf} setFilters={setMf} people={false} employeeStatus search="employee name or ID"
+            departments={markDepts.length > 1 ? markDepts : undefined} statuses={MARK_STATUSES}
+            shown={marking.length} total={markingAll.length} style={{ margin: '12px 18px' }}
+          >
+            {kpi && <button className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {KPI_NAME[kpi] || kpi}</button>}
+          </PeopleFilterBar>
+          <ScrollTable>
             <table>
-              <thead><tr><th>Code</th><th>Name</th><th>Department</th><th>Status</th><th>In</th><th>Location</th><th style={{ textAlign: 'right' }}>Mark</th></tr></thead>
+              <thead><tr><th>Code</th><th>Name</th><th>Department</th><th title="From punches, marks, leave, holidays">Day status</th><th title="What HR marked (the Mark buttons change this)">Marked</th><th>In</th><th>Out</th><th>Location</th><th style={{ textAlign: 'right' }}>Mark</th></tr></thead>
               <tbody>
-                {data.marking.map((r) => (
+                {markPage.slice.map((r) => (
                   <tr key={r.employeeId}>
                     <td><b>{r.employeeCode}</b></td>
                     <td>{r.name}</td>
                     <td className="cell-muted">{r.department || '—'}</td>
+                    <td>{r.dayStatus ? <DayStatus status={r.dayStatus === 'Missing Check-In' && r.bucket === 'noRecord' ? 'No record' : r.dayStatus} /> : '—'}</td>
                     <td><StatusPill status={r.status} /></td>
                     <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
+                    <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
                     <td className="cell-muted">{r.location || '—'}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {canMark ? ['Present', 'Absent', 'Half Day'].map((s) => (
@@ -142,299 +308,458 @@ function DashboardTab({ isHR, canMark, goTab }) {
                     </td>
                   </tr>
                 ))}
-                {data.marking.length === 0 && <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No employees.</td></tr>}
+                {marking.length === 0 && <tr><td colSpan="9"><ListEmpty lf={{ activeCount: Object.values(mf).some(Boolean) || kpi ? 1 : 0, clear: () => { setMf(EMPTY_MARK); setKpi(''); } }} noun="employees" title="No employees on the rolls on this date." /></td></tr>}
               </tbody>
             </table>
-          </div>
+          </ScrollTable>
+          {markPage.total > 0 && <div style={{ padding: '0 18px' }}><Pager page={markPage} noun="employees" /></div>}
         </Panel>
       )}
-    </div>
-  );
-}
 
-// An employee's own view of the Dashboard tab: punch in/out and see their history.
-function SelfServiceTab() {
-  const [records, setRecords] = useState([]);
-  const [punches, setPunches] = useState([]);
-  const [method, setMethod] = useState(METHODS[0]);
-  const [message, setMessage] = useState('');
-
-  function load() {
-    api.get('/attendance').then((res) => setRecords(res.data));
-    api.get('/attendance/punches').then((res) => setPunches(res.data));
-  }
-  useEffect(load, []);
-
-  async function punch(direction) {
-    setMessage('');
-    const res = await api.post('/attendance/punches', { direction, method });
-    setMessage(`Punched ${direction} at ${to12h(res.data.time)} via ${res.data.method}.`);
-    load();
-  }
-
-  const todayPunches = punches.filter((p) => p.date === today());
-
-  return (
-    <div>
-      <PanelPad>
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Check in / Check out</h3>
-        <div className="filter-row">
-          <Combo value={method} onChange={(e) => setMethod(e.target.value)}>
-            {METHODS.map((m) => <option key={m}>{m}</option>)}
-          </Combo>
-          <button className="btn btn-sm btn-primary" onClick={() => punch('In')}>Punch In</button>
-          <button className="btn btn-sm" onClick={() => punch('Out')}>Punch Out</button>
-        </div>
-        {message && <div className="small-muted" style={{ marginTop: 8 }}>{message}</div>}
-        <div className="small-muted" style={{ marginTop: 8 }}>
-          {todayPunches.length ? `${todayPunches.length} punch(es) recorded today.` : 'No punches recorded today yet.'}
-        </div>
-      </PanelPad>
-
-      <Panel>
-        <PanelHead title="My attendance" />
-        <div className="tbl-wrap">
-          <table>
-            <thead><tr><th>Date</th><th>Status</th><th>Check-in</th><th>Check-out</th></tr></thead>
-            <tbody>
-              {records.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.date}</td>
-                  <td><StatusPill status={r.status} /></td>
-                  <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
-                  <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
-                </tr>
-              ))}
-              {records.length === 0 && <tr><td colSpan="4" className="small-muted" style={{ padding: 16 }}>No attendance records yet.</td></tr>}
-            </tbody>
-          </table>
+      {/* Trends over a range — person-days, clearly labelled, and apart from
+          the KPIs above. */}
+      <Panel style={{ marginTop: 16 }}>
+        <PanelHead title="Trends over a period (person-days)" />
+        <div style={{ padding: '10px 18px 16px' }}>
+          <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            These charts add up every day of the chosen period, so a person present on 20 days counts 20 — they are person-days, not people.
+            The KPIs above are people.
+          </div>
+          <InsightsPanel module="attendance" storageKey={TREND_RANGE_KEY} tiles={false} />
         </div>
       </Panel>
     </div>
   );
 }
 
-// ---- Tab 2: Biometric Attendance List ---------------------------------------
+// Anyone's own attendance — check in / out with a live face + location, and
+// their own days — is ./attendance/MyAttendance.jsx (HRMS-24 §5, §10).
 
-const EMPTY_BIO = { date: '', code: '', name: '', department: '', role: '' };
+// ---- Tab 2: Biometric Attendance List — the old "First Check-In & Last
+// Check-Out Report" -----------------------------------------------------------
+// One line per person per day, exactly the old report's columns: Employee No ·
+// Employee Ref No · Employee Name · Department · Designation · Date · First
+// Check In · Last Check Out · Work Location · Total Time Worked · Total Time In
+// Break · Total Hours. Imported days show the CSV's values as exported; device
+// days are worked out from the stored punches (server: reportDay()). Name,
+// department and designation come from Employee Management. Like the old
+// report, only days with a check-in are listed unless "Show people without a
+// check-in" is ticked or a KPI card / status is picked. The KPI cards and the
+// date-wise totals stay (people, never person-days).
+
+// The dropdown options a filter bar has seen so far on this tab: the union of
+// every response's facets, so picking "Biometric" never shrinks the Method
+// list to that one value (and a department filter never hides the others).
+function useSeen(data, pick) {
+  const [seen, setSeen] = useState({});
+  useEffect(() => {
+    if (!data) return;
+    const p = pick(data) || {};
+    setSeen((cur) => {
+      const next = { ...cur };
+      Object.entries(p).forEach(([k, list]) => {
+        next[k] = [...new Set([...(cur[k] || []), ...(list || []).filter((v) => v && v !== '—')])].sort();
+      });
+      return next;
+    });
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  return seen;
+}
+
+// Search · Department · Status | More: Role · Employee status · Method · Source.
+// All of them are sent to the server (GET /attendance/biometric), so the
+// KPI-free totals, the rows and the CSV / Excel export follow the same filters.
+// Department only when the login's scope holds more than one.
+const bioFields = (seen, roles) => [
+  { key: 'q', type: 'search', placeholder: 'Search employee name or ID…' },
+  { key: 'department', label: 'Department', primary: true, options: seen.departments || [], show: (seen.departments || []).length > 1 },
+  { key: 'status', label: 'Status', allLabel: 'All day statuses', primary: true, options: seen.statuses || [] },
+  { key: 'role', label: 'Role', options: roles },
+  { key: 'hrStatus', label: 'Employee status', options: HR_STATUSES },
+  { key: 'method', label: 'Method', options: seen.methods || [] },
+  { key: 'source', label: 'Source', options: seen.sources || [] },
+];
+
+const REPORT_COLS = [
+  ['employeeNo', 'Employee No'], ['employeeRef', 'Employee Ref No'], ['name', 'Employee Name'], ['department', 'Department'],
+  ['designation', 'Designation'], ['dateLabel', 'Date'], ['firstCheckIn', 'First Check In'], ['lastCheckOut', 'Last Check Out'],
+  ['workLocation', 'Work Location'], ['totalTimeWorked', 'Total Time Worked'], ['totalBreak', 'Total Time In Break'], ['totalHours', 'Total Hours'],
+];
 
 function BiometricTab() {
-  const [filters, setFilters] = useState(EMPTY_BIO);
+  const [range, setRange] = useState({ from: today(), to: today() });
+  const [kpi, setKpi] = useState('');
+  const [everyone, setEveryone] = useState(false);
   const [data, setData] = useState(null);
-  const departments = useDepartments(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const roles = useRoles(true);
+  const seen = useSeen(data, (d) => ({ departments: (d.rows || []).map((r) => r.department), ...(d.facets || {}) }));
+  const lf = useListFilters([], bioFields(seen, roles), { server: true });
 
+  const single = range.from === range.to;
+  // A KPI card lists people who may have no check-in (Absent, On Leave…), so
+  // it asks for everyone too.
+  const params = { ...(single ? { date: range.from } : range), ...lf.params, ...(everyone || kpi ? { all: '1' } : {}) };
+  const key = JSON.stringify(params);
   useEffect(() => {
-    api.get(`/attendance/biometric?${filterQuery(filters)}`).then((res) => setData(res.data));
-  }, [filters]);
+    let alive = true;
+    setError('');
+    api.get('/attendance/biometric', { params })
+      .then((res) => { if (alive) setData(res.data); })
+      .catch((e) => { if (alive) { setData(null); setError(e.response?.data?.error || 'Could not load the biometric list.'); } });
+    return () => { alive = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function exportCsv() {
-    downloadCsv(
-      `attendance-${data.month}.csv`,
-      ['Code', 'Name', 'Department', 'Role', 'Present', 'Late', 'Half-day Cut', 'Attendance %'],
-      data.rows.map((r) => [r.employeeCode, r.name, r.department, r.role, r.present, r.late, r.halfDayCut, `${r.pct}%`])
-    );
+  const isRange = !!data?.range;
+  // In range mode the "≥ 1 day" cards pick PEOPLE; their day rows are listed.
+  const rangePeople = isRange && kpi ? new Set((data.summary?.rows || []).filter((p) => matchesKpi(p, kpi)).map((p) => p.employeeId)) : null;
+  const rows = (data?.rows || []).filter((r) => (rangePeople ? rangePeople.has(r.employeeId) : matchesKpi(r, kpi)));
+  const page = usePaged(rows, 100);
+  const clearAll = () => { lf.clear(); setKpi(''); };
+
+  async function exportAs(format) {
+    setBusy(true);
+    try {
+      const name = single ? range.from : `${range.from}_to_${range.to}`;
+      await downloadFrom('/attendance/biometric', { ...params, ...(kpi && !isRange ? { dayStatus: kpi } : {}), format }, `first-check-in-last-check-out-${name}.${format}`);
+    } catch { setError('Could not export the list.'); } finally { setBusy(false); }
   }
 
-  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-
   return (
-    <Panel>
-      <PanelHead title={<>Biometric &amp; Device Attendance — Employee List <span className="cell-muted" style={{ fontSize: 12, fontStyle: 'italic' }}>({data?.month || ''})</span></>}>
-        <button className="btn btn-sm btn-primary" onClick={exportCsv} disabled={!data}>Export</button>
+    <Panel className="att-day">
+      <PanelHead title={`First Check-In & Last Check-Out Report — ${single ? fmtDay(range.from) : `${fmtDay(range.from)} → ${fmtDay(range.to)}`}`}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button type="button" className="btn btn-sm" onClick={() => exportAs('csv')} disabled={!data || busy} title="The rows matching these filters, with the same 12 columns">Export CSV</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => exportAs('xlsx')} disabled={!data || busy} title="The rows matching these filters, with the same 12 columns">Export Excel</button>
+        </div>
       </PanelHead>
-      <div style={{ padding: '12px 18px' }}>
-        <div className="filter-row">
-          <input type="date" value={filters.date} onChange={(e) => set('date', e.target.value)} />
-          <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
-          <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
-            <option value="">All Departments</option>
-            {departments.map((d) => <option key={d}>{d}</option>)}
-          </Combo>
-          <Combo value={filters.role} onChange={(e) => set('role', e.target.value)}>
-            <option value="">All Roles</option>
-            {roles.map((r) => <option key={r}>{r}</option>)}
-          </Combo>
-          <button className="btn btn-sm" onClick={() => setFilters(EMPTY_BIO)}>Clear</button>
+      <div style={{ padding: '12px 18px 0' }}>
+        <RangeBar from={range.from} to={range.to} onChange={(f, t) => { setRange({ from: f, to: t }); setKpi(''); }} latest={data?.latestDataDate} today={data?.today} />
+        <ListFilterBar lf={lf} storageKey="att-bio">
+          <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, margin: 0 }} title="Also list the people on the rolls with no check-in that day (absent, on leave, no record, week-off)">
+            <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={everyone} onChange={(e) => setEveryone(e.target.checked)} />
+            Show people without a check-in
+          </label>
+          {kpi && <button type="button" className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {KPI_NAME[kpi] || kpi}</button>}
+        </ListFilterBar>
+        {error && <div className="notice red">{error}</div>}
+        <NoDataNotice data={data} to={range.to} />
+        {data && !isRange && <DayKpis kpis={data.totals} date={data.date} headcount={data.headcount} active={kpi} onPick={setKpi} />}
+        {data && isRange && (
+          <>
+            <RangeKpis summary={data.summary} from={data.from} to={data.to} active={kpi} onPick={setKpi} />
+            <div className="att-kpi-sep">Date-wise totals — click a date to open that day</div>
+            <DateTotalsTable days={data.days} onPickDay={(d) => { setRange({ from: d, to: d }); setKpi(''); }} />
+          </>
+        )}
+        <div className="small-muted" style={{ fontSize: 12, margin: '4px 0 10px' }}>
+          Imported days show the old HRMS report&apos;s values as exported. Device days: First Check In = the first check-in, Last Check Out = the last
+          check-out the employee pressed, Total Hours = last out − first in, Total Time In Break = the gaps from a check-out to the next check-in,
+          Total Time Worked = Total Hours − breaks. Hover a row for the day&apos;s status.
+          {data && !data.everyone && data.withoutCheckIn > 0 && (
+            <> {' '}<b>{data.withoutCheckIn}</b> person-day(s) on the rolls without a check-in are not listed —{' '}
+              <button type="button" className="link-btn" onClick={() => setEveryone(true)}>show them</button>.
+            </>
+          )}
         </div>
       </div>
-      <div className="small-muted" style={{ fontSize: 12.5, padding: '0 18px 10px' }}>
-        {filters.date
-          ? `Showing the biometric report for ${filters.date}. Clear the date to go back to each employee's last-ever punch.`
-          : "Showing each employee's last-ever punch. Pick a date above to see that specific day's biometric report instead."}
+      <ScrollTable>
+        <table>
+          <thead>
+            <tr>{REPORT_COLS.map(([k, label]) => <th key={k} style={{ whiteSpace: 'nowrap' }}>{label}</th>)}</tr>
+          </thead>
+          <tbody>
+            {page.slice.map((r) => (
+              <tr key={`${r.employeeId}-${r.date}`} title={`${r.dateLabel}: ${r.bucket === 'noRecord' ? 'No record' : r.status}${r.note ? ` — ${r.note}` : ''}${r.source && r.source !== '—' ? ` · ${r.source}` : ''}`}>
+                <td><b>{r.employeeNo}</b></td>
+                <td>{r.employeeRef}</td>
+                <td>{r.name}</td>
+                <td className="cell-muted">{r.department || ''}</td>
+                <td className="cell-muted">{r.designation || ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{r.dateLabel}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{r.firstCheckIn || ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{r.lastCheckOut || ''}</td>
+                <td className="cell-muted">{r.workLocation || ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{r.totalTimeWorked || ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{r.totalBreak || ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{r.totalHours || ''}</td>
+              </tr>
+            ))}
+            {data && rows.length === 0 && (
+              <tr><td colSpan="12">
+                <ListEmpty lf={{ activeCount: lf.activeCount || kpi ? 1 : 0, clear: clearAll }} noun="rows" title="No check-ins in this period." />
+              </td></tr>
+            )}
+            {!data && !error && <tr><td colSpan="12" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+          </tbody>
+        </table>
+      </ScrollTable>
+      <div style={{ padding: '4px 18px 10px' }}>
+        {rows.length > 0 && <Pager page={page} noun="rows" />}
+        <div className="small-muted" style={{ fontSize: 12 }}>
+          {data && rows.length !== data.rows.length ? `${data.rows.length} row(s) before the card filter` : ''}{kpi ? ` · ${KPI_NAME[kpi] || kpi}` : ''}
+          {data && rows.length > page.size ? ' · the export has every matching row' : ''}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+// ---- Tab 3: Punch Log — the old "Bio-Metric Logs" screen --------------------
+// Employee · Department · Designation · Attendance Date · Time Interval: every
+// punch time of the day joined with "|" (device punches and the imported
+// bio-metric log merged by time, each once — server: timeIntervalOf()).
+// Employee by employee, dates ascending; the Employee / Department /
+// Designation cells are shown on an employee's first row (and again at the top
+// of a page) and left blank on the following dates. No KPI cards here.
+
+const PUNCH_STATUS_CHOICES = [
+  { value: 'Checked In', label: 'Still checked in (no check-out)' },
+  { value: 'Checked Out', label: 'Checked out' },
+];
+
+// Search · Department · Punch status · Day status | More: Role · Method · Source.
+// All sent to GET /attendance/punch-log, so the rows and the exports follow them.
+const punchFields = (seen, roles) => [
+  { key: 'q', type: 'search', placeholder: 'Search employee name or ID…' },
+  { key: 'department', label: 'Department', primary: true, options: seen.departments || [], show: (seen.departments || []).length > 1 },
+  { key: 'punchStatus', label: 'Punch status', allLabel: 'Checked In & Checked Out', primary: true, options: PUNCH_STATUS_CHOICES },
+  { key: 'dayStatus', label: 'Day status', allLabel: 'All day statuses', primary: true, options: seen.dayStatuses || [] },
+  { key: 'role', label: 'Role', options: roles },
+  { key: 'method', label: 'Method', options: seen.methods || [] },
+  { key: 'source', label: 'Source', options: seen.sources || [] },
+];
+
+function PunchLogTab() {
+  const [range, setRange] = useState({ from: today(), to: today() });
+  const [absentees, setAbsentees] = useState(false);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const roles = useRoles(true);
+  const seen = useSeen(data, (d) => ({ departments: (d.rows || []).map((r) => r.department), ...(d.facets || {}) }));
+  const lf = useListFilters([], punchFields(seen, roles), { server: true });
+  const punchStatus = lf.params.punchStatus || '';
+
+  const query = { ...range, ...lf.params, ...(absentees ? { absentees: '1' } : {}) };
+  useEffect(() => {
+    let alive = true;
+    setError('');
+    api.get(`/attendance/punch-log?${filterQuery(query)}`)
+      .then((res) => { if (alive) setData(res.data); })
+      .catch((e) => { if (alive) { setData(null); setError(e.response?.data?.error || 'Could not load punch log.'); } });
+    return () => { alive = false; };
+  }, [JSON.stringify(query)]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rows = data?.rows || [];
+  const page = usePaged(rows, 100);
+  const oneDay = range.from === range.to;
+
+  async function exportAs(format) {
+    setBusy(true);
+    try {
+      await downloadFrom('/attendance/punch-log', { ...query, format }, `bio-metric-logs-${range.from}_to_${range.to}.${format}`);
+    } catch { setError('Could not export the punch log.'); } finally { setBusy(false); }
+  }
+
+  return (
+    <Panel className="att-day">
+      <PanelHead title={`Bio-Metric Logs — ${oneDay ? fmtDay(range.from) : `${fmtDay(range.from)} → ${fmtDay(range.to)}`}`}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sm" onClick={() => exportAs('csv')} disabled={!data || busy} title="The rows matching these filters, with the same 5 columns">Export CSV</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => exportAs('xlsx')} disabled={!data || busy} title="The rows matching these filters, with the same 5 columns">Export Excel</button>
+        </div>
+      </PanelHead>
+      <div style={{ padding: '12px 18px 0' }}>
+        <RangeBar from={range.from} to={range.to} onChange={(from, to) => setRange({ from, to })} latest={data?.latestDataDate} today={data?.today} />
+        <ListFilterBar lf={lf} storageKey="att-punch">
+          <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, margin: 0 }} title="Also list the people on the rolls with no punch that day (their Time Interval is empty)">
+            <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={absentees && !punchStatus} disabled={!!punchStatus} onChange={(e) => setAbsentees(e.target.checked)} />
+            Show people without punches
+          </label>
+        </ListFilterBar>
+        <NoDataNotice data={data} to={range.to} />
+        <div className="small-muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+          Time Interval = every punch of the day, earliest first — the biometric device and the imported old-HRMS log merged, each time once.
+        </div>
+      </div>
+      {error && <div className="notice red" style={{ margin: '0 18px 10px' }}>{error}</div>}
+      <ScrollTable>
+        <table>
+          <thead>
+            <tr><th>Employee</th><th>Department</th><th>Designation</th><th>Attendance Date</th><th>Time Interval</th></tr>
+          </thead>
+          <tbody>
+            {page.slice.map((r, i) => {
+              // The employee's cells on their first row (and at the top of a page).
+              const first = i === 0 || page.slice[i - 1].employeeId !== r.employeeId;
+              return (
+                <tr key={`${r.employeeId}-${r.date}`} className={first && i > 0 ? 'att-emp-first' : undefined}
+                  title={r.dayStatus ? `${r.dateLabel}: ${r.dayStatus}` : undefined}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{first ? <b>{r.employeeLabel}</b> : ''}</td>
+                  <td className="cell-muted">{first ? (r.department || '') : ''}</td>
+                  <td className="cell-muted">{first ? (r.designation || '') : ''}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{r.dateLabel}</td>
+                  <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12.5 }}>
+                    {r.timeInterval || <span className="cell-muted">{r.dayStatus || 'No punch'}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+            {data && rows.length === 0 && (
+              lf.activeCount > 0
+                ? <tr><td colSpan="5"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
+                : <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>No punches in this period.</td></tr>
+            )}
+            {!data && !error && <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+          </tbody>
+        </table>
+      </ScrollTable>
+      <div style={{ padding: '4px 18px 10px' }}>
+        {rows.length > 0 && <Pager page={page} noun="rows" />}
+        <div className="small-muted" style={{ fontSize: 12 }}>
+          {data ? `${rows.length} row(s) · ${new Set(rows.map((r) => r.employeeId)).size} employee(s)${absentees && !punchStatus ? ' — people without punches included' : ''}` : ''}
+          {data && rows.length > page.size ? ' · the export has every matching row' : ''}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+// "Reports (Monthly)" now lives inside the Monthly Summary tab
+// (./attendance/TeamAttendance.jsx MonthlySummaryTab) — attendance %, the
+// payroll half-day cuts and the employee-status filter came with it.
+
+// ---- Check-in method assignment — Super Admin only ---------------------------
+// One row per employee, a tick per method. Changes are held on screen until
+// Save, and only the rows that changed are sent. "Tick all shown" works on
+// whatever the filters leave on screen, so a whole department is two clicks.
+function MethodAssignment() {
+  const [data, setData] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [f, setF] = useState({ q: '', department: '', method: '' });
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  function load() {
+    api.get('/attendance/checkin-methods')
+      .then((res) => { setData(res.data); setDraft({}); })
+      .catch((e) => setErr(e.response?.data?.error || 'Could not load the assignments.'));
+  }
+  useEffect(load, []);
+
+  if (err && !data) return <div className="notice red">{err}</div>;
+  if (!data) return <div className="small-muted">Loading…</div>;
+
+  const current = (e) => draft[e.id] || e.methods;
+  const depts = [...new Set(data.employees.map((e) => e.department).filter(Boolean))].sort();
+  const shown = data.employees.filter((e) => {
+    const q = f.q.trim().toLowerCase();
+    if (q && !`${e.employeeCode} ${e.name}`.toLowerCase().includes(q)) return false;
+    if (f.department && e.department !== f.department) return false;
+    if (f.method === 'none' && current(e).length) return false;
+    if (f.method && f.method !== 'none' && !current(e).includes(f.method)) return false;
+    return true;
+  });
+  const toggle = (e, key) => {
+    const now = current(e);
+    setDraft((d) => ({ ...d, [e.id]: now.includes(key) ? now.filter((k) => k !== key) : [...now, key] }));
+  };
+  const setAllShown = (key, on) => {
+    setDraft((d) => {
+      const next = { ...d };
+      shown.forEach((e) => {
+        const now = next[e.id] || e.methods;
+        next[e.id] = on ? [...new Set([...now, key])] : now.filter((k) => k !== key);
+      });
+      return next;
+    });
+  };
+  const changed = data.employees.filter((e) => draft[e.id]
+    && [...draft[e.id]].sort().join(',') !== [...e.methods].sort().join(','));
+
+  async function save() {
+    setMsg(''); setErr(''); setSaving(true);
+    try {
+      const res = await api.put('/attendance/checkin-methods', {
+        assignments: changed.map((e) => ({ employeeId: e.id, methods: draft[e.id] })),
+      });
+      setMsg(`${res.data.changed} employee(s) updated.`);
+      load();
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not save.');
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <Panel style={{ marginTop: 16 }}>
+      <PanelHead title="Assign check-in methods — Super Admin">
+        <button className="btn btn-sm btn-primary" disabled={!changed.length || saving} onClick={save}>
+          {saving ? 'Saving…' : changed.length ? `Save ${changed.length} change(s)` : 'Save'}
+        </button>
+      </PanelHead>
+      <div style={{ padding: '12px 18px 0' }}>
+        <div className="small-muted" style={{ marginBottom: 8 }}>
+          An employee can check in only by the methods ticked here. With nothing ticked they cannot check in at all.
+        </div>
+        <div className="filter-row">
+          <input placeholder="Employee ID or name" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
+          <Combo value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>
+            <option value="">All departments</option>
+            {depts.map((d) => <option key={d}>{d}</option>)}
+          </Combo>
+          <Combo value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>
+            <option value="">Any method</option>
+            {data.methods.map((m) => <option key={m.key} value={m.key}>Has {m.label}</option>)}
+            <option value="none">No method assigned</option>
+          </Combo>
+          <span className="small-muted" style={{ alignSelf: 'center' }}>{shown.length} employee(s)</span>
+        </div>
+        {msg && <div className="notice">{msg}</div>}
+        {err && <div className="notice red">{err}</div>}
       </div>
       <div className="tbl-wrap">
         <table>
           <thead>
             <tr>
-              <th>Code</th><th>Name</th><th>Department</th><th>Role</th><th>Method</th>
-              <th>{filters.date ? 'Punches' : 'Last punch (ever)'}</th>
-              <th>Check-in</th><th>Check-out</th><th>Location</th>
-              <th>Present (month)</th><th>Late (month)</th><th>Half-day Cut (month)</th>
+              <th>Code</th><th>Employee</th><th>Department</th>
+              {data.methods.map((m) => (
+                <th key={m.key} style={{ textAlign: 'center' }}>
+                  {m.label}
+                  <div style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, marginTop: 3 }}>
+                    <button type="button" className="link-btn" onClick={() => setAllShown(m.key, true)}>all</button>
+                    {' · '}
+                    <button type="button" className="link-btn" onClick={() => setAllShown(m.key, false)}>none</button>
+                  </div>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {(data?.rows || []).map((r) => (
-              <tr key={r.employeeId}>
-                <td><b>{r.employeeCode}</b></td><td>{r.name}</td>
-                <td className="cell-muted">{r.department || '—'}</td><td className="cell-muted">{r.role || '—'}</td>
-                <td className="cell-muted">{r.method}</td><td className="cell-muted">{r.lastPunch}</td>
-                <td className="cell-muted">{to12h(r.checkIn)}</td><td className="cell-muted">{to12h(r.checkOut)}</td>
-                <td className="cell-muted">{r.location}</td>
-                <td style={{ textAlign: 'center' }}>{r.present}</td>
-                <td style={{ textAlign: 'center' }}>{r.late}</td>
-                <td style={{ textAlign: 'center' }}>{r.halfDayCut}</td>
-              </tr>
-            ))}
-            {data && data.rows.length === 0 && <tr><td colSpan="12" className="small-muted" style={{ padding: 16 }}>No employees match these filters</td></tr>}
-          </tbody>
-        </table>
-      </div>
-      <div style={{ padding: '10px 18px' }} className="small-muted">{data?.rows.length ?? 0} employee(s)</div>
-    </Panel>
-  );
-}
-
-// ---- Tab 3: Punch Log (Detailed) --------------------------------------------
-
-function PunchLogTab() {
-  const emptyFilters = { from: `${thisMonth()}-01`, to: today(), name: '', department: '' };
-  const [filters, setFilters] = useState(emptyFilters);
-  const [data, setData] = useState(null);
-  const departments = useDepartments(true);
-
-  useEffect(() => {
-    api.get(`/attendance/punch-log?${filterQuery(filters)}`).then((res) => setData(res.data));
-  }, [filters]);
-
-  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-
-  function exportCsv() {
-    downloadCsv(
-      `punch-log-${filters.from}_${filters.to}.csv`,
-      ['Date', 'Code', 'Name', 'Department', 'Punches', 'First In', 'Last Out', 'Hours', 'Method', 'Location', 'Late?'],
-      data.rows.map((r) => [r.date, r.employeeCode, r.name, r.department, r.punches, r.firstIn, r.lastOut, r.hours ?? '—', r.method, r.location, r.late ? 'Late' : 'On time'])
-    );
-  }
-
-  return (
-    <Panel>
-      <PanelHead title="Punch Log — every device punch, paired into sessions">
-        <button className="btn btn-sm btn-primary" onClick={exportCsv} disabled={!data}>Export</button>
-      </PanelHead>
-      <div style={{ padding: '12px 18px' }}>
-        <div className="filter-row">
-          <label className="small-muted" style={{ alignSelf: 'center', margin: 0 }}>From</label>
-          <input type="date" value={filters.from} onChange={(e) => set('from', e.target.value)} />
-          <label className="small-muted" style={{ alignSelf: 'center', margin: 0 }}>To</label>
-          <input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} />
-          <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
-            <option value="">All Departments</option>
-            {departments.map((d) => <option key={d}>{d}</option>)}
-          </Combo>
-          <button className="btn btn-sm" onClick={() => setFilters(emptyFilters)}>Clear</button>
-        </div>
-      </div>
-      <div className="tbl-wrap">
-        <table>
-          <thead><tr><th>Date</th><th>Code</th><th>Name</th><th>Punches</th><th>First In</th><th>Last Out</th><th>Hours</th><th>Method</th><th>Location</th><th>Late?</th></tr></thead>
-          <tbody>
-            {(data?.rows || []).map((r) => (
-              <tr key={`${r.employeeId}-${r.date}`}>
-                <td>{r.date}</td><td><b>{r.employeeCode}</b></td><td>{r.name}</td>
-                <td className="cell-muted">{r.punches}</td>
-                <td className="cell-muted">{to12h(r.firstIn)}</td>
-                <td className="cell-muted">{to12h(r.lastOut)}</td>
-                <td className="cell-muted">{r.hours ?? '—'}</td>
-                <td className="cell-muted">{r.method}</td>
-                <td className="cell-muted">{r.location}</td>
-                <td><span className={`status ${r.late ? 'pending' : 'active'}`}>{r.late ? 'Late' : 'On time'}</span></td>
-              </tr>
-            ))}
-            {data && data.rows.length === 0 && <tr><td colSpan="10" className="small-muted" style={{ padding: 16 }}>No punches in this date range.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-      <div style={{ padding: '10px 18px' }} className="small-muted">{data?.rows.length ?? 0} session(s)</div>
-    </Panel>
-  );
-}
-
-// ---- Tab 4: Reports (Monthly) -----------------------------------------------
-
-function ReportsTab() {
-  const [month, setMonth] = useState(thisMonth());
-  const [filters, setFilters] = useState({ code: '', name: '', department: '', role: '' });
-  const [report, setReport] = useState(null);
-  const departments = useDepartments(true);
-  const roles = useRoles(true);
-
-  useEffect(() => {
-    api.get(`/attendance/report?month=${month}&${filterQuery(filters)}`).then((res) => setReport(res.data));
-  }, [month, filters]);
-
-  function exportCsv() {
-    downloadCsv(
-      `attendance-report-${month}.csv`,
-      ['Code', 'Name', 'Department', 'Working Days', 'Present', 'Half Day', 'Absent', 'Leave', 'Late', 'Half-day Cut', 'Attendance %'],
-      report.rows.map((r) => [r.employeeCode, r.name, r.department, r.workingDays, r.present, r.halfDay, r.absent, r.leave, r.late, r.halfDayCut, `${r.pct}%`])
-    );
-  }
-
-  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-
-  return (
-    <Panel>
-      <PanelHead title={`Monthly Attendance Report — ${report?.monthLabel || month}`}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          <button className="btn btn-sm btn-primary" onClick={exportCsv} disabled={!report}>Export</button>
-        </div>
-      </PanelHead>
-      <div style={{ padding: '12px 18px' }}>
-        <div className="filter-row">
-          <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
-          <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-          <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
-            <option value="">All Departments</option>
-            {departments.map((d) => <option key={d}>{d}</option>)}
-          </Combo>
-          <Combo value={filters.role} onChange={(e) => set('role', e.target.value)}>
-            <option value="">All Roles</option>
-            {roles.map((r) => <option key={r}>{r}</option>)}
-          </Combo>
-        </div>
-      </div>
-      {report && (
-        <div style={{ padding: '2px 18px 14px' }}>
-          <StatRow cells={[
-            { value: report.totals.present, label: 'Total Present Days' },
-            { value: report.totals.absent, label: 'Total Absent Days' },
-            { value: report.totals.late, label: 'Total Late Days' },
-            { value: report.totals.halfDayCut, label: 'Total Half-day Cuts' },
-          ]} />
-        </div>
-      )}
-      <div className="tbl-wrap">
-        <table>
-          <thead><tr><th>Code</th><th>Name</th><th>Department</th><th>Working Days</th><th>Present</th><th>Half Day</th><th>Absent</th><th>Leave</th><th>Late</th><th>Half-day Cut</th><th>Attendance %</th></tr></thead>
-          <tbody>
-            {(report?.rows || []).map((r) => (
-              <tr key={r.employeeId}>
-                <td><b>{r.employeeCode}</b></td><td>{r.name}</td><td className="cell-muted">{r.department || '—'}</td>
-                <td style={{ textAlign: 'center' }}>{r.workingDays}</td>
-                <td style={{ textAlign: 'center' }}>{r.present}</td>
-                <td style={{ textAlign: 'center' }}>{r.halfDay}</td>
-                <td style={{ textAlign: 'center' }}>{r.absent}</td>
-                <td style={{ textAlign: 'center' }}>{r.leave}</td>
-                <td style={{ textAlign: 'center' }}>{r.late}</td>
-                <td style={{ textAlign: 'center' }}>{r.halfDayCut}</td>
-                <td style={{ textAlign: 'center' }}><b>{r.pct}%</b></td>
-              </tr>
-            ))}
-            {report && report.rows.length === 0 && <tr><td colSpan="11" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>}
+            {shown.map((e) => {
+              const now = current(e);
+              return (
+                <tr key={e.id}>
+                  <td><b>{e.employeeCode}</b></td>
+                  <td>{e.name}<div className="small-muted">{e.designation || ''}</div></td>
+                  <td className="cell-muted">{e.department || '—'}</td>
+                  {data.methods.map((m) => (
+                    <td key={m.key} style={{ textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        style={{ width: 16, height: 16, minHeight: 0 }}
+                        aria-label={`${m.label} for ${e.name}`}
+                        checked={now.includes(m.key)}
+                        onChange={() => toggle(e, m.key)}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+            {shown.length === 0 && <tr><td colSpan={3 + data.methods.length}><ListEmpty lf={{ activeCount: f.q || f.department || f.method ? 1 : 0, clear: () => setF({ q: '', department: '', method: '' }) }} noun="employees" /></td></tr>}
           </tbody>
         </table>
       </div>
@@ -444,7 +769,7 @@ function ReportsTab() {
 
 // ---- Tab 5: Check-in Methods (usage + attendance policy) --------------------
 
-function MethodsTab({ canEdit }) {
+function MethodsTab({ canEdit, canAssign, canAlerts }) {
   const [methods, setMethods] = useState([]);
   const [policy, setPolicy] = useState(null);
   const [error, setError] = useState('');
@@ -468,11 +793,12 @@ function MethodsTab({ canEdit }) {
   }
 
   return (
+    <>
     <TwoCol style={{ gridTemplateColumns: '1fr 1fr' }}>
       <PanelPad>
         <h3 style={{ fontSize: 14, marginBottom: 10 }}>Check-in Methods</h3>
         <div className="small-muted" style={{ fontSize: 12, marginBottom: 10 }}>
-          Methods your people may use to record a punch. Usage counts are from the punch log.
+          Each employee may use only the methods Super Admin assigns them. Usage counts are from the punch log.
         </div>
         {methods.map((m) => (
           <AssignRow flush key={m.method}>
@@ -480,8 +806,9 @@ function MethodsTab({ canEdit }) {
             <span className="cell-muted" style={{ fontSize: 12 }}>{m.punches} punch(es) recorded</span>
           </AssignRow>
         ))}
-        <div className="small-muted" style={{ fontSize: 11.5, fontStyle: 'italic', marginTop: 10 }}>
-          Prototype simulation — a production check-in would capture GPS location (with permission) and a face verification.
+        <div className="small-muted" style={{ fontSize: 11.5, marginTop: 10 }}>
+          Web and mobile check-in (GPS / Location or Face Recognition) needs a live camera capture, matched on the server to the
+          employee&apos;s registered photo with a head-turn or blink liveness step, plus the location. Biometric punches come from the fingerprint device.
         </div>
       </PanelPad>
 
@@ -511,6 +838,11 @@ function MethodsTab({ canEdit }) {
         </PanelPad>
       )}
     </TwoCol>
+    <CheckinSettings canEditPolicy={canEdit} isSuperAdmin={canAssign} />
+    {canAssign && <MethodAssignment />}
+    {/* Late / missing-punch alerts — HR settings (configure permission). */}
+    {canAlerts && <AlertSettings />}
+    </>
   );
 }
 
@@ -518,14 +850,43 @@ function MethodsTab({ canEdit }) {
 // The prototype calls regularizationModalHtml(), which it never defines, so its
 // own "+ Request Regularization" button is dead; this is the working version.
 
+const REG_STATUSES = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
+const EMPTY_REG = { code: '', name: '', department: '', empStatus: '', date: '', status: '' };
+
 function RegularizationTab({ isHR, canDecide }) {
+  const { user } = useAuth();
   const [requests, setRequests] = useState([]);
   const [form, setForm] = useState({ date: today(), requestedCheckIn: '', requestedCheckOut: '', reason: '' });
+  const [rf, setRf] = useState(EMPTY_REG);
+  const [error, setError] = useState('');
+  const [chainFor, setChainFor] = useState(null);
 
   function load() {
     api.get('/attendance/regularizations').then((res) => setRequests(res.data));
   }
   useEffect(load, []);
+
+  async function cancel(id) {
+    setError('');
+    try { await api.patch(`/attendance/regularizations/${id}/cancel`); load(); } catch (e) {
+      setError(e.response?.data?.error || 'Could not cancel the request.');
+    }
+  }
+
+  // The five filters work together over every request on screen.
+  const setR = (k, v) => setRf((f) => ({ ...f, [k]: v }));
+  const regDepts = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
+  const shown = requests.filter((r) => {
+    const e = r.employee || {};
+    if (rf.code && !String(e.employeeCode || '').toLowerCase().includes(rf.code.trim().toLowerCase())) return false;
+    if (rf.name && !String(e.name || '').toLowerCase().includes(rf.name.trim().toLowerCase())) return false;
+    if (rf.department && e.department !== rf.department) return false;
+    if (rf.empStatus && hrStatusOf(e.employmentStatus) !== rf.empStatus) return false;
+    if (rf.date && r.date !== rf.date) return false;
+    if (rf.status && r.status !== rf.status) return false;
+    return true;
+  });
+  const regPage = usePaged(shown);
 
   async function submit(e) {
     e.preventDefault();
@@ -534,8 +895,15 @@ function RegularizationTab({ isHR, canDecide }) {
     load();
   }
 
+  // Quick approve for the login whose turn it is. Rejecting (remarks
+  // required) and the Super Admin's direct decision live in the chain view.
   async function decide(id, status) {
-    await api.patch(`/attendance/regularizations/${id}/decision`, { status });
+    setError('');
+    try {
+      await api.patch(`/attendance/regularizations/${id}/decision`, { status });
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not record the decision.');
+    }
     load();
   }
 
@@ -556,26 +924,53 @@ function RegularizationTab({ isHR, canDecide }) {
 
       <Panel>
         <PanelHead title="Regularization requests" />
+        <PeopleFilterBar
+          filters={rf} setFilters={setRf} people={isHR} employeeStatus={isHR}
+          departments={isHR ? regDepts : undefined} statuses={REG_STATUSES}
+          labels={{ date: 'Date' }} shown={shown.length} total={requests.length}
+          style={{ margin: '12px 18px' }}
+        >
+          <input type="date" aria-label="Date" title="Date" value={rf.date} onChange={(e) => setR('date', e.target.value)} />
+          {/* hrms-24 §3 — the requests matching these filters, from the
+              server's own scoped query (own requests only without export). */}
+          <span style={{ marginLeft: 'auto' }}>
+            <ExportMenu url="/insights/regularization/export" params={rf} note="The requests matching these filters" />
+          </span>
+        </PeopleFilterBar>
+        {error && <div className="notice red" style={{ margin: '0 18px 10px' }}>{error}</div>}
         <div className="tbl-wrap">
           <table>
-            <thead><tr>{isHR && <th>Employee</th>}<th>Date</th><th>Requested In</th><th>Requested Out</th><th>Reason</th><th>Status</th>{isHR && <th></th>}</tr></thead>
+            <thead><tr>{isHR && <th>Code</th>}{isHR && <th>Employee</th>}{isHR && <th>Department</th>}<th>Date</th><th>Requested In</th><th>Requested Out</th><th>Reason</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {requests.map((r) => (
-                <tr key={r.id}>
-                  {isHR && <td>{r.employee?.name}</td>}
-                  <td>{r.date}</td>
-                  <td className="cell-muted">{r.requestedCheckIn || '—'}</td>
-                  <td className="cell-muted">{r.requestedCheckOut || '—'}</td>
-                  <td className="cell-muted">{r.reason || '—'}</td>
-                  <td><Status>{r.status}</Status></td>
-                  {isHR && <td>{canDecide && r.status === 'Pending' && (<><button className="btn btn-sm btn-primary" onClick={() => decide(r.id, 'Approved')}>Approve</button>{' '}<button className="btn btn-sm btn-danger" onClick={() => decide(r.id, 'Rejected')}>Reject</button></>)}</td>}
-                </tr>
-              ))}
-              {requests.length === 0 && <tr><td colSpan={isHR ? 7 : 5} className="small-muted" style={{ padding: 16 }}>No regularization requests yet.</td></tr>}
+              {regPage.slice.map((r) => {
+                const mineRow = r.employee?.userId && r.employee.userId === user?.id;
+                return (
+                  <tr key={r.id}>
+                    {isHR && <td><b>{r.employee?.employeeCode || '—'}</b></td>}
+                    {isHR && <td>{r.employee?.name}</td>}
+                    {isHR && <td className="cell-muted">{r.employee?.department || '—'}</td>}
+                    <td>{r.date}</td>
+                    <td className="cell-muted">{r.requestedCheckIn || '—'}</td>
+                    <td className="cell-muted">{r.requestedCheckOut || '—'}</td>
+                    <td className="cell-muted">{r.reason || '—'}</td>
+                    <td><Status>{r.status}</Status>{r.workflow && <ApprovalChainLine workflow={r.workflow} compact />}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {r.workflow && <button className="btn btn-sm" onClick={() => setChainFor(r.id)}>Chain</button>}{' '}
+                      {canDecide && r.status === 'Pending' && !mineRow && r.workflow?.currentOwnerUserId === user?.id && <button className="btn btn-sm btn-primary" onClick={() => decide(r.id, 'Approved')}>Approve</button>}
+                      {mineRow && r.status === 'Pending' && <button className="btn btn-sm" onClick={() => cancel(r.id)}>Cancel request</button>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {shown.length === 0 && <tr><td colSpan={isHR ? 9 : 6}><ListEmpty lf={{ activeCount: Object.values(rf).some(Boolean) ? 1 : 0, clear: () => setRf(EMPTY_REG) }} noun="regularization requests" /></td></tr>}
             </tbody>
           </table>
         </div>
+        {regPage.total > 0 && <Pager page={regPage} noun="requests" />}
       </Panel>
+      {chainFor && (
+        <ApprovalChainModal type="regularization" recordId={chainFor} onClose={() => setChainFor(null)} onChanged={load} />
+      )}
     </div>
   );
 }
@@ -594,22 +989,31 @@ export default function Attendance() {
   const canMark = canEditAttendance(user);
   const canDecide = canDecideAttendance(user);
   const canEditPolicy = isAdmin(user);
+  const canImportHistory = can(user, 'hrms', 'hrms', 'Attendance & Time', 'configure');
+  const canAssignMethods = isSuperAdmin(user);
   const [tab, setTab] = useState('dashboard');
 
   return (
     <TabsPage
       title="Attendance & Time"
-      subtitle="Daily marking, device punches, monthly reports and the check-in methods your people may use."
+      subtitle="Day-by-day attendance of the people on the rolls, device punches, the monthly summary and the check-in methods your people may use."
       value={tab}
       onChange={setTab}
       tabs={[
-        { key: 'dashboard', label: 'Dashboard', element: <DashboardTab isHR={isHR} canMark={canMark} goTab={setTab} /> },
+        { key: 'dashboard', label: 'Dashboard', element: <DashboardTab isHR={isHR} canMark={canMark} goTab={setTab} canImportHistory={canImportHistory} /> },
+        // HR, Managers, STLs and TLs have their own attendance too.
+        // …but Super Admin is a system account, not an employee: no self-service tab.
+        ...(isHR && !user?.systemAccount ? [{ key: 'mine', label: 'My Attendance', element: <MyAttendance /> }] : []),
         ...(isHR ? [
           { key: 'biometric', label: 'Biometric Attendance List', element: <BiometricTab /> },
           { key: 'punchlog', label: 'Punch Log (Detailed)', element: <PunchLogTab /> },
-          { key: 'reports', label: 'Reports (Monthly)', element: <ReportsTab /> },
+          // HRMS-24 §11 — the monthly summary, in scope. It now carries the old
+          // "Reports (Monthly)" figures too; "Team Attendance" is gone — the
+          // Biometric list above is the date-wise, in-scope view of every person.
+          { key: 'summary', label: 'Monthly Summary', element: <MonthlySummaryTab /> },
         ] : []),
-        { key: 'methods', label: 'Check-in Methods', element: <MethodsTab canEdit={canEditPolicy} /> },
+        ...(canImportHistory ? [{ key: 'history', label: 'Import History', element: <HistoryImport /> }] : []),
+        { key: 'methods', label: 'Check-in Methods', element: <MethodsTab canEdit={canEditPolicy} canAssign={canAssignMethods} canAlerts={canImportHistory} /> },
         { key: 'regularization', label: 'Regularization', element: <RegularizationTab isHR={isHR} canDecide={canDecide} /> },
       ]}
     />

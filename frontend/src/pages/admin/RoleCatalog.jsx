@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { atsRoleLabel } from '../../atsVocab';
+import { atsRoleLabel, registerRoleLabels } from '../../atsVocab';
+import CustomRoles from './CustomRoles.jsx';
+import { invalidateMasters } from '../../utils/masters';
+import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
+import './RoleCatalog.css';
 
 // Role Catalog (the prototype's roleCatalogView + openEditAccess +
 // openConfigureFeatures, lines 10098-10210).
@@ -53,9 +57,12 @@ export default function RoleCatalog() {
   const [draft, setDraft] = useState({}); // unsaved feature grid for `configuring`
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // + Add Role (custom roles live in CustomRoles.jsx; this only opens its form).
+  const [addSignal, setAddSignal] = useState(0);
+  const [mayAddRole, setMayAddRole] = useState(false);
 
   function load() {
-    api.get('/admin/role-catalog').then((res) => setRoles(res.data)).catch(() => setError('Could not load the role catalog.'));
+    api.get('/admin/role-catalog').then((res) => { registerRoleLabels(res.data.map((r) => ({ code: r.role, name: r.name }))); setRoles(res.data); }).catch(() => setError('Could not load the role catalog.'));
   }
   useEffect(load, []);
 
@@ -79,6 +86,7 @@ export default function RoleCatalog() {
         modules: e.modules.map((m) => (m.id === moduleId ? { ...m, moduleEnabled: res.data.moduleEnabled } : m)),
       }));
       setNotice(`${res.data.label} ${enabled ? 'enabled' : 'disabled'} for ${atsRoleLabel(editing.role)}.`);
+      invalidateMasters(); // which product a role fills feeds the role pickers
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'That toggle could not be saved.');
@@ -115,6 +123,7 @@ export default function RoleCatalog() {
         modules: e.modules.map((m) => (m.id === configuring ? { ...m, features: res.data.features } : m)),
       }));
       setConfiguring(null);
+      invalidateMasters();
       setNotice(`Feature permissions saved for ${atsRoleLabel(editing.role)} — ${mod.label}.`);
     } catch (err) {
       setError(err.response?.data?.error || 'Those permissions could not be saved.');
@@ -122,6 +131,23 @@ export default function RoleCatalog() {
   }
 
   const mod = configuring && editing ? editing.modules.find((m) => m.id === configuring) : null;
+
+  // THE FILTER STANDARD for the system roles: Search · Product · Users, Sort.
+  const systemRoles = roles.filter((r) => r.isSystem !== false);
+  const lf = useListFilters(systemRoles, [
+    { key: 'q', type: 'search', placeholder: 'Search role or scope…', get: (r) => `${atsRoleLabel(r.role)} ${r.role} ${r.scope || ''}` },
+    { key: 'product', label: 'Product', allLabel: 'All products', primary: true, get: (r) => r.products || [],
+      options: PRODUCT_ORDER.map((p) => ({ value: p, label: PRODUCT_LABEL[p] || p })) },
+    { key: 'users', label: 'Users', allLabel: 'With or without users', primary: true,
+      options: [{ value: 'with', label: 'Has users' }, { value: 'none', label: 'No users' }],
+      match: (r, v) => (v === 'with') === (r.users > 0) },
+  ], {
+    sorts: [
+      { key: 'catalog', label: 'Catalog order' },
+      { key: 'name', label: 'Name A–Z', cmp: (a, b) => atsRoleLabel(a.role).localeCompare(atsRoleLabel(b.role)) },
+      { key: 'users', label: 'Most users', cmp: (a, b) => (b.users || 0) - (a.users || 0) },
+    ],
+  });
 
   // The module list, grouped by product — the top level of
   // Product → Module → Feature → Action.
@@ -136,13 +162,15 @@ export default function RoleCatalog() {
           <h1>Role Catalog</h1>
           <div className="page-sub">Real user counts per role. Click Edit Access to configure a role&apos;s page access.</div>
         </div>
+        {mayAddRole && <button className="btn btn-primary" onClick={() => setAddSignal((n) => n + 1)}>+ Add Role</button>}
       </div>
 
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
 
+      <ListFilterBar lf={lf} storageKey="admin-role-catalog" noun="roles" />
       <div className="panel">
-        {roles.map((r) => (
+        {lf.rows.map((r) => (
           <div className="assign-row" key={r.role}>
             <span>
               <b>{atsRoleLabel(r.role)} · {r.users} user{r.users === 1 ? '' : 's'}</b>
@@ -160,8 +188,16 @@ export default function RoleCatalog() {
             <button className="btn btn-sm" onClick={() => openEditAccess(r.role)}>Edit Access</button>
           </div>
         ))}
-        {roles.length === 0 && <div className="empty-mini">No roles.</div>}
+        {lf.rows.length === 0 && <ListEmpty lf={lf} noun="roles" />}
       </div>
+
+      <CustomRoles
+        roles={roles.filter((r) => r.isSystem === false)}
+        addSignal={addSignal}
+        onMeta={(m) => setMayAddRole(!!m.canManage)}
+        onChanged={load}
+        onEditAccess={openEditAccess}
+      />
 
       <div className="notice" style={{ marginTop: 12 }}>
         Product → Module → Feature → Action. Everything here is ENFORCED: it is the same matrix the API
@@ -219,6 +255,20 @@ export default function RoleCatalog() {
             {PRODUCT_LABEL[mod.product || '*']} · {mod.featureNames.length} feature(s) · {atsRoleLabel(editing.role)}
             <br />
             {PRODUCT_NOTE[mod.product || '*']}
+            {mod.locked && (
+              <>
+                <br />
+                {atsRoleLabel(editing.role)} is view-only: greyed actions are ignored by the server whatever is ticked
+                (view and export stay, plus approve on the approval chain and LMS assign).
+              </>
+            )}
+            {mod.featureInfo && Object.values(mod.featureInfo).some((i) => !i.api) && (
+              <>
+                <br />
+                <span className="rc-badge">Screen visibility</span> no endpoint checks that feature on its own — its View
+                counts toward opening {mod.label}, like any feature of this module, and it drives the screen named in its note.
+              </>
+            )}
           </div>
           <div className="tbl-wrap">
             <table>
@@ -234,12 +284,22 @@ export default function RoleCatalog() {
                 {mod.featureNames.map((f) => {
                   const rec = draft[f] || {};
                   const all = editing.actions.every((a) => rec[a]);
+                  const info = mod.featureInfo && mod.featureInfo[f];
+                  const locked = (mod.locked && mod.locked[f]) || [];
                   return (
                     <tr key={f}>
-                      <td><b>{f}</b></td>
+                      <td>
+                        <b>{f}</b>
+                        {info && !info.api && <> <span className="rc-badge">Screen visibility</span></>}
+                        {info && <div className="cell-muted" style={{ fontSize: 11.5, maxWidth: 340, whiteSpace: 'normal' }}>{info.hint}</div>}
+                      </td>
                       {editing.actions.map((a) => (
                         <td key={a} style={{ textAlign: 'center' }}>
-                          <input type="checkbox" style={{ width: 'auto' }} checked={!!rec[a]} onChange={() => toggleAction(f, a)} />
+                          <input
+                            type="checkbox" style={{ width: 'auto' }} checked={!!rec[a]} onChange={() => toggleAction(f, a)}
+                            disabled={locked.includes(a)}
+                            title={locked.includes(a) ? 'View-only role — the server ignores this action' : undefined}
+                          />
                         </td>
                       ))}
                       <td style={{ textAlign: 'center' }}>

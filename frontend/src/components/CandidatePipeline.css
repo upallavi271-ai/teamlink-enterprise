@@ -1,0 +1,103 @@
+/* Candidates & Pipeline (pages/Candidates.jsx) and its helpers:
+   quick-view chips, stage strip, bulk bar, sortable headers, column chooser,
+   bulk call queue, bulk results. Scoped under .cpl / .colchooser / .bcq / .cbulk. */
+.cpl-quick,.cpl-stages{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.cpl-chip,.cpl-stage{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line,#dfe5ee);background:var(--paper-raised,#fff);color:var(--ink,#1b2437);border-radius:999px;padding:4px 10px;font-size:12.5px;cursor:pointer;line-height:1.3}
+.cpl-chip:hover,.cpl-stage:hover{border-color:var(--brand,#0a6fc2)}
+.cpl-chip.is-on,.cpl-stage.is-on{background:var(--brand,#0a6fc2);border-color:var(--brand,#0a6fc2);color:#fff}
+.cpl-chip-n{font-size:11px;font-weight:700;background:rgba(10,111,194,.1);color:var(--brand,#0a6fc2);border-radius:999px;padding:0 6px;min-width:18px;text-align:center}
+.cpl-chip.is-on .cpl-chip-n,.cpl-stage.is-on .cpl-chip-n{background:rgba(255,255,255,.25);color:#fff}
+.cpl-chip.is-red:not(.is-on) .cpl-chip-n{background:#fde8e8;color:#c0392b}
+.cpl-stage{border-radius:6px;font-size:12px;padding:3px 8px}
+.cpl-stage.is-empty{opacity:.6}
+.cpl-legend-btn{font-size:12px;margin-left:4px}
+.cpl-legend{margin-bottom:8px}
+.cpl-bulk{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:8px 10px;margin:8px 0;border:1px solid #b9d7f5;background:#f3f8fe;border-radius:8px;position:sticky;top:54px;z-index:5}
+.cpl-bulk-sep{width:1px;height:20px;background:#b9d7f5;margin:0 2px}
+.cpl-tablebar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0}
+.cpl-tablebar>.small-muted{margin-right:auto}
+.cpl-sort{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft,#5b6478)}
+.cpl-sort select{font-size:12.5px}
+.cpl-th{border:0;background:none;padding:0;font:inherit;font-weight:inherit;color:inherit;cursor:pointer;white-space:nowrap}
+.cpl-th.is-on{color:var(--brand,#0a6fc2)}
+.cpl-next{text-align:left;font-weight:600}
+.cpl-row-open td{background:#eef5fd}
+.cpl-loading{opacity:.6;transition:opacity .15s}
+.colchooser{position:relative;display:inline-block}
+.colchooser-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:40;background:var(--paper-raised,#fff);border:1px solid var(--line,#dfe5ee);border-radius:8px;box-shadow:0 8px 24px rgba(18,28,52,.14);padding:8px 10px;min-width:200px}
+.colchooser-item{display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0;cursor:pointer}
+.colchooser-item.is-locked{color:var(--ink-soft,#5b6478);cursor:default}
+.colchooser-reset{margin-top:6px;font-size:12px}
+.bcq-progress{height:4px;background:var(--line,#e3e8f0);border-radius:4px;overflow:hidden;margin-bottom:12px}
+.bcq-progress span{display:block;height:100%;background:var(--brand,#0a6fc2)}
+.bcq-person{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.bcq-name{font-size:16px;font-weight:700}
+.bcq-call{text-decoration:none}
+.bcq-log,.cbulk-results{max-height:240px;overflow-y:auto;margin-top:10px;border:1px solid var(--line,#e3e8f0);border-radius:6px}
+.bcq-log-row,.cbulk-row{display:flex;justify-content:space-between;gap:10px;padding:5px 8px;font-size:12.5px;border-bottom:1px solid var(--line,#eef1f6)}
+.bcq-log-row:last-child,.cbulk-row:last-child{border-bottom:0}
+@media (max-width:700px){.cpl-bulk{position:static}}
+/* Review #2 §28 — sticky header (from .tbl-fit) + sticky checkbox and
+   Candidate columns while the table scrolls sideways. */
+.cpl-table{min-width:980px}
+.cpl-table td,.cpl-table th{vertical-align:top}
+.cpl-table .cpl-sticky{position:sticky;background:#fff;z-index:1}
+.cpl-table thead th.cpl-sticky{z-index:3;background:var(--card2,#f5f7fb)}
+.cpl-table .cpl-sticky-0{left:0;width:36px;min-width:36px;max-width:36px}
+.cpl-table .cpl-sticky-1{left:36px;min-width:190px;max-width:260px;box-shadow:inset -1px 0 0 var(--line,#e3e8f0)}
+.cpl-table tbody tr:nth-child(even) td.cpl-sticky{background:#FAFBFD}
+.cpl-table tbody tr.row-link:hover td.cpl-sticky{background:var(--navy-tint,#eef3fb)}
+.cpl-table tbody tr.cpl-row-open td.cpl-sticky{background:#eef5fd}
+.cpl-cand-name{font-weight:600}
+.cpl-own{font-size:11px;margin-top:2px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Review #2 §10 — the compact "Stage: … ▾" menu. */
+.cpl-stagemenu{position:relative;display:inline-block}
+.cpl-stagemenu-btn{white-space:nowrap}
+.cpl-stagemenu-btn.is-on{border-color:var(--brand,#0a6fc2);color:var(--brand,#0a6fc2)}
+.cpl-stagemenu-pop{position:absolute;left:0;top:calc(100% + 4px);z-index:45;background:var(--paper-raised,#fff);border:1px solid var(--line,#dfe5ee);border-radius:8px;box-shadow:0 8px 24px rgba(18,28,52,.14);padding:6px;min-width:250px;max-height:420px;overflow-y:auto}
+.cpl-stagemenu-item{display:flex;align-items:center;border-radius:6px}
+.cpl-stagemenu-item.is-on{background:#eef5fd}
+.cpl-stagemenu-item.is-empty{opacity:.55}
+.cpl-stagemenu-main{flex:1;display:flex;justify-content:space-between;align-items:center;gap:8px;border:0;background:none;padding:6px 8px;font:inherit;font-size:13px;cursor:pointer;text-align:left;color:inherit;border-radius:6px}
+.cpl-stagemenu-main:hover,.cpl-stagemenu-sub:hover{background:#f3f7fc}
+.cpl-stagemenu-more{border:0;background:none;cursor:pointer;padding:6px 8px;color:var(--ink-soft,#5b6478)}
+.cpl-stagemenu-sub{display:block;width:100%;border:0;background:none;text-align:left;font:inherit;font-size:12.5px;padding:4px 8px 4px 22px;cursor:pointer;color:var(--ink-soft,#5b6478);border-radius:6px}
+.cpl-stagemenu-sub.is-on{color:var(--brand,#0a6fc2);font-weight:600}
+/* Review #2 §12 — "Candidate already exists" on the Add Candidate form. */
+.cdup-exists{border:1px solid #f0cf8f;background:#fffaf0;border-radius:8px;padding:10px 12px;margin:10px 0}
+.cdup-exists-title{font-weight:700;color:#8a5a00;font-size:14px;margin-bottom:2px}
+.cdup-exists-card{background:#fff;border:1px solid var(--line,#e3e8f0);border-radius:6px;padding:8px 10px;margin-bottom:8px}
+.cdup-exists-why{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:3px}
+.cdup-why{font-size:10.5px;font-weight:700;border-radius:10px;padding:1px 7px;background:#e8f1fb;color:var(--brand,#0a6fc2)}
+.cdup-why-name{background:#f1f3f6;color:var(--ink-soft,#5b6478)}
+.cdup-exists-apps{margin:6px 0;font-size:12.5px}
+.cdup-exists-app{display:flex;justify-content:space-between;gap:10px;padding:2px 0;border-bottom:1px dashed var(--line,#eef1f6)}
+.cdup-exists-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cdup-exists-actions .combo{min-width:240px;max-width:360px}
+.cdup-exists-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;margin-top:4px}
+.cdup-possible{margin-top:8px;font-size:12.5px}
+button.cpl-stagemenu-item{width:100%;border:0;background:none;padding:6px 8px;font:inherit;font-size:13px;cursor:pointer;text-align:left;color:inherit}
+.cpl-table td.cpl-col-next{min-width:200px}
+.cpl-sub{font-size:11.5px;margin-top:2px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpl-th{text-transform:inherit;letter-spacing:inherit}
+.cpl-table td.cpl-nowrap{white-space:nowrap}
+
+/* Review #3 §6 §14 §16 — Reports link, More Filters row, one-click next
+   action + "⋯" menu, role-relevant Stage menu. */
+.cpl-moved{margin-left:auto;align-self:center;font-size:12.5px;white-space:nowrap;padding:0 4px}
+.cpl .cpl-search{min-width:240px}
+.cpl-date{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--ink-soft,#5b6478)}
+.cpl-flash{display:flex;align-items:center;gap:10px;justify-content:space-between;margin:6px 0}
+.cpl-next-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.cpl-next-row .btn-sm{white-space:nowrap}
+.cpl-next-alt{background:#fff;border:1px solid var(--line,#d5dce7);color:var(--ink,#1b2437)}
+.cpl-rowmenu{position:relative;display:inline-block;margin-left:auto}
+.cpl-rowmenu-btn{border:1px solid transparent;background:transparent;border-radius:6px;padding:2px 8px;font-size:15px;line-height:1.2;color:var(--ink-soft,#5b6478);cursor:pointer}
+.cpl-rowmenu-btn:hover,.cpl-rowmenu-btn[aria-expanded="true"]{border-color:var(--line,#d5dce7);background:#fff;color:var(--ink,#1b2437)}
+.cpl-rowmenu-pop{position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:180px;background:#fff;border:1px solid var(--line,#e3e8f0);border-radius:8px;box-shadow:0 8px 24px rgba(15,30,60,.14);padding:4px;display:flex;flex-direction:column}
+.cpl-rowmenu-item{background:none;border:0;text-align:left;padding:7px 10px;border-radius:6px;font-size:13px;color:var(--ink,#1b2437);cursor:pointer;white-space:nowrap}
+.cpl-rowmenu-item:hover{background:var(--brand-tint,#eaf3fc)}
+.cpl-rowmenu-item.is-danger{color:#b3261e}
+.cpl-stagemenu-sep{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft,#5b6478);padding:8px 10px 2px;border-top:1px solid var(--line,#e3e8f0);margin-top:4px}
+.cpl-stagemenu-foot{font-size:11px;color:var(--ink-soft,#5b6478);padding:6px 10px 2px;border-top:1px solid var(--line,#e3e8f0);margin-top:4px}
+.cpl-waiting{font-size:12.5px;color:var(--ink-soft,#5b6478);white-space:nowrap}

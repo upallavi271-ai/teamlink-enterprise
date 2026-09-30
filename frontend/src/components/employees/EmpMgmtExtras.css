@@ -1,0 +1,19 @@
+/* Employee Management extras: list avatar, docs count, notice-period line,
+   transfer history. Scoped under emgx- so nothing else is affected. */
+.emgx-avatar{display:inline-flex;align-items:center;justify-content:center;flex:none;border-radius:50%;overflow:hidden;
+  background:var(--card2, #F1F4F9);border:1px solid var(--line, #DDE3EC);color:var(--navy, #1F3864);font-weight:600;
+  vertical-align:middle;line-height:1}
+.emgx-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.emgx-name{display:flex;align-items:center;gap:8px}
+.emgx-name > div{min-width:0}
+.emgx-docs{font-size:12px;white-space:nowrap}
+.emgx-docs.none{color:var(--muted, #8A94A6)}
+.emgx-lwd{font-size:11.5px;margin-top:4px;color:var(--amber, #B7791F);white-space:nowrap}
+.emgx-lwd.missing{color:var(--red, #C0392B)}
+.emgx-lwd-edit{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 10px}
+.emgx-lwd-edit input{width:auto}
+.emgx-th-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.emgx-th-table th,.emgx-th-table td{padding:6px 8px;border-bottom:1px solid var(--line, #DDE3EC);text-align:left;vertical-align:top}
+.emgx-th-table th{font-weight:600;color:var(--muted, #8A94A6);font-size:11.5px}
+.emgx-kind{display:inline-block;padding:1px 7px;border-radius:10px;background:var(--card2, #F1F4F9);font-size:11px;font-weight:600;color:var(--navy, #1F3864)}
+.emgx-viewonly{margin-bottom:12px}

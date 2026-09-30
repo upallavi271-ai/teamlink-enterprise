@@ -7,20 +7,32 @@ import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel
 import { isHR as hasHrmsAdmin, can } from '../../permissions';
 import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
 import Combo from '../../components/Combo.jsx';
+import FilterChips from '../../components/FilterChips.jsx';
+import DateRangePicker, { useDateRange, rangeParams } from '../../components/DateRangePicker.jsx';
+import ChartFromSpec from '../../components/charts/ChartFromSpec.jsx';
 
-const PERIODS = ['Today', 'This Week', 'This Month', 'This Quarter', 'This Year'];
+const NO_FILTERS = { department: '', location: '', status: '', manager: '' };
 
 // The HR/manager view: every tile, panel and the CSV export are computed by
 // /api/hrms/dashboard against the same filtered employee set.
+//
+// The date range (it replaces a "Date Range" select that was never sent to
+// the server) moves the dated tiles — attendance, on leave, new joiners and
+// the leave overview — and their labels say so. Tiles marked "(now)" are the
+// state of things today whatever range is picked.
 function HrDashboard() {
-  const [filters, setFilters] = useState({ period: '', department: '', location: '', status: '', manager: '' });
+  const [filters, setFilters] = useState(NO_FILTERS);
+  const [range, setRange] = useDateRange('tl_dash_range_hrms');
   const [data, setData] = useState(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    Object.keys(filters).forEach((k) => { if (filters[k] && k !== 'period') params.set(k, filters[k]); });
-    api.get(`/hrms/dashboard?${params.toString()}`).then((res) => setData(res.data));
-  }, [filters]);
+    const params = new URLSearchParams(rangeParams(range));
+    Object.keys(filters).forEach((k) => { if (filters[k]) params.set(k, filters[k]); });
+    api.get(`/hrms/dashboard?${params.toString()}`)
+      .then((res) => { setData(res.data); setError(''); })
+      .catch((err) => setError(err.response?.data?.error || 'Could not load the dashboard'));
+  }, [filters, range]);
 
   function exportCsv() {
     downloadCsv(
@@ -30,37 +42,51 @@ function HrDashboard() {
     );
   }
 
-  if (!data) return <div className="small-muted">Loading…</div>;
+  if (!data) return error ? <div className="notice red">{error}</div> : <div className="small-muted">Loading…</div>;
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-  const anyFilter = Object.values(filters).some(Boolean);
+  const anyFilter = Object.values(filters).some(Boolean) || range.range !== 'today';
   const o = data.filterOptions;
+  // "New Joiners — This Month" moved with the range; "Active (now)" did not.
+  const p = data.period;
+  const inP = (label) => `${label} — ${p.name}`;
+  const now = (label) => `${label} (now)`;
 
   return (
     <div>
       <div className="filter-row" style={{ marginBottom: 16 }}>
-        <Combo value={filters.period} onChange={(e) => set('period', e.target.value)}>
-          <option value="">Date Range</option>
-          {PERIODS.map((p) => <option key={p}>{p}</option>)}
-        </Combo>
-        <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
-          <option value="">Department</option>
+        <DateRangePicker value={range} onChange={setRange} period={data.period} />
+        <Combo value={filters.department} title="Department" onChange={(e) => set('department', e.target.value)}>
+          <option value="">All departments</option>
           {o.departments.map((d) => <option key={d}>{d}</option>)}
         </Combo>
-        <Combo value={filters.location} onChange={(e) => set('location', e.target.value)}>
-          <option value="">Location</option>
+        <Combo value={filters.location} title="Location" onChange={(e) => set('location', e.target.value)}>
+          <option value="">All locations</option>
           {o.locations.map((l) => <option key={l}>{l}</option>)}
         </Combo>
-        <Combo value={filters.status} onChange={(e) => set('status', e.target.value)}>
-          <option value="">Employee Status</option>
+        <Combo value={filters.status} title="Employee status" onChange={(e) => set('status', e.target.value)}>
+          <option value="">All employee statuses</option>
           {o.statuses.map((s) => <option key={s}>{s}</option>)}
         </Combo>
-        <Combo value={filters.manager} onChange={(e) => set('manager', e.target.value)}>
-          <option value="">Reporting Manager</option>
+        <Combo value={filters.manager} title="Reporting manager" onChange={(e) => set('manager', e.target.value)}>
+          <option value="">All reporting managers</option>
           {o.managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
         </Combo>
-        {anyFilter && <button className="btn btn-sm" onClick={() => setFilters({ period: '', department: '', location: '', status: '', manager: '' })}>Clear Filters</button>}
+        {anyFilter && <button className="btn btn-sm" onClick={() => { setFilters(NO_FILTERS); setRange({ range: 'today', from: '', to: '' }); }}>Clear All</button>}
         <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={exportCsv}>Export</button>
       </div>
+      {/* Every active filter as a removable chip, so nothing narrows the
+          tiles silently (the date range shows on its own picker). */}
+      <FilterChips
+        filters={[
+          { key: 'department', label: 'Department', value: filters.department, onRemove: () => set('department', '') },
+          { key: 'location', label: 'Location', value: filters.location, onRemove: () => set('location', '') },
+          { key: 'status', label: 'Employee status', value: filters.status, onRemove: () => set('status', '') },
+          { key: 'manager', label: 'Reporting manager', value: filters.manager ? ((o.managers.find((m) => String(m.id) === String(filters.manager)) || {}).name || filters.manager) : '', onRemove: () => set('manager', '') },
+        ]}
+        onClearAll={Object.values(filters).some(Boolean) ? () => setFilters(NO_FILTERS) : undefined}
+      />
+
+      {error && <div className="notice red">{error}</div>}
 
       {data.employeeOverview.total === 0 && (
         <ScopeNote>No employee records match these filters — the counts below are genuinely zero, not placeholders.</ScopeNote>
@@ -68,37 +94,64 @@ function HrDashboard() {
 
       <SectionLabel>Employee Overview</SectionLabel>
       <StatRow cells={[
-        { value: data.employeeOverview.total, label: 'Total Employees', to: '/employees' },
-        { value: data.employeeOverview.active, label: 'Active' },
-        { value: data.employeeOverview.newJoiners30d, label: 'New Joiners (30d)' },
-        { value: data.employeeOverview.onLeaveToday, label: 'On Leave Today', to: '/leave' },
-        { value: data.employeeOverview.servingNotice, label: 'Serving Notice' },
-        { value: data.employeeOverview.exitProcess, label: 'Exit Process' },
-        { value: data.employeeOverview.relieved, label: 'Relieved' },
+        { value: data.employeeOverview.total, label: now('Total Employees'), to: '/employees' },
+        { value: data.employeeOverview.active, label: now('Active') },
+        { value: data.employeeOverview.newJoiners, label: inP('New Joiners') },
+        { value: data.employeeOverview.onLeave, label: inP('On Leave'), to: '/leave' },
+        { value: data.employeeOverview.servingNotice, label: now('Serving Notice') },
+        { value: data.employeeOverview.exitProcess, label: now('Exit Process') },
+        { value: data.employeeOverview.relieved, label: now('Relieved') },
       ]} />
 
-      <SectionLabel>Attendance Overview (Today)</SectionLabel>
+      {/* PEOPLE ON ONE DAY, not person-days: the range's last day (today when
+          the range runs on past it), out of the people on the rolls that day.
+          The buckets add up to the headcount, and match the Attendance
+          page's Dashboard for the same date. */}
+      <SectionLabel>{`Attendance on ${data.attendanceOverview.asOf} — people on the rolls that day${p.days > 1 ? ` (last day of ${p.name}; the charts below cover the whole range)` : ''}`}</SectionLabel>
       <StatRow cells={[
-        { value: data.attendanceOverview.present, label: 'Present', to: '/attendance' },
-        { value: data.attendanceOverview.absent, label: 'Absent', to: '/attendance' },
-        { value: data.attendanceOverview.late, label: 'Late', to: '/attendance' },
+        { value: data.attendanceOverview.headcount, label: 'Headcount on the rolls', to: '/attendance' },
+        { value: data.attendanceOverview.present, label: 'Present (incl. late)', to: '/attendance' },
         { value: data.attendanceOverview.halfDay, label: 'Half Day', to: '/attendance' },
-        { value: data.attendanceOverview.missingPunch, label: 'Missing Punch', to: '/attendance' },
-        { value: data.attendanceOverview.regularizationPending, label: 'Regularization Pending', to: '/attendance' },
+        { value: data.attendanceOverview.absent, label: 'Absent', to: '/attendance' },
+        { value: data.attendanceOverview.onLeave, label: 'On Leave', to: '/leave' },
+        ...(data.attendanceOverview.offDay ? [{ value: data.attendanceOverview.offDay, label: 'Week-off / Holiday', to: '/attendance' }] : []),
+        ...(data.attendanceOverview.noRecord ? [{ value: data.attendanceOverview.noRecord, label: 'No record (nothing marked)', to: '/attendance' }] : []),
+        ...(data.attendanceOverview.notYet ? [{ value: data.attendanceOverview.notYet, label: 'Not checked in yet', to: '/attendance' }] : []),
+        ...(data.attendanceOverview.upcoming ? [{ value: data.attendanceOverview.upcoming, label: 'Upcoming day', to: '/attendance' }] : []),
+        { value: data.attendanceOverview.late, label: 'Of whom late', to: '/attendance' },
+        { value: data.attendanceOverview.missingPunch, label: 'Missing punch', to: '/attendance' },
+        // Regularization Pending (now) was the same figure as "Attendance
+        // Regularization" under Pending Tasks & Approvals — shown there once.
       ]} />
+      <div className="small-muted" style={{ fontSize: 12, margin: '-2px 0 12px' }}>
+        Present + Half Day + Absent + On Leave{data.attendanceOverview.offDay ? ' + Week-off / Holiday' : ''}{data.attendanceOverview.noRecord ? ' + No record' : ''}
+        {data.attendanceOverview.notYet ? ' + Not checked in yet' : ''}{data.attendanceOverview.upcoming ? ' + Upcoming' : ''} = headcount {data.attendanceOverview.headcount}.
+        {' '}Total Employees above counts every employee record, including people who have left.
+      </div>
 
-      <SectionLabel>Leave Overview</SectionLabel>
+      <SectionLabel>{`Leave Overview — requests overlapping ${p.name}`}</SectionLabel>
       <StatRow cells={[
         { value: data.leaveOverview.total, label: 'Leave Requests', to: '/leave' },
         { value: data.leaveOverview.pending, label: 'Pending Approvals', to: '/leave' },
         { value: data.leaveOverview.approved, label: 'Approved', to: '/leave' },
         { value: data.leaveOverview.rejected, label: 'Rejected', to: '/leave' },
-        { value: data.leaveOverview.upcoming, label: 'Upcoming Leaves', to: '/leave' },
+        { value: data.leaveOverview.upcoming, label: 'Upcoming Leaves (from today)', to: '/leave' },
       ]} />
+
+      {/* hrms-24 §9 — built by the server from exactly the figures in the
+          tiles above: same range, same filters, same scope. */}
+      {(data.charts || []).length > 0 && (
+        <>
+          <SectionLabel>{`Charts — ${p.name} (attendance charts are person-days: every day of the range added up)`}</SectionLabel>
+          <div className="tlc-grid2">
+            {data.charts.map((c) => <ChartFromSpec key={c.id} spec={c} />)}
+          </div>
+        </>
+      )}
 
       <div style={{ marginTop: 16 }}>
         <PanelPad>
-          <h3 style={{ marginBottom: 12, fontSize: 14 }}>Pending Tasks &amp; Approvals</h3>
+          <h3 style={{ marginBottom: 12, fontSize: 14 }}>Pending Tasks &amp; Approvals (now)</h3>
           <StatRow cells={[
             { value: data.pendingTasks.leaveApprovals, label: 'Leave Approvals', to: '/leave' },
             { value: data.pendingTasks.attendanceRegularization, label: 'Attendance Regularization', to: '/attendance' },
@@ -112,7 +165,7 @@ function HrDashboard() {
 
       <TwoCol>
         <Panel>
-          <PanelHead title="Headcount by Department" />
+          <PanelHead title="Headcount by Department (now)" />
           {data.headcountByDepartment.length === 0
             ? <EmptyMini>No employees in scope.</EmptyMini>
             : data.headcountByDepartment.map((d) => (

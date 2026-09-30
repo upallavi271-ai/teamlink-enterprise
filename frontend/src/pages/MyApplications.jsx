@@ -1,26 +1,32 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
-import { stageLabel } from '../atsVocab';
 
-// Candidate portal — someone who applied through /careers checks where their
-// applications got to, using the email they applied with. No account, matching
-// the no-login apply flow in JobDetail.jsx.
+// Public "My Applications" page (/careers/my-applications) for someone who
+// applied through the job portal.
+//
+// It USED to look applications up by email with no login, which let anyone
+// who knew an address read that person's applications and employers. Now the
+// candidate gets their OWN LOGIN instead (user notes #4, point 4): they type
+// the email they applied with and a single-use, expiring "set your password"
+// link is MAILED to that address (POST /api/portal/public/claim). Nothing
+// about the applications is ever shown on this public page. After signing in
+// they land on their candidate portal (/my-applications).
 export default function MyApplications() {
   const [email, setEmail] = useState('');
-  const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState('');
   const [error, setError] = useState('');
 
-  async function check(e) {
+  async function claim(e) {
     e.preventDefault();
     setBusy(true);
     setError('');
     try {
-      const res = await api.get('/public/my-applications', { params: { email } });
-      setResult(res.data);
+      const res = await api.post('/portal/public/claim', { email });
+      setDone(res.data.message);
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not look that up right now');
+      setError(err.response?.data?.error || 'Could not send the link right now — please try again.');
     } finally {
       setBusy(false);
     }
@@ -37,49 +43,39 @@ export default function MyApplications() {
           </div>
         </div>
       </header>
-      <main className="careers-content">
+      <main className="careers-content" style={{ maxWidth: 560 }}>
         <Link className="small-muted" to="/careers/classic">← Back to open positions</Link>
-        <h1 style={{ marginTop: 10 }}>Check your application status</h1>
-        <p className="small-muted">Enter the email address you applied with — no account needed.</p>
-        <form className="filter-row" onSubmit={check} style={{ maxWidth: 460 }}>
-          <input
-            style={{ flex: 1 }}
-            required
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-          />
-          <button className="btn btn-sm btn-primary" type="submit" disabled={busy}>
-            {busy ? 'Checking…' : 'Check status'}
-          </button>
-        </form>
-
-        {error && <div className="error-text">{error}</div>}
-
-        {result && (
-          <div className="card section">
-            {result.name && <h3>Applications for {result.name}</h3>}
-            <div className="tbl-wrap">
-              <table>
-                <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Last update</th></tr></thead>
-                <tbody>
-                  {result.applications.map((a) => (
-                    <tr key={a.id}>
-                      <td>{a.jobTitle}</td>
-                      <td>{a.client}{a.location ? ` · ${a.location}` : ''}</td>
-                      <td><span className="status">{stageLabel(a.stage)}</span></td>
-                      <td>{new Date(a.updatedAt).toLocaleDateString()}</td>
-                    </tr>
-                  ))}
-                  {result.applications.length === 0 && (
-                    <tr><td colSpan="4" className="small-muted">No applications found for that email.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <h1 style={{ marginTop: 10 }}>See your applications</h1>
+        <p className="small-muted">
+          Already have a password? <Link to="/login">Sign in</Link> to see every application, its status,
+          your interview details and offers — and to update your profile and resume.
+        </p>
+        <div className="card section">
+          <h3 style={{ marginTop: 0 }}>First time here?</h3>
+          <p className="small-muted">
+            Enter the email address you applied with. We will email you a link to set your password.
+            The link works once and expires in 48 hours.
+          </p>
+          {done ? (
+            <div className="notice"><span>{done}</span></div>
+          ) : (
+            <form className="filter-row" onSubmit={claim}>
+              <input
+                style={{ flex: 1, minWidth: 0 }}
+                required
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                aria-label="Email you applied with"
+              />
+              <button className="btn btn-sm btn-primary" type="submit" disabled={busy}>
+                {busy ? 'Sending…' : 'Get my sign-in link'}
+              </button>
+            </form>
+          )}
+          {error && <div className="error-text">{error}</div>}
+        </div>
       </main>
     </div>
   );

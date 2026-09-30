@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
@@ -8,9 +7,13 @@ import {
   SECTION_ICON,
 } from '../nav';
 import Logo from './Logo.jsx';
-import AiAssistant from './AiAssistant.jsx';
+import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
-import Combo from './Combo.jsx';
+import NotificationBell from './NotificationBell.jsx';
+import TodayTasks from './dashboard/TodayTasks.jsx';
+import GlobalSearch from './GlobalSearch.jsx';
+import { hasAtsWork } from '../utils/useAtsAlerts';
+import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
 
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
 // which tabs appear is decided entirely by the permission engine — see that
@@ -30,23 +33,19 @@ function initials(name) {
 }
 
 export default function Shell() {
-  const { user, logout, switchWorkspace } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
-  const [q, setQ] = useState('');
+  // The TeamLink Job Portal is its own application; its URL is JOB_PORTAL_URL
+  // on the server (GET /api/public/job-portal/config).
+  const jobPortalUrl = useJobPortalUrl();
   const [open, setOpen] = useState(false);           // mobile sidebar
   const [manual, setManual] = useState({});          // prototype's sidebarManualToggle
   const [manualSub, setManualSub] = useState({});    // the ATS sub-sections
-  const [unread, setUnread] = useState(0);
 
   const groups = useMemo(() => groupsForUser(user), [user]);
-  const section = sectionOf(pathname);
-
-  useEffect(() => {
-    api.get('/admin/notifications')
-      .then((res) => setUnread(res.data.filter((n) => !n.read).length))
-      .catch(() => setUnread(0));
-  }, [pathname]);
+  const section = sectionOf(pathname, user);
+  // The 🔔 count and its dropdown live in ./NotificationBell.jsx (§33).
 
   // The nav entry the current URL belongs to — the highest-scoring match.
   const allLeaves = useMemo(() => flattenGroups(groups), [groups]);
@@ -86,12 +85,6 @@ export default function Shell() {
   function toggleSub(id) { setManualSub({ ...manualSub, [id]: !isSubOpen(id) }); }
   function navTo(path) { closeSidebar(); navigate(path); }
   function closeSidebar() { setOpen(false); }
-
-  function onSearch(e) {
-    e.preventDefault();
-    if (!q.trim()) return;
-    navigate(`/ats/search?q=${encodeURIComponent(q)}`);
-  }
 
   const isActive = (to) => !!(current && current.to === to);
   const currentPath = current ? current.to.split('?')[0] : null;
@@ -149,11 +142,15 @@ export default function Shell() {
               </div>
             </div>
           ))}
-          <div className="sb-group">
-            <a className="sb-item" href="/careers" target="_blank" rel="noreferrer">
-              <Ico char="🌐" />Job Portal (public) ↗
-            </a>
-          </div>
+          {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
+              nothing to do with the job portal). */}
+          {user?.products?.ats && (
+            <div className="sb-group">
+              <a className="sb-item" href={`${jobPortalUrl}/`} target="_blank" rel="noreferrer">
+                <Ico char="🌐" />Job Portal (public) ↗
+              </a>
+            </div>
+          )}
         </nav>
       </aside>
       <div className={'sidebar-overlay' + (open ? ' show' : '')} onClick={closeSidebar} />
@@ -162,28 +159,21 @@ export default function Shell() {
         <div className="topbar">
           <button className="hamburger" onClick={() => setOpen(true)} title="Menu">☰</button>
           <div className="topbar-title">{sectionLabel(section, user)}</div>
-          <form className="gsearch" onSubmit={onSearch}>
-            <input
-              type="text"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search candidates, clients, requirements…"
-            />
-          </form>
+          {/* Review #3 §13 — "Search TeamLink": typed, grouped, scoped results
+              (./GlobalSearch.jsx). The search API is part of ATS, so a login
+              with no ATS work (plain Employee, Accounts) gets no box. */}
+          {hasAtsWork(user) && <GlobalSearch />}
           <div className="topbar-right">
-            {(user?.workspaces || []).length > 1 && (
-              <Combo
-                className="rolechip"
-                aria-label="Workspace"
-                value={user.workspace}
-                onChange={(e) => switchWorkspace(e.target.value).then((u) => navTo(u.landingPath))}
-                style={{ padding: '2px 6px' }}
-              >
-                {user.workspaces.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
-              </Combo>
-            )}
-            <span className="rolechip">{workRoleLabel(user)}</span>
-            <span className="rolechip" style={{ cursor: 'pointer' }} onClick={() => navTo('/admin/notifications')}>🔔 {unread}</span>
+            {/* No workspace switcher: the sidebar already reaches every
+                product, so the chip simply shows this login's role in the
+                product whose page is open. */}
+            <span className="rolechip">{workRoleLabel(user, ['hrms', 'ats', 'accounts'].includes(section) ? section : undefined)}</span>
+            {/* Always-on AI status: green = model ready, amber = model not
+                pulled, grey = offline. Opens the AI panel. */}
+            <AiStatusDot />
+            {/* Today's tasks (dashboard spec 2026-09-29): follow-ups, interviews and actions due today. */}
+            <TodayTasks />
+            <NotificationBell />
             <div className="avatar">{initials(user?.name)}</div>
             <button className="btn btn-ghost btn-sm" onClick={logout}>Sign Out</button>
           </div>
@@ -219,6 +209,14 @@ export default function Shell() {
               )}
             </>
           )}
+          {/* Review #3 §27 — whose data this is, on every ATS screen:
+              "Scope: Education → Team A → My Team" / "Scope: All Company"
+              (utils/scope.js scopeLabel, ATS reading, via /auth/me). */}
+          {section === 'ats' && user && user.scope && (user.scope.atsLabel || user.scope.label) && (
+            <span className="shell-scope" title="The records you can see on ATS screens">
+              Scope: {user.scope.atsLabel || user.scope.label}
+            </span>
+          )}
         </div>
 
         <main>
@@ -239,7 +237,8 @@ export default function Shell() {
           )}
         </main>
 
-        <footer>
+        {/* Review #2 §27 — small and unobtrusive: one faint line, no rule. */}
+        <footer style={{ padding: '6px 22px 8px', fontSize: 10.5, borderTop: 0, opacity: 0.6 }}>
           {/* No product names: this footer renders for clients and candidates too. */}
           TeamLink.Enterprise · connected to the TeamLink Job Portal
         </footer>

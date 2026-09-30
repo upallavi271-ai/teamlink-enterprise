@@ -1,0 +1,21 @@
+.bio-card { margin-bottom: 14px; }
+.bio-card h3 { font-size: 14px; margin-bottom: 6px; }
+.bio-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.bio-model { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.bio-proto { font-size: 12.5px; color: var(--ink-3, #6b7280); margin-top: 2px; }
+.bio-state { font-size: 12.5px; padding: 4px 12px; }
+.bio-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 18px; margin: 14px 0 6px; }
+.bio-facts > div { min-width: 0; }
+.bio-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3, #6b7280); margin-bottom: 2px; }
+.bio-facts dd { margin: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.bio-mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; }
+.bio-note { margin: 10px 0; font-size: 12.5px; line-height: 1.55; }
+.bio-actions { display: flex; gap: 6px; margin: 10px 0 4px; flex-wrap: wrap; }
+.bio-sub { margin: 14px 0 2px; }
+.bio-hint { font-size: 12px; margin-bottom: 6px; }
+.bio-card select { max-width: 240px; }
+.bio-details { margin-top: 12px; }
+.bio-details summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.bio-matches { margin: 14px 0 4px; padding: 12px 14px; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; background: var(--paper, #fafafa); }
+.bio-matches-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.bio-matches-head .small-muted { font-size: 12px; margin-top: 2px; }

@@ -1,0 +1,43 @@
+/* EmployeeDocuments — the Documents section inside every employee form.
+   Scoped under .edocs. One row per document type: type | files | + Add file. */
+.edocs h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.edocs-count{font-size:11px;font-weight:600;color:var(--amber, #b7791f);background:var(--line-soft);border-radius:10px;padding:1px 8px}
+.edocs-req{color:var(--red)}
+.edocs-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.edocs-row{display:grid;grid-template-columns:190px minmax(0,1fr) auto;gap:10px 14px;align-items:start;padding:9px 12px;border-top:1px solid var(--line-soft)}
+.edocs-row:first-child{border-top:0}
+.edocs-type{font-size:13px;padding-top:4px;min-width:0}
+.edocs-type .cell-muted{font-size:11.5px;font-weight:400}
+.edocs-files{display:flex;flex-direction:column;gap:6px;min-width:0}
+.edocs-file{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;min-width:0}
+.edocs-pending{background:var(--navy-tint);border-radius:6px;padding:5px 8px}
+.edocs-pending.failed{background:transparent;border:1px dashed var(--red)}
+.edocs-name{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 220px;font-size:13px}
+.edocs-name .cell-muted{font-size:11.5px}
+.edocs-fn{word-break:break-all;font-weight:500}
+.edocs-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.edocs-dn{width:170px;max-width:100%;padding:4px 8px;font-size:12.5px}
+.edocs-none{font-size:12.5px;padding-top:5px}
+.edocs-st{font-size:11.5px;font-weight:500}
+.edocs-st.ok{color:var(--teal)}
+.edocs-st.bad{color:var(--red)}
+.edocs-st.up{color:var(--navy)}
+.edocs-st.wait{color:var(--ink-soft);font-weight:400}
+.edocs-bar{display:block;height:4px;border-radius:2px;background:var(--line);overflow:hidden;margin:3px 0 1px;max-width:260px}
+.edocs-bar>span{display:block;height:100%;background:var(--navy);transition:width .15s ease}
+.edocs-pick{position:relative;overflow:hidden;white-space:nowrap;cursor:pointer;margin:0}
+.edocs-pick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;font-size:0}
+.edocs-embedded{margin-top:4px}
+/* The employee form's own Save / Cancel row, stuck to the bottom of the view
+   while the long form scrolls — after the Documents section, never above it. */
+.emp-form-foot{position:sticky;bottom:0;z-index:5;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:16px -18px -18px;padding:12px 18px;background:var(--paper-raised, #fff);border-top:1px solid var(--line);
+  border-radius:0 0 var(--radius,10px) var(--radius,10px);box-shadow:0 -4px 10px rgba(15,30,60,.05)}
+.emp-form-foot .small-muted{flex:1 1 240px}
+@media (max-width:700px){
+  .edocs-row{grid-template-columns:1fr;gap:6px}
+  .edocs-type{padding-top:0}
+  .edocs-pick{justify-self:start}
+  .edocs-dn{width:100%}
+  .edocs-acts{width:100%}
+}

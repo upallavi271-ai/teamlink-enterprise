@@ -1,248 +1,238 @@
 // ---------------------------------------------------------------------------
-// EXECUTING AN AGREEMENT — both seals, and a verified signature.
+// EXECUTING AN AGREEMENT — the signing link, the e-signature, the OTP, and
+// who may see the result.
 //
-//   we prepare it        apply OUR stamp and signature
-//   send                 mail / WhatsApp / SMS link      (already built)
-//   client reads it      uploads THEIR stamp and signature
-//   client clicks Done   chooses how to verify:
-//        Aadhaar         Aadhaar number, eSign, mobile OTP
-//        Alternative     mobile OTP to the contact already on record
-//   verified             the executed agreement becomes visible to the BDE,
-//                        the Super Admin, the Admin, the Client and the
-//                        Accountant — view only, except Super Admin and Admin
+//   Send to client     a NEW single-use token every time (resend invalidates
+//                      the old link), valid for LINK_DAYS (default 14,
+//                      AGREEMENT_LINK_DAYS) from the send
+//   Client opens it    reads the agreement, presses "OK, Proceed"
+//   E-signature        typed name in a signature font, drawn on a pad, or an
+//                      uploaded image — each arrives as an image
+//   OTP                six digits to the REGISTERED mobile on the client record
+//                      (SMS, else WhatsApp, else email as the last fallback),
+//                      hashed, 10-minute expiry, 5 attempts, 60 s resend
+//                      cooldown, at most OTP_MAX_SENDS codes per link
+//   Submit             the correct code signs it: SIGNED. With TeamLink's
+//                      countersign on as well it becomes ACTIVE by itself.
 //
-// THREE RULES THAT ARE NOT NEGOTIABLE HERE
+// NOTHING HERE ADDS A COLUMN. Link expiry is derived from agreementSentAt,
+// the resend cooldown from agreementOtpExpiresAt, and the "proceeded" step and
+// the OTP send count from the audit trail — which also makes every step of the
+// signing auditable.
 //
-// 1. THE FULL AADHAAR NUMBER IS NEVER STORED. Section 29 of the Aadhaar Act
-//    and the UIDAI circulars forbid an unauthenticated entity retaining it.
-//    The number is validated, used, and dropped; what is kept is the last four
-//    digits for display and the eSign provider's transaction id, which is what
-//    actually proves the signature and what an auditor asks for.
-//
-// 2. THE OTP IS HASHED, with an expiry and an attempt counter — the same shape
-//    utils/employeeAdmin.js already uses for employee email verification. A
-//    plaintext OTP column would make the database a way to sign an agreement.
-//
-// 3. AN UNVERIFIED SIGNATURE IS NEVER RECORDED AS VERIFIED. No eSign provider
-//    is connected to this installation yet, so the Aadhaar path completes the
-//    OTP step and records itself as `Alternative (mobile OTP)` with a note
-//    saying no eSign provider was connected — it does not write a transaction
-//    id it does not have. When a licensed ASP/ESP is configured, esignProvider()
-//    returns it and the same path records a real one.
+// THE OTP IS HASHED with the client id AND the current token, so a code issued
+// for an old link is useless on a new one, and it is compared in constant time.
 // ---------------------------------------------------------------------------
 
 const crypto = require('crypto');
 const prisma = require('../db');
-const { readConfig } = require('./integrationStore');
 
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
+const OTP_RESEND_COOLDOWN_S = 60;
+const OTP_MAX_SENDS = 8;
+const LINK_DAYS = Number(process.env.AGREEMENT_LINK_DAYS) > 0 ? Number(process.env.AGREEMENT_LINK_DAYS) : 14;
+const OUT_FOR_SIGNATURE = ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'];
+const SIGN_METHODS = { typed: 'Typed name (signature font)', drawn: 'Drawn on screen', uploaded: 'Uploaded signature image' };
 
-const METHODS = ['AADHAAR', 'ALTERNATIVE'];
+// Audit actions the flow writes and reads back. One vocabulary.
+const ACTION = {
+  sent: 'Agreement link sent',
+  opened: 'Agreement opened by client',
+  proceeded: 'Agreement read — client pressed OK, Proceed',
+  signature: 'Client e-signature captured',
+  stamp: 'Client company stamp uploaded',
+  otpSent: 'Agreement OTP sent',
+  otpFailed: 'Agreement OTP could not be delivered',
+  otpWrong: 'Agreement OTP incorrect',
+  otpLocked: 'Agreement OTP locked after too many attempts',
+  verified: 'Agreement OTP verified — signed',
+  sealed: 'TeamLink countersign / seal applied',
+  activated: 'Agreement auto-activated',
+  reminder: (d) => `Agreement signing reminder (day ${d})`,
+  expiredLink: 'Agreement signing link expired',
+  voided: 'Agreement voided for re-signing',
+};
 
-// Same hashing as the employee-verification OTP: a salted SHA-256, because the
-// value is short-lived and single-use and bcrypt's work factor buys nothing
-// that the ten-minute expiry does not already buy.
-function hashOtp(otp, salt) {
-  return crypto.createHash('sha256').update(`${salt}:${String(otp)}`).digest('hex');
+const { normalizeAgreementStatus } = require('./atsVocab');
+const statusOf = (c) => normalizeAgreementStatus(c && c.agreementStatus);
+
+// Everything that makes an agreement "executed", cleared when the document is
+// regenerated, re-uploaded or voided — a signature belongs to one text.
+const RESET_EXECUTION = {
+  esignToken: null,
+  agreementSignedAt: null,
+  agreementSignedBy: null,
+  agreementSignedByTitle: null,
+  agreementViewedAt: null,
+  agreementCompanyStampFile: null, agreementCompanyStampName: null,
+  agreementCompanySignFile: null, agreementCompanySignName: null,
+  agreementCompanySignedBy: null, agreementCompanySealedAt: null,
+  agreementClientStampFile: null, agreementClientStampName: null,
+  agreementClientSignFile: null, agreementClientSignName: null,
+  agreementClientSealedAt: null,
+  agreementVerifyMethod: null, agreementAadhaarLast4: null, agreementEsignTxnId: null,
+  agreementEsignProvider: null, agreementVerifyMobile: null, agreementVerifiedAt: null,
+  agreementVerifyNote: null,
+  agreementOtpHash: null, agreementOtpExpiresAt: null, agreementOtpAttempts: 0,
+};
+const RESET_OTP = { agreementOtpHash: null, agreementOtpExpiresAt: null, agreementOtpAttempts: 0 };
+
+// --- The link ----------------------------------------------------------------
+function linkExpiresAt(client) {
+  if (!client || !client.agreementSentAt) return null;
+  return new Date(new Date(client.agreementSentAt).getTime() + LINK_DAYS * 86400000);
 }
-function newOtp() {
-  // Six digits, from a CSPRNG rather than Math.random.
-  return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+// { ok, code, error, expiresAt } — code: 404 unknown, 410 expired.
+function linkState(client) {
+  if (!client || !client.agreementDocument || !client.esignToken) {
+    return { ok: false, code: 404, error: 'This signing link is not valid — ask TeamLink to send it again.' };
+  }
+  const expiresAt = linkExpiresAt(client);
+  if (expiresAt && expiresAt < new Date()) {
+    return { ok: false, code: 410, expiresAt, error: `This signing link expired on ${expiresAt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}. Ask TeamLink to send you a new one.` };
+  }
+  return { ok: true, expiresAt };
 }
 
-// A mobile number, shown without showing it.
-function maskMobile(raw) {
-  const d = String(raw || '').replace(/\D/g, '');
-  if (d.length < 4) return null;
-  return `${'•'.repeat(Math.max(2, d.length - 4))}${d.slice(-4)}`;
-}
-
-// Aadhaar is twelve digits and never starts with 0 or 1. That is the whole of
-// what can be checked offline — the Verhoeff checksum is also computable, so
-// it is, because a typo caught here is a failed eSign avoided.
-function aadhaarShape(raw) {
-  const d = String(raw || '').replace(/\D/g, '');
-  if (d.length !== 12) return { ok: false, error: 'An Aadhaar number is 12 digits.' };
-  if (/^[01]/.test(d)) return { ok: false, error: 'An Aadhaar number does not begin with 0 or 1.' };
-  if (!verhoeff(d)) return { ok: false, error: 'That Aadhaar number fails its checksum — please re-enter it.' };
-  return { ok: true, last4: d.slice(-4) };
-}
-
-// The Verhoeff check digit scheme UIDAI uses.
-const D_TABLE = [
-  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
-  [2, 3, 4, 0, 1, 7, 8, 9, 5, 6], [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
-  [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
-  [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
-  [8, 7, 6, 5, 9, 3, 2, 1, 0, 4], [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
-];
-const P_TABLE = [
-  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
-  [5, 8, 0, 3, 7, 9, 6, 1, 4, 2], [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
-  [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
-  [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
-];
-function verhoeff(num) {
-  let c = 0;
-  String(num).split('').reverse().forEach((ch, i) => {
-    c = D_TABLE[c][P_TABLE[i % 8][Number(ch)]];
+// --- Steps read back from the audit trail --------------------------------------
+async function stepsOf(client) {
+  const since = client.agreementSentAt ? new Date(client.agreementSentAt) : new Date(0);
+  const rows = await prisma.auditLog.findMany({
+    where: { entity: 'Client', entityId: client.id, createdAt: { gte: since }, action: { in: [ACTION.proceeded, ACTION.otpSent] } },
+    select: { action: true, createdAt: true },
   });
-  return c === 0;
+  return {
+    proceededAt: (rows.find((r) => r.action === ACTION.proceeded) || {}).createdAt || null,
+    otpSends: rows.filter((r) => r.action === ACTION.otpSent).length,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// THE eSIGN PROVIDER, if one is configured.
-//
-// Aadhaar eSign can only be performed by a licensed ASP/ESP — NSDL, eMudhra,
-// Digio, SignDesk, Leegality. This reads whichever is configured under
-// Administration -> Integrations and returns null when none is. The caller
-// then records what actually happened instead of what was hoped for.
-// ---------------------------------------------------------------------------
-async function esignProvider() {
-  try {
-    const cfg = await readConfig('esign');
-    if (!cfg || !cfg.enabled) return null;
-    const name = String(cfg.values?.Provider || '').trim();
-    const key = String(cfg.values?.['API key'] || '').trim();
-    if (!name || !key) return null;
-    return { name, configured: true };
-  } catch {
-    return null;
-  }
+// --- OTP -------------------------------------------------------------------------
+function hashOtp(otp, client) {
+  return crypto.createHash('sha256').update(`${client.id}:${client.esignToken || ''}:${String(otp).trim()}`).digest('hex');
+}
+function newOtp() { return String(crypto.randomInt(0, 1000000)).padStart(6, '0'); }
+
+function otpState(client) {
+  const expiresAt = client.agreementOtpExpiresAt ? new Date(client.agreementOtpExpiresAt) : null;
+  const sentAt = expiresAt ? new Date(expiresAt.getTime() - OTP_TTL_MINUTES * 60000) : null;
+  const attempts = client.agreementOtpAttempts || 0;
+  const cooldownRemaining = sentAt ? Math.max(0, Math.ceil((sentAt.getTime() + OTP_RESEND_COOLDOWN_S * 1000 - Date.now()) / 1000)) : 0;
+  return {
+    active: !!(client.agreementOtpHash && expiresAt && expiresAt > new Date()),
+    sentAt, expiresAt, attempts,
+    attemptsLeft: Math.max(0, OTP_MAX_ATTEMPTS - attempts),
+    locked: !!client.agreementOtpHash && attempts >= OTP_MAX_ATTEMPTS,
+    cooldownRemaining,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// START: the client has sealed the document and picked how to verify.
-// Returns the OTP so the CALLER can deliver it over the configured channel —
-// this module never sends, and never returns it to the browser.
-// ---------------------------------------------------------------------------
-async function startVerification(client, { method, aadhaar, mobile }) {
-  if (!METHODS.includes(method)) {
-    return { error: 'Choose Aadhaar verification or the alternative.' };
-  }
-  if (!client.agreementClientSignFile) {
-    return { error: 'Upload your signature before verifying — the signature is what is being verified.' };
-  }
-
-  let last4 = null;
-  if (method === 'AADHAAR') {
-    const shape = aadhaarShape(aadhaar);
-    if (!shape.ok) return { error: shape.error };
-    last4 = shape.last4;
-  }
-
-  // The number the code goes to: what was typed, or the contact on record.
-  const target = String(mobile || client.contactPhone || '').replace(/\D/g, '');
-  if (target.length < 10) {
-    return { error: 'A 10-digit mobile number is needed to send the verification code.' };
-  }
-
+// Stores the hash and returns the plaintext for the CALLER to deliver. The
+// plaintext never goes to the browser.
+async function issueOtp(client, { destinationLabel }) {
   const otp = newOtp();
   await prisma.client.update({
     where: { id: client.id },
     data: {
-      agreementVerifyMethod: method,
-      // Last four ONLY — the full number is not kept. See the header.
-      agreementAadhaarLast4: last4,
-      agreementVerifyMobile: maskMobile(target),
-      agreementOtpHash: hashOtp(otp, client.id),
+      agreementOtpHash: hashOtp(otp, client),
       agreementOtpExpiresAt: new Date(Date.now() + OTP_TTL_MINUTES * 60000),
       agreementOtpAttempts: 0,
+      agreementVerifyMethod: 'MOBILE_OTP',
+      agreementVerifyMobile: destinationLabel || null,
     },
   });
-  return { otp, mobile: target, masked: maskMobile(target), method, ttlMinutes: OTP_TTL_MINUTES };
+  return otp;
+}
+
+// { ok } | { error, locked, attemptsLeft }
+async function checkOtp(client, otp) {
+  const st = otpState(client);
+  if (!client.agreementOtpHash || !st.expiresAt) return { error: 'Send the code first — no code is waiting.' };
+  if (st.locked) return { error: 'Too many wrong codes. Request a new code.', locked: true, attemptsLeft: 0 };
+  if (st.expiresAt < new Date()) return { error: 'That code has expired. Request a new code.', expired: true };
+  const given = Buffer.from(hashOtp(String(otp || '').replace(/\D/g, ''), client), 'hex');
+  const want = Buffer.from(client.agreementOtpHash, 'hex');
+  if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) {
+    const attempts = st.attempts + 1;
+    await prisma.client.update({ where: { id: client.id }, data: { agreementOtpAttempts: attempts } });
+    const left = Math.max(0, OTP_MAX_ATTEMPTS - attempts);
+    return left > 0
+      ? { error: `That code is not right. ${left} attempt${left === 1 ? '' : 's'} left.`, attemptsLeft: left }
+      : { error: 'That code is not right, and that was the last attempt. Request a new code.', locked: true, attemptsLeft: 0 };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
-// CONFIRM: the code the client typed.
-// ---------------------------------------------------------------------------
-async function confirmVerification(client, { otp }) {
-  if (!client.agreementOtpHash || !client.agreementOtpExpiresAt) {
-    return { error: 'Start the verification first — no code has been sent.' };
-  }
-  if (new Date(client.agreementOtpExpiresAt) < new Date()) {
-    return { error: 'That code has expired. Send a new one.' };
-  }
-  if ((client.agreementOtpAttempts || 0) >= OTP_MAX_ATTEMPTS) {
-    return { error: 'Too many wrong codes. Send a new one.' };
-  }
-  if (hashOtp(otp, client.id) !== client.agreementOtpHash) {
-    await prisma.client.update({
-      where: { id: client.id },
-      data: { agreementOtpAttempts: (client.agreementOtpAttempts || 0) + 1 },
-    });
-    const left = OTP_MAX_ATTEMPTS - (client.agreementOtpAttempts || 0) - 1;
-    return { error: `That code is not right.${left > 0 ? ` ${left} attempt${left === 1 ? '' : 's'} left.` : ''}` };
-  }
-
-  // WHAT IS RECORDED IS WHAT HAPPENED.
-  //
-  // With a licensed provider connected, the Aadhaar path is a real eSign and
-  // carries the provider's transaction id. With none connected, the mobile OTP
-  // is all that was actually verified, and the record says exactly that rather
-  // than claiming an Aadhaar eSign that never took place.
-  const provider = await esignProvider();
-  const wantedAadhaar = client.agreementVerifyMethod === 'AADHAAR';
-  const note = wantedAadhaar && !provider
-    ? 'Aadhaar was chosen, but no licensed eSign provider is connected to this installation, '
-      + 'so the identity was verified by mobile OTP only. Connect a provider under '
-      + 'Administration → Integrations to record a legally recognised Aadhaar eSign.'
-    : null;
-
-  const updated = await prisma.client.update({
-    where: { id: client.id },
-    data: {
-      agreementVerifiedAt: new Date(),
-      agreementEsignProvider: wantedAadhaar && provider ? provider.name : null,
-      agreementEsignTxnId: null, // set by the provider call when one exists
-      agreementVerifyNote: note,
-      // The code is single-use.
-      agreementOtpHash: null,
-      agreementOtpExpiresAt: null,
-      agreementOtpAttempts: 0,
-    },
-  });
-  return { client: updated, verifiedBy: wantedAadhaar && provider ? `Aadhaar eSign (${provider.name})` : 'Mobile OTP', note };
-}
-
-// ---------------------------------------------------------------------------
-// WHO SEES THE EXECUTED AGREEMENT, AND WHO MAY CHANGE IT.
+// WHO SEES THE AGREEMENT, AND WHO MAY CHANGE IT.
 //
-// "ahh agreement bde ki, super admin ki, admin ki, client ki, accountant ki
-//  valla logins lo visible avvali. edit only super admin & admin."
+// "The agreement can be viewed in the client login, BDE logins, Accountants,
+//  Admin & Super Admin (view & edit)."
 //
-// Read from the role rather than from a list of user ids, so a new BDE or a
-// new accountant is covered the day they are created.
+//   Super Admin / Admin (any product role)   view + EDIT
+//   Manager / Assistant Manager              view (they see everything, view-only)
+//   Accountant / Accounts roles              view
+//   BDE                                      view — only for THEIR clients
+//                                            (assigned, holding a requirement,
+//                                            or named as BDE owner)
+//   Client login                             view — only their own company
+//   everyone else (TL, Recruiter, HR, …)     nothing
+//
+// Read from roles rather than a list of user ids, so a new BDE or accountant is
+// covered the day they are created. Enforced by every route that serves an
+// agreement, its images or its PDF.
 // ---------------------------------------------------------------------------
-const VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE', 'ACCOUNTANT', 'CLIENT'];
-const EDIT_ROLES = ['SUPER_ADMIN', 'ADMIN'];
-
-function agreementAccess(user, client) {
-  if (!user) return { view: false, edit: false };
-  const roles = [user.role, user.atsRole, user.hrmsRole, user.accountsRole].filter(Boolean);
-  const isClientOwner = user.role === 'CLIENT' && client && user.clientId === client.id;
-
-  // A CLIENT SEES THEIR OWN AGREEMENT AND NOBODY ELSE'S. Being a client login
-  // is not the same as being THIS client.
-  if (user.role === 'CLIENT') return { view: isClientOwner, edit: false };
-
-  const view = roles.some((r) => VIEW_ROLES.includes(r));
-  const edit = roles.some((r) => EDIT_ROLES.includes(r));
-  return { view, edit };
+async function agreementAccess(user, client) {
+  if (!user || !client) return { view: false, edit: false, as: null };
+  // eslint-disable-next-line global-require
+  const scope = require('./scope');
+  const s = scope.scopeOf(user);
+  if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') {
+    const own = !!user.clientId && user.clientId === client.id;
+    return { view: own, edit: false, as: own ? 'client' : null };
+  }
+  if (user.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return { view: false, edit: false, as: null };
+  if (s.global) return { view: true, edit: true, as: 'admin' };
+  const held = [user.role, s.atsRole, s.hrmsRole, s.accountsRole].filter(Boolean);
+  if (held.some((r) => ['MANAGER', 'ASSISTANT_MANAGER'].includes(r))) return { view: true, edit: false, as: 'manager' };
+  if (held.includes('ACCOUNTANT')) return { view: true, edit: false, as: 'accounts' };
+  if (s.atsRole === 'BDE') {
+    const byName = client.bdeOwner && user.name && String(client.bdeOwner).trim().toLowerCase() === String(user.name).trim().toLowerCase();
+    const inScope = byName || !!(await prisma.client.findFirst({ where: { AND: [{ id: client.id }, scope.clientWhere(user)] }, select: { id: true } }));
+    return { view: inScope, edit: false, as: inScope ? 'bde' : null };
+  }
+  return { view: false, edit: false, as: null };
 }
 
-// The executed-agreement summary a screen renders. Everything here is safe to
-// show to any audience that passed agreementAccess().view — there is no
-// Aadhaar number in it because there is no Aadhaar number stored.
+// The Prisma filter for "every agreement this login may see" (lists).
+async function visibleClientWhere(user) {
+  // eslint-disable-next-line global-require
+  const scope = require('./scope');
+  const s = scope.scopeOf(user);
+  if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') return user.clientId ? { id: user.clientId } : null;
+  if (user.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return null;
+  if (s.global) return {};
+  const held = [user.role, s.atsRole, s.hrmsRole, s.accountsRole].filter(Boolean);
+  if (held.some((r) => ['MANAGER', 'ASSISTANT_MANAGER', 'ACCOUNTANT'].includes(r))) return {};
+  if (s.atsRole === 'BDE') return { OR: [scope.clientWhere(user), ...(user.name ? [{ bdeOwner: user.name }] : [])] };
+  return null;
+}
+
+// The execution summary a screen renders — safe for anyone with view access.
 function executedSummary(client) {
   if (!client) return null;
+  const link = linkExpiresAt(client);
   return {
     agreementId: client.agreementId,
-    status: client.agreementStatus,
+    status: statusOf(client),
+    sentAt: client.agreementSentAt || null,
+    linkExpiresAt: link,
+    linkExpired: !!(link && link < new Date() && OUT_FOR_SIGNATURE.includes(statusOf(client))),
     company: {
       sealedAt: client.agreementCompanySealedAt,
       signedBy: client.agreementCompanySignedBy,
+      signMethod: client.agreementCompanySignName || null,
       hasStamp: !!client.agreementCompanyStampFile,
       hasSignature: !!client.agreementCompanySignFile,
     },
@@ -250,28 +240,67 @@ function executedSummary(client) {
       sealedAt: client.agreementClientSealedAt,
       signedBy: client.agreementSignedBy,
       signedByTitle: client.agreementSignedByTitle,
+      signMethod: client.agreementClientSignName || null,
       hasStamp: !!client.agreementClientStampFile,
       hasSignature: !!client.agreementClientSignFile,
     },
     verification: client.agreementVerifiedAt
       ? {
-        method: client.agreementVerifyMethod,
-        aadhaarLast4: client.agreementAadhaarLast4,
+        method: client.agreementVerifyMethod === 'MOBILE_OTP' ? 'OTP to registered contact' : client.agreementVerifyMethod,
+        sentTo: client.agreementVerifyMobile,
         mobile: client.agreementVerifyMobile,
         verifiedAt: client.agreementVerifiedAt,
-        provider: client.agreementEsignProvider,
-        transactionId: client.agreementEsignTxnId,
         note: client.agreementVerifyNote,
       }
       : null,
+    signedAt: client.agreementSignedAt || null,
+    activatedAt: client.agreementActivatedAt || null,
+    awaitingCountersign: statusOf(client) === 'SIGNED' && !client.agreementCompanySealedAt,
     executed: !!(client.agreementCompanySealedAt && client.agreementClientSealedAt && client.agreementVerifiedAt),
+    pdfAvailable: ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(statusOf(client)),
+  };
+}
+
+// What the public signing page is told. No token, no hash, no contact detail
+// beyond a masked hint of where the code will go.
+async function publicView(client) {
+  // eslint-disable-next-line global-require
+  const core = require('./messagingCore');
+  const st = statusOf(client);
+  const steps = await stepsOf(client);
+  const otp = otpState(client);
+  return {
+    clientName: client.name,
+    agreementId: client.agreementId,
+    document: client.agreementDocument,
+    status: st,
+    open: OUT_FOR_SIGNATURE.includes(st),
+    linkExpiresAt: linkExpiresAt(client),
+    consultant: { countersigned: !!client.agreementCompanySealedAt, signedBy: client.agreementCompanySignedBy || null, hasSignature: !!client.agreementCompanySignFile, hasStamp: !!client.agreementCompanyStampFile },
+    proceededAt: steps.proceededAt,
+    signature: client.agreementClientSignFile
+      ? { captured: true, method: client.agreementClientSignName, signedBy: client.agreementSignedBy, signedByTitle: client.agreementSignedByTitle, at: client.agreementClientSealedAt }
+      : { captured: false },
+    hasStamp: !!client.agreementClientStampFile,
+    registeredMobile: core.maskMobile(client.contactPhone) || null,
+    otp: {
+      waiting: otp.active && !otp.locked, sentTo: client.agreementVerifyMobile || null, expiresAt: otp.active ? otp.expiresAt : null,
+      attemptsLeft: otp.attemptsLeft, locked: otp.locked, cooldownRemaining: otp.cooldownRemaining,
+      sendsLeft: Math.max(0, OTP_MAX_SENDS - steps.otpSends), ttlMinutes: OTP_TTL_MINUTES,
+    },
+    verifiedAt: client.agreementVerifiedAt || null,
+    signedAt: client.agreementSignedAt || null,
+    signedBy: client.agreementSignedBy || null,
+    signedByTitle: client.agreementSignedByTitle || null,
+    activatedAt: client.agreementActivatedAt || null,
+    pdfAvailable: ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(st),
   };
 }
 
 module.exports = {
-  METHODS, OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS,
-  aadhaarShape, maskMobile, esignProvider,
-  startVerification, confirmVerification,
-  agreementAccess, executedSummary,
-  VIEW_ROLES, EDIT_ROLES,
+  OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_S, OTP_MAX_SENDS, LINK_DAYS,
+  OUT_FOR_SIGNATURE, SIGN_METHODS, ACTION, RESET_EXECUTION, RESET_OTP,
+  statusOf, linkExpiresAt, linkState, stepsOf,
+  otpState, issueOtp, checkOtp, hashOtp,
+  agreementAccess, visibleClientWhere, executedSummary, publicView,
 };
