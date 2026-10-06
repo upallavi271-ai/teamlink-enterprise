@@ -174,6 +174,8 @@ async function sendSms({ to, kind = 'bulk', text, vars }) {
   const mobile = core.normalizeMobile(to);
   if (!mobile.ok) return { ok: false, invalid: true, transient: false, error: mobile.reason };
   const body = String(text || (vars || []).join(' ')).slice(0, 1000);
+  // TEST SANDBOX: reported as sent, never transmitted (utils/sandbox.js).
+  if (require('./sandbox').isSandbox()) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-sms-${Date.now().toString(36)}`, sandbox: true };
   await core.acquire('SMS');
   if (cfg.provider === 'MSG91') return viaMsg91(cfg, { mobile, kind, vars: vars || [body] });
   if (cfg.provider === 'FAST2SMS') return viaFast2sms(cfg, { mobile, kind, vars: vars || [body], text: body });

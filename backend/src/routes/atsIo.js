@@ -46,7 +46,7 @@ const prisma = require('../db');
 const { requireAuth, can } = require('../middleware/auth');
 const { canMoveToStage } = require('../utils/permissions');
 const {
-  scopeOf, scopeLabel, requirementWhere, clientWhere, applicationInScope, isAssignedTo, matches,
+  atsScopeOf: scopeOf, scopeLabel, requirementWhere, clientWhere, applicationInScope, isAssignedTo, matches, candidateWhere,
 } = require('../utils/scope');
 const { formatOf, sendTable } = require('../utils/exportKit');
 const { logAudit } = require('../utils/audit');
@@ -58,6 +58,42 @@ const {
   requirementIsLive, requirementStatusLabel, agreementIsActive, agreementStatusLabel, stageLabel,
 } = require('../utils/atsVocab');
 const { hiringTypeOf, INTERNAL_HIRE } = require('../utils/joining');
+// Spec 2026-10-03 §B — role rules, batches + undo, big exports, filter counts,
+// bulk resume upload.
+const { ioAccessFor, mayApproveImport, roleOf } = require('../utils/ioAccess');
+const batches = require('../utils/importBatch');
+const exportJobs = require('../utils/exportJobs');
+const { facetsFor } = require('../utils/atsFacets');
+const ioStore = require('../utils/atsIoStore');
+// The app's resume parser (utils/resumeParse.js — the resume_ work):
+// text out of PDF / DOCX / DOC, then the fields the resume states.
+const resumeParser = require('../utils/resumeParse');
+
+function resumeKind(buf, name = '') {
+  if (buf.length > 4 && buf.toString('latin1', 0, 5) === '%PDF-') return 'pdf';
+  if (buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4b) return 'docx';
+  if (buf.length > 8 && buf.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1') return 'doc';
+  return /\.txt$/i.test(name) ? 'txt' : null;
+}
+// -> { fields: { name, email, phone, location, experienceYears, skills }, kind } | { error }
+async function parseResume(buf, name) {
+  const kind = resumeKind(buf, name);
+  if (!kind) return { error: 'Not a PDF, DOCX or DOC file.' };
+  let out;
+  if (kind === 'txt') out = { text: buf.toString('utf8'), parsed: await resumeParser.parseResumeText(buf.toString('utf8')) };
+  else out = await resumeParser.extractAndParse(buf, kind);
+  if (!out || !out.parsed) return { error: (out && out.error) || 'No readable text was found in this file.', kind };
+  const p = out.parsed;
+  const fields = {};
+  if (p.name) fields.name = p.name;
+  if (Array.isArray(p.emails) && p.emails[0]) fields.email = p.emails[0];
+  if (Array.isArray(p.phones) && p.phones[0]) fields.phone = String(p.phones[0]).replace(/[^\d+]/g, '');
+  if (p.location) fields.location = p.location;
+  if (typeof p.totalExperienceYears === 'number') fields.experienceYears = p.totalExperienceYears;
+  if (Array.isArray(p.skills) && p.skills.length) fields.skills = p.skills.slice(0, 25).join(', ');
+  return { fields, kind };
+}
+const { pushNotification } = require('../utils/notify');
 
 const {
   readSheet, buildIndex, HANDLERS, isDry, findCandidate,
@@ -151,6 +187,9 @@ const fb = (f) => (f && typeof f === 'object'
   : f || '');
 const clientOfReq = (r) => (r && r.internal ? 'TeamLink Internal' : nm(r && r.client));
 const NO_PDF = { pdf: false };
+// PAN / Aadhaar / bank: HR, Admin, Super Admin only. Revenue / fee: Admin only.
+const SENSITIVE = { pdf: false, sensitive: true };
+const REVENUE = { pdf: false, revenue: true };
 
 const reqTitle = (r) => (r.requirement && (r.requirement.title || r.requirement.name)) || '';
 // The shared columns of the four Interviews & Joining workspaces.
@@ -211,11 +250,24 @@ const EXPORTS = {
     perm: ['clients', 'Client List'],
     entity: 'Client',
     what: () => 'Clients',
-    async load(req) {
-      const [clients, reqs] = await Promise.all([screen(req, '/clients'), screen(req, '/requirements').catch(() => [])]);
+    async load(req, b, access) {
+      const [clients, reqs] = await Promise.all([screen(req, '/clients', b.params), screen(req, '/requirements').catch(() => [])]);
       const open = new Map();
       reqs.forEach((r) => { if (requirementIsLive(r.status)) open.set(r.clientId, (open.get(r.clientId) || 0) + 1); });
-      return clients.map((c) => ({ ...c, openRequirements: open.get(c.id) || 0 }));
+      // Sensitive / revenue columns are read from the table itself, and only
+      // for a login allowed to see them (the screen's list may redact them).
+      let extra = new Map();
+      if (access && (access.sensitive || access.revenue) && clients.length) {
+        const ids = clients.map((c) => c.id);
+        const [rows, paid] = await Promise.all([
+          access.sensitive ? prisma.client.findMany({ where: { id: { in: ids } }, select: { id: true, pan: true, tan: true } }) : [],
+          access.revenue ? prisma.invoice.groupBy({ by: ['clientId'], where: { clientId: { in: ids }, status: { not: 'Cancelled' } }, _sum: { amount: true } }) : [],
+        ]);
+        extra = new Map(ids.map((id) => [id, {}]));
+        rows.forEach((r) => Object.assign(extra.get(r.id), { pan: r.pan, tan: r.tan }));
+        paid.forEach((p) => Object.assign(extra.get(p.clientId) || {}, { revenue: p._sum.amount || 0 }));
+      }
+      return clients.map((c) => ({ ...c, ...(extra.get(c.id) || {}), openRequirements: open.get(c.id) || 0 }));
     },
     columns: [
       ['Client Name', (c) => c.name],
@@ -231,9 +283,15 @@ const EXPORTS = {
       ['Primary Contact', (c) => c.contactName || ''],
       ['Contact Phone', (c) => c.contactPhone || ''],
       ['Contact Email', (c) => c.contactEmail || '', NO_PDF],
+      ['Secondary Contact', (c) => c.secondaryContactName || '', NO_PDF],
+      ['Secondary Phone', (c) => c.secondaryContactPhone || '', NO_PDF],
       ['GST Number', (c) => c.gst || '', NO_PDF],
+      ['PAN', (c) => c.pan || '', SENSITIVE],
+      ['TAN', (c) => c.tan || '', SENSITIVE],
       ['Agreement Status', (c) => agreementStatusLabel(c.agreementStatus) || c.agreementStatus || ''],
-      ['Fee %', (c) => c.agreementFeePercent ?? '', NO_PDF],
+      ['Agreement Expiry', (c) => c.agreementEnd || '', NO_PDF],
+      ['Fee %', (c) => c.agreementFeePercent ?? '', REVENUE],
+      ['Revenue invoiced (₹)', (c) => c.revenue ?? '', REVENUE],
       ['BDE Owner', (c) => c.bdeOwner || '', NO_PDF],
       ['Account Manager', (c) => c.accountManager || '', NO_PDF],
       ['Open Requirements', (c) => c.openRequirements],
@@ -264,7 +322,7 @@ const EXPORTS = {
       ['Agreement ID', (c) => c.agreementId || ''],
       ['Status', (c) => agreementStatusLabel(c.agreementStatus) || c.agreementStatus || ''],
       ['Source', (c) => c.agreementSource || ''],
-      ['Fee %', (c) => c.agreementFeePercent ?? ''],
+      ['Fee %', (c) => c.agreementFeePercent ?? '', REVENUE],
       ['Agreement Date', (c) => c.agreementStart || ymd(c.agreementActivatedAt)],
       ['Expiry', (c) => c.agreementEnd || ''],
       ['Signed By', (c) => c.agreementSignedBy || '', NO_PDF],
@@ -279,11 +337,31 @@ const EXPORTS = {
     perm: ['candidates', 'Candidate List'],
     entity: 'Candidate',
     what: (b) => `Candidates${b.view && b.view !== 'all' ? ` (${b.view})` : ''}`,
-    load: (req, b) => screen(req, '/candidates', b.params),
+    // b5_: a person whose consent is WITHDRAWN (do not contact) is exported
+    // without phone / email, and every row says what consent is on file.
+    async load(req, b) {
+      const rows = (await screen(req, '/candidates', b.params)) || [];
+      // eslint-disable-next-line global-require
+      const CR = require('../utils/candidateRecord');
+      if (!CR.supported() || !Array.isArray(rows) || !rows.length) return rows;
+      const flagged = await prisma.candidate.findMany({
+        where: { OR: [{ doNotContact: true }, { consentStatus: { not: null } }] },
+        select: { id: true, doNotContact: true, consentStatus: true },
+      });
+      const by = new Map(flagged.map((c) => [c.id, c]));
+      return rows.map((r) => {
+        const c = by.get(r.id);
+        if (!c) return { ...r, consentLabel: 'Not recorded' };
+        const out = { ...r, consentLabel: CR.CONSENT_LABEL[c.consentStatus] || 'Not recorded' };
+        if (CR.isDoNotContact(c)) Object.assign(out, { email: '', phone: '', consentLabel: 'Withdrawn — do not contact' });
+        return out;
+      });
+    },
     columns: [
       ['Candidate', (c) => c.name],
       ['Email', (c) => c.email || ''],
       ['Phone', (c) => c.phone || ''],
+      ['Consent', (c) => c.consentLabel || '', NO_PDF],
       ['Location', (c) => c.location || '', NO_PDF],
       ['Source', (c) => c.source || '', NO_PDF],
       ['Skills', (c) => c.skills || '', NO_PDF],
@@ -310,13 +388,27 @@ const EXPORTS = {
     entity: 'User',
     what: (b) => `Recruiter & BDE — ${b.tab || 'recruiters'}${b.former ? ' (with former)' : ''}`,
     idOf: (r) => r.id || r.label || r.code,
-    async load(req, b) {
+    async load(req, b, access) {
       const tab = b.tab || 'recruiters';
       if (['recruiters', 'bdes', 'workload'].includes(tab)) {
-        const rows = await screen(req, '/ats/team', { includeLeft: 1 });
-        if (!b.former) return rows;
-        const former = (await screen(req, '/ats/team', { former: 1 })).filter((r) => r.former);
-        return [...rows, ...former];
+        let rows = await screen(req, '/ats/team', { includeLeft: 1 });
+        if (b.former) {
+          // Former people from HRMS (utils/formerPeople.js) — the screen's
+          // Active / Former filter; a login that has left is listed once.
+          const former = (((await screen(req, '/ats/team', { view: 'former' })) || {}).rows || []);
+          const leftIds = new Set(former.map((r) => r.userId).filter(Boolean));
+          rows = [...rows.filter((r) => !leftIds.has(r.id)), ...former];
+        }
+        // PAN / bank of the people: HR, Admin, Super Admin only.
+        if (access && access.sensitive && rows.length) {
+          const emps = await prisma.employee.findMany({
+            where: { userId: { in: rows.map((r) => r.id).filter(Boolean) } },
+            select: { userId: true, panNumber: true, bankName: true, bankAccountNumber: true, ifscCode: true },
+          });
+          const byUser = new Map(emps.map((e) => [e.userId, e]));
+          rows = rows.map((r) => ({ ...r, sensitive: byUser.get(r.id) || null }));
+        }
+        return rows;
       }
       if (tab === 'pending') return ((await screen(req, '/dashboard/ats')) || {}).queue || [];
       if (tab === 'mywork') return ((await screen(req, '/dashboard/ats')) || {}).myWork || [];
@@ -364,6 +456,10 @@ const EXPORTS = {
         ['Replaced By', (r) => nm(r.replacedBy), NO_PDF],
         ['Requirements Worked', (r) => r.requirementsWorked ?? '', NO_PDF], ['Candidates Worked', (r) => r.candidatesWorked ?? '', NO_PDF],
         ['Joined', (r) => r.joined ?? '', NO_PDF],
+        ['PAN', (r) => (r.sensitive && r.sensitive.panNumber) || '', SENSITIVE],
+        ['Bank', (r) => (r.sensitive && r.sensitive.bankName) || '', SENSITIVE],
+        ['Bank Account', (r) => (r.sensitive && r.sensitive.bankAccountNumber) || '', SENSITIVE],
+        ['IFSC', (r) => (r.sensitive && r.sensitive.ifscCode) || '', SENSITIVE],
       ];
     },
   },
@@ -390,6 +486,10 @@ const EXPORTS = {
         ['Interviewer', (r) => r.interviewer || '', NO_PDF], ['Date & Time', (r) => when(r.interviewAt)],
         ['Status', (r) => r.statusLabel || r.status || ''], ['Result', (r) => (r.result === '—' ? '' : r.result || '')],
         ['Score', (r) => r.score ?? '', NO_PDF],
+        // Schedule + feedback (spec 2026-10-03 §B). Internal and client
+        // feedback stay in their own columns — never mixed with the AI score.
+        ['Internal Feedback', (r) => fb(r.internalFeedback), NO_PDF],
+        ['Client Feedback', (r) => fb(r.clientFeedback), NO_PDF],
       ]),
   },
 
@@ -563,10 +663,26 @@ function exportState(req) {
   }
   b = b && typeof b === 'object' ? b : {};
   const params = b.params && typeof b.params === 'object' ? b.params : {};
+  // "Everything I can access" (scope: 'all'): the screen's filters, chip and
+  // selected rows are dropped — only the role's own scope (applied by the
+  // screen's endpoint, server-side) remains.
+  const all = b.scope === 'all';
   return {
-    params, view: b.view || '', tab: b.tab || '', former: !!b.former, ids: Array.isArray(b.ids) ? b.ids.map(String) : null,
+    params: all ? {} : params,
+    view: all ? '' : (b.view || ''),
+    tab: b.tab || '',
+    former: !!b.former,
+    ids: !all && Array.isArray(b.ids) ? b.ids.map(String) : null,
+    scope: all ? 'all' : 'view',
+    // Lets a test (or a deliberate user) send a smaller export to the
+    // background; it can only LOWER the threshold, never raise it.
+    threshold: Number(b.backgroundThreshold) > 0 ? Number(b.backgroundThreshold) : null,
   };
 }
+
+// The roles whose export right the spec's table gives (utils/ioAccess.js);
+// any other role also needs the Role Catalog's `export` on the feature.
+const SPEC_EXPORT_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER', 'BDE', 'HR'];
 
 async function runExport(req, res) {
   const moduleId = req.params.module;
@@ -574,10 +690,12 @@ async function runExport(req, res) {
   if (!def) throw new HttpError(404, { error: 'Unknown export' });
   const format = formatOf(req.query);
   if (!format) throw new HttpError(400, { error: 'format must be xlsx, csv or pdf' });
-  if (!(await can(req.user, 'ats', def.perm[0], def.perm[1], 'export'))) throw DENIED('Export on this screen');
+  const access = await ioAccessFor(req.user, moduleId);
+  const permitted = await can(req.user, 'ats', def.perm[0], def.perm[1], 'export');
+  if (!access.export || (!permitted && !SPEC_EXPORT_ROLES.includes(access.role))) throw DENIED('Export on this screen');
 
   const state = exportState(req);
-  let rows = await def.load(req, state);
+  let rows = await def.load(req, state, access);
   if (!Array.isArray(rows)) rows = [];
   // The screen's own browser-side filters: keep what it shows, in its order.
   if (state.ids) {
@@ -586,6 +704,8 @@ async function runExport(req, res) {
     rows = state.ids.map((id) => byId.get(id)).filter(Boolean);
   }
   let columns = typeof def.columns === 'function' ? def.columns(state) : def.columns;
+  // PAN / Aadhaar / bank only for HR / Admin / Super Admin; revenue only Admin.
+  columns = columns.filter((c) => !(c[2] && c[2].sensitive && !access.sensitive) && !(c[2] && c[2].revenue && !access.revenue));
   if (format === 'pdf') {
     if (rows.length > PDF_ROW_CAP) {
       throw new HttpError(400, { error: `${rows.length} rows is too many for a readable PDF (the limit is ${PDF_ROW_CAP}). Use Excel or CSV, or narrow the filters.` });
@@ -595,9 +715,9 @@ async function runExport(req, res) {
   const what = def.what(state);
   const p = state.params || {};
   const period = req.atsIoPeriod || (p.from || p.to ? { from: p.from || '…', to: p.to || '…' } : null);
-  return sendTable(req, res, {
+  const table = {
     format,
-    name: `ats-${moduleId}${state.tab ? `-${state.tab}` : ''}${state.view && state.view !== 'all' ? `-${state.view}` : ''}`,
+    name: `ats-${moduleId}${state.tab ? `-${state.tab}` : ''}${state.view && state.view !== 'all' ? `-${state.view}` : ''}${state.scope === 'all' ? '-everything' : ''}`,
     title: what,
     headers: columns.map((c) => c[0]),
     rows: rows.map((r) => columns.map((c) => {
@@ -606,10 +726,24 @@ async function runExport(req, res) {
     })),
     sheet: what.slice(0, 31),
     entity: def.entity,
-    what: `ATS ${what}`,
+    what: `ATS ${what}${state.scope === 'all' ? ' (everything I can access)' : ' (current view)'}`,
     scope: scopeLabel(req.user, 'ats'),
     period,
-  });
+    module: moduleId,
+  };
+  // BIG EXPORTS: answered at once, written in the background.
+  const limit = Math.min(exportJobs.threshold(), state.threshold || Infinity);
+  if (table.rows.length > limit) {
+    const job = exportJobs.startBackgroundExport(req.user, table);
+    return res.status(202).json({
+      background: true,
+      id: job.id,
+      rows: job.rows,
+      filename: job.filename,
+      message: `${job.rows.toLocaleString('en-IN')} rows is a big export — it is being prepared in the background. You will get a notification (and an email) when it is ready; it will be under the History button on this screen.`,
+    });
+  }
+  return sendTable(req, res, table);
 }
 
 router.get('/export/:module', guarded(runExport));
@@ -728,10 +862,34 @@ const MODULE_KINDS = {
   dashboard: [],
 };
 
-async function mayImport(user, kindId) {
+async function mayImportPerm(user, kindId) {
   const k = KINDS[kindId];
   return !!k && can(user, 'ats', k.perm[0], k.perm[1], k.perm[2]);
 }
+
+// The screen each import kind belongs to (for utils/ioAccess.js).
+const MODULE_OF_KIND = {
+  clients: 'clients', agreements: 'clients', requirements: 'requirements', candidates: 'candidates', applications: 'candidates',
+  resumes: 'candidates', 'requirement-assignments': 'team', interviews: 'interviews', 'interview-feedback': 'interviews',
+  offers: 'offers', joining: 'joining', 'internal-hiring': 'internal-hiring', followups: 'followups',
+};
+
+// HOW this login may import a kind (spec 2026-10-03 "Who may import"):
+//   'direct'  — imports at once (needs the kind's own permission too, so the
+//               Manager / Assistant Manager view-only rule in can() stands)
+//   'request' — BDE: the file becomes a REQUEST an Admin / Manager approves
+//   null      — no import
+async function importModeOf(user, kindId) {
+  if (!KINDS[kindId] && kindId !== 'resumes') return null;
+  const access = await ioAccessFor(user, MODULE_OF_KIND[kindId] || kindId, kindId);
+  if (access.importMode === 'request') return 'request';
+  if (access.importMode === 'direct') {
+    const perm = kindId === 'resumes' ? await can(user, 'ats', 'candidates', 'Add Candidate', 'create') : await mayImportPerm(user, kindId);
+    return perm ? 'direct' : null;
+  }
+  return null;
+}
+async function mayImport(user, kindId) { return !!(await importModeOf(user, kindId)); }
 
 // --- reading any spreadsheet -------------------------------------------------
 const MAX_BYTES = 15 * 1024 * 1024;
@@ -844,7 +1002,7 @@ function autoMap(headerCells, spec, override) {
 // headers, one row per file row), so routes/dataImport.js readSheet() reads it
 // exactly as it reads the master workbook. Row numbers are kept: `rowOf`
 // turns a sheet row back into the row of the uploaded file.
-function prepare(file, spec, { mapping, sheet: askedSheet } = {}) {
+function prepare(file, spec, { mapping, sheet: askedSheet, onlyRows = null } = {}) {
   const wb = workbookGrids(file);
   const sheetName = pickSheet(wb, spec, askedSheet);
   const xs = wb.Sheets[sheetName];
@@ -876,7 +1034,11 @@ function prepare(file, spec, { mapping, sheet: askedSheet } = {}) {
   put(1, header);
   let examples = 0;
   const data = grid.slice(best.idx + 1);
+  const headerAt = firstRow + best.idx;
   data.forEach((cells, i) => {
+    // An approved import REQUEST writes only the rows that passed when it
+    // was sent (file row numbers).
+    if (onlyRows && !onlyRows.has(headerAt + i + 1)) return;
     const values = mapped.map((col) => {
       const v = cells[map.get(col.h)];
       return v === undefined ? null : v;
@@ -896,6 +1058,8 @@ function prepare(file, spec, { mapping, sheet: askedSheet } = {}) {
     sheets: wb.SheetNames,
     headerRow: headerFileRow,
     rowOf: (wsRow) => headerFileRow + (wsRow - 1),
+    // The original cells of a file row — for the "rows with errors" download.
+    cellsOf: (fileRow) => grid[fileRow - firstRow] || [],
     fileColumns: headerCells,
     exampleRows: examples,
     mapping: spec.columns.map((col) => {
@@ -979,9 +1143,26 @@ const localTime = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const RULES = {
   clients: {
     keyOf: (d, ix) => ix.ckey(d.name),
-    async guard(ctx, d) {
-      const id = ctx.ix.client.get(ctx.ix.ckey(d.name));
-      if (id && !isDry(id)) return { skip: 'a client with this name is already on file — skipped, nothing overwritten' };
+    // DUPLICATE = same name (case / punctuation ignored) or same GST number.
+    // Never overwritten silently: only with "Update existing" ticked, and
+    // only a client inside the caller's scope.
+    async guard(ctx, d, note) {
+      let id = ctx.ix.client.get(ctx.ix.ckey(d.name));
+      let by = 'name';
+      if ((!id || isDry(id)) && d.gst) {
+        const g = await prisma.client.findFirst({ where: { gst: String(d.gst).trim() }, select: { id: true, name: true } });
+        if (g) { id = g.id; by = 'gst'; d._gstName = g.name; }
+      }
+      if (!id || isDry(id)) return null;
+      // Client lifecycle (2026-10-03): an import never changes a client's
+      // status — Pause / Reactivate / Archive are actions with a reason.
+      if (d.status) { note(`Status "${d.status}" ignored — change a client's status with Pause / Reactivate / Archive on the client`); delete d.status; }
+      const what = by === 'gst' ? `the same GST number ("${d._gstName}")` : 'the same name';
+      if (!ctx.updateExisting) return { skip: `a client with ${what} is already on file — skipped, nothing overwritten`, duplicate: true };
+      if (!ctx.global && !(await prisma.client.count({ where: { AND: [{ id }, clientWhere(ctx.user)] } }))) {
+        throw new Error(`client "${by === 'gst' ? d._gstName : d.name}" ${OUT} — not updated`);
+      }
+      if (by === 'gst') { note(`matches "${d._gstName}" by GST number — that client is updated (not renamed)`); d.name = d._gstName; } else note('already on file — will be updated; blank cells keep what it has');
       return null;
     },
   },
@@ -1002,11 +1183,32 @@ const RULES = {
 
   requirements: {
     keyOf: (d, ix) => ix.norm(d.reqCode),
+    // DUPLICATE = same requirement code, or the same job title for the same
+    // client. Updated only with "Update existing" ticked, in scope.
     async guard(ctx, d, note) {
       const { ix, user } = ctx;
-      const id = ix.requirement.get(ix.norm(d.reqCode));
-      if (id && !isDry(id)) return { skip: `requirement ${d.reqCode} is already on file — skipped, nothing overwritten` };
+      let id = ix.requirement.get(ix.norm(d.reqCode));
+      let dupBy = id && !isDry(id) ? 'code' : null;
       const clientId = ix.client.get(ix.ckey(d._client));
+      if (!dupBy && clientId && !isDry(clientId) && d.title) {
+        const same = await prisma.requirement.findFirst({ where: { clientId, title: String(d.title).trim() }, select: { id: true, reqCode: true } });
+        if (same) { id = same.id; dupBy = 'title'; d._sameCode = same.reqCode; }
+      }
+      if (dupBy) {
+        const what = dupBy === 'code' ? `requirement ${d.reqCode}` : `"${d.title}" for ${d._client}${d._sameCode ? ` (${d._sameCode})` : ''}`;
+        if (!ctx.updateExisting) return { skip: `${what} is already on file — skipped, nothing overwritten`, duplicate: true };
+        const cur = await prisma.requirement.findUnique({ where: { id } });
+        if (!ctx.global && !matches(cur, requirementWhere(user))) throw new Error(`${what} ${OUT} — not updated`);
+        if (dupBy === 'title') {
+          if (!d._sameCode) return { skip: `${what} is already on file but has no requirement code, so it cannot be updated from a file`, duplicate: true };
+          note(`same title + client as ${d._sameCode} — that requirement is updated`);
+          d.reqCode = d._sameCode;
+        } else note('already on file — will be updated; blank cells keep what it has');
+        // An update changes only what the file says; the status gate and the
+        // assignment defaults below are for NEW requirements.
+        if (!d.status) delete d.status;
+        return null;
+      }
       if (!clientId) throw new Error(`client "${d._client}" is not on file`);
       const client = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true, clientType: true } });
       // The assignment chain as ids, so scope can be judged before the write.
@@ -1022,7 +1224,8 @@ const RULES = {
       // requirement is not live until the client's agreement is Active.
       const internal = client && client.clientType === 'Internal';
       let status = d.status || 'OPEN';
-      if (status === 'OPEN' && !internal && !agreementIsActive(client && client.agreementStatus)) {
+      // Spec 6: ANY live status (Open, Sourcing …) waits for an Active agreement.
+      if (requirementIsLive(status) && !internal && !agreementIsActive(client && client.agreementStatus)) {
         status = 'AGREEMENT_CHECK';
         note('saved at Agreement Check — the client agreement is not Active yet');
       } else if (status === 'OPEN' && recruiterId) status = 'RECRUITER_ASSIGNED';
@@ -1061,15 +1264,24 @@ const RULES = {
           return { skip: `already on file and already on ${d._requirement} — skipped` };
         }
       }
-      if (existing && !requirement) return { skip: 'a candidate with this email / phone is already on file — skipped, nothing overwritten' };
-      if (existing) note(`already on file — added to ${d._requirement}`);
+      // DUPLICATE = same phone (last ten digits) or email. Updated only with
+      // "Update existing" ticked, and only a candidate in the caller's scope.
+      if (existing && ctx.updateExisting) {
+        if (!ctx.global && !(await prisma.candidate.count({ where: { AND: [{ id: existing }, candidateWhere(ctx.user)] } }))) {
+          throw new Error(`a candidate with this email / phone is on file but ${OUT} — not updated`);
+        }
+        d._update = true;
+        note('already on file — will be updated; blank cells keep what they have');
+      }
+      if (existing && !requirement && !d._update) return { skip: 'a candidate with this email / phone is already on file — skipped, nothing overwritten', duplicate: true };
+      if (existing && requirement) note(`already on file — added to ${d._requirement}`);
       d._existing = existing;
       return null;
     },
     async handle(ctx, d, note, row) {
       let action = 'skipped';
-      if (!d._existing) {
-        const { _existing, ...rest } = d;
+      if (!d._existing || d._update) {
+        const { _existing, _update, ...rest } = d;
         action = await HANDLERS.candidate({ data: rest, ix: ctx.ix, dry: ctx.dry, row, note });
       }
       if (d._requirement) {
@@ -1255,7 +1467,7 @@ const RULES = {
       if (ctx.dry) return 'created';
       // The Follow-up dialog's own endpoint, as the importer: its validation,
       // its "close the open one first", its audit row and in-app notice.
-      await loopback(ctx.req, 'POST', '/followups', {
+      const made = await loopback(ctx.req, 'POST', '/followups', {
         body: {
           applicationId: d._app.id,
           nextAction: d.nextAction || undefined,
@@ -1266,12 +1478,15 @@ const RULES = {
           notes: d.notes || undefined,
         },
       });
+      // Written by another request, so the batch is told by hand (Undo import).
+      const fuId = made && (made.id || (made.followUp && made.followUp.id));
+      if (fuId) batches.recordCreate('ApplicationFollowUp', fuId);
       return 'created';
     },
   },
 };
 
-async function runImport(req, kindId, prepared, { dry }) {
+async function runImport(req, kindId, prepared, { dry, updateExisting = false }) {
   const spec = ATS_IMPORT_SHEETS[kindId];
   const rule = RULES[kindId];
   const ix = await buildIndex();
@@ -1279,6 +1494,9 @@ async function runImport(req, kindId, prepared, { dry }) {
   const ctx = {
     req, user: req.user, s, global: s.global, dry, ix, reqCache: new Map(),
     mayApply: await can(req.user, 'ats', 'candidates', 'Applications', 'create'),
+    // "Update existing records" ticked: a row matching a record on file
+    // updates it (blank cells keep its values) instead of being skipped.
+    updateExisting: !!updateExisting,
   };
   const { rows, problems } = readSheet(prepared.ws, spec);
   const results = [];
@@ -1297,14 +1515,14 @@ async function runImport(req, kindId, prepared, { dry }) {
     try {
       key = rule.keyOf(data, ix);
       if (key && seen.has(key)) {
-        results.push({ row: fileRow, action: 'skip', message: 'the same record is on an earlier row of this file — skipped' });
+        results.push({ row: fileRow, action: 'duplicate', message: 'the same record is on an earlier row of this file — skipped' });
         continue;
       }
       if (key) seen.add(key);
       // eslint-disable-next-line no-await-in-loop
       const verdict = await rule.guard(ctx, data, note);
       if (verdict && verdict.skip) {
-        results.push({ row: fileRow, action: 'skip', message: verdict.skip });
+        results.push({ row: fileRow, action: verdict.duplicate ? 'duplicate' : 'skip', message: verdict.skip });
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
@@ -1324,12 +1542,37 @@ async function runImport(req, kindId, prepared, { dry }) {
   }
   results.sort((a, b) => a.row - b.row);
   const count = (a) => results.filter((r) => r.action === a).length;
+  // The preview's three numbers (spec §B): VALID (will be written), ERRORS,
+  // DUPLICATES (already on file / repeated in the file — never overwritten
+  // unless "Update existing" is ticked). `skip` = nothing to change.
   const totals = {
     rows: rows.length + new Set(problems.filter((p) => p.row !== 1).map((p) => p.row)).size,
     create: count('create'), update: count('update'), skip: count('skip'), error: count('error'),
+    duplicate: count('duplicate'),
+    valid: count('create') + count('update'),
     examples: prepared.exampleRows,
   };
+  // A row with errors is counted once however many cells are wrong.
+  totals.errorRows = new Set(results.filter((r) => r.action === 'error').map((r) => r.row)).size;
   return { totals, results, ok: totals.error === 0 };
+}
+
+// The rows that were not imported, as the user's own columns + "Why" —
+// fix them and import that file again.
+function errorRowsFile(prepared, run) {
+  const why = new Map();
+  run.results.filter((r) => r.action === 'error' && r.row !== prepared.headerRow).forEach((r) => {
+    why.set(r.row, [...(why.get(r.row) || []), `${r.column ? `${r.column}: ` : ''}${r.message}`]);
+  });
+  const header = [...prepared.fileColumns, 'Why it was not imported'];
+  const rows = [...why.keys()].sort((a, b) => a - b).map((n) => {
+    const cells = prepared.cellsOf(n);
+    const out = prepared.fileColumns.map((_, i) => (cells[i] === undefined ? '' : cells[i]));
+    return [...out, why.get(n).join(' | ')];
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...rows]), 'Rows with errors');
+  return { buffer: XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), count: rows.length };
 }
 
 function reportOf(kindId, prepared, run, filename) {
@@ -1353,9 +1596,14 @@ function reportOf(kindId, prepared, run, filename) {
   };
 }
 
-async function importRequest(req, kindId) {
+async function importRequest(req, kindId, { want = null } = {}) {
   if (!KINDS[kindId]) throw new HttpError(404, { error: 'Unknown import' });
-  if (!(await mayImport(req.user, kindId))) throw DENIED(`Importing ${KINDS[kindId].label.toLowerCase()}`);
+  const mode = await importModeOf(req.user, kindId);
+  if (!mode) throw DENIED(`Importing ${KINDS[kindId].label.toLowerCase()}`);
+  if (want === 'direct' && mode !== 'direct') {
+    throw new HttpError(403, { error: 'Your role sends imports for approval — use "Send for approval"; an Admin or Manager approves it.', requestInstead: true });
+  }
+  if (want === 'request' && mode !== 'request') throw new HttpError(400, { error: 'You can import this directly — no approval is needed.' });
   let upload;
   try {
     upload = await attachments.parseMultipart(req, { maxBytes: MAX_BYTES });
@@ -1371,40 +1619,395 @@ async function importRequest(req, kindId) {
     try { mapping = JSON.parse(fields.mapping); } catch { mapping = null; }
   }
   const prepared = prepare(file, ATS_IMPORT_SHEETS[kindId], { mapping, sheet: fields.sheet });
-  return { prepared, filename: file.filename, fields };
+  return {
+    prepared, filename: file.filename, fields, file, mapping, mode,
+    updateExisting: String(fields.updateExisting || '') === 'true',
+  };
 }
 
 router.post('/import/:kind/check', guarded(async (req, res) => {
   const kindId = req.params.kind;
-  const { prepared, filename } = await importRequest(req, kindId);
-  const run = await runImport(req, kindId, prepared, { dry: true });
-  return res.json(reportOf(kindId, prepared, run, filename));
+  const { prepared, filename, mode, updateExisting } = await importRequest(req, kindId);
+  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting });
+  return res.json({ ...reportOf(kindId, prepared, run, filename), importMode: mode, updateExisting });
 }));
 
-router.post('/import/:kind/commit', guarded(async (req, res) => {
+// The rows with errors as a file (step 3 of the import: "error rows
+// downloadable"). Same upload as /check; writes nothing.
+router.post('/import/:kind/errors', guarded(async (req, res) => {
   const kindId = req.params.kind;
-  const { prepared, filename, fields } = await importRequest(req, kindId);
+  const { prepared, updateExisting } = await importRequest(req, kindId);
+  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting });
+  const out = errorRowsFile(prepared, run);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="teamlink-${kindId}-rows-with-errors.xlsx"`);
+  res.setHeader('X-Error-Rows', String(out.count));
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Error-Rows');
+  return res.send(out.buffer);
+}));
+
+// One committed import: dry run first, then the real run as a BATCH.
+async function commitImport(req, kindId, prepared, filename, { updateExisting, partial, requestId = null, requestedBy = null }) {
   // CHECK FIRST, ALWAYS — the same rule as Data Import: a file with errors
   // writes nothing unless the user chose "import the valid rows, skip the rest".
-  const dryRun = await runImport(req, kindId, prepared, { dry: true });
-  const partial = String(fields.partial || req.query.partial || '') === 'true';
+  const dryRun = await runImport(req, kindId, prepared, { dry: true, updateExisting });
   if (!dryRun.ok && !partial) {
-    return res.status(400).json({
-      error: `${dryRun.totals.error} row${dryRun.totals.error === 1 ? '' : 's'} need fixing before anything is imported.`,
+    throw new HttpError(400, {
+      error: `${dryRun.totals.errorRows || dryRun.totals.error} row${(dryRun.totals.errorRows || dryRun.totals.error) === 1 ? '' : 's'} need fixing before anything is imported.`,
       report: reportOf(kindId, prepared, dryRun, filename),
     });
   }
-  const run = await runImport(req, kindId, prepared, { dry: false });
+  let run;
+  const { batch } = await batches.runInBatch({
+    kind: kindId, label: KINDS[kindId].label, module: MODULE_OF_KIND[kindId], file: filename, user: req.user, requestId,
+    get counts() { return run ? run.totals : null; },
+  }, async () => { run = await runImport(req, kindId, prepared, { dry: false, updateExisting }); return run; });
   const t = run.totals;
   await logAudit({
     userId: req.user.id,
     actorName: req.user.name,
-    action: `ATS import — ${KINDS[kindId].label}: ${t.create} created, ${t.update} updated, ${t.skip} skipped, ${t.error} error(s)`,
+    action: `ATS import — ${KINDS[kindId].label}: ${t.create} created, ${t.update} updated, ${t.duplicate} duplicate(s), ${t.skip} skipped, ${t.error} error(s)${requestedBy ? ` (request by ${requestedBy})` : ''}`,
     entity: 'AtsImport',
     entityId: kindId,
-    toValue: JSON.stringify({ file: filename, sheet: prepared.sheet, ...t, scope: scopeLabel(req.user, 'ats') }),
+    toValue: JSON.stringify({ file: filename, sheet: prepared.sheet, ...t, batchId: batch ? batch.id : null, scope: scopeLabel(req.user, 'ats') }),
   });
-  return res.json({ ...reportOf(kindId, prepared, run, filename), committed: true });
+  return { run, batch };
+}
+
+router.post('/import/:kind/commit', guarded(async (req, res) => {
+  const kindId = req.params.kind;
+  const { prepared, filename, fields, updateExisting } = await importRequest(req, kindId, { want: 'direct' });
+  const partial = String(fields.partial || req.query.partial || '') === 'true';
+  const { run, batch } = await commitImport(req, kindId, prepared, filename, { updateExisting, partial });
+  return res.json({ ...reportOf(kindId, prepared, run, filename), committed: true, batch });
+}));
+
+// ---- IMPORT REQUESTS (BDE: "client / job requests") ---------------------------
+// The file is checked under the REQUESTER's scope and kept (private folder);
+// an AuditLog row (entity 'AtsImportRequest', Pending) is the request. An
+// Admin / Super Admin / Manager approves it: only the rows that passed for
+// the requester are imported, as one batch (undoable), and the requester is
+// told. Nothing is written before that.
+const REQUEST_ENTITY = 'AtsImportRequest';
+const TEST_RE = /zztest|example\.test/i;
+const isTestUser = (u) => !!u && TEST_RE.test(`${u.name || ''} ${u.email || ''}`);
+
+async function approversFor(actor) {
+  const rows = await prisma.user.findMany({
+    where: { status: 'Active', OR: [{ role: { in: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] } }, { atsRole: { in: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] } }] },
+    select: { id: true, name: true, email: true },
+  });
+  // A test requester is only ever routed to test approvers; a real one never to them.
+  return rows.filter((u) => u.id !== actor.id && isTestUser(u) === isTestUser(actor));
+}
+
+function requestRowView(row) {
+  let p = {};
+  try { p = JSON.parse(row.toValue || '{}'); } catch { p = {}; }
+  return {
+    id: row.id,
+    kind: row.entityId,
+    label: p.label || row.entityId,
+    file: row.fromValue,
+    status: row.approvalStatus,
+    requestedBy: row.actorName,
+    requestedById: row.userId,
+    requestedAt: row.createdAt,
+    decidedBy: row.approvedByName,
+    decidedAt: row.approvedAt,
+    note: row.reason,
+    totals: p.totals || null,
+    updateExisting: !!p.updateExisting,
+    batchId: p.batchId || null,
+  };
+}
+
+router.post('/import/:kind/request', guarded(async (req, res) => {
+  const kindId = req.params.kind;
+  const {
+    prepared, filename, file, mapping, fields, updateExisting,
+  } = await importRequest(req, kindId, { want: 'request' });
+  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting });
+  const okRows = run.results.filter((r) => ['create', 'update'].includes(r.action)).map((r) => r.row);
+  if (!okRows.length) {
+    return res.status(422).json({ error: 'Nothing in this file would be added or changed — no request was sent.', report: reportOf(kindId, prepared, run, filename) });
+  }
+  const fileId = ioStore.newId('r-');
+  ioStore.writeBin('requests', `${fileId}.bin`, file.data);
+  const row = await prisma.auditLog.create({
+    data: {
+      userId: req.user.id,
+      actorName: req.user.name || req.user.email,
+      action: `Import request — ${KINDS[kindId].label}`,
+      entity: REQUEST_ENTITY,
+      entityId: kindId,
+      fromValue: filename,
+      toValue: JSON.stringify({
+        label: KINDS[kindId].label, fileId, fileName: filename, mapping, sheet: prepared.sheet, okRows, updateExisting, totals: run.totals,
+      }),
+      approvalStatus: 'Pending',
+      reason: fields.note ? String(fields.note).slice(0, 500) : null,
+    },
+  });
+  const approvers = await approversFor(req.user);
+  await Promise.all(approvers.map((u) => pushNotification({
+    userId: u.id,
+    title: `Import request waiting — ${KINDS[kindId].label}`,
+    message: `${req.user.name || 'A BDE'} asked to import ${okRows.length} row(s) of ${KINDS[kindId].label.toLowerCase()} (${filename}). Open the screen → History (Approvals & history) to approve or reject.`,
+  }).catch(() => null)));
+  return res.status(201).json({
+    request: requestRowView(row),
+    report: reportOf(kindId, prepared, run, filename),
+    message: 'Sent for approval. Nothing is imported until an Admin or Manager approves it.',
+  });
+}));
+
+router.get('/import/requests', guarded(async (req, res) => {
+  const approver = mayApproveImport(req.user);
+  const where = { entity: REQUEST_ENTITY };
+  if (!approver) where.userId = req.user.id;
+  else if (isTestUser(req.user)) where.actorName = { contains: 'ZZTEST' };
+  if (req.query.status) where.approvalStatus = String(req.query.status);
+  const rows = await prisma.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: 100 });
+  res.json({ approver, requests: rows.map(requestRowView) });
+}));
+
+router.post('/import/requests/:id/approve', express.json(), guarded(async (req, res) => {
+  if (!mayApproveImport(req.user)) throw new HttpError(403, { error: 'Only an Admin, Super Admin or Manager approves an import request.' });
+  const row = await prisma.auditLog.findUnique({ where: { id: req.params.id } });
+  if (!row || row.entity !== REQUEST_ENTITY) throw new HttpError(404, { error: 'Import request not found.' });
+  if (row.userId === req.user.id) throw new HttpError(403, { error: 'You cannot approve your own import request.' });
+  if (row.approvalStatus !== 'Pending') throw new HttpError(409, { error: `This request is already ${String(row.approvalStatus).toLowerCase()}.` });
+  const kindId = row.entityId;
+  if (!KINDS[kindId]) throw new HttpError(400, { error: 'That import no longer exists.' });
+  let p = {};
+  try { p = JSON.parse(row.toValue || '{}'); } catch { p = {}; }
+  const buf = ioStore.readBin('requests', `${p.fileId}.bin`);
+  if (!buf) throw new HttpError(410, { error: 'The file of this request is no longer on the server — ask for it to be sent again.' });
+  // Claim it first, so two approvers pressing at once import it once.
+  const claimed = await prisma.auditLog.updateMany({ where: { id: row.id, approvalStatus: 'Pending' }, data: { approvalStatus: 'Approving' } });
+  if (!claimed.count) throw new HttpError(409, { error: 'Somebody else is deciding this request.' });
+  try {
+    const prepared = prepare({ data: buf, filename: p.fileName }, ATS_IMPORT_SHEETS[kindId], {
+      mapping: p.mapping || null, sheet: p.sheet, onlyRows: new Set(p.okRows || []),
+    });
+    const { run, batch } = await commitImport(req, kindId, prepared, p.fileName, {
+      updateExisting: !!p.updateExisting, partial: true, requestId: row.id, requestedBy: row.actorName,
+    });
+    await prisma.auditLog.update({
+      where: { id: row.id },
+      data: {
+        approvalStatus: 'Approved', approvedByName: req.user.name || req.user.email, approvedAt: new Date(),
+        toValue: JSON.stringify({ ...p, result: run.totals, batchId: batch ? batch.id : null }),
+        reason: req.body && req.body.note ? String(req.body.note).slice(0, 500) : row.reason,
+      },
+    });
+    ioStore.remove('requests', `${p.fileId}.bin`);
+    if (row.userId) {
+      await pushNotification({
+        userId: row.userId,
+        title: `Import approved — ${KINDS[kindId].label}`,
+        message: `${req.user.name || 'An approver'} approved your import (${p.fileName}): ${run.totals.create} created, ${run.totals.update} updated${run.totals.error ? `, ${run.totals.errorRows || run.totals.error} row(s) not imported` : ''}.`,
+      });
+    }
+    return res.json({ request: requestRowView(await prisma.auditLog.findUnique({ where: { id: row.id } })), totals: run.totals, batch });
+  } catch (err) {
+    await prisma.auditLog.update({ where: { id: row.id }, data: { approvalStatus: 'Pending' } }).catch(() => {});
+    throw err;
+  }
+}));
+
+router.post('/import/requests/:id/reject', express.json(), guarded(async (req, res) => {
+  if (!mayApproveImport(req.user)) throw new HttpError(403, { error: 'Only an Admin, Super Admin or Manager rejects an import request.' });
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500);
+  if (!reason) throw new HttpError(400, { error: 'Say why it is rejected — the requester is told.' });
+  const row = await prisma.auditLog.findUnique({ where: { id: req.params.id } });
+  if (!row || row.entity !== REQUEST_ENTITY) throw new HttpError(404, { error: 'Import request not found.' });
+  if (row.approvalStatus !== 'Pending') throw new HttpError(409, { error: `This request is already ${String(row.approvalStatus).toLowerCase()}.` });
+  await prisma.auditLog.update({ where: { id: row.id }, data: { approvalStatus: 'Rejected', approvedByName: req.user.name || req.user.email, approvedAt: new Date(), reason } });
+  let p = {};
+  try { p = JSON.parse(row.toValue || '{}'); } catch { p = {}; }
+  if (p.fileId) ioStore.remove('requests', `${p.fileId}.bin`);
+  if (row.userId) {
+    await pushNotification({ userId: row.userId, title: `Import rejected — ${(KINDS[row.entityId] || {}).label || row.entityId}`, message: `${req.user.name || 'An approver'} rejected your import (${row.fromValue}): ${reason}` });
+  }
+  return res.json({ request: requestRowView(await prisma.auditLog.findUnique({ where: { id: row.id } })) });
+}));
+
+// ---- BATCHES: list + Undo import (24 h) -----------------------------------------
+router.get('/import/batches', guarded(async (req, res) => {
+  res.json({ batches: await batches.listBatches(req.user), undoHours: batches.UNDO_WINDOW_MS / 3600000 });
+}));
+
+router.post('/import/batches/:id/undo', guarded(async (req, res) => {
+  const out = await batches.undoBatch(req.params.id, req.user);
+  if (out.status !== 200) return res.status(out.status).json({ error: out.error, changed: out.changed || undefined });
+  return res.json({ ...out, message: `Import undone — ${out.removed} record(s) removed, ${out.restored} restored to how they were.` });
+}));
+
+// ---- BACKGROUND EXPORT FILES ------------------------------------------------------
+router.get('/export-files', guarded(async (req, res) => {
+  res.json({ exports: exportJobs.listExports(req.user, { all: roleOf(req.user) === 'SUPER_ADMIN' && req.query.all === '1' }) });
+}));
+
+router.get('/export-files/:id', guarded(async (req, res) => {
+  const out = exportJobs.exportFile(req.user, req.params.id, { all: roleOf(req.user) === 'SUPER_ADMIN' });
+  if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+  const types = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv; charset=utf-8', pdf: 'application/pdf' };
+  res.setHeader('Content-Type', types[out.meta.format] || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${out.meta.filename}"`);
+  res.setHeader('X-Export-Rows', String(out.meta.rows));
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Rows');
+  return res.send(out.buf);
+}));
+
+// ---- FILTER OPTIONS WITH COUNTS ------------------------------------------------------
+router.get('/facets/:module', guarded(async (req, res) => {
+  const out = await facetsFor(req.params.module, req.user, req.query || {});
+  if (!out) throw new HttpError(404, { error: 'No server-side filter counts for this screen.' });
+  // A recruiter never sees more of a client than its name — which is all an option carries.
+  return res.json(out);
+}));
+
+// ---- BULK RESUME UPLOAD (Candidates → Upload resumes button) ----------------------
+// 1. /resumes/parse — one file per call (the screen sends them one by one and
+//    shows progress): it is kept in the private folder under a token, read,
+//    and checked for a duplicate (same phone / email as a candidate on file).
+// 2. /resumes/commit — the tokens the user confirms (with any corrections to
+//    name / email / phone); creates the candidates as ONE batch (Undo import),
+//    optionally on one requirement's pipeline. PDFs are attached as the
+//    candidate's resume document.
+const RESUME_MAX = 8 * 1024 * 1024;
+async function resumeGate(req) {
+  const mode = await importModeOf(req.user, 'resumes');
+  if (mode !== 'direct') throw DENIED('Uploading resumes');
+}
+function resumeDup(ix, f) {
+  return [f.email, f.phone].filter(Boolean).map((v) => findCandidate(ix, v)).find((id) => id && !isDry(id)) || null;
+}
+
+router.post('/resumes/parse', guarded(async (req, res) => {
+  await resumeGate(req);
+  ioStore.sweep('resumes', 24 * 3600 * 1000);
+  let upload;
+  try { upload = await attachments.parseMultipart(req, { maxBytes: RESUME_MAX }); } catch (err) {
+    if (err.code === 'TOO_LARGE') throw new HttpError(413, { error: 'That resume is over 8 MB.' });
+    throw new HttpError(400, { error: 'Send the resume as a form upload.' });
+  }
+  const { file } = upload;
+  if (!file || !file.data || !file.data.length) throw new HttpError(400, { error: 'Attach a resume.' });
+  const token = ioStore.newId('cv-');
+  ioStore.writeBin('resumes', `${token}.bin`, file.data);
+  ioStore.writeJson('resumes', token, { userId: req.user.id, fileName: file.filename, contentType: file.contentType, at: new Date().toISOString() });
+  const parsed = await parseResume(file.data, file.filename);
+  let duplicate = null;
+  if (!parsed.error) {
+    const ix = await buildIndex();
+    const dupId = resumeDup(ix, parsed.fields);
+    if (dupId) {
+      const c = await prisma.candidate.findUnique({ where: { id: dupId }, select: { id: true, name: true } });
+      duplicate = c ? { id: c.id, name: c.name } : null;
+    }
+  }
+  const f = parsed.fields || {};
+  const missing = !parsed.error && !f.email && !f.phone ? 'No email or phone found in the resume — add one below, or the row is skipped.' : null;
+  return res.json({
+    token, fileName: file.filename, kind: parsed.kind || null, fields: f, error: parsed.error || null, duplicate, warning: missing,
+  });
+}));
+
+router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }), guarded(async (req, res) => {
+  await resumeGate(req);
+  let b = {};
+  try { b = JSON.parse(req.body || '{}'); } catch { throw new HttpError(400, { error: 'The request could not be read.' }); }
+  const items = Array.isArray(b.items) ? b.items.slice(0, 500) : [];
+  if (!items.length) throw new HttpError(400, { error: 'Nothing to import.' });
+  const reqCode = String(b.requirementCode || '').trim();
+  const ix = await buildIndex();
+  const s = scopeOf(req.user);
+  const ctx = { user: req.user, ix, global: s.global, reqCache: new Map(), dry: false };
+  let requirement = null;
+  if (reqCode) {
+    if (!(await can(req.user, 'ats', 'candidates', 'Applications', 'create'))) throw new HttpError(403, { error: 'Adding to a pipeline needs the Applications permission — leave the requirement blank.' });
+    try { requirement = await requirementByCode(ctx, reqCode); assertRequirementInScope(ctx, requirement, reqCode); } catch (e) { throw new HttpError(400, { error: e.message }); }
+  }
+  const results = [];
+  const storedFiles = [];
+  const { batch } = await batches.runInBatch({
+    kind: 'resumes', label: 'Resumes', module: 'candidates', file: `${items.length} resume file(s)`, user: req.user,
+  }, async () => {
+    const seen = new Set();
+    for (const it of items) {
+      const meta = ioStore.readJson('resumes', String(it.token || ''));
+      if (!meta || meta.userId !== req.user.id) { results.push({ token: it.token, action: 'error', message: 'That upload is gone — upload the resume again.' }); continue; }
+      if (it.skip) { results.push({ token: it.token, fileName: meta.fileName, action: 'skip', message: 'left out' }); continue; }
+      const buf = ioStore.readBin('resumes', `${it.token}.bin`);
+      // eslint-disable-next-line no-await-in-loop
+      const parsed = buf ? await parseResume(buf, meta.fileName) : { error: 'file missing' };
+      const f = { ...(parsed.fields || {}) };
+      ['name', 'email', 'phone'].forEach((k) => { if (typeof it[k] === 'string' && it[k].trim()) f[k] = it[k].trim(); });
+      if (f.phone) f.phone = String(f.phone).replace(/[^\d+]/g, '');
+      if (!f.name) { results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: 'No name — type the candidate\'s name.' }); continue; }
+      if (!f.email && !f.phone) { results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: 'No email or phone — one is needed to tell candidates apart.' }); continue; }
+      const key = (f.email || f.phone).toLowerCase();
+      if (seen.has(key)) { results.push({ token: it.token, fileName: meta.fileName, action: 'duplicate', message: 'the same person is in an earlier file of this upload' }); continue; }
+      seen.add(key);
+      const dupId = resumeDup(ix, f);
+      if (dupId && !b.updateExisting) { results.push({ token: it.token, fileName: meta.fileName, action: 'duplicate', message: 'a candidate with this phone / email is already on file — skipped, nothing overwritten' }); continue; }
+      const notes = [];
+      const note = (m) => notes.push(m);
+      try {
+        if (dupId && !s.global && !(await prisma.candidate.count({ where: { AND: [{ id: dupId }, candidateWhere(req.user)] } }))) {
+          throw new Error('a candidate with this phone / email is on file but outside your scope — not updated');
+        }
+        const data = {
+          name: f.name, email: f.email || null, phone: f.phone || null, location: f.location || null,
+          experienceYears: typeof f.experienceYears === 'number' ? f.experienceYears : null,
+          noticePeriod: f.noticePeriod || null, currentSalary: f.currentSalary || null, expectedSalary: f.expectedSalary || null,
+          skills: f.skills || null, source: dupId ? null : 'Resume upload', resumeName: meta.fileName,
+        };
+        // eslint-disable-next-line no-await-in-loop
+        const action = await HANDLERS.candidate({ data, ix, dry: false, row: 0, note });
+        const candidateId = findCandidate(ix, f.email || f.phone);
+        if (requirement && candidateId && !(await prisma.application.count({ where: { candidateId, requirementId: requirement.id } }))) {
+          // eslint-disable-next-line no-await-in-loop
+          await HANDLERS.application({ data: { _candidate: f.email || f.phone, _requirement: reqCode, stage: 'NEW', source: 'Resume upload' }, ix, dry: false, row: 0, note });
+          note(`added to ${reqCode}`);
+        }
+        // A PDF resume is kept as the candidate's resume document (as the
+        // candidate portal keeps one). Other formats keep their file name.
+        if (candidateId && parsed.kind === 'pdf') {
+          try {
+            const stored = attachments.store({ filename: meta.fileName, contentType: 'application/pdf', data: buf });
+            storedFiles.push(stored.billFile);
+            // eslint-disable-next-line no-await-in-loop
+            await prisma.candidateDocument.create({
+              data: {
+                candidateId, docType: 'Resume', name: stored.billName, note: `file:${stored.billFile}`, internalOnly: false,
+                uploadedByUserId: req.user.id, uploadedByName: req.user.name,
+              },
+            });
+          } catch { note('resume file not attached'); }
+        }
+        results.push({ token: it.token, fileName: meta.fileName, action: action === 'updated' ? 'update' : 'create', candidateId, message: notes.join(' · ') });
+      } catch (e) {
+        results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: e.message });
+      }
+    }
+  });
+  if (batch && storedFiles.length) storedFiles.forEach((f) => batches.addFileToBatch(batch.id, f));
+  items.forEach((it) => { ioStore.remove('resumes', `${it.token}.bin`); ioStore.remove('resumes', `${it.token}.json`); });
+  const count = (a) => results.filter((r) => r.action === a).length;
+  const totals = {
+    rows: results.length, create: count('create'), update: count('update'), duplicate: count('duplicate'), error: count('error'), skip: count('skip'),
+  };
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name,
+    action: `ATS import — Resumes: ${totals.create} created, ${totals.update} updated, ${totals.duplicate} duplicate(s), ${totals.error} error(s)`,
+    entity: 'AtsImport', entityId: 'resumes',
+    toValue: JSON.stringify({ ...totals, batchId: batch ? batch.id : null, requirement: reqCode || null }),
+  });
+  return res.json({ totals, results, batch });
 }));
 
 router.get('/import/:kind/template', guarded(async (req, res) => {
@@ -1438,11 +2041,20 @@ router.get('/import/:kind/template', guarded(async (req, res) => {
 // every other ATS endpoint (review #3 §2 access audit).
 router.get('/access', require('../middleware/auth').requireProduct('ats'), guarded(async (req, res) => {
   const exportsOut = {};
+  const exportInfo = {};
   await Promise.all(Object.entries(EXPORTS).map(async ([id, def]) => {
-    exportsOut[id] = await can(req.user, 'ats', def.perm[0], def.perm[1], 'export');
+    const access = await ioAccessFor(req.user, id);
+    const permitted = await can(req.user, 'ats', def.perm[0], def.perm[1], 'export');
+    exportsOut[id] = !!access.export && (permitted || SPEC_EXPORT_ROLES.includes(access.role));
+    exportInfo[id] = { sensitive: !!access.sensitive, revenue: !!access.revenue, scope: access.exportScope };
   }));
   const importsOut = {};
-  await Promise.all(Object.keys(KINDS).map(async (id) => { importsOut[id] = await mayImport(req.user, id); }));
+  const importModes = {};
+  await Promise.all([...Object.keys(KINDS), 'resumes'].map(async (id) => {
+    importModes[id] = await importModeOf(req.user, id);
+    importsOut[id] = !!importModes[id];
+  }));
+  const role = roleOf(req.user);
   const kinds = {};
   Object.entries(KINDS).forEach(([id, k]) => {
     const spec = ATS_IMPORT_SHEETS[id];
@@ -1453,7 +2065,18 @@ router.get('/access', require('../middleware/auth').requireProduct('ats'), guard
       columns: spec.columns.filter((c) => !c.legacy).map((c) => ({ header: c.h, required: !!c.req })),
     };
   });
-  return res.json({ exports: exportsOut, imports: importsOut, kinds, modules: MODULE_KINDS });
+  kinds.resumes = { label: 'Resumes (PDF / DOCX)', mode: 'create', note: 'Several resume files at once; each becomes a candidate. Duplicates (same phone / email) are skipped unless you choose to update them.', columns: [] };
+  return res.json({
+    exports: exportsOut,
+    exportInfo,
+    imports: importsOut,
+    importModes,
+    kinds,
+    modules: { ...MODULE_KINDS, candidates: [...(MODULE_KINDS.candidates || []), 'resumes'] },
+    viewer: { role, admin: ['SUPER_ADMIN', 'ADMIN'].includes(role), approver: mayApproveImport(req.user) },
+    undoHours: batches.UNDO_WINDOW_MS / 3600000,
+    backgroundRows: exportJobs.threshold(),
+  });
 }));
 
 module.exports = router;

@@ -14,6 +14,21 @@ export default function JobDetail() {
     api.get(`/public/jobs/${id}`).then((res) => setJob(res.data)).catch(() => setNotFound(true));
   }, [id]);
 
+  // GOOGLE FOR JOBS reads schema.org JobPosting markup on the job's own page.
+  // Only jobs with "Google Jobs" ticked answer (404 otherwise — nothing added).
+  useEffect(() => {
+    let tag = null;
+    let alive = true;
+    api.get(`/public/jobs/${id}/jsonld`).then((res) => {
+      if (!alive) return;
+      tag = document.createElement('script');
+      tag.type = 'application/ld+json';
+      tag.text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      document.head.appendChild(tag);
+    }).catch(() => {});
+    return () => { alive = false; if (tag) tag.remove(); };
+  }, [id]);
+
   async function apply(e) {
     e.preventDefault();
     setStatus('submitting');

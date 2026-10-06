@@ -8,7 +8,11 @@
     "start": "node src/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "sandbox": "node scripts/sandbox.js",
+    "backup": "node scripts/backup.js",
+    "backup:verify": "node scripts/backup.js --verify",
+    "healthcheck": "node scripts/healthcheck.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",
@@ -23,9 +27,12 @@
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.13.0",
     "nodemailer": "^6.10.1",
+    "pdf-parse": "^2.4.5",
     "pdfkit": "^0.15.2",
     "sharp": "^0.34.5",
+    "word-extractor": "^1.0.4",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {

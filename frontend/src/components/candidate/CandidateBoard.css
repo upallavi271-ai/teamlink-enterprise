@@ -1,0 +1,61 @@
+/* Progress board (components/candidate/CandidateBoard.jsx). Scoped under .cboard */
+.cboard{margin-top:6px}
+.cboard.is-loading{opacity:.6;transition:opacity .15s}
+.cboard-loading{padding:16px}
+.cboard-top{margin:0 0 8px 2px;font-size:12.5px}
+.cboard-flash{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.cboard-cols{display:flex;gap:10px;overflow-x:auto;padding-bottom:10px;align-items:flex-start;scroll-snap-type:x proximity}
+.cboard-col{flex:0 0 232px;background:#f4f7fb;border:1px solid var(--line,#e3e8f0);border-radius:10px;display:flex;flex-direction:column;max-height:72vh;scroll-snap-align:start}
+.cboard-col.is-over{outline:2px solid #1f6fd1;background:#eaf2fd}
+.cboard-col.is-locked{outline:2px dashed #b3261e}
+.cboard-col.is-dim{opacity:.55}
+.cboard-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:10px 12px 8px;border-bottom:1px solid var(--line,#e3e8f0)}
+.cboard-title{font-weight:700;font-size:13.5px;color:var(--ink,#1c2434)}
+.cboard-n{font-size:12px;font-weight:700;background:#e3ecf8;color:#1f6fd1;border-radius:10px;padding:1px 9px}
+.cboard-lock{padding:6px 12px 0;font-size:11.5px;color:#b3261e}
+.cboard-cards{padding:8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.cboard-empty{padding:8px 4px;font-size:12px}
+.cboard-card{background:#fff;border:1px solid var(--line,#e3e8f0);border-left:3px solid #1f6fd1;border-radius:8px;padding:8px 10px;cursor:pointer;font-size:12.5px;line-height:1.4}
+.cboard-card[draggable="true"]{cursor:grab}
+.cboard-card:hover,.cboard-card:focus{box-shadow:0 2px 6px rgba(18,28,52,.12);outline:none}
+.cboard-card.is-late{border-left-color:#b3261e}
+.cboard-card.is-busy{opacity:.5}
+.cboard-card-top{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.cboard-name{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cboard-job{color:var(--ink,#1c2434);overflow-wrap:anywhere}
+.cboard-meta{color:var(--ink-soft,#5b6478);margin-top:2px}
+.cboard-days{margin-top:3px;font-weight:600;color:#1f6fd1}
+.cboard-days.is-orange{color:#b86e00}
+.cboard-days.is-red{color:#b3261e}
+.cboard-moved{font-size:11.5px;margin-top:2px}
+.cboard-more{width:100%}
+@media (max-width:700px){
+  .cboard-col{flex-basis:84vw;max-height:none}
+  .cboard-tip{display:none}
+}
+/* ATS layout v3 (2026-10-03): job picker, job summary, funnel, card tones, Rejected column. */
+.cboard-job-pick{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.cboard-job-pick select{min-width:260px;max-width:100%}
+.cboard-sum{display:flex;flex-direction:column;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--card,#fff);border:1px solid var(--line,#e3e8f0);border-radius:10px;padding:10px 14px;margin-bottom:8px}
+.cboard-sum-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cboard-sum-main b{font-size:15px}
+.cboard-sum-facts{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:13px}
+.cboard-urg{padding:1px 9px;border-radius:10px;font-weight:600;font-size:12px;background:var(--st-blue-tint,#eaf2fd);color:var(--st-blue-ink,#1f6fd1)}
+.cboard-urg.is-high,.cboard-urg.is-urgent,.cboard-urg.is-critical{background:var(--st-red-tint,#fef3f2);color:var(--st-red-ink,#b3261e)}
+.cboard-urg.is-low{background:var(--st-grey-tint,#f2f4f7);color:var(--st-grey-ink,#5b6478)}
+.cboard-funnel{margin-bottom:8px}
+.cboard-card.is-green{border-left-color:var(--st-green,#15803d)}
+.cboard-card.is-yellow{border-left-color:var(--st-yellow,#b88600)}
+.cboard-card.is-red{border-left-color:var(--st-red,#b3261e)}
+.cboard-days.is-green{color:var(--st-green-ink,var(--st-green,#15803d))}
+.cboard-days.is-yellow{color:var(--st-yellow-ink,#8a6400)}
+.cboard-days.is-red{color:var(--st-red-ink,var(--st-red,#b3261e))}
+.cboard-hold{margin-left:auto;font-size:11px;font-weight:700;padding:1px 7px;border-radius:9px;background:var(--st-yellow-tint,#fffaeb);color:var(--st-yellow-ink,#8a6400);white-space:nowrap}
+.cboard-col.is-side{margin-left:12px;background:var(--st-red-tint,#fef3f2);border-color:var(--st-red,#b3261e)}
+.cboard-col.is-side .cboard-title{color:var(--st-red-ink,var(--st-red,#b3261e))}
+.cboard-col.is-side .cboard-n{background:var(--st-red,#b3261e);color:#fff}
+.cboard-job-pick .lph-facet{flex:0 1 460px;min-width:0}
+.cboard-job-pick select{min-width:0;width:100%}
+.cboard-top2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:10px;align-items:start;margin-bottom:8px}
+.cboard-top2 > *{margin-bottom:0}
+@media (max-width:900px){.cboard-top2{grid-template-columns:1fr}}

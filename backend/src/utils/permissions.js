@@ -197,7 +197,9 @@ const DEFAULT_MODULES = {
   // view-only rule for MANAGER in DEFAULT_RULES below).
   MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   ASSISTANT_MANAGER: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
-  STL: ['dashboard', 'requirements', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
+  // + `clients` (per-role spec 2026-10-03): an STL reads, view only, the
+  // clients their section's requirements are for — names / basics.
+  STL: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // `reports` is in both of these because DEFAULT_RULES below already grants a
   // TL and a BDE the ATS and Job Portal reports (view, and export for a TL) —
   // the module list was the only thing withholding them, which made the grant
@@ -238,7 +240,9 @@ const DEFAULT_MODULES = {
   BDE: ['dashboard', 'requirements', 'clients', 'candidates', 'recruiterbde', 'interviews', 'hrms', 'reports'],
   // A client reaches the `clients` module only to read and e-sign their OWN
   // company record — utils/scope.js pins it to their clientId.
-  CLIENT: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'accounts'],
+  // + `reports` (per-role spec 2026-10-03): Client Reports — their own
+  // company's numbers on the portal, and nothing else in Reports.
+  CLIENT: ['dashboard', 'requirements', 'clients', 'candidates', 'interviews', 'accounts', 'reports'],
   // An accountant is an employee: Accounts per the catalog, HRMS self-service.
   // ACCOUNTANT — Accounts is the job, and HRMS SELF-SERVICE comes with being
   // an employee. Taking `hrms` off this list made the screens unreachable
@@ -291,7 +295,10 @@ const rolesReaching = (product) => SET.STAFF.filter((r) => (DEFAULT_MODULES[r] |
 // ---------------------------------------------------------------------------
 const DEFAULT_RULES = [
   // --- Dashboard ---------------------------------------------------------
-  { module: 'dashboard', features: '*', actions: ['view'], roles: SET.EVERYONE },
+  // Not '*': 'System Alerts' (Job Portal connection / sync failures, AI
+  // credits) is Super Admin's by default (per-role spec 2026-10-03 — Admin
+  // only when granted in Role Catalog).
+  { module: 'dashboard', features: ['KPI Overview', 'Department Strength', 'Pending Approvals', 'Alerts & Notifications', 'Upcoming Interviews', 'Quick Actions', 'Recruiter Leaderboard', 'Role & User Management'], actions: ['view'], roles: SET.EVERYONE },
   { module: 'dashboard', features: ['Role & User Management'], actions: ['view'], roles: SET.ADMIN },
 
   // --- ATS: Jobs / Requirements -----------------------------------------
@@ -323,22 +330,46 @@ const DEFAULT_RULES = [
   //   §6 Recruiter = View Candidates / Add Candidate — no requirement edits.
   //   §1 Accounts = read-only, requirements with joined candidates only.
   { module: 'requirements', features: ['Requirement List', 'Requirement Detail', 'Requirement Pipeline'], actions: ['view'], roles: ['ACCOUNTANT'] },
-  { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: [...SET.RAISE, 'BDE'] },
+  // PER-ROLE SPEC (2026-10-03) — newest wins:
+  //   Create a job   Super Admin · Admin · Manager (dept) · Asst Manager
+  //                  (teams) · STL (section) · TL (team) · Internal HR
+  //                  (INTERNAL jobs only — routes/requirements.js forces it)
+  //                  · NOT a Recruiter · NOT a BDE (a BDE REQUESTS one:
+  //                  'Requirement Request' below)
+  //   Activate / hold / close   Manager all three · Asst Manager and STL HOLD
+  //                  only (routes/requirements.js narrows) · BDE close only
+  //                  (kept from the 2026-09-29 spec) · TL none
+  { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: [...SET.RAISE, 'HR'] },
   { module: 'requirements', features: ['Requirement Detail'], actions: ['edit'], roles: [...SET.RAISE, 'BDE'] },
   { module: 'requirements', features: ['Requirement Detail'], actions: ['approve'], roles: [...SET.RAISE.filter((r) => r !== 'TL'), 'BDE'] },
+  // 'Requirement Request' — ask for a new job (saved as a DRAFT a lead
+  // activates). A BDE for their own clients; a CLIENT from the portal.
+  { module: 'requirements', features: ['Requirement Request'], actions: ['view', 'create'], roles: ['BDE', 'CLIENT'] },
+  // …and the leads who activate (approve) a request.
+  { module: 'requirements', features: ['Requirement Request'], actions: ['view', 'approve'], roles: [...SET.ADMIN, 'MANAGER'] },
   // ASSIGN is its own action: the assignment chain (TL -> Recruiter(s) -> BDE)
   // is what drives scope, so handing it out is a lead's decision, not a
   // side-effect of being able to edit. A BDE assigns the client side of it.
   { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE, 'BDE'] },
-  // DELETE (§6 / §7 Admin only). routes/requirements.js refuses it (409)
-  // while the requirement carries any candidate or invoice.
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['delete'], roles: SET.ADMIN },
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['export'], roles: SET.REQ_EXPORT },
+  // PERMANENT DELETE (per-role spec 2026-10-03): Super Admin only — an Admin
+  // closes instead. routes/requirements.js still refuses it (409) while the
+  // requirement carries any candidate or invoice.
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['delete'], roles: SET.SUPER },
+  // EXPORT (2026-10-03 import / export rule): everyone exports the jobs in
+  // their own scope — a Recruiter their own, HR the internal ones.
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['export'], roles: [...SET.REQ_EXPORT, 'RECRUITER', 'HR'] },
+  // A Recruiter UPDATES THE JOB POSTING of their own jobs (spec §7) — edit,
+  // never create a job.
   { module: 'requirements', features: ['Job Posting'], actions: ['create', 'edit'], roles: [...SET.RAISE, 'BDE'] },
-  { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: SET.REQ_EXPORT },
+  { module: 'requirements', features: ['Job Posting'], actions: ['edit'], roles: ['RECRUITER'] },
+  { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: [...SET.REQ_EXPORT, 'RECRUITER', 'HR'] },
   { module: 'requirements', features: ['Requirement Pipeline'], actions: ['view'], roles: SET.MATCHING },
-  // §3 Import / Template: Admin ✅ · BDE ✅ · everyone else ❌.
-  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'BDE'] },
+  // IMPORT (2026-10-03): view = may upload a sheet, create = rows become
+  // jobs directly. Super Admin / Admin, Manager (their departments) and HR
+  // (internal jobs only) import directly; a BDE imports REQUESTS (view
+  // without create — ioAccessFor() importMode 'request').
+  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'HR'] },
+  { module: 'requirements', features: ['Bulk Import'], actions: ['view'], roles: ['BDE'] },
 
   // --- ATS: Jobs / Requirements -> Job Portal ---------------------------
   // THE ACCESS MATRIX, expressed once, here. Nothing in a route handler or a
@@ -398,31 +429,79 @@ const DEFAULT_RULES = [
   // What each of those roles may SEE of a record (contact names only for a
   // TL, the billing contact for Accounts, invoice status only for a BDE) is
   // utils/clientRedact.js; WHICH clients is utils/scope.js clientWhere().
-  { module: 'clients', features: '*', actions: ['view'], roles: SET.CLIENT_DESK },
-  { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements'], actions: ['view'], roles: ['TL'] },
+  // PER-ROLE SPEC (2026-10-03): the full read stays with Super Admin, Admin,
+  // Manager (their departments) and BDE (own clients). An Assistant Manager
+  // is VIEW only — name, owner, open jobs, agreement STATUS (no revenue, no
+  // commercial terms); an STL and a TL read names / basics only
+  // (utils/clientRedact.js), a Recruiter nothing (the user, 2026-10-03:
+  // "only the client name and the requirement").
+  { module: 'clients', features: '*', actions: ['view'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE'] },
+  // (the agreement STATUS is on every client row; the agreement itself is not)
+  { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements'], actions: ['view'], roles: ['ASSISTANT_MANAGER'] },
+  // Spec 6 (2026-10-03): the agreement is VIEWED by the BDE (own), Accounts,
+  // Admin, Super Admin, the Manager AND the Assistant Manager.
+  { module: 'clients', features: ['Agreement Lifecycle', 'Commercial Terms'], actions: ['view'], roles: ['ASSISTANT_MANAGER'] },
+  { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements'], actions: ['view'], roles: ['TL', 'STL'] },
   { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements', 'Agreement Lifecycle', 'Commercial Terms'], actions: ['view'], roles: ['ACCOUNTANT'] },
   // A BDE has FULL access to their OWN clients (scope keeps it to them).
   { module: 'clients', features: ['Add Client'], actions: ['create'], roles: [...SET.ADMIN, 'BDE'] },
   { module: 'clients', features: ['Client Detail'], actions: ['edit'], roles: [...SET.ADMIN, 'BDE'] },
-  // Client delete: Admin only, and routes/clients.js refuses it (409) while
-  // the client has active requirements.
-  { module: 'clients', features: ['Client Detail'], actions: ['delete'], roles: SET.ADMIN },
-  // generate / send / resend / activate — Admin, and a BDE on their own client
-  { module: 'clients', features: ['Agreement Lifecycle'], actions: ['create', 'edit'], roles: [...SET.ADMIN, 'BDE'] },
+  // Client delete — PERMANENT, so Super Admin only (per-role spec
+  // 2026-10-03); routes/clients.js refuses it (409) while the client has
+  // active requirements. 'Delete Client' is the same decision, named.
+  { module: 'clients', features: ['Client Detail'], actions: ['delete'], roles: SET.SUPER },
+  { module: 'clients', features: ['Delete Client'], actions: ['delete'], roles: SET.SUPER },
+  // CLIENT LIFECYCLE (2026-10-03). Pause / Reactivate: edit = do it
+  // directly (Super Admin, Admin, a Manager on THEIR departments' clients —
+  // utils/scope.js clientWhere), create = only REQUEST a pause (the owner
+  // BDE; an Admin / Manager approves). Archive: Super Admin / Admin.
+  { module: 'clients', features: ['Pause / Reactivate Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER'] },
+  { module: 'clients', features: ['Pause / Reactivate Client'], actions: ['create'], roles: ['BDE'] },
+  { module: 'clients', features: ['Archive Client'], actions: ['edit'], roles: SET.ADMIN },
+  // Notes on a client (Activity): Admin, Manager (their departments), the
+  // owner BDE, Accounts.
+  { module: 'clients', features: ['Client Notes'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'BDE', 'ACCOUNTANT'] },
+  // generate / send / resend / activate — Super Admin / Admin
+  // Spec 6 (2026-10-03): the agreement and its terms are EDITED by Super
+  // Admin and Admin only — a BDE views their own clients' agreements.
+  { module: 'clients', features: ['Agreement Lifecycle'], actions: ['create', 'edit'], roles: SET.ADMIN },
   // requireRole('CLIENT','SUPER_ADMIN','ADMIN') — the client confirms/e-signs
   { module: 'clients', features: ['Agreement Lifecycle'], actions: ['approve'], roles: ['SUPER_ADMIN', 'ADMIN', 'CLIENT'] },
-  { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: [...SET.ADMIN, 'BDE'] },
+  { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: SET.ADMIN },
   // ASSIGN on a client = its portal invite / account manager (a BDE invites
   // their own client). Re-assigning the OWNER BDE itself is Admin only
   // (routes/clients.js PUT refuses a bdeOwner change from anyone not global).
   { module: 'clients', features: ['Client Detail'], actions: ['assign'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
-  { module: 'clients', features: ['Client List'], actions: ['export'], roles: [...SET.CLIENT_DESK, 'ACCOUNTANT'] },
-  // Import clients / agreement updates, and Merge Duplicates: Admin only.
-  { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: SET.ADMIN },
+  // CLIENT PORTAL LOGINS (spec B1, 2026-10-03): the owner BDE REQUESTS a
+  // client login (create) or its disabling; Super Admin / Admin — and a
+  // Manager for their departments' clients — approve + create / disable
+  // (approve). TL, Recruiter, HR: nothing. routes/portalLogins.js.
+  { module: 'clients', features: ['Client Portal Logins'], actions: ['view'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
+  { module: 'clients', features: ['Client Portal Logins'], actions: ['create'], roles: [...SET.ADMIN, 'BDE'] },
+  { module: 'clients', features: ['Client Portal Logins'], actions: ['approve'], roles: [...SET.ADMIN, 'MANAGER'] },
+  // CANDIDATE PORTAL (spec B2): "Invite to portal" — the owner Recruiter, the
+  // TL and Admin (never a Client or a BDE); approve = the Admin queue
+  // (privacy / delete-my-data requests, archiving idle logins).
+  { module: 'candidates', features: ['Candidate Portal Invite'], actions: ['create'], roles: [...SET.ADMIN, 'TL', 'RECRUITER'] },
+  { module: 'candidates', features: ['Candidate Portal Invite'], actions: ['view', 'approve'], roles: SET.ADMIN },
+  // Export: Admin, Manager (department), BDE (own clients), Accounts — not
+  // an Assistant Manager (the export carries revenue / terms).
+  { module: 'clients', features: ['Client List'], actions: ['export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE', 'ACCOUNTANT'] },
+  // Import clients / agreement updates: Admin and a Manager (their
+  // departments) directly; a BDE imports REQUESTS (view without create).
+  // Merge Duplicates stays Admin-only (routes/clientMerge.js).
+  { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER'] },
+  { module: 'clients', features: ['Bulk Import'], actions: ['view'], roles: ['BDE'] },
 
   // --- ATS: Candidates & Pipeline ---------------------------------------
   // No CLIENT / CANDIDATE: outside logins use /api/portal (review #3 access audit).
-  { module: 'candidates', features: '*', actions: ['view'], roles: SET.PIPELINE },
+  // A BDE reads the people submitted to their clients — never the internal
+  // scores (per-role spec 2026-10-03), so not 'Resume & Scores'.
+  { module: 'candidates', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores'], actions: ['view'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
+  { module: 'candidates', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold'], actions: ['view'], roles: ['BDE'] },
+  // CANDIDATE IMPORT (2026-10-03): Admin, Manager (dept), TL (team),
+  // Recruiter (own), HR (internal) — each into their own scope.
+  { module: 'candidates', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'TL', 'RECRUITER', 'HR'] },
   // requireRole(...RECRUITING_ROLES) on POST / and PUT /:id
   { module: 'candidates', features: ['Add Candidate'], actions: ['create'], roles: SET.RECRUITING },
   { module: 'candidates', features: ['Candidate Master'], actions: ['edit'], roles: SET.RECRUITING },
@@ -431,7 +510,7 @@ const DEFAULT_RULES = [
   { module: 'candidates', features: ['Applications'], actions: ['create', 'edit'], roles: SET.PIPELINE },
   { module: 'candidates', features: ['Pipeline Stages'], actions: ['create', 'edit', 'approve', 'assign'], roles: SET.PIPELINE },
   { module: 'candidates', features: ['Rejection & Hold'], actions: ['edit', 'approve'], roles: SET.PIPELINE },
-  { module: 'candidates', features: ['Resume & Scores'], actions: ['edit'], roles: SET.PIPELINE },
+  { module: 'candidates', features: ['Resume & Scores'], actions: ['edit'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
 
   // --- ATS: Recruiter & BDE ---------------------------------------------
   { module: 'recruiterbde', features: '*', actions: ['view'], roles: SET.MATCHING },
@@ -445,11 +524,13 @@ const DEFAULT_RULES = [
   // feedback. A client decides on the portal; its Client Feedback grant stays.
   { module: 'interviews', features: '*', actions: ['view'], roles: SET.MATCHING },
   { module: 'interviews', features: ['Schedule Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
-  { module: 'interviews', features: ['AI Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
+  // A BDE confirms CLIENT interviews and records the client's feedback
+  // (per-role spec 2026-10-03) — not the AI interview, not the internal panel.
+  { module: 'interviews', features: ['AI Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
   // INTERNAL interview feedback — the panel's own record. A client never
   // writes this one; they write Client Feedback below, which is a separate
   // record on the same interview.
-  { module: 'interviews', features: ['Interview Feedback'], actions: ['create', 'edit', 'approve'], roles: SET.PIPELINE },
+  { module: 'interviews', features: ['Interview Feedback'], actions: ['create', 'edit', 'approve'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
   { module: 'interviews', features: ['Client Feedback'], actions: ['create', 'edit'], roles: [...SET.PIPELINE, 'CLIENT'] },
   // Offers and Joining are recruitment work; a client watches their own.
   { module: 'interviews', features: ['Offers', 'Joining'], actions: ['create', 'edit'], roles: SET.PIPELINE },
@@ -469,6 +550,9 @@ const DEFAULT_RULES = [
   { module: 'recruiterbde', features: ['Team View', 'Recruiter Workload', 'BDE Workload', 'Pending Actions'], actions: ['export'], roles: SET.MATCHING },
   { module: 'interviews', features: ['Calendar View', 'Interview Feedback', 'Offers', 'Joining', 'Internal Hiring'], actions: ['export'], roles: SET.MATCHING },
   { module: 'candidates', features: ['Applications'], actions: ['export'], roles: SET.MATCHING },
+  // HR exports its INTERNAL hiring (scope pins it), 2026-10-03.
+  { module: 'candidates', features: ['Candidate List', 'Applications'], actions: ['export'], roles: ['HR'] },
+  { module: 'interviews', features: ['Calendar View', 'Interview Feedback', 'Offers', 'Joining', 'Internal Hiring'], actions: ['export'], roles: ['HR'] },
   { module: 'requirements', features: ['Job Portal Workspace'], actions: ['export'], roles: SET.MATCHING },
   { module: 'requirements', features: ['Client Job Portal'], actions: ['export'], roles: ['CLIENT'] },
   { module: 'dashboard', features: ['KPI Overview'], actions: ['export'], roles: SET.MATCHING },
@@ -616,13 +700,21 @@ const DEFAULT_RULES = [
   // --- Reports -----------------------------------------------------------
   // A report follows the product it reports on: an accountant does not get the
   // ATS reports, and a recruiting lead does not get the accounts ledger.
-  { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['view'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE'] },
-  { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE', 'TL'] },
-  // RECRUITER: view only, and only their own data (scope.js requirementWhere /
-  // applicationWhere RECRUITER branch). No export by default.
+  // PER-ROLE SPEC (2026-10-03): every lead reads AND exports the reports of
+  // their own scope (Manager department, Asst Manager teams, STL section,
+  // TL team, BDE client performance); Internal HR the internal hiring.
+  { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['view', 'export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE'] },
+  { module: 'reports', features: ['ATS Reports'], actions: ['view', 'export'], roles: ['HR'] },
+  // RECRUITER: their own data only (scope.js RECRUITER branch) + MY RESULTS —
+  // submitted, interviews, selected, joined (routes/atsReports.js
+  // /my-results). Export of their own data (2026-10-03 import / export rule).
   { module: 'reports', features: ['ATS Reports'], actions: ['view'], roles: ['RECRUITER'] },
-  // Accounts Reports follow Accounts: not automatic for a Manager (§4).
-  { module: 'reports', features: ['Accounts Reports'], actions: ['view', 'export'], roles: SET.ACCOUNTS },
+  { module: 'reports', features: ['My Results'], actions: ['view', 'export'], roles: ['RECRUITER'] },
+  // A CLIENT's own company numbers (routes/portal.js /client/reports).
+  { module: 'reports', features: ['Client Reports'], actions: ['view', 'export'], roles: ['CLIENT'] },
+  // Accounts Reports follow Accounts — NOT automatic for an Admin either
+  // (per-role spec 2026-10-03: "only if allowed" — grant in Role Catalog).
+  { module: 'reports', features: ['Accounts Reports'], actions: ['view', 'export'], roles: ['SUPER_ADMIN', 'ACCOUNTANT'] },
   // HRMS Reports follow the same rule: they belong to HRMS, so the people who
   // administer HRMS records get them and nobody else does. This is the report
   // surface §6 gives HR, and it is the reason HR holds the `reports` module
@@ -634,12 +726,19 @@ const DEFAULT_RULES = [
   // Everything EXCEPT Departments & Teams, which stays Super-Admin-only. The
   // list is explicit rather than '*' because rules are additive: a later rule
   // can widen a grant, never narrow one.
+  // PER-ROLE SPEC (2026-10-03): an Admin does NOT get Role Catalog or
+  // Integrations by default — Super Admin only, grantable here.
   {
     module: 'administration',
-    features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Notifications', 'Audit Logs'],
+    features: ['Company Setup', 'Users', 'Organization Structure', 'Notifications', 'Audit Logs'],
     actions: ROLE_FEATURE_ACTIONS,
     roles: SET.ADMIN,
   },
+  { module: 'administration', features: ['Role Catalog', 'Integrations'], actions: ROLE_FEATURE_ACTIONS, roles: SET.SUPER },
+  // VENDOR PORTAL (spec v2 §19, 2026-10-06): three Admin-side grants, Super
+  // Admin / Admin only by default (Role Catalog can widen them). Accounts
+  // roles reach vendor bills ONLY through accounts · Office & Expenses.
+  { module: 'administration', features: ['Vendor Logins', 'Vendor Audit', 'Vendor Bills Review'], actions: ROLE_FEATURE_ACTIONS, roles: SET.ADMIN },
   // requireRole(...SUPER_ADMIN_ONLY) — create/delete departments and teams.
   { module: 'administration', features: ['Departments & Teams'], actions: ROLE_FEATURE_ACTIONS, roles: SET.SUPER },
   { module: 'administration', features: ['Departments & Teams'], actions: ['view'], roles: SET.ADMIN },
@@ -659,7 +758,9 @@ const DEFAULT_RULES = [
   // Approve = run without the confirm step — Admin only by default (Super
   // Admin is global). Manager / Assistant Manager are view-only: the §3/§4
   // pass below strips create / edit / approve from them whatever is granted.
-  { module: 'ai', features: ['Agent Actions'], actions: ['create', 'edit'], roles: ['ADMIN', 'STL', 'TL', 'HR', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'] },
+  // Manager / Assistant Manager act in ATS now (per-role spec 2026-10-03),
+  // so the agent may act for them too — each tool re-checks can().
+  { module: 'ai', features: ['Agent Actions'], actions: ['create', 'edit'], roles: ['ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'HR', 'RECRUITER', 'BDE', 'ACCOUNTANT', 'EMPLOYEE'] },
   { module: 'ai', features: ['Agent Actions'], actions: ['approve'], roles: ['ADMIN'] },
 ];
 
@@ -707,6 +808,43 @@ const GLOBAL_ROLES = ['SUPER_ADMIN'];
 // configuration as what they must not do.
 // ---------------------------------------------------------------------------
 const VIEW_ONLY_ROLES = ['MANAGER', 'ASSISTANT_MANAGER'];
+// PER-ROLE SPEC (2026-10-03): "Manager is no longer read-only in ATS". The
+// pass now covers the HRMS and Accounts products and Administration only;
+// in ATS (and the core Dashboard / Reports / AI modules) a Manager and an
+// Assistant Manager hold what the rules give them, inside their
+// departments / teams (utils/scope.js atsScopeOf).
+// …and in ATS they hold EXACTLY the actions the per-role spec lists, not
+// every write the shared role sets (RAISE / PIPELINE / RECRUITING) name. A
+// DEFAULT only: Role Catalog can widen either role like any other.
+//   Manager    jobs: create, assign recruiter / TL, activate, hold, close;
+//              candidates: add, move the Manager's steps, assign owner;
+//              Recruiter & BDE: reassign; interviews: schedule, reschedule,
+//              feedback; clients: notes, pause / reactivate; import (dept)
+//   Asst Mgr   jobs: create, assign recruiter, hold; candidates: move own
+//              steps; Recruiter & BDE: reassign; interviews: schedule, feedback
+const LEAD_ATS_WRITES = {
+  MANAGER: {
+    requirements: { 'Create Requirement': ['create'], 'Requirement Detail': ['edit', 'approve', 'assign'], 'Bulk Import': ['create'], 'Requirement Request': ['approve'] },
+    clients: { 'Client Notes': ['create'], 'Pause / Reactivate Client': ['edit'], 'Bulk Import': ['create'], 'Client Portal Logins': ['approve'] },
+    candidates: {
+      'Add Candidate': ['create'], 'Candidate Master': ['edit'], Applications: ['create', 'edit'], 'Pipeline Stages': ['create', 'edit', 'approve', 'assign'], 'Rejection & Hold': ['edit', 'approve'], 'Bulk Import': ['create'],
+    },
+    recruiterbde: { 'Team View': ['assign'] },
+    interviews: { 'Schedule Interview': ['create', 'edit'], 'Interview Feedback': ['create', 'edit'] },
+  },
+  ASSISTANT_MANAGER: {
+    requirements: { 'Create Requirement': ['create'], 'Requirement Detail': ['edit', 'approve', 'assign'] },
+    clients: {},
+    candidates: { 'Pipeline Stages': ['edit'], 'Rejection & Hold': ['edit'] },
+    recruiterbde: { 'Team View': ['assign'] },
+    interviews: { 'Schedule Interview': ['create', 'edit'], 'Interview Feedback': ['create', 'edit'] },
+  },
+};
+function viewOnlyApplies(moduleId) {
+  if (isLegacyModule(moduleId)) return true;
+  const p = PRODUCT_OF_MODULE[moduleId];
+  return p === 'hrms' || p === 'accounts' || moduleId === 'administration';
+}
 // The features whose `approve` is a RUNG ON AN APPROVAL CHAIN rather than an
 // edit. utils/approvalWorkflow.js routes requests through these, and a level
 // that cannot act is a level the request dies at.
@@ -790,7 +928,7 @@ function defaultAccessForRole(role, moduleId) {
   // Approving a request that the workflow ROUTED TO YOU is not editing a
   // record; create, edit, delete and configure are still stripped everywhere,
   // and the approval engine still refuses anybody whose turn it is not.
-  if (VIEW_ONLY_ROLES.includes(role)) {
+  if (VIEW_ONLY_ROLES.includes(role) && viewOnlyApplies(moduleId)) {
     // EXACTLY what can() allows them (viewOnlyAllows): view / export, approve
     // on the approval chain, LMS assignment. `assign` elsewhere used to
     // survive HERE while can() refused it, so the matrix /auth/me sends drew
@@ -798,6 +936,16 @@ function defaultAccessForRole(role, moduleId) {
     // audit). One rule now, in both places.
     names.forEach((f) => ROLE_FEATURE_ACTIONS.forEach((a) => {
       if (!viewOnlyAllows(f, a, moduleId)) features[f][a] = false;
+    }));
+  }
+
+  // Per-role spec 2026-10-03 — Manager / Asst Manager in ATS: the listed
+  // actions only (LEAD_ATS_WRITES above); view / export stay as the rules say.
+  if (LEAD_ATS_WRITES[role] && LEAD_ATS_WRITES[role][moduleId]) {
+    const allowed = LEAD_ATS_WRITES[role][moduleId];
+    names.forEach((f) => ROLE_FEATURE_ACTIONS.forEach((a) => {
+      if (['view', 'export'].includes(a)) return;
+      if (!(allowed[f] || []).includes(a)) features[f][a] = false;
     }));
   }
 
@@ -940,7 +1088,7 @@ async function accessFor(role, moduleId, product) {
 // else — no create, edit, delete or configure.
 const VIEW_ONLY_ACTIONS = ['view', 'export'];
 const EXTERNAL_LOGIN_ROLES = ['CLIENT', 'CANDIDATE'];
-const EXTERNAL_ATS_FEATURES = ['Client Job Portal', 'Client Feedback', 'Agreement Lifecycle'];
+const EXTERNAL_ATS_FEATURES = ['Client Job Portal', 'Client Feedback', 'Agreement Lifecycle', 'Requirement Request'];
 function isExternalLogin(user) {
   if (!user) return false;
   const sr = user.scopeRoles || {};
@@ -958,7 +1106,9 @@ function viewOnlyAllows(featureName, action, moduleId) {
   return false;
 }
 
-const REPORT_FEATURE_PRODUCT = { 'ATS Reports': 'ats', 'Job Portal Reports': 'ats', 'Accounts Reports': 'accounts' };
+const REPORT_FEATURE_PRODUCT = {
+  'ATS Reports': 'ats', 'Job Portal Reports': 'ats', 'Accounts Reports': 'accounts', 'My Results': 'ats', 'Client Reports': 'ats',
+};
 
 async function can(user, product, moduleId, feature, action, record = undefined) {
   // 1. user identity
@@ -996,6 +1146,9 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   //     agreement confirmation. Their screens are /api/portal/* and
   //     /api/job-portal/client*, which check these features.
   if (owningProduct === 'ats' && isExternalLogin(user) && !EXTERNAL_ATS_FEATURES.includes(feature)) return false;
+  // 2c. CLIENT LOGIN TYPE (spec B1): Reviewer / Viewer / Billing only ever
+  //     narrow what the CLIENT role holds (utils/clientPortalTypes.js).
+  if (user.portalType && !require('./clientPortalTypes').portalTypeAllows(user, moduleId, feature, action)) return false; // eslint-disable-line global-require
 
   // 3. PRODUCT ROLE — the role for THIS product, never the account-level one.
   //    accountsRole = None means Accounts is refused however senior the
@@ -1013,7 +1166,7 @@ async function can(user, product, moduleId, feature, action, record = undefined)
     // refused whatever a rule or Role Catalog says. Their own self-service
     // (own leave, own check-in, own profile) never goes through can(), so it
     // still works.
-    if (VIEW_ONLY_ROLES.includes(role) && !viewOnlyAllows(feature, action, moduleId)) continue;
+    if (VIEW_ONLY_ROLES.includes(role) && viewOnlyApplies(moduleId) && !viewOnlyAllows(feature, action, moduleId)) continue;
     // eslint-disable-next-line no-await-in-loop
     const access = await accessFor(role, moduleId, key);
     if (access.moduleEnabled && access.features[feature] && access.features[feature][action]) {
@@ -1246,11 +1399,80 @@ async function aiAccessFor(user) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// IMPORT / EXPORT PER ROLE (2026-10-03) — the one reader for the data-I/O
+// screens.
+//
+// ioAccessFor(user, moduleId) -> {
+//   import:      may upload a sheet into this module at all
+//   importMode:  'direct'  — rows become records (Bulk Import / create)
+//                'request' — rows become REQUESTS a lead approves (Bulk
+//                            Import / view without create: a BDE's client /
+//                            job import)
+//                null      — no import
+//   export:      may download this module's rows
+//   exportScope: whose rows: 'all' | 'department' | 'teams' | 'section' |
+//                'team' | 'own' | 'own-clients' | 'internal' | 'billing' |
+//                'own-company' | 'own-profile' | 'none'  (utils/scope.js
+//                still decides the actual rows — this is the label / rule)
+//   sensitive:   may export PAN / Aadhaar / bank details — the HR desk's
+//                employee export (HRMS Employee Management / Export / export:
+//                Super Admin, Admin, HR by default)
+// }
+// Configurable: every answer is a can() on the Role Catalog matrix.
+// ---------------------------------------------------------------------------
+const IO_MODULES = {
+  requirements: { importFeature: 'Bulk Import', exportFeature: 'Requirement List', direct: ['requirements', 'Create Requirement', 'create'] },
+  clients: { importFeature: 'Bulk Import', exportFeature: 'Client List', direct: ['clients', 'Add Client', 'create'] },
+  candidates: { importFeature: 'Bulk Import', exportFeature: 'Candidate List', direct: ['candidates', 'Add Candidate', 'create'] },
+  interviews: { importFeature: null, exportFeature: 'Calendar View' },
+  recruiterbde: { importFeature: null, exportFeature: 'Team View' },
+};
+function ioScopeOf(user) {
+  // eslint-disable-next-line global-require
+  const { atsScopeOf, atsViewRole } = require('./scope');
+  const s = atsScopeOf(user);
+  if (s.global) return 'all';
+  if (s.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return 'own-profile';
+  if (s.role === 'CLIENT' || s.atsRole === 'CLIENT') return 'own-company';
+  switch (s.atsRole) {
+    case 'MANAGER': return 'department';
+    case 'ASSISTANT_MANAGER': return s.teamUserIds ? 'teams' : 'department';
+    case 'STL': return 'section';
+    case 'TL': return 'team';
+    case 'RECRUITER': return 'own';
+    case 'BDE': return 'own-clients';
+    case 'HR': return 'internal';
+    case 'ACCOUNTANT': return 'billing';
+    default: return atsViewRole(user) === 'admin' ? 'all' : 'none';
+  }
+}
+async function ioAccessFor(user, moduleId) {
+  const def = IO_MODULES[moduleId];
+  const none = { import: false, importMode: null, export: false, exportScope: 'none', sensitive: false };
+  if (!def || !user || !user.id) return none;
+  const [mayImport, importDirect, mayExport, sensitive] = await Promise.all([
+    def.importFeature ? can(user, 'ats', moduleId, def.importFeature, 'view') : false,
+    def.importFeature ? can(user, 'ats', moduleId, def.importFeature, 'create') : false,
+    can(user, 'ats', moduleId, def.exportFeature, 'export'),
+    can(user, 'hrms', 'hrms_employees', 'Export', 'export'),
+  ]);
+  // Direct import also needs the right to create ONE such record by hand.
+  const direct = importDirect && (!def.direct || await can(user, 'ats', ...def.direct));
+  return {
+    import: !!mayImport,
+    importMode: mayImport ? (direct ? 'direct' : 'request') : null,
+    export: !!mayExport,
+    exportScope: mayExport ? ioScopeOf(user) : 'none',
+    sensitive: !!sensitive,
+  };
+}
+
 // Role Catalog: the actions the server IGNORES for a view-only role (§3/§4),
 // per feature of one module — can() and effectiveMatrix() drop them whatever
 // is ticked, so the catalog greys them. null for every other role.
 function viewOnlyLocksFor(role, moduleId) {
-  if (!VIEW_ONLY_ROLES.includes(role)) return null;
+  if (!VIEW_ONLY_ROLES.includes(role) || !viewOnlyApplies(moduleId)) return null;
   const mod = moduleById(moduleId);
   if (!mod) return null;
   const out = {};
@@ -1298,19 +1520,27 @@ async function effectiveMatrix(user) {
     const external = owning === 'ats' && isExternalLogin(user);
     const list = await Promise.all(roles.map(async (r) => {
       const acc = await accessFor(r, m.id, key);
-      if (!VIEW_ONLY_ROLES.includes(r) && !external) return acc;
+      const viewOnly = VIEW_ONLY_ROLES.includes(r) && viewOnlyApplies(m.id);
+      if (!viewOnly && !external) return acc;
       const features = {};
       Object.entries(acc.features || {}).forEach(([f, actions]) => {
         features[f] = {};
         Object.entries(actions).forEach(([a, v]) => {
           features[f][a] = !!v
-            && (!VIEW_ONLY_ROLES.includes(r) || viewOnlyAllows(f, a, m.id))
+            && (!viewOnly || viewOnlyAllows(f, a, m.id))
             && (!external || EXTERNAL_ATS_FEATURES.includes(f));
         });
       });
       return { ...acc, features };
     }));
     out[m.id] = list.length ? unionAccess(m.id, list) : defaultAccessForRole(NO_SUCH_ROLE, m.id);
+    // Client login type (spec B1) — the same clamp can() applies.
+    if (user.portalType) {
+      const { portalTypeAllows } = require('./clientPortalTypes'); // eslint-disable-line global-require
+      Object.entries(out[m.id].features || {}).forEach(([f, actions]) => {
+        Object.keys(actions).forEach((a) => { if (actions[a] && !portalTypeAllows(user, m.id, f, a)) actions[a] = false; });
+      });
+    }
   }
   // The legacy `hrms` / `accounts` entries, so every screen and sidebar
   // entry that reads the old area names keeps its exact answer.
@@ -1354,4 +1584,8 @@ module.exports = {
   // AI Assistant & Agent gate (see aiAccessFor above).
   aiAccessFor,
   viewOnlyLocksFor,
+  // Import / export per role (2026-10-03) — see ioAccessFor above.
+  ioAccessFor,
+  IO_MODULES,
+  viewOnlyApplies,
 };

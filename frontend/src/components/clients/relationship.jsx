@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { inr } from '../../utils/csv';
 import './clients.css';
 
 // ---------------------------------------------------------------------------
@@ -26,7 +25,8 @@ export function lastActivityText(c) {
 // A count that links to the tab that lists those rows; a zero is quiet.
 export function RelNum({ value, to, title }) {
   const n = Number(value) || 0;
-  if (!n) return <span className="clrel-zero">0</span>;
+  // Never a bare zero (simplicity checklist #8): a quiet dash instead.
+  if (!n) return <span className="clrel-zero" title="None yet">—</span>;
   return to
     ? <Link to={to} title={title} onClick={(e) => e.stopPropagation()}>{n.toLocaleString('en-IN')}</Link>
     : <span title={title}>{n.toLocaleString('en-IN')}</span>;
@@ -36,7 +36,7 @@ export function RelNum({ value, to, title }) {
 // A number the server did not send for this role (clients role spec §5: no
 // pipeline numbers for Accounts, no guarantee for a TL, no amounts for a
 // BDE) draws no card; a card links only to a tab in `tabs` (when given).
-export function RelationshipStrip({ s, onTab, guaranteePeriod, tabs = null }) {
+export function RelationshipStrip({ s, onTab, tabs = null }) {
   if (!s) return null;
   const has = (k) => s[k] !== undefined;
   const linkable = (t) => (t && (!tabs || tabs.includes(t)) ? t : null);
@@ -56,25 +56,20 @@ export function RelationshipStrip({ s, onTab, guaranteePeriod, tabs = null }) {
       )
     );
   };
-  const inv = s.invoiceSummary;
-  const invSub = !inv ? null
-    : inv.outstanding !== undefined
-      ? (inv.outstanding > 0 ? `${inr(inv.outstanding)} outstanding${inv.overdue ? ` · ${inv.overdue} overdue` : ''}` : 'nothing outstanding')
-      : (inv.count ? `${inv.status || '—'} · ${inv.paid} paid · ${inv.pending} pending` : 'none raised');
+  // Spec 6 + simplicity checklist: five plain numbers, and a number that is
+  // zero is not drawn at all (never a bare zero). Pending decisions, invoices,
+  // guarantee and last activity live in their own tabs.
+  const cards = [
+    card('req', 'Open jobs', s.activeRequirements, s.totalRequirements ? `of ${s.totalRequirements} jobs` : null, 'requirements'),
+    has('candidatesSubmitted') && s.candidatesSubmitted ? card('sub', 'People sent', s.candidatesSubmitted, null, 'candidates') : null,
+    has('clientInterviews') && s.clientInterviews ? card('int', 'Interviews', s.clientInterviews, null, 'interviews') : null,
+    has('selectedCount') && s.selectedCount ? card('sel', 'Selected', s.selectedCount, null, 'selected') : null,
+    s.joinedCount ? card('join', 'Joined', s.joinedCount, null, 'selected') : null,
+  ].filter((x, k) => x && (k > 0 || s.activeRequirements));
+  if (!cards.length) return null;
   return (
     <div className="clhead-strip">
-      {card('req', 'Active Requirements', s.activeRequirements ?? 0, `of ${s.totalRequirements ?? 0} total`, 'requirements')}
-      {has('candidatesSubmitted') && card('sub', 'Candidates Submitted', s.candidatesSubmitted ?? 0, 'shared with the client', 'candidates')}
-      {has('clientInterviews') && card('int', 'Client Interviews', s.clientInterviews ?? 0, null, 'interviews')}
-      {has('selectedCount') && card('sel', 'Selected', s.selectedCount ?? 0, null, 'selected')}
-      {card('join', 'Joined', s.joinedCount ?? 0, null, 'selected')}
-      {has('pendingDecisions') && card('pend', 'Pending Decisions', s.pendingDecisions ?? 0,
-        `${s.awaitingDecision ?? 0} profile · ${s.awaitingFeedback ?? 0} feedback`, 'candidates')}
-      {inv && card('inv', 'Invoices', inv.count, invSub, 'invoices')}
-      {has('guaranteeDays') && card('gua', 'Replacement / Guarantee', guaranteePeriod || '—',
-        s.inGuarantee ? `${s.inGuarantee} joining(s) in guarantee${s.guaranteeEnds ? ` · first ends ${shortDate(s.guaranteeEnds)}` : ''}` : 'none in guarantee now', 'replacements')}
-      {card('last', 'Last Activity', s.lastActivityAt ? shortDate(s.lastActivityAt) : '—',
-        [s.lastActivityBy, s.lastActivityWhat].filter(Boolean).join(' · ') || null, 'activity')}
+      {cards}
     </div>
   );
 }

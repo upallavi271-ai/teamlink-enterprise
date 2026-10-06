@@ -1,0 +1,31 @@
+/* The list behind a dashboard number (HomeDrill.jsx) — scoped under .hd */
+.hd { display: flex; flex-direction: column; min-height: 120px; }
+.hd-bar { padding: 10px 14px 4px; border-bottom: 1px solid var(--line, #e5e9f2); position: sticky; top: 0; background: var(--card, #fff); z-index: 2; }
+.hd-bar .lph-bar { margin: 0; }
+.hd-export { display: inline-flex; gap: 6px; }
+.hd-msg { font-size: 12.5px; margin: 4px 0 6px; }
+.hd-msg.ok { color: #1e7e46; }
+.hd-msg.bad { color: #c62828; }
+.hd-wrap { overflow-x: auto; }
+.hd-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.hd-tbl th { text-align: left; font-weight: 600; color: var(--ink-soft, #5b6578); background: #f7f9fc; padding: 8px 12px; border-bottom: 1px solid var(--line, #e5e9f2); white-space: nowrap; }
+.hd-tbl td { padding: 8px 12px; border-bottom: 1px solid var(--line, #eef1f6); vertical-align: top; }
+.hd-tbl .num { text-align: right; }
+.hd-tbl tr:hover td { background: #f8fbff; }
+.hd-name { font-weight: 600; }
+.hd-sub { font-size: 11.5px; color: var(--ink-soft, #6b7486); }
+.hd-red { color: #c62828; }
+.hd-open { font-size: 12px; white-space: nowrap; }
+.hd-empty { padding: 22px 16px; color: var(--ink-soft, #5b6578); }
+.hd-pad { padding: 16px; }
+.hd-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; font-size: 12.5px; color: var(--ink-soft, #5b6578); border-top: 1px solid var(--line, #e5e9f2); flex-wrap: wrap; }
+.hd-pager { display: inline-flex; gap: 6px; }
+@media (max-width: 640px) {
+  .hd-bar .lph-search { min-width: 0 !important; width: 100%; }
+  .hd-tbl th, .hd-tbl td { padding: 7px 8px; }
+}
+/* phone: fewer columns, so a row reads like a card line */
+@media (max-width: 640px) {
+  .hd-tbl th:nth-child(3), .hd-tbl td:nth-child(3), .hd-tbl th:nth-child(6), .hd-tbl td:nth-child(6) { display: none; }
+  .hd-tbl td { font-size: 12.5px; }
+}

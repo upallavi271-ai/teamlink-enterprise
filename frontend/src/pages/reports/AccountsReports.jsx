@@ -3,11 +3,15 @@ import api from '../../api';
 import { BarList, Meter } from '../../components/Chart.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
-import { canExportReports } from '../../permissions';
+import { canExportReports, can } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
 import MoreFilters from '../../components/ui/MoreFilters.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
+// Client revenue (ATS change list §17): invoiced / received / late per client, compare periods.
+import AtsReports from './AtsReports.jsx';
+// B2 — Placement margin (fee − credit notes − incentive − partner payouts) per placement / client / recruiter / month.
+import PlacementMargin from './PlacementMargin.jsx';
 
 const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
 const RECV_SORTS = [
@@ -21,6 +25,10 @@ const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 export default function AccountsReports() {
   const { user } = useAuth();
   const canExport = canExportReports(user, 'Accounts Reports');
+  // The margin reads the invoice register — only for logins that hold Invoices.
+  const canMargin = can(user, 'accounts', 'accounts', 'Invoices', 'view');
+  // Two views: this page's receivables, and the Client revenue report (§17).
+  const [view, setView] = useState('ledger');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   // Search + Client narrow the client tables here; the Date range is asked of
@@ -68,6 +76,16 @@ export default function AccountsReports() {
     </tr>
   );
 
+  const viewSwitch = (
+    <div className="report-groupby" style={{ margin: '0 0 12px' }} role="tablist" aria-label="Accounts reports">
+      {[['ledger', 'Receivables'], ['revenue', 'Client revenue'], ...(canMargin ? [['margin', 'Placement margin']] : [])].map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={view === id} className={`report-tab${view === id ? ' is-on' : ''}`} onClick={() => setView(id)}>{label}</button>
+      ))}
+    </div>
+  );
+  if (view === 'revenue') return <div>{viewSwitch}<AtsReports fixedTab="revenue" /></div>;
+  if (view === 'margin') return <div>{viewSwitch}<PlacementMargin canExport={canExport} /></div>;
+
   return (
     <div>
       <div className="page-head">
@@ -76,6 +94,7 @@ export default function AccountsReports() {
           <div className="page-sub">Receivables &amp; billing</div>
         </div>
       </div>
+      {viewSwitch}
 
       {error && <div className="notice red"><span>{error}</span></div>}
       <MoreFilters

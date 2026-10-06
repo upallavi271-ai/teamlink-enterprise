@@ -1,16 +1,26 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api';
 import Modal, { SectionHead } from './Modal.jsx';
 import Combo from './Combo.jsx';
+import { Help } from './ui/Guide.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { can, productRole, canPublishToPortal } from '../permissions';
+import { can, productRole } from '../permissions';
 import { PRIORITY_CHOICES, priorityLabel } from './jobs/reqFormat.jsx';
-import { useHierarchy } from './HierarchyFilter.jsx';
-import { assignCascade } from './jobs/assignCascade.js';
+import {
+  TlOptions, RecruiterOptions, useAllTls, useRecruiterBench, benchPeople,
+} from './jobs/assignPeople.jsx';
+import SpecPicker from './SpecPicker.jsx'; // spec D: Qualification + Specialization (Admin master)
+// B9.1 / B9.4 (ATS-100): duplicate-job warning with "Create anyway", and job templates.
+import DuplicateJobWarning from './jobs/DuplicateJobWarning.jsx';
+import JobTemplates from './jobs/JobTemplates.jsx';
+// docfill_: "Upload the requirement" / "Type it myself" (components/ui/FillFromFile.jsx).
+import { useFillFromFile, FillEntryModal, FillBanner } from './ui/FillFromFile.jsx';
+import { jobFieldsToForm, JOB_FIELD_NAMES } from './ui/fillMaps.js';
 import {
   DEPTS, deptOptions, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
   JOINING_TIMELINES, NOTICE_PERIODS_MAX, JOB_PREFERENCES, SALARY_TYPES, CURRENCIES,
-  POSTING_SOURCES, requirementStatusLabel,
+  requirementStatusLabel,
   agreementStatusLabel, agreementIsActive,
 } from '../atsVocab';
 
@@ -85,9 +95,14 @@ export const EMPTY = {
   targetDate: '',
   accountManager: '',
   postingSources: [],
+  // spec D: master Qualification / Specialization ids (Administration -> Master lists).
+  qualificationId: '',
+  specialisationId: '',
 };
 
 const listOf = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
+// Our own sites, ticked by default on a new job (they post at once).
+const OWN_SITES = ['TeamLink Job Portal', 'TeamLink Website', 'Google Jobs'];
 
 // "5-8 yrs" / "2 yrs" back into the two number inputs the form carries. The
 // server stores the rendered string; the form edits the numbers behind it.
@@ -116,23 +131,31 @@ function salaryBand(min, max) {
 // kind: 'draft' | 'activate' | 'post' | 'edit'.
 export function formProblems(form, { kind, internal, editing }) {
   const out = [];
-  if (!String(form.title || '').trim()) out.push('Job Title is required.');
+  const blank = (v) => !String(v ?? '').trim();
+  if (blank(form.title)) out.push('Enter the job title.');
+  if (blank(form.department)) out.push('Pick a department.');
   const openings = Number(form.openings);
-  if (!Number.isInteger(openings) || openings < 1 || openings > 999) out.push('Number of Openings must be a whole number from 1 to 999.');
-  if (!editing && !internal && !form.clientId) out.push('Select a Client (or change Requirement Type to Internal Requirement).');
+  if (!Number.isInteger(openings) || openings < 1 || openings > 999) out.push('Openings must be a number from 1 to 999.');
+  if (!editing && !internal && !form.clientId) out.push('Pick a client, or choose Internal.');
+  if (blank(form.priority)) out.push('Pick the priority.');
+  // Every field marked * on the form is checked here (a draft may skip the job details).
   if (kind !== 'draft') {
-    if (!String(form.department || '').trim()) out.push('Department is required.');
-    if (!String(form.jobDescription || '').trim()) out.push('Full Job Description is required (use Save Draft to finish it later).');
-    if (!String(form.skills || '').trim()) out.push('Enter at least one Mandatory Skill (comma separated).');
+    if (blank(form.jobDescription)) out.push('Enter the job description.');
+    if (blank(form.skills)) out.push('Enter at least one must-have skill.');
+    if (blank(form.employmentType)) out.push('Pick the employment type.');
+    if (blank(form.workMode)) out.push('Pick the work mode.');
+    if (blank(form.location)) out.push('Enter the location.');
+    if (blank(form.expMin) || Number(form.expMin) < 0) out.push('Enter the minimum experience.');
+    if (blank(form.joiningTimeline)) out.push('Pick when the person should join.');
   }
   const min = Number(form.expMin); const max = Number(form.expMax);
-  if (form.expMin !== '' && form.expMax !== '' && min > max) out.push('Minimum Experience cannot be more than Maximum Experience.');
+  if (form.expMin !== '' && form.expMax !== '' && min > max) out.push('Minimum experience can not be more than maximum.');
   const sMin = Number(form.salaryMin); const sMax = Number(form.salaryMax);
-  if (form.salaryMin !== '' && form.salaryMax !== '' && sMin > sMax) out.push('Minimum Salary cannot be more than Maximum Salary.');
+  if (form.salaryMin !== '' && form.salaryMax !== '' && sMin > sMax) out.push('Minimum salary can not be more than maximum.');
   if (!editing) {
     const today = new Date().toISOString().slice(0, 10);
-    if (form.closingDate && form.closingDate < today) out.push('Closing Date is in the past.');
-    if (form.targetDate && form.targetDate < today) out.push('Target Date is in the past.');
+    if (form.closingDate && form.closingDate < today) out.push('The closing date is in the past.');
+    if (form.targetDate && form.targetDate < today) out.push('The target date is in the past.');
   }
   return out;
 }
@@ -184,6 +207,8 @@ export function formFromRequirement(r) {
     targetDate: r.targetDate || '',
     accountManager: r.accountManager || '',
     postingSources: listOf(r.postingSources),
+    qualificationId: r.qualificationId || '',
+    specialisationId: r.specialisationId || '',
   };
 }
 
@@ -223,11 +248,33 @@ export default function RequirementForm({
       stl: atsRole === 'STL' ? (user?.name || '') : '',
       bdeId: atsRole === 'BDE' ? (user?.id || '') : '',
       clientId: initialClientId || '',
+      postingSources: [...OWN_SITES],
     }));
   const [problems, setProblems] = useState([]);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [dup, setDup] = useState(null); // B9.1: the server's 409 DUPLICATE_JOB answer (+ which save)
+  // docfill_: the two-choice entry (Add only) and the green / orange marks on
+  // the fields a file filled. Edit opens the form straight away.
+  const fill = useFillFromFile('job', { enabled: !editing });
+  const ff = (name) => fill.cls(name);
+  const ft = (name) => fill.tag(name);
+  // ONE CLICK = ONE JOB (spec §25): a ref blocks a second click before the
+  // button re-renders as disabled, and the one-time key per form opening
+  // makes the server answer a repeat with the same job (utils/idempotency.js).
+  const busy = useRef(false);
+  const onceKey = useRef(`rf${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
+  // SAVE & POST (2026-10-05): the sources, each with whether it can post now
+  // or needs setup in Administration → Integrations (utils/jobConnectors.js).
+  const [sources, setSources] = useState(null);
+  useEffect(() => {
+    let on = true;
+    api.get('/requirements/posting-sources')
+      .then((r) => { if (on) setSources(r.data.sources || []); })
+      .catch(() => { if (on) setSources([]); });
+    return () => { on = false; };
+  }, []);
 
   const internal = form.type === 'Internal Requirement';
   // Section F is locked only on an EDIT the user may not re-assign. Creating
@@ -245,44 +292,27 @@ export default function RequirementForm({
     .sort((a, b) => deptOf(a).localeCompare(deptOf(b)) || a.name.localeCompare(b.name)), [team]);
   const stls = useMemo(() => team.filter((t) => roleOf(t) === 'STL'), [team]);
   const allRecruiters = useMemo(() => team.filter((t) => roleOf(t) === 'RECRUITER'), [team]);
-  // CASCADE (review #3 §10): Department → Section → TL → Recruiter. The TL
-  // list follows the requirement's department (and Section, where the
-  // department splits — Education A / B); the recruiter list follows the
-  // chosen TL's section, else the section / department. If that leaves
-  // nobody, everyone assignable is offered rather than an empty list; the
-  // people already on the record are always kept (components/jobs/assignCascade.js).
-  const tree = useHierarchy();
-  const [assignSection, setAssignSection] = useState('');
-  const selectedTl = tls.find((t) => t.id === form.tlId);
-  const recruiterDept = (selectedTl && deptOf(selectedTl)) || form.department || '';
-  const keepIds = editing ? [requirement?.tlId, requirement?.recruiterId, ...((requirement?.coRecruiters || []).map((c) => c.id))].filter(Boolean) : [];
-  const cascade = useMemo(
-    () => assignCascade(tree.data, team, { department: form.department, section: assignSection, tlId: form.tlId, keep: [...keepIds, form.tlId, form.recruiterId, ...form.recruiterIds].filter(Boolean), keepTlId: editing ? (requirement?.tlId || '') : form.tlId }),
-    [tree.data, team, form.department, assignSection, form.tlId, form.recruiterId, form.recruiterIds.join(',')], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  const cascadeTls = cascade.tls.slice().sort((a, b) => deptOf(a).localeCompare(deptOf(b)) || a.name.localeCompare(b.name));
-  const recruiters = cascade.recruiters.length ? cascade.recruiters : allRecruiters;
+  // ASSIGNMENT (user, 2026-10-05 — supersedes the 2026-10-03 "only this
+  // department's TLs" rule): "Assigned to" lists the TLs of EVERY department,
+  // grouped by department, the job's own first, each with their open jobs. A
+  // busy Medical desk can hand a job to the Manufacturing team; the job keeps
+  // its department. The TL then picks the recruiter — on Edit, the chosen
+  // TL's team, least busy first (components/jobs/assignPeople.jsx). On Add the
+  // recruiter fields stay hidden: the TL assigns them.
+  const allTls = useAllTls(!lockAssign);
+  const tlChoices = allTls || tls;
+  const bench = useRecruiterBench(form.tlId, editing && !lockAssign, form.department);
+  const keepRecruiters = editing ? [
+    requirement?.recruiterId ? { id: requirement.recruiterId, name: requirement.recruiter?.name } : null,
+    ...((requirement?.coRecruiters || []).map((c) => ({ id: c.id, name: c.name }))),
+  ].filter(Boolean) : [];
+  const benchList = benchPeople(bench);
+  const recruiters = bench
+    ? [...keepRecruiters.filter((k) => !benchList.some((p) => p.id === k.id)), ...benchList]
+    : allRecruiters;
   const pickTl = (tlId) => {
-    const tl = tls.find((t) => t.id === tlId);
-    const next = assignCascade(tree.data, team, { department: form.department, section: assignSection, tlId });
-    const fits = (id) => !id || next.recruiters.some((r) => r.id === id);
-    set({
-      tlId,
-      tl: tl?.name || '',
-      recruiterId: fits(form.recruiterId) ? form.recruiterId : '',
-      recruiterIds: form.recruiterIds.filter(fits),
-    });
-  };
-  const pickSection = (section) => {
-    setAssignSection(section);
-    if (!section) return;
-    const next = assignCascade(tree.data, team, { department: form.department, section, tlId: '' });
-    const fits = (id) => !id || next.recruiters.some((r) => r.id === id);
-    set({
-      ...(form.tlId && !next.tls.some((t) => t.id === form.tlId) ? { tlId: '', tl: '' } : {}),
-      recruiterId: fits(form.recruiterId) ? form.recruiterId : '',
-      recruiterIds: form.recruiterIds.filter(fits),
-    });
+    const tl = tlChoices.find((t) => t.id === tlId) || tls.find((t) => t.id === tlId);
+    set({ tlId, tl: tl?.name || '' });
   };
 
   // The same body both modes send. On an edit the server drops status and
@@ -301,61 +331,50 @@ export default function RequirementForm({
       openings: Number(form.openings),
       bdeId: internal ? '' : form.bdeId,
       description: form.jobDescription,
-      postingSources: form.postingSources.join(', '),
+      // Nothing ticked is stored as 'None' (empty would read as "our own sites").
+      postingSources: form.postingSources.length ? form.postingSources.join(', ') : 'None',
     };
   }
 
-  async function save(kind) {
-    if (saving) return;
+  async function save(kind, extra = {}) { // B9.1: extra = { duplicateOverride, duplicateReason } on "Create anyway"
+    if (saving || busy.current) return;
     setError('');
     const found = formProblems(form, { kind, internal, editing: false });
     setProblems(found);
     if (found.length) return;
+    busy.current = true;
     setSaving(true);
     try {
-      const res = await api.post('/requirements', payload(kind === 'draft' ? 'DRAFT' : 'OPEN'));
-      // SAVE & POST really posts to the one channel this app publishes to: the
-      // TeamLink Job Portal, when it is ticked. The other sources have no live
-      // connection — the requirement page says so, source by source.
+      const res = await api.post('/requirements', { ...payload(kind === 'draft' ? 'DRAFT' : 'OPEN'), ...extra }, { headers: { 'Idempotency-Key': onceKey.current } });
+      // SAVE & POST: the server publishes the ONE job on every ticked site at
+      // once, in the background (utils/jobConnectors.js). The job page shows
+      // each site's own result as it comes in.
       let posting = null;
       const live = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].includes(res.data?.status);
-      const others = form.postingSources.filter((x) => x !== 'TeamLink Job Portal');
-      if (kind === 'post' && !live) {
-        posting = 'Not posted anywhere yet — only a live requirement can be posted. Post it from the requirement page once it is Active.';
-      } else if (kind === 'post' && !form.postingSources.length) {
-        posting = 'Not posted — no posting source was ticked. Tick sources in Edit Requirement, then post from the requirement page.';
-      } else if (kind === 'post' && !form.postingSources.includes('TeamLink Job Portal')) {
-        posting = `Not published automatically — ${others.join(', ')} have no live connection. Use "Copy posting text" and "Mark as posted" for each on the requirement page.`;
-      }
-      if (kind === 'post' && live && form.postingSources.includes('TeamLink Job Portal') && !canPublishToPortal(user)) {
-        posting = 'Saved. Publishing on the TeamLink Job Portal is done by the assigned TL / recruiter / BDE — your role can view it but not publish.';
-      } else if (kind === 'post' && live && form.postingSources.includes('TeamLink Job Portal')) {
-        try {
-          const pub = await api.post(`/job-portal/jobs/${res.data.id}/publish`, { published: true });
-          // Published here either way; portalError says the portal itself could
-          // not be reached, and Sync (or the hourly sync) will retry.
-          posting = pub.data?.portalError
-            ? `Published, but the TeamLink Job Portal could not be updated yet: ${pub.data.portalError}`
-            : 'Published on the TeamLink Job Portal.';
-          if (others.length) posting += ` ${others.join(', ')}: no live connection — post each from the requirement page ("Copy posting text", then "Mark as posted").`;
-        } catch (e) {
-          posting = `Saved, but not published on the TeamLink Job Portal: ${e.response?.data?.error || 'the publish step failed'}`;
-        }
-      }
-      onSaved?.(res.data, { created: true, posting });
+      const n = form.postingSources.length;
+      if (kind === 'post' && n && live) posting = `Posting to ${n} site${n === 1 ? '' : 's'} now. Each site's result shows on the job page.`;
+      else if (kind === 'post' && n && res.data?.status === 'AGREEMENT_CHECK') posting = 'Will post when the agreement is Active.';
+      else if (kind === 'post' && !n) posting = 'No posting site was ticked, so it is not posted anywhere.';
+      // docfill_: keep the uploaded requirement on the job as its source document.
+      const sourceNote = await fill.attach('job', res.data?.id);
+      if (sourceNote) posting = [posting, sourceNote].filter(Boolean).join(' ');
+      onSaved?.(res.data, { created: true, posting, openJob: kind === 'post' });
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not save this requirement — check your connection and try again.');
+      if (err.response?.status === 409 && err.response.data?.code === 'DUPLICATE_JOB') { setDup({ ...err.response.data, kind }); return; } // B9.1
+      setError(err.response?.data?.error || 'Could not save the job. Please try again.');
     } finally {
       setSaving(false);
+      busy.current = false;
     }
   }
 
-  async function saveEdit() {
-    if (saving) return;
+  async function saveEdit(extra = {}) { // B9.1: extra = { duplicateOverride, duplicateReason } on "Save anyway"
+    if (saving || busy.current) return;
     setError('');
     const found = formProblems(form, { kind: requirement?.status === 'DRAFT' ? 'draft' : 'edit', internal, editing: true });
     setProblems(found);
     if (found.length) return;
+    busy.current = true;
     setSaving(true);
     const body = payload(undefined);
     // Never send a field the user is not allowed to change: the server
@@ -377,12 +396,14 @@ export default function RequirementForm({
       delete body.description;
     }
     try {
-      const res = await api.put(`/requirements/${requirement.id}`, body);
+      const res = await api.put(`/requirements/${requirement.id}`, { ...body, ...extra });
       onSaved?.(res.data, { created: false, changedFields: res.data?.changedFields || [] });
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not save this requirement');
+      if (err.response?.status === 409 && err.response.data?.code === 'DUPLICATE_JOB') { setDup({ ...err.response.data, kind: 'edit' }); return; } // B9.1
+      setError(err.response?.data?.error || 'Could not save the job. Please try again.');
     } finally {
       setSaving(false);
+      busy.current = false;
     }
   }
 
@@ -439,27 +460,49 @@ export default function RequirementForm({
           <span className="k">{`${form.salaryType} (${form.currency})`}</span>
           <span>{salaryBand(form.salaryMin, form.salaryMax)}</span>
         </div>
-        <div className="section-label">Assignment</div>
-        <div className="kv">
-          <span className="k">{`Recruiter / TL / STL${internal ? '' : ' / BDE'}`}</span>
-          <span>
-            {[
-              allRecruiters.find((r) => r.id === form.recruiterId)?.name || '—',
-              form.tl || '—',
-              form.stl || '—',
-              ...(internal ? [] : [bdes.find((b) => b.id === form.bdeId)?.name || '—']),
-            ].join(' · ')}
-          </span>
-        </div>
+        <div className="section-label">Team</div>
+        {/* Add job: only the team lead (the TL picks the recruiters later). */}
+        {editing ? (
+          <div className="kv">
+            <span className="k">{`Recruiter / Team lead / Senior team lead${internal ? '' : ' / Client manager (BDE)'}`}</span>
+            <span>
+              {[
+                allRecruiters.find((r) => r.id === form.recruiterId)?.name || '—',
+                form.tl || '—',
+                form.stl || '—',
+                ...(internal ? [] : [bdes.find((b) => b.id === form.bdeId)?.name || '—']),
+              ].join(' · ')}
+            </span>
+          </div>
+        ) : (
+          <div className="kv"><span className="k">Team lead</span><span>{form.tl || '—'}</span></div>
+        )}
         <div className="section-label">Posting Sources</div>
         <div className="kv"><span className="k">Selected</span><span>{form.postingSources.join(', ') || 'None'}</span></div>
       </Modal>
     );
   }
 
+  // docfill_: on Add, the two big choices come first; "Type it myself" or a
+  // read file then shows the form below exactly as today.
+  if (!editing && fill.entry !== 'form') {
+    return (
+      <FillEntryModal
+        title="Add job"
+        target="job"
+        fill={fill}
+        onClose={onClose}
+        onFilled={(r) => set(jobFieldsToForm(r.fields || {}, { clients, departments }))}
+      />
+    );
+  }
+  const clientSuggest = !editing && fill.state && !form.clientId ? fill.state.fields.clientSuggest : null;
+  const clientMark = !editing && fill.state ? (form.clientId ? ' ff-found' : ' ff-missing') : '';
+  const clientTag = !editing && fill.state ? (form.clientId ? <span className="ff-tag ok">Found in the file</span> : <span className="ff-tag no">Not found: pick one</span>) : null;
+
   return (
       <Modal
-        title={editing ? `Edit Requirement — ${requirement.reqCode || requirement.title}` : 'Create Requirement'}
+        title={editing ? `Edit job — ${requirement.reqCode || requirement.title}` : 'Add job'}
         size="xwide"
         onClose={onClose}
         footer={(
@@ -475,12 +518,14 @@ export default function RequirementForm({
                 {error && <div>{error}</div>}
               </div>
             )}
+            {/* B9.1: the same client already has this job open — show it, "Create anyway" needs a reason. */}
+            <DuplicateJobWarning dup={dup} editing={editing} onCancel={() => setDup(null)} onCreateAnyway={(reason) => { const k = dup.kind; setDup(null); if (k === 'edit') saveEdit({ duplicateOverride: true, duplicateReason: reason }); else save(k, { duplicateOverride: true, duplicateReason: reason }); }} />
             {editing ? (
               <>
                 <button className="btn" onClick={onClose}>Cancel</button>
                 <button className="btn" onClick={() => setPreview(true)}>Preview</button>
-                <button className="btn btn-primary" disabled={saving} onClick={saveEdit}>
-                  {saving ? 'Saving…' : 'Save Changes'}
+                <button className="btn btn-primary" disabled={saving} onClick={saveEdit} title={requirement?.status === 'DRAFT' ? 'Saves the draft. Nothing is posted.' : 'Saves the job and updates it on every ticked site'}>
+                  {saving ? 'Saving…' : (requirement?.status === 'DRAFT' ? 'Save Changes' : 'Save & Post')}
                 </button>
               </>
             ) : (
@@ -488,39 +533,73 @@ export default function RequirementForm({
                 <button className="btn" disabled={saving} onClick={onClose}>Cancel</button>
                 <button className="btn" onClick={() => setPreview(true)}>Preview</button>
                 <button className="btn" disabled={saving} onClick={() => save('draft')} title="Saved as Draft — nothing is live or posted">Save Draft</button>
-                <button className="btn" disabled={saving} onClick={() => save('activate')} title="Opens it now if the client agreement is Active; otherwise it waits at Agreement Check">Save &amp; Activate</button>
-                <button className="btn btn-primary" disabled={saving} onClick={() => save('post')} title="Activate, then publish on the TeamLink Job Portal when it is ticked">
+                <button className="btn btn-primary" disabled={saving} onClick={() => save('post')} title="Saves the job and posts it on every ticked site. A client job whose agreement is not Active yet posts by itself when it becomes Active.">
                   {saving ? 'Saving…' : 'Save & Post'}
                 </button>
+                <div className="cell-muted" style={{ flex: '1 1 100%', textAlign: 'right', fontSize: 11.5, marginTop: 4 }}>
+                  We post this job on the ticked sites and show each site&apos;s status on the job page.
+                </div>
               </>
             )}
           </>
         )}
       >
+          {!editing && <FillBanner fill={fill} names={JOB_FIELD_NAMES} />}
+          {clientSuggest && (
+            <div className="notice amber">
+              <span>
+                {'The file names the client '}
+                <b>{clientSuggest}</b>
+                {', which is not in your client list. Add the client first (Clients → Add client), then pick it in section B — or pick the right client below.'}
+              </span>
+            </div>
+          )}
+          {/* B9.4: "Start from a template" / "Save as template" (components/jobs/JobTemplates.jsx) — Add job only. */}
+          {!editing && <JobTemplates form={form} toForm={formFromRequirement} payload={() => payload('DRAFT')} onApply={set} />}
           <SectionHead first>A. Basic Information</SectionHead>
           <div className="grid-2">
             <label className="field">
-              <span>Requirement ID</span>
+              <span>Job ID</span>
               <input disabled value={editing ? (requirement.reqCode || requirement.id) : 'Assigned automatically on save'} />
             </label>
             <label className="field">
-              <span>Requirement Type *</span>
+              <span>Job type *</span>
               <Combo value={form.type} disabled={editing} onChange={(e) => set({ type: e.target.value })}>
-                {REQUIREMENT_TYPES.map((t) => <option key={t}>{t}</option>)}
+                {REQUIREMENT_TYPES.map((t) => <option key={t} value={t}>{t.replace(/Requirement$/, 'job')}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Job Title *</span>
+            <label className={`field${ff('title')}`}>
+              <span>Job Title *{ft('title')}</span>
               <input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Senior Java Developer" />
             </label>
-            <label className="field">
-              <span>Department *</span>
-              <Combo creatable value={form.department} onChange={(e) => set({ department: e.target.value })}>
+            <label className={`field${ff('department')}`}>
+              <span>Department *{ft('department')}</span>
+              <Combo
+                creatable
+                value={form.department}
+                onChange={(e) => {
+                  const department = e.target.value;
+                  // The chosen TL stays: a job may go to any department's TL (2026-10-05).
+                  set({
+                    department,
+                    // spec D: the qualification / specialization belong to the department.
+                    ...(department !== form.department ? { qualificationId: '', specialisationId: '' } : {}),
+                  });
+                }}
+              >
                 {departments.map((d) => <option key={d}>{d}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Number of Openings *</span>
+            <SpecPicker
+              wrapClass={null}
+              department={form.department}
+              qualificationId={form.qualificationId}
+              specialisationId={form.specialisationId}
+              oldValue={editing ? requirement?.specialisation || '' : ''}
+              onChange={(v) => set(v)}
+            />
+            <label className={`field${ff('openings')}`}>
+              <span>Number of openings *{ft('openings')}<Help text="How many people the client wants for this job. 3 openings = 3 people can join." /></span>
               <input type="number" min="1" value={form.openings} onChange={(e) => set({ openings: e.target.value })} />
             </label>
             <label className="field">
@@ -531,7 +610,7 @@ export default function RequirementForm({
               </Combo>
             </label>
             <label className="field">
-              <span>Requirement Status</span>
+              <span>Job status</span>
               <input disabled value={editing ? requirementStatusLabel(requirement.status) : 'Draft (until activated)'} />
             </label>
             <label className="field">
@@ -544,8 +623,8 @@ export default function RequirementForm({
             <>
               <SectionHead>B. Client Information</SectionHead>
               <div className="grid-2">
-                <label className="field">
-                  <span>Client *</span>
+                <label className={`field${clientMark}`}>
+                  <span>Client *{clientTag}</span>
                   <Combo value={form.clientId} disabled={editing} onChange={(e) => set({ clientId: e.target.value })}>
                     <option value="">— Select —</option>
                     {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -571,7 +650,7 @@ export default function RequirementForm({
               </div>
               {selectedClient && (
                 agreementIsActive(selectedClient.agreementStatus)
-                  ? <div className="notice">Agreement is Active — this requirement can be activated and posted.</div>
+                  ? <div className="notice">Agreement is Active — this job goes live and is posted when you press Save & Post.</div>
                   : (
                     <div className="notice amber">
                       <div>
@@ -579,16 +658,16 @@ export default function RequirementForm({
                         <b>{selectedClient.name}</b>
                         {' is '}
                         <b>{agreementStatusLabel(selectedClient.agreementStatus)}</b>
-                        {', so this requirement cannot go live or be posted yet. You can still save it: Save & Activate / Save & Post park it at '}
+                        {', so this job cannot go live or be posted yet. You can still save it: Save & Post keeps it at '}
                         <b>Agreement Check</b>
                         {'; Save Draft keeps it as a Draft.'}
                       </div>
                       <div style={{ marginTop: 6 }}>
                         {canRunAgreement
-                          ? `To make it live: Clients → ${selectedClient.name} → Agreement tab → Generate / Send to Client → the client signs → Activate Agreement. Then open the requirement and press Activate Requirement.`
+                          ? `To make it live: Clients → ${selectedClient.name} → Agreement tab → Generate / Send to Client → the client signs → Activate Agreement. The job then opens and posts by itself.`
                           : clientDesk
-                            ? `An Admin must complete the agreement (Clients → ${selectedClient.name} → Agreement tab). Then open the requirement and press Activate Requirement.`
-                            : `Ask the BDE or an Admin who owns ${selectedClient.name} to complete the agreement; then open the requirement and press Activate Requirement.`}
+                            ? `An Admin must complete the agreement (Clients → ${selectedClient.name} → Agreement tab). The job then opens and posts by itself.`
+                            : `Ask the BDE or an Admin who owns ${selectedClient.name} to complete the agreement. The job then opens and posts by itself.`}
                       </div>
                     </div>
                   )
@@ -597,51 +676,51 @@ export default function RequirementForm({
           )}
 
           <SectionHead>C. Job Description</SectionHead>
-          <label className="field">
-            <span>Full Job Description *</span>
+          <label className={`field${ff('jobDescription')}`}>
+            <span>Full Job Description *{ft('jobDescription')}</span>
             <textarea rows="3" value={form.jobDescription} onChange={(e) => set({ jobDescription: e.target.value })} />
           </label>
-          <label className="field">
-            <span>Responsibilities</span>
+          <label className={`field${ff('responsibilities')}`}>
+            <span>Responsibilities{ft('responsibilities')}</span>
             <textarea rows="2" placeholder="One per line" value={form.responsibilities} onChange={(e) => set({ responsibilities: e.target.value })} />
           </label>
-          <label className="field">
-            <span>Qualifications</span>
+          <label className={`field${ff('qualifications')}`}>
+            <span>Qualifications{ft('qualifications')}</span>
             <textarea rows="2" value={form.qualifications} onChange={(e) => set({ qualifications: e.target.value })} />
           </label>
           <div className="grid-2">
-            <label className="field">
-              <span>Education</span>
+            <label className={`field${ff('education')}`}>
+              <span>Education{ft('education')}</span>
               <Combo creatable value={form.education} onChange={(e) => set({ education: e.target.value })}>
                 {EDUCATION_LEVELS.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Mandatory Skills * (comma separated)</span>
+            <label className={`field${ff('skills')}`}>
+              <span>Mandatory Skills * (comma separated){ft('skills')}</span>
               <input value={form.skills} placeholder="Java, Spring Boot, SQL" onChange={(e) => set({ skills: e.target.value })} />
             </label>
           </div>
-          <label className="field">
-            <span>Good-to-have Skills (comma separated)</span>
+          <label className={`field${ff('goodToHaveSkills')}`}>
+            <span>Good-to-have Skills (comma separated){ft('goodToHaveSkills')}</span>
             <input value={form.goodToHaveSkills} placeholder="AWS, Docker" onChange={(e) => set({ goodToHaveSkills: e.target.value })} />
           </label>
 
           <SectionHead>D. Job Conditions</SectionHead>
           <div className="grid-2">
-            <label className="field">
-              <span>Employment Type *</span>
+            <label className={`field${ff('employmentType')}`}>
+              <span>Employment Type *{ft('employmentType')}</span>
               <Combo value={form.employmentType} onChange={(e) => set({ employmentType: e.target.value })}>
                 {EMPLOYMENT_TYPES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Work Mode *</span>
+            <label className={`field${ff('workMode')}`}>
+              <span>Work Mode *{ft('workMode')}</span>
               <Combo value={form.workMode} onChange={(e) => set({ workMode: e.target.value })}>
                 {WORK_MODES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Work Location *</span>
+            <label className={`field${ff('location')}`}>
+              <span>Work Location *{ft('location')}</span>
               <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
                 {LOCS.map((x) => <option key={x}>{x}</option>)}
               </Combo>
@@ -653,12 +732,12 @@ export default function RequirementForm({
                 {LOCS.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Minimum Experience (yrs) *</span>
+            <label className={`field${ff('expMin')}`}>
+              <span>Minimum Experience (yrs) *{ft('expMin')}</span>
               <input type="number" min="0" value={form.expMin} onChange={(e) => set({ expMin: e.target.value })} />
             </label>
-            <label className="field">
-              <span>Maximum Experience (yrs)</span>
+            <label className={`field${ff('expMax')}`}>
+              <span>Maximum Experience (yrs){ft('expMax')}</span>
               <input type="number" min="0" value={form.expMax} onChange={(e) => set({ expMax: e.target.value })} />
             </label>
             <label className="field">
@@ -671,8 +750,8 @@ export default function RequirementForm({
                 {JOINING_TIMELINES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Maximum Notice Period</span>
+            <label className={`field${ff('noticePeriodMax')}`}>
+              <span>Maximum notice period{ft('noticePeriodMax')}<Help text="The longest time a person may still have to serve at their current company before joining. Example: 30 Days = they can join within a month." /></span>
               <Combo value={form.noticePeriodMax} onChange={(e) => set({ noticePeriodMax: e.target.value })}>
                 {NOTICE_PERIODS_MAX.map((x) => <option key={x}>{x}</option>)}
               </Combo>
@@ -688,7 +767,7 @@ export default function RequirementForm({
           <SectionHead>E. Compensation</SectionHead>
           <div className="grid-2">
             <label className="field">
-              <span>Salary Type</span>
+              <span>Salary type<Help text="CTC = Cost To Company: the full yearly pay including bonus and benefits, before tax. Annual CTC is the usual choice." /></span>
               <Combo value={form.salaryType} onChange={(e) => set({ salaryType: e.target.value })}>
                 {SALARY_TYPES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
@@ -699,12 +778,12 @@ export default function RequirementForm({
                 {CURRENCIES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>Minimum Salary (₹L)</span>
+            <label className={`field${ff('salaryMin')}`}>
+              <span>Minimum salary (₹ lakh per year){ft('salaryMin')}<Help text="In lakh rupees a year (CTC). 6 = ₹6,00,000 a year." /></span>
               <input type="number" step="0.5" placeholder="10" value={form.salaryMin} onChange={(e) => set({ salaryMin: e.target.value })} />
             </label>
-            <label className="field">
-              <span>Maximum Salary (₹L)</span>
+            <label className={`field${ff('salaryMax')}`}>
+              <span>Maximum salary (₹ lakh per year){ft('salaryMax')}</span>
               <input type="number" step="0.5" placeholder="15" value={form.salaryMax} onChange={(e) => set({ salaryMax: e.target.value })} />
             </label>
           </div>
@@ -712,7 +791,7 @@ export default function RequirementForm({
           <SectionHead>F. Assignment</SectionHead>
           {editing && !canAssign && (
             <div className="notice amber">
-              The assignment chain decides who can SEE this requirement, so changing it needs the
+              The assignment chain decides who can SEE this job, so changing it needs the
               {' '}
               <b>assign</b>
               {' '}
@@ -721,43 +800,38 @@ export default function RequirementForm({
             </div>
           )}
           <div className="cell-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
-            Requirement → Assigned TL → Assigned Recruiter(s) → BDE → Client. This chain is what decides who
-            can see this requirement: a recruiter sees the ones assigned to them, a TL the ones they lead,
+            Job → Team lead → Recruiter(s) → Client manager (BDE) → Client. This chain is what decides who
+            can see this job: a recruiter sees the ones assigned to them, a TL the ones they lead,
             a BDE their clients&apos;.
           </div>
           <div className="grid-2">
-            {cascade.sections.length > 0 && (
-              <label className="field">
-                <span>{`Section · ${form.department}`}</span>
-                <Combo disabled={lockAssign} value={cascade.section} onChange={(e) => pickSection(e.target.value)}>
-                  <option value="">All sections</option>
-                  {cascade.sections.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                </Combo>
-              </label>
-            )}
             <label className="field">
-              <span>Assigned TL</span>
+              <span>Assigned to (Team lead)</span>
               <Combo
                 disabled={lockAssign}
                 value={form.tlId}
                 onChange={(e) => pickTl(e.target.value)}
               >
-                <option value="">— Not assigned —</option>
-                {cascadeTls.map((t) => <option key={t.id} value={t.id}>{deptOf(t) ? `${t.name} — ${deptOf(t)} TL` : t.name}</option>)}
+                <option value="">{tlChoices.length ? '— Pick a team lead —' : 'No team lead yet'}</option>
+                {TlOptions({ tls: tlChoices, first: form.department, keep: form.tlId ? { id: form.tlId, name: form.tl } : null })}
               </Combo>
+              <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+                {editing
+                  ? 'Any department\'s team lead can take this job. It stays a ' + (form.department || '') + ' job.'
+                  : 'Any department\'s team lead can take this job. The team lead picks the recruiters after it is saved.'}
+              </div>
             </label>
+            {editing && (
             <label className="field">
-              <span>
-                Assigned Recruiter *
-                {recruiterDept && (recruiters.some((r) => deptOf(r) === recruiterDept)
-                  ? ` · ${recruiterDept}`
-                  : ` · no ${recruiterDept} recruiters — showing everyone`)}
-              </span>
+              <span>Recruiter · least busy first</span>
               <Combo disabled={lockAssign} value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
-                <option value="">— Not assigned —</option>
-                {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                <option value="">{bench === null && !lockAssign ? 'Loading…' : '— Not assigned —'}</option>
+                {bench
+                  ? RecruiterOptions({ groups: bench.groups, keep: keepRecruiters })
+                  : recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </Combo>
             </label>
+            )}
             <label className="field">
               <span>STL</span>
               <Combo
@@ -792,8 +866,9 @@ export default function RequirementForm({
               <input type="date" value={form.targetDate} onChange={(e) => set({ targetDate: e.target.value })} />
             </label>
           </div>
+          {editing && (
           <div className="field">
-            <span>Co-recruiters (a requirement can carry more than one)</span>
+            <span>Co-recruiters (a job can have more than one)</span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
               {recruiters.filter((r) => r.id !== form.recruiterId).map((r) => (
                 <label key={r.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
@@ -814,28 +889,42 @@ export default function RequirementForm({
               {recruiters.length === 0 && <span className="cell-muted" style={{ fontSize: 12 }}>No recruiters in your scope.</span>}
             </div>
           </div>
+          )}
 
-          <SectionHead>G. Job Posting</SectionHead>
+          <SectionHead>G. Where to post</SectionHead>
           <div className="field">
-            <span>Posting Sources</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-              {POSTING_SOURCES.map((name) => (
-                <label key={name} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: 'auto' }}
-                    checked={form.postingSources.includes(name)}
-                    onChange={() => togglePostingSource(name)}
-                  />
-                  {name}
-                </label>
-              ))}
+            <span>Tick where this job should appear. We post it for you.</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+              {(sources || OWN_SITES.map((name) => ({ id: name, name, source: name, ready: true }))).map((src) => {
+                const off = src.id === 'google' && internal;
+                return (
+                  <label key={src.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontWeight: 400, fontSize: 12.5, opacity: src.ready && !off ? 1 : 0.65 }}>
+                    <input
+                      type="checkbox"
+                      style={{ width: 'auto' }}
+                      disabled={off}
+                      checked={!off && form.postingSources.includes(src.source)}
+                      onChange={() => togglePostingSource(src.source)}
+                    />
+                    <b style={{ fontWeight: 600 }}>{src.name}</b>
+                    {off && <span className="cell-muted">Not for TeamLink internal jobs</span>}
+                    {!off && src.ready && <span className="cell-muted">{src.readyText || 'Posts automatically'}</span>}
+                    {!off && !src.ready && (
+                      <span className="cell-muted">
+                        {src.setupLink
+                          ? <Link to={src.setupLink} target="_blank" rel="noreferrer">Needs account setup →</Link>
+                          : 'Needs account setup'}
+                        {src.hint ? <span style={{ display: 'block', whiteSpace: 'pre-line' }}>{src.hint}</span> : ''}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
             </div>
           </div>
           <div className="cell-muted" style={{ fontSize: 11.5 }}>
-            Posting Status, External Job ID and External URL are managed by the existing Job Posting lifecycle
-            (Draft → Ready to Post → Posted / Partially Posted / Failed → Paused → Closed) on the requirement
-            page after saving.
+            After Save &amp; Post, the job page shows each site: Posted, Posting…, Failed (with Retry) or Needs account setup.
+            Save Draft posts nothing.
           </div>
 
         </Modal>

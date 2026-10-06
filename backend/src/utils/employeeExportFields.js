@@ -164,7 +164,9 @@ const DERIVED = {
 // --- DOCUMENTS -------------------------------------------------------------
 // The documents every employee is expected to have on file. "Missing Required
 // Documents" is measured against THIS list and nothing else.
-const REQUIRED_DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Degree Certificate', 'Photo'];
+// 'Education Certificate' replaced 'Degree Certificate' (spec item 25); a file
+// still filed under the old name counts too (see the documents count below).
+const REQUIRED_DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Education Certificate', 'Photo'];
 
 // AADHAAR / PAN COPIES are identity documents. The rule:
 //   * only these roles may export the COPY — its row on the Documents sheet
@@ -197,7 +199,8 @@ const DOCUMENT_FIELDS = {
   docCount: { label: 'Document Count', get: (e, ctx) => ctx.docsOf(e).length },
   docsMissing: {
     label: 'Missing Required Documents',
-    get: (e, ctx) => REQUIRED_DOCUMENT_TYPES.filter((t) => !ctx.docsOf(e).some((d) => d.docType === t)).join(', '),
+    get: (e, ctx) => REQUIRED_DOCUMENT_TYPES.filter((t) => !ctx.docsOf(e).some((d) => d.docType === t
+      || (t === 'Education Certificate' && ['Degree Certificate', 'Academic Certificate'].includes(d.docType)))).join(', '),
   },
   docsLastUploaded: {
     label: 'Last Document Uploaded On',

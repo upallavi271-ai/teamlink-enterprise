@@ -1,0 +1,40 @@
+/* "Posted on" card (JobPostingSites.jsx, Save & Post 2026-10-05).
+   Row = [tick + site] [status] [buttons →] on one line, the plain-words
+   reason on its own full-width line below — readable on a phone too. */
+.jobops-sites.jps .jobops-site { grid-template-columns: minmax(170px, max-content) auto 1fr; row-gap: 4px; }
+.jobops-sites.jps .jobops-why { grid-column: 1 / -1; padding-left: 24px; }
+.jobops-sites.jps .jobops-site-btns { justify-content: flex-end; }
+.jobops-sites.jps .jobops-sites-head { align-items: center; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .jobops-sites.jps .jobops-site { grid-template-columns: 1fr auto; }
+  .jobops-sites.jps .jobops-site-btns { grid-column: 1 / -1; justify-content: flex-start; padding-left: 24px; }
+}
+
+/* PostingStatusPanel — the corner panel after Save & Post (spec §15). */
+.jps-toast { position: fixed; right: 16px; bottom: 16px; z-index: 900; width: min(380px, calc(100vw - 32px));
+  background: var(--card, #fff); border: 1px solid var(--line, #e2e8f0); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .18); padding: 12px 14px; display: grid; gap: 6px; font-size: 13px; }
+.jps-toast-head { display: flex; align-items: center; gap: 8px; }
+.jps-toast-head .small-muted { flex: 1; }
+.jps-x { border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--ink-soft, #64748b); }
+.jps-toast-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 5px 0; border-top: 1px solid var(--line-soft, #f1f5f9); }
+.jps-toast-site { font-weight: 600; }
+.jps-toast-st { font-weight: 600; text-align: right; }
+.jps-toast-row.is-green .jps-toast-st { color: var(--green, #15803d); }
+.jps-toast-row.is-blue .jps-toast-st { color: var(--blue, #1d4ed8); }
+.jps-toast-row.is-orange .jps-toast-st { color: var(--amber, #b45309); }
+.jps-toast-row.is-red .jps-toast-st { color: var(--red, #b91c1c); }
+.jps-toast-row.is-grey .jps-toast-st { color: var(--ink-soft, #64748b); }
+.jps-toast-why { grid-column: 1 / -1; color: var(--ink-soft, #64748b); font-size: 12px; }
+.jps-toast-link { grid-column: 1 / -1; font-size: 12px; }
+.jps-toast-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+
+/* JobBoardIntegration — a job board's details on the Integrations card (spec §14). */
+.jbi { margin: 0 18px 12px 46px; padding: 10px 12px; border: 1px solid var(--line-soft, #f1f5f9); border-radius: 10px; background: var(--surface-2, #f8fafc); font-size: 12.5px; }
+.jbi-grid { display: grid; grid-template-columns: 170px 1fr; gap: 4px 10px; }
+.jbi-grid .k { color: var(--ink-soft, #64748b); }
+.jbi-err { color: var(--red, #b91c1c); }
+.jbi-details { margin-top: 4px; font-family: ui-monospace, monospace; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; color: var(--ink-soft, #64748b); }
+.jbi-hint { margin-top: 6px; color: var(--ink-soft, #64748b); }
+.jbi-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+@media (max-width: 640px) { .jbi { margin-left: 0; } .jbi-grid { grid-template-columns: 1fr; } }

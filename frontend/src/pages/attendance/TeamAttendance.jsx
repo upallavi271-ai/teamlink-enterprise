@@ -85,13 +85,16 @@ const NUM_COLS = [
   { key: 'present', label: 'Present' },
   { key: 'late', label: 'Late', title: 'Present, but checked in after the grace time' },
   { key: 'missingCheckOut', label: 'Missing Check-Out', title: 'Came in, never pressed check-out' },
-  { key: 'halfDay', label: 'Half Day' },
-  { key: 'absent', label: 'Absent' },
+  { key: 'earlyLogout', label: 'Early Logout', title: 'Left between 5:00 PM and 6:00 PM (a full day, flagged)' },
+  { key: 'halfDay', label: 'Half Day', title: 'Left before 5:00 PM (1st half) or came after 1:30 PM (2nd half), no leave for the other half' },
+  { key: 'halfDayHalfLeave', label: 'Half Day + Half Leave', title: 'Worked one half, approved leave for the other' },
+  { key: 'absent', label: 'Absent', title: 'No check-in, and no leave or request (did not inform)' },
   { key: 'onLeave', label: 'On Leave' },
-  { key: 'noRecord', label: 'No record', title: 'Working days with no punch, no mark and no leave' },
-  { key: 'weeklyOffs', label: 'Weekly Offs' },
+  { key: 'noData', label: 'No device data', title: 'Working days the biometric device has not sent yet (not counted as Absent)' },
+  { key: 'weeklyOffs', label: 'Week off', title: 'Week off days with nothing worked (not working days for them)' },
   { key: 'holidays', label: 'Holidays' },
   { key: 'hoursWorked', label: 'Hours' },
+  { key: 'paidDays', label: 'Paid Days', title: 'Present + leave (half days at ½). Leave still waiting is not paid until it is approved.' },
 ];
 
 export function MonthlySummaryTab() {
@@ -218,9 +221,9 @@ export function MonthlySummaryTab() {
         )}
         <div className="small-muted" style={{ marginBottom: 8, fontSize: 12 }}>
           Counted day by day from actual records — biometric, web and mobile punches, the imported CSV days, marked days, approved leave,
-          holidays and weekly offs. Each person counts once per day. A past working day with nothing recorded is <b>No record</b>
-          {data?.missingCheckInRule === 'Absent' ? ' (counted as Absent by the Attendance policy)' : ' (shown inside Missing Check-In by the Attendance policy)'}.
-          Attendance % = (Present + Late + Missing Check-Out + ½ × Half Day) ÷ Working Days.
+          holidays and weekly offs. Each person counts once per day. A past working day with no check-in and no leave or request is <b>Absent</b>;
+          a pending leave or attendance correction is not Absent. Days the biometric device has not sent yet are <b>No device data</b>.
+          Attendance % = days worked (Present, Late, Early Logout, Missing Check-Out; a worked half at ½) ÷ Working Days.
           {isMonth && <> Late half-day cut = late days beyond the {data.freeLateArrivalsPerMonth ?? 0} free per month (what payroll deducts).</>}
           {' '}People who left are included for the days they worked.
         </div>
@@ -233,8 +236,8 @@ export function MonthlySummaryTab() {
               { value: t.present + t.late + t.missingCheckOut, label: 'Days attended (Present + Late + Missing Check-Out)' },
               { value: t.halfDay, label: 'Half days' },
               { value: t.absent, label: 'Absent days' },
-              { value: t.onLeave, label: 'Leave days' },
-              { value: t.noRecord, label: 'No-record days' },
+              { value: t.onLeave + (t.leaveUnderReview || 0) + (t.informed || 0), label: 'Leave days (approved + pending + informed)' },
+              ...(t.noData ? [{ value: t.noData, label: 'No device data (days)' }] : []),
               { value: `${t.attendancePct}%`, label: 'Attendance %' },
               ...(isMonth ? [{ value: t.lateCut, label: 'Late half-day cuts (payroll)' }] : []),
             ]} />

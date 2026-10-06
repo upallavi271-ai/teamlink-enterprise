@@ -94,17 +94,17 @@ export function waitingText(r) {
 // "⋯" — secondary actions, each only when the server said this login may.
 //   kinds: open, edit, assign-recruiter, assign-tl, hold, close, reopen, export
 export function secondaryActions(r, { mayExport = false } = {}) {
-  const out = [{ key: 'open', label: 'Open Requirement 360' }];
-  if (r.mayEdit) out.push({ key: 'edit', label: 'Edit requirement' });
+  const out = [{ key: 'open', label: 'Open job' }];
+  if (r.mayEdit) out.push({ key: 'edit', label: 'Edit job' });
   if (r.mayAssign) {
     out.push({ key: 'assign-recruiter', label: 'Assign recruiter' });
-    out.push({ key: 'assign-tl', label: 'Assign TL' });
+    out.push({ key: 'assign-tl', label: 'Assign team lead' });
   }
   if (r.mayApprove) {
-    if (r.live) out.push({ key: 'hold', label: 'Put on hold' });
-    if (r.status !== 'CLOSED') out.push({ key: 'close', label: 'Close requirement', danger: true });
-    if (r.status === 'CLOSED' || r.status === 'ON_HOLD') out.push({ key: 'reopen', label: r.status === 'CLOSED' ? 'Reopen' : 'Resume (Open)' });
+    if (r.live) out.push({ key: 'hold', label: 'Pause' });
+    if (r.status !== 'CLOSED') out.push({ key: 'close', label: 'Close job', danger: true });
+    if (r.status === 'CLOSED' || r.status === 'ON_HOLD') out.push({ key: 'reopen', label: r.status === 'CLOSED' ? 'Reopen' : 'Resume' });
   }
-  if (mayExport) out.push({ key: 'export', label: 'Export this requirement' });
+  if (mayExport) out.push({ key: 'export', label: 'Export this job' });
   return out;
 }

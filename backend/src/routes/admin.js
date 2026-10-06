@@ -52,7 +52,7 @@ const {
 } = require('../utils/employeeAdmin');
 const {
   INTEGRATION_CATALOG, INTEGRATION_GROUPS, SYNC_ENTITIES, ORG_STRUCTURE_DEFAULT,
-  COMPANY_POLICIES, COMPANY_DEFAULTS, integrationById, LIVE_CHANNELS,
+  COMPANY_POLICIES, COMPANY_DEFAULTS, integrationById, LIVE_CHANNELS, JOB_BOARD_CHANNELS,
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
 const { publicValuesFor, writeValues, recordEvent } = require('../utils/integrationStore');
@@ -738,13 +738,34 @@ router.put('/role-catalog/:role/modules/:moduleId/features', requirePerm(null, '
 // TL is offered Medical; an external login is offered none.
 router.get('/departments', async (req, res) => {
   const allowed = scopeDepartments(req.user);
+  // Spec item 18 — pickers get ACTIVE departments and teams only. The
+  // Departments & Teams screen asks for ?all=1 to see (and switch back on)
+  // the ones that are off.
+  const { activeOnly } = require('../utils/masters');
+  const all = String(req.query.all || '') === '1';
   const departments = await prisma.department.findMany({
-    where: allowed === undefined ? {} : { name: { in: allowed } },
-    include: { teams: { orderBy: { name: 'asc' } } },
+    where: { ...(allowed === undefined ? {} : { name: { in: allowed } }), ...(all ? {} : activeOnly('Department')) },
+    include: { teams: { where: all ? {} : activeOnly('Team'), orderBy: { name: 'asc' } } },
     orderBy: { name: 'asc' },
   });
   res.json(departments);
 });
+
+// Spec item 18 — SWITCH A DEPARTMENT / TEAM OFF (or back on). Off = gone from
+// every dropdown at once; employees already in it keep it on their record.
+async function setMasterActive(req, res, model, label) {
+  const { hasColumn } = require('../utils/masters');
+  if (!hasColumn(model, 'active')) return res.status(503).json({ error: `Switching a ${label.toLowerCase()} off needs a database update that has not been applied yet.` });
+  const delegate = model === 'Team' ? prisma.team : prisma.department;
+  const row = await delegate.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ error: `${label} not found` });
+  const active = req.body && req.body.active !== undefined ? !!req.body.active : !row.active;
+  const saved = await delegate.update({ where: { id: row.id }, data: { active } });
+  await logAudit({ userId: req.user.id, action: `${label} ${active ? 'switched on' : 'switched off'}`, entity: model, entityId: row.id, fromValue: row.active ? 'On' : 'Off', toValue: active ? 'On' : 'Off' });
+  return res.json(saved);
+}
+router.put('/departments/:id/active', requirePerm(null, 'administration', 'Departments & Teams', 'edit'), (req, res) => setMasterActive(req, res, 'Department', 'Department'));
+router.put('/teams/:id/active', requirePerm(null, 'administration', 'Departments & Teams', 'edit'), (req, res) => setMasterActive(req, res, 'Team', 'Team'));
 
 router.post('/departments', requirePerm(null, 'administration', 'Departments & Teams', 'create'), async (req, res) => {
   const { name } = req.body;
@@ -762,6 +783,10 @@ router.post('/departments', requirePerm(null, 'administration', 'Departments & T
 router.delete('/departments/:id', requirePerm(null, 'administration', 'Departments & Teams', 'delete'), async (req, res) => {
   const department = await prisma.department.findUnique({ where: { id: req.params.id } });
   if (!department) return res.status(404).json({ error: 'Department not found' });
+  // Spec item 18 — a removed department must vanish from the dropdowns, which
+  // it cannot while people are still filed under it. Say so, and offer Off.
+  const inUse = await prisma.employee.count({ where: { department: department.name, employmentStatus: { notIn: ['Relieved', 'Exited'] } } });
+  if (inUse) return res.status(409).json({ error: `${inUse} employee${inUse === 1 ? ' is' : 's are'} in ${department.name}. Move them to another department first, or press "Switch off" to hide it from the lists.` });
   await prisma.team.deleteMany({ where: { departmentId: req.params.id } });
   await prisma.department.delete({ where: { id: req.params.id } });
   await logAudit({ userId: req.user.id, action: 'Department removed', entity: 'Department', entityId: req.params.id, fromValue: department.name });
@@ -786,6 +811,9 @@ router.post('/departments/:id/teams', requirePerm(null, 'administration', 'Depar
 router.delete('/teams/:id', requirePerm(null, 'administration', 'Departments & Teams', 'delete'), async (req, res) => {
   const team = await prisma.team.findUnique({ where: { id: req.params.id } });
   if (!team) return res.status(404).json({ error: 'Team not found' });
+  const teamDept = await prisma.department.findUnique({ where: { id: team.departmentId }, select: { name: true } });
+  const inTeam = await prisma.employee.count({ where: { team: team.name, ...(teamDept ? { department: teamDept.name } : {}), employmentStatus: { notIn: ['Relieved', 'Exited'] } } });
+  if (inTeam) return res.status(409).json({ error: `${inTeam} employee${inTeam === 1 ? ' is' : 's are'} in ${team.name}. Move them to another team first, or press "Switch off" to hide it from the lists.` });
   await prisma.team.delete({ where: { id: req.params.id } });
   await logAudit({ userId: req.user.id, action: 'Team removed', entity: 'Team', entityId: req.params.id, fromValue: team.name });
   res.json({ ok: true });
@@ -1048,7 +1076,18 @@ router.get('/org-structure', requirePerm(null, 'administration', 'Organization S
   })]);
   const branches = [...new Set((await prisma.employee.findMany({ select: { branch: true, location: true } }))
     .map((e) => e.branch || e.location).filter(Boolean))].sort();
+  // Spec item 19 — what each role means for the approval chain, in plain
+  // words, so the screen can say "In the approval chain" / "Paused" / "Not an
+  // approver (below Employee)" next to every row.
+  let chainOf = {};
+  try {
+    const lad = await require('../utils/approvalWorkflow').ladder();
+    chainOf = Object.fromEntries(lad.levels.filter((l) => l.orgRoleId && !l.applicant).map((l) => [l.orgRoleId, {
+      inChain: true, paused: !!l.paused, level: l.level, step: l.seq - 1,
+    }]));
+  } catch (err) { console.error('[org-structure] ladder', err.message); }
   res.json({
+    chain: roles.map((r) => ({ id: r.id, ...(chainOf[r.id] || { inChain: false }) })),
     roles,
     departments: departments.map((d) => ({ id: d.id, name: d.name, parent: null })),
     branches: branches.map((name) => ({ name, location: name })),
@@ -1060,11 +1099,38 @@ router.post('/org-structure', requirePerm(null, 'administration', 'Organization 
   const { name, description } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'A role name is required' });
   const rows = await orgRoles();
-  const role = await prisma.orgRole.create({
-    data: { name: String(name).trim(), description: (description && String(description).trim()) || '—', system: false, paused: false, position: rows.length },
+  // A NEW ROLE STARTS JUST BELOW SUPER ADMIN (spec item 19 — "when a role is
+  // added it becomes available in the approval chain"). Appended at the
+  // bottom it landed below "Employee", where nobody can approve anything.
+  // Drag it to move it.
+  const top = rows.findIndex((r) => r.system);
+  const at = top >= 0 ? top + 1 : 0;
+  const role = await prisma.$transaction(async (tx) => {
+    for (const r of rows.slice(at)) {
+      await tx.orgRole.update({ where: { id: r.id }, data: { position: r.position + 1 } }); // eslint-disable-line no-await-in-loop
+    }
+    return tx.orgRole.create({
+      data: { name: String(name).trim(), description: (description && String(description).trim()) || '—', system: false, paused: false, position: at },
+    });
   });
   await logAudit({ userId: req.user.id, action: 'Approval-chain role added', entity: 'OrgRole', entityId: role.id, toValue: role.name });
   res.status(201).json(role);
+});
+
+// REMOVE a role from the structure (spec item 19 — "when a role is removed it
+// no longer appears"). System roles stay. Requests waiting on it right now
+// move on to their next approver.
+router.delete('/org-structure/:id', requirePerm(null, 'administration', 'Organization Structure', 'edit'), async (req, res) => {
+  const existing = await prisma.orgRole.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: 'Role not found' });
+  if (existing.system) return res.status(409).json({ error: 'Super Admin is the final approver and cannot be removed.' });
+  await prisma.orgRole.delete({ where: { id: existing.id } });
+  const rest = await prisma.orgRole.findMany({ orderBy: { position: 'asc' } });
+  await prisma.$transaction(rest.map((r, i) => prisma.orgRole.update({ where: { id: r.id }, data: { position: i } })));
+  await logAudit({ userId: req.user.id, action: 'Approval-chain role removed', entity: 'OrgRole', entityId: existing.id, fromValue: existing.name });
+  let rerouted = { moved: 0, kept: 0 };
+  try { rerouted = await require('../utils/approvalWorkflow').reroutePausedSteps(); } catch (err) { console.error('[org-structure] reroute', err.message); }
+  res.json({ ok: true, rerouted });
 });
 
 // Drag-reorder: the client sends the whole chain in its new order. Declared
@@ -1115,7 +1181,13 @@ router.post('/org-structure/:id/toggle-pause', requirePerm(null, 'administration
     userId: req.user.id, action: `${role.paused ? 'Paused' : 'Resumed'} role in approval chain`,
     entity: 'OrgRole', entityId: role.id, fromValue: existing.paused ? 'Paused' : 'Active', toValue: role.paused ? 'Paused' : 'Active',
   });
-  res.json(role);
+  // Spec item 19 — a paused role is never an active approver: requests
+  // waiting on it right now move on to their next approver.
+  let rerouted = { moved: 0, kept: 0 };
+  if (role.paused) {
+    try { rerouted = await require('../utils/approvalWorkflow').reroutePausedSteps(); } catch (err) { console.error('[org-structure] reroute', err.message); }
+  }
+  res.json({ ...role, rerouted });
 });
 
 /* ==========================================================================
@@ -1154,6 +1226,8 @@ function shapeIntegration(channel, row) {
     // Whether this channel really talks to an outside system. Everything
     // else on the screen is still Demo / Simulated and says so.
     live: LIVE_CHANNELS.includes(channel.id),
+    // Save & Post: a job board gets its own details panel on the card.
+    jobBoard: JOB_BOARD_CHANNELS.includes(channel.id),
     lastSync: row && row.lastSync ? new Date(row.lastSync).toLocaleString() : null,
     lastTest: row && row.lastTest ? new Date(row.lastTest).toLocaleString() : null,
     lastTestResult: row ? row.lastTestResult : null,
@@ -1171,16 +1245,40 @@ function detBool(seed, pct) {
   return h % 100 < pct;
 }
 
+// "Failed" counts RECORDS still failing — a requirement push or a portal
+// application that went wrong (rows with a recordRef) since the last full sync
+// that worked end to end; that sync re-pushes every live requirement and
+// re-pulls 90 days of applications, so it supersedes anything older. A whole
+// run that failed because the portal was down is not a failed record: it is
+// reported as `portalError` (the latest run's failure, until a good run).
+// Before this, every startup sync with the portal switched off (one per
+// nodemon restart) added one to a "failed" badge that never went down.
 async function jobPortalStats() {
-  const [candidates, applications, requirements, needsMapping, failed] = await Promise.all([
+  const lastGood = await prisma.syncLog.findFirst({
+    where: { entity: 'Requirements', status: 'Success', reason: { startsWith: 'Job Portal sync' } },
+    orderBy: { createdAt: 'desc' }, select: { createdAt: true },
+  });
+  const since = lastGood ? { createdAt: { gt: lastGood.createdAt } } : {};
+  const [lastRun, failedRows, failedReqs] = await Promise.all([
+    prisma.syncLog.findFirst({
+      where: { entity: 'Requirements', reason: { startsWith: 'Job Portal sync' } },
+      orderBy: { createdAt: 'desc' }, select: { status: true, reason: true, createdAt: true },
+    }),
+    prisma.syncLog.findMany({ where: { status: 'Failed', recordRef: { not: null }, ...since }, distinct: ['recordRef'], select: { recordRef: true } }),
+    // A published, live requirement the portal has not accepted.
+    prisma.requirement.findMany({ where: { portalPublished: true, portalSyncStatus: 'Failed', status: { in: REQUIREMENT_LIVE_STATUSES } }, select: { id: true } }),
+  ]);
+  const failedRecords = new Set([...failedRows.map((r) => r.recordRef), ...failedReqs.map((r) => r.id)]);
+  const portalError = lastRun && lastRun.status === 'Failed' && / failed: /.test(lastRun.reason || '')
+    ? { reason: lastRun.reason, at: lastRun.createdAt } : null;
+  const [candidates, applications, requirements, needsMapping] = await Promise.all([
     prisma.candidate.count({ where: { source: 'Job Portal' } }),
     prisma.application.count({ where: { candidate: { source: 'Job Portal' } } }),
     prisma.requirement.count({ where: { status: { in: REQUIREMENT_LIVE_STATUSES }, postingSources: { contains: 'Job Portal' } } }),
     // A portal candidate who never landed on a requirement still needs mapping.
     prisma.candidate.count({ where: { source: 'Job Portal', applications: { none: {} } } }),
-    prisma.syncLog.count({ where: { status: 'Failed' } }),
   ]);
-  return { candidates, applications, requirements, needsMapping, failed };
+  return { candidates, applications, requirements, needsMapping, failed: failedRecords.size, portalError };
 }
 
 router.get('/integrations', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
@@ -1212,7 +1310,7 @@ router.get('/integrations/job-portal', requirePerm(null, 'administration', 'Inte
     stats,
     status: row.state === 'Connected' ? 'Connected' : 'Not Connected',
     lastSync: row.lastSync ? new Date(row.lastSync).toLocaleString() : '—',
-    lastSyncResult: row.recordsFailed ? 'Completed with errors' : 'Synced',
+    lastSyncResult: stats.portalError ? 'Last run failed — see Sync Logs' : (stats.failed ? 'Completed with errors' : 'Synced'),
     syncLog: log.map((l) => ({
       id: l.id,
       date: new Date(l.createdAt).toLocaleString(),
@@ -1288,7 +1386,29 @@ router.post('/integrations/job-portal/sync', requirePerm(null, 'administration',
 router.post('/integrations/job-portal/log/:id/retry', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const entry = await prisma.syncLog.findUnique({ where: { id: req.params.id } });
   if (!entry) return res.status(404).json({ error: 'Log entry not found' });
-  const updated = await prisma.syncLog.update({ where: { id: req.params.id }, data: { status: 'Success', reason: 'Retried successfully' } });
+  if (entry.status !== 'Failed') return res.status(400).json({ error: 'Only a failed entry can be retried.' });
+  // A REAL retry. (It used to mark the row "Retried successfully" without
+  // sending anything.) One requirement push -> push that requirement again;
+  // anything else (a whole run, a portal application) -> a full sync, which
+  // re-pushes every live requirement and re-pulls the portal's applications.
+  // The row is marked resolved only when the retry really worked.
+  const bridge = require('../utils/jobPortalBridge');
+  let ok;
+  let why;
+  if (entry.entity === 'Requirements' && entry.recordRef) {
+    const r = await bridge.pushRequirement(entry.recordRef);
+    ok = !!r.ok;
+    why = r.ok ? 'requirement pushed to the Job Portal' : (r.error || r.skipped || 'push failed');
+  } else {
+    const r = await bridge.fullSync({ actor: req.user.name });
+    ok = r.ok && !r.failed && !r.errors.length;
+    why = r.ok ? `${r.jobs} job(s) live, ${r.failed} failed, ${r.errors.length} problem(s)` : r.error;
+  }
+  if (!ok) return res.status(502).json({ error: `Retry did not work: ${String(why || '').replace(/\s+/g, ' ').trim().slice(0, 300)}` });
+  const updated = await prisma.syncLog.update({
+    where: { id: req.params.id },
+    data: { status: 'Success', reason: `Resolved by retry (${new Date().toLocaleString()}, ${why}). Was: ${entry.reason || ''}`.slice(0, 1000) },
+  });
   await logAudit({ userId: req.user.id, action: 'Sync record retried', entity: 'SyncLog', entityId: entry.id, fromValue: entry.status, toValue: 'Success' });
   res.json(updated);
 });
@@ -1716,6 +1836,16 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
   res.json(shapeIntegration(channel, next));
 });
 
+// JOB BOARDS — the Integrations card details (Save & Post spec §14,
+// utils/jobConnectors.js boardStatus): connection, account id, posting method,
+// last success, last error in plain words + details. Never a credential.
+router.get('/integrations/:id/board-status', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  if (!JOB_BOARD_CHANNELS.includes(req.params.id)) return res.status(404).json({ error: 'Not a job board' });
+  const out = await require('../utils/jobConnectors').boardStatus(req.params.id); // eslint-disable-line global-require
+  if (!out) return res.status(404).json({ error: 'Not a job board' });
+  return res.json(out);
+});
+
 router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
@@ -1734,6 +1864,35 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
     return res.json({ ...shapeIntegration(channel, nextRow), state: st.state, result, device: shapeDevice(device) });
   }
+  // JOB BOARDS (Save & Post, utils/jobConnectors.js): the test says honestly
+  // whether the connector has what it needs. Nothing is sent to the board.
+  if (JOB_BOARD_CHANNELS.includes(channel.id)) {
+    await integrationRow(channel.id);
+    const report = await require('../utils/jobConnectors').boardSetupReport(channel.id); // eslint-disable-line global-require
+    const result = report ? report.result : 'Unknown job board';
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: report && report.ready ? null : result.slice(0, 480) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: report && report.ready ? 'Ready' : 'Not ready' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+  // eMUDHRA eSIGN (utils/emudhra.js): checks the setup only — token, the
+  // certificate parses, https URLs. Nothing is sent to eMudhra.
+  // CALENDAR SYNC (B4, utils/meetingLinks.js): the same honest setup check.
+  if (channel.id === 'esign' || channel.id === 'calendar') {
+    await integrationRow(channel.id);
+    const report = await require(channel.id === 'esign' ? '../utils/emudhra' : '../utils/meetingLinks').setupReport(); // eslint-disable-line global-require
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: report.result.slice(0, 480), error: report.ready ? null : report.result.slice(0, 480) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: report.result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: report.ready ? 'Ready' : 'Not ready' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result: report.result });
+  }
+
   const row = await integrationRow(channel.id);
   if (row.state !== 'Connected') {
     await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: 'Failed — not connected' });
@@ -1823,7 +1982,9 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
         lastTest: new Date(),
         lastTestResult: result.slice(0, 480),
         error: probe.ok ? null : result.slice(0, 480),
-        ...(probe.ok ? {} : { state: 'Reconnect Required' }),
+        // A passing test (e.g. after credits were bought) clears an earlier
+        // "Reconnect Required" — it used to stay stuck on it.
+        ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }),
       },
     });
     await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
@@ -1862,6 +2023,14 @@ router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integ
     synced = stats.candidates + stats.applications;
     failed = stats.failed;
     entities = SYNC_ENTITIES.jobportal;
+  } else if (JOB_BOARD_CHANNELS.includes(channel.id) && prisma.requirementPosting) {
+    // Save & Post: the real per-job results of this board's connector.
+    const src = { 'google-jobs': 'google' }[channel.id] || channel.id;
+    const rows = await prisma.requirementPosting.groupBy({ by: ['status'], where: { source: src }, _count: { _all: true } });
+    const n = (st) => rows.filter((x) => st.includes(x.status)).reduce((a, x) => a + x._count._all, 0);
+    synced = n(['Posted']);
+    failed = n(['Failed']);
+    entities = ['Requirements'];
   } else {
     // External boards are simulated, but the counts derive from real postings.
     const posted = await prisma.requirement.findMany({ where: { postingSources: { contains: channel.name } }, select: { status: true } });
@@ -1872,7 +2041,7 @@ router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integ
     where: { id: channel.id },
     data: {
       lastSync: new Date(), recordsSynced: synced, recordsFailed: failed,
-      error: failed ? `${failed} record(s) could not be synced (simulated).` : null,
+      error: failed ? `${failed} record(s) could not be synced${JOB_BOARD_CHANNELS.includes(channel.id) ? ' — see the Posted on card of each job' : ' (simulated)'}.` : null,
     },
   });
   await recordEvent(channel.id, {

@@ -11,14 +11,14 @@ import { Link } from 'react-router-dom';
 export const PRIORITY_DISPLAY = {
   Urgent: { icon: '🔴', label: 'Critical', cls: 'crit' },
   High: { icon: '🟠', label: 'High', cls: 'high' },
-  Medium: { icon: '🟡', label: 'Medium', cls: 'med' },
-  Low: { icon: '⚪', label: 'Low', cls: 'low' },
+  Medium: { icon: '', label: 'Medium', cls: 'med' },
+  Low: { icon: '', label: 'Low', cls: 'low' },
 };
 export const PRIORITY_CHOICES = [
   { value: 'Urgent', label: '🔴 Critical' },
   { value: 'High', label: '🟠 High' },
-  { value: 'Medium', label: '🟡 Medium' },
-  { value: 'Low', label: '⚪ Low' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'Low', label: 'Low' },
 ];
 export const priorityLabel = (p) => (PRIORITY_DISPLAY[p] ? PRIORITY_DISPLAY[p].label : (p || '—'));
 
@@ -26,9 +26,9 @@ export function PriorityChip({ value }) {
   const d = PRIORITY_DISPLAY[value];
   if (!d) return <span className="small-muted">{value || '—'}</span>;
   return (
-    <span className={`reqprio reqprio-${d.cls}`} title={value === 'Urgent' ? 'Critical (stored as Urgent)' : d.label}>
-      <span aria-hidden="true">{d.icon}</span>
-      {` ${d.label}`}
+    <span className={`reqprio reqprio-${d.cls}`} title={d.label}>
+      {d.icon && <span aria-hidden="true">{`${d.icon} `}</span>}
+      {d.label}
     </span>
   );
 }
@@ -45,8 +45,8 @@ export const fmtShort = (d) => {
 };
 export const fmtWhen = (d) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 
-// "Age: 18 days"
-export const ageText = (days) => (days === null || days === undefined ? '—' : `Age: ${nf(days)} day${days === 1 ? '' : 's'}`);
+// "Open 18 days"
+export const ageText = (days) => (days === null || days === undefined ? '—' : `Open ${nf(days)} day${days === 1 ? '' : 's'}`);
 
 // "SLA: 3 days overdue" / "SLA: due in 5 days" / "SLA: due today" /
 // "12 candidates past SLA". Returns { text, cls, title } or null.
@@ -55,15 +55,12 @@ export function slaInfo(sla) {
   const parts = [];
   if (sla.daysLeft !== null && sla.daysLeft !== undefined) {
     const d = sla.daysLeft;
-    parts.push(d < 0 ? `SLA: ${nf(-d)} day${d === -1 ? '' : 's'} overdue` : d === 0 ? 'SLA: due today' : `SLA: due in ${nf(d)} day${d === 1 ? '' : 's'}`);
+    parts.push(d < 0 ? `${nf(-d)} day${d === -1 ? '' : 's'} late` : d === 0 ? 'Due today' : `Due in ${nf(d)} day${d === 1 ? '' : 's'}`);
   }
-  if (sla.overdue) parts.push(`${nf(sla.overdue)} candidate${sla.overdue === 1 ? '' : 's'} past SLA`);
+  if (sla.overdue) parts.push(`${nf(sla.overdue)} ${sla.overdue === 1 ? 'person' : 'people'} late`);
   const cls = sla.state === 'overdue' ? 'overdue' : sla.state === 'due-soon' ? 'pending' : 'active';
-  const title = [
-    sla.due ? `Target / closing date ${sla.due}` : 'No target or closing date set',
-    sla.overdue ? `${sla.overdue} candidate(s) past their stage SLA` : 'No candidate past their stage SLA',
-  ].join(' · ');
-  return { text: parts.join(' · ') || 'SLA: on track', cls, title };
+  const title = sla.due ? `Deadline ${sla.due}` : 'No deadline';
+  return { text: parts.join(' · ') || 'On time', cls, title };
 }
 
 // "26 Sep · Kiran Kumar"
@@ -74,11 +71,11 @@ export function lastActivityText(la) {
 
 // §7 — the five counts, in order. `key` is the field of row.pipeline.
 export const COUNT_TILES = [
-  { key: 'candidates', label: 'Candidates', hint: 'Every candidate on this requirement, incl. rejected / hold' },
-  { key: 'shortlisted', label: 'Shortlisted', hint: 'Now at Client Shortlisted' },
-  { key: 'interview', label: 'Interview', hint: 'Now at Interview Scheduled / Completed' },
-  { key: 'selected', label: 'Selected', hint: 'Selected, Offer or Offer Accepted — not yet joined' },
-  { key: 'joined', label: 'Joined', hint: 'Joined / Hired' },
+  { key: 'candidates', label: 'Candidates', hint: 'Everyone on this job' },
+  { key: 'shortlisted', label: 'Shortlisted', hint: 'Shortlisted by the client' },
+  { key: 'interview', label: 'Interview', hint: 'Interview booked or done' },
+  { key: 'selected', label: 'Selected', hint: 'Selected, not joined yet' },
+  { key: 'joined', label: 'Joined', hint: 'Joined the job' },
 ];
 
 export function CountTiles({ pipeline, onPick }) {
@@ -87,7 +84,7 @@ export function CountTiles({ pipeline, onPick }) {
     <div className="reqtiles">
       {COUNT_TILES.map((t) => (
         <button key={t.key} type="button" className="reqtile" title={t.hint} onClick={onPick ? () => onPick(t.key) : undefined} disabled={!onPick}>
-          <b>{nf(p[t.key])}</b>
+          <b>{p[t.key] ? nf(p[t.key]) : '—'}</b>
           <span>{t.label}</span>
         </button>
       ))}
@@ -110,34 +107,36 @@ export const candidatesLink = (requirementId, stages) => {
   return `/candidates?${q.toString()}`;
 };
 
+// Everyday step words (the server's labels are the old ones).
+const STEP_WORDS = {
+  screening: 'New / screening', recruiterReview: 'Check by recruiter', tlReview: 'Check by team lead',
+  bdeReview: 'Check by BDE', clientSubmission: 'Sent to client', clientDecision: 'Client checking',
+  interview: 'Interview', feedback: 'Waiting for feedback', selected: 'Selected', offer: 'Offer',
+  offerAccepted: 'Offer accepted', joined: 'Joined',
+};
 export function PipelineSteps({ requirementId, pipeline, compact = false }) {
   const steps = (pipeline && pipeline.steps) || [];
   if (!steps.length) return null;
   const p = pipeline || {};
   return (
     <div className={`reqpipe${compact ? ' compact' : ''}`}>
-      <div className="small-muted" style={{ fontSize: 11, marginBottom: 4 }}>
-        {p.hiring === 'internal'
-          ? 'Internal hiring — Screening → HR Review → Dept Head / TL → Interview → Feedback → Selected → Offer → Joining → HRMS'
-          : 'Client hiring — Screening → Recruiter Review → TL Review → BDE Review → Client Submission → Client Decision → Interview → Feedback → Selected → Offer → Offer Accepted → Joining'}
-      </div>
-      <ol className="reqpipe-steps" aria-label="Candidates pipeline">
+      <ol className="reqpipe-steps" aria-label="People in process">
         {steps.map((s, i) => (
           <li key={s.key}>
             <Link
               to={candidatesLink(requirementId, s.stages)}
               className={`reqpipe-step${s.count ? ' has' : ''}`}
-              title={`${s.label}: ${s.count} candidate(s) at this step now — open them in Candidates`}
+              title={`${nf(s.count)} ${s.count === 1 ? 'person' : 'people'} at this step`}
             >
-              <b>{nf(s.count)}</b>
-              <span>{s.label}</span>
+              <b>{s.count ? nf(s.count) : '—'}</b>
+              <span>{STEP_WORDS[s.key] || s.label}</span>
             </Link>
             {i < steps.length - 1 && <span className="reqpipe-arrow" aria-hidden="true">→</span>}
           </li>
         ))}
       </ol>
       <div className="reqpipe-foot">
-        <Link to={candidatesLink(requirementId)}>{`All ${nf(p.candidates)} candidate(s)`}</Link>
+        <Link to={candidatesLink(requirementId)}>{p.candidates ? `All ${nf(p.candidates)} people` : 'No one yet'}</Link>
         {p.hold ? <Link to={candidatesLink(requirementId, ['HOLD'])}>{` · ${nf(p.hold)} on hold`}</Link> : null}
         {p.rejected ? <Link to={candidatesLink(requirementId, ['REJECTED'])}>{` · ${nf(p.rejected)} rejected`}</Link> : null}
       </div>
@@ -147,7 +146,8 @@ export function PipelineSteps({ requirementId, pipeline, compact = false }) {
 
 // §24 — the workflow statuses in the app-wide colours (StatusChip). The word
 // alone does not say it ("Sourcing", "Recruiter Assigned" match no rule), so
-// the tone is passed explicitly: live = green, waiting = amber, closed = grey.
+// the tone is passed explicitly: live = blue (going on), waiting = orange,
+// closed = green (done).
 const LIVE_CODES = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
-export const reqStatusTone = (code) => (LIVE_CODES.includes(code) ? 'green'
-  : ['ON_HOLD', 'AGREEMENT_CHECK', 'DRAFT'].includes(code) ? 'amber' : 'grey');
+export const reqStatusTone = (code) => (LIVE_CODES.includes(code) ? 'blue'
+  : ['ON_HOLD', 'AGREEMENT_CHECK', 'DRAFT'].includes(code) ? 'amber' : code === 'CLOSED' ? 'green' : 'grey');

@@ -1,0 +1,38 @@
+/* ATS-100 B5/B6 — consent, where they came from, certifications, documents.
+   Everything scoped under .crx-* (components/candidate/CandidateRecord.jsx). */
+.crx-card .crx-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 6px; }
+.crx-dnc { font-size: 11.5px; font-weight: 700; color: #b42318; background: #fef3f2; border: 1px solid #fecdca; border-radius: 999px; padding: 2px 8px; }
+.crx-line { font-size: 13px; color: #1f2a44; margin: 2px 0; }
+.crx-sub { font-size: 12px; color: #667085; margin-top: 2px; word-break: break-word; }
+.crx-mt { margin-top: 8px; }
+.crx-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.crx-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; align-items: end; }
+.crx-grid .crx-span, .crx-grid .crx-flash { grid-column: 1 / -1; }
+.crx-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.crx-choice { display: flex; gap: 6px; flex-wrap: wrap; }
+.crx-pill { border: 1px solid #c9d6ee; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; min-height: 32px; }
+.crx-pill.on { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+.crx-checks { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.crx-checks label, .crx-inline { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.crx-input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 6px 9px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 13px; }
+.crx-flash { font-size: 12.5px; color: #067647; background: #ecfdf3; border: 1px solid #abefc6; border-radius: 8px; padding: 6px 10px; margin-top: 8px; }
+.crx-flash.bad { color: #b42318; background: #fef3f2; border-color: #fecdca; }
+.crx-picker { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.crx-options { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto; }
+.crx-option { display: flex; flex-direction: column; align-items: flex-start; text-align: left; border: 1px solid #eaecf0; background: #fff; border-radius: 8px; padding: 6px 9px; cursor: pointer; }
+.crx-option:hover { border-color: #1d4ed8; }
+.crx-option span { font-size: 11.5px; color: #667085; }
+.crx-docs { display: flex; flex-direction: column; gap: 12px; }
+.crx-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.crx-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid #f2f4f7; }
+.crx-main { display: flex; flex-direction: column; flex: 1 1 220px; min-width: 0; }
+.crx-main b { font-size: 13.5px; word-break: break-word; }
+.crx-ask { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; width: 100%; margin-top: 6px; }
+.crx-ask .crx-input { flex: 1 1 200px; width: auto; }
+.crx-red { color: #b42318; border-color: #fecdca; }
+.crx-ghost { color: #667085; }
+.crx-suggest { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px dashed #eaecf0; }
+.crx-extras { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin: 6px 0 4px; }
+@media (max-width: 640px) {
+  .crx-grid, .crx-extras { grid-template-columns: 1fr; }
+}

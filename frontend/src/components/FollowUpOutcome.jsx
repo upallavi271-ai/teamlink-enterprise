@@ -63,7 +63,7 @@ export default function FollowUpOutcome({
       });
       onSaved(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'That could not be saved.');
+      setError(err.response?.data?.error || 'Could not save. Please try again.');
     } finally { setBusy(false); }
   }
 

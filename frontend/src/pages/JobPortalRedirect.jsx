@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import api from '../api';
+import { useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 
 // ---------------------------------------------------------------------------
 // TeamLink Job Portal — the stable entry point, and where its URL comes from.
@@ -22,56 +22,50 @@ import api from '../api';
 // the jobs.xml / jobs.feed feeds are untouched: links already shared keep
 // working until they are retired.
 // ---------------------------------------------------------------------------
-export const DEFAULT_JOB_PORTAL_URL = 'http://localhost:4323';
-
-let cached = null;
-let pending = null;
+//
+// BUILT IN (2026-10-05). The separate portal is retired: the job portal is
+// this app's own /careers pages (pages/careers/), on this site and this
+// database. The helpers below keep their names (the sidebar link, the
+// Integrations screen and the requirement page use them) but now always
+// point here: <this site>/careers and /careers/<requirement id>?src=….
+// Nothing redirects to another port any more.
+//
+// EMBEDDED (2026-10-05, later the same day). The customer's own Job Portal
+// (job-portal-app/job_portal-main, unchanged) is served by THIS site at /jobs:
+// the backend starts it and proxies to it (backend utils/jobPortalEmbed.js),
+// and utils/jobPortalBridge.js keeps it in step with the ATS within seconds.
+// The helpers keep their names; /job-portal and /careers land on /jobs.
+// ---------------------------------------------------------------------------
+const embedded = () => `${typeof window !== 'undefined' ? window.location.origin : ''}/jobs`;
+export const DEFAULT_JOB_PORTAL_URL = embedded();
 
 export function loadJobPortalUrl() {
-  if (cached) return Promise.resolve(cached);
-  if (!pending) {
-    pending = api.get('/public/job-portal/config')
-      .then((res) => {
-        cached = String((res.data && res.data.url) || DEFAULT_JOB_PORTAL_URL).replace(/\/+$/, '');
-        return cached;
-      })
-      .catch(() => { pending = null; return DEFAULT_JOB_PORTAL_URL; });
-  }
-  return pending;
+  return Promise.resolve(embedded());
 }
 
 export function useJobPortalUrl() {
-  const [url, setUrl] = useState(cached || DEFAULT_JOB_PORTAL_URL);
-  useEffect(() => {
-    let live = true;
-    loadJobPortalUrl().then((u) => { if (live) setUrl(u); });
-    return () => { live = false; };
-  }, []);
-  return url;
+  return embedded();
 }
 
-// A requirement's own page on the portal. The job there is keyed
-// tl_<requirement id>; ?src= is recorded by the portal as the application's
-// source and comes back here as firstSource (Shine, Naukri, LinkedIn …).
+// A requirement's own page on the portal: /jobs/#/job/tl_<id>. ?src= is read
+// by the portal and recorded on the application (Shine, Naukri, LinkedIn …).
 export function jobPortalJobUrl(base, requirementId, src) {
-  return `${base}/${src ? `?src=${encodeURIComponent(src)}` : ''}#/job/tl_${requirementId}`;
+  return `${base || embedded()}/${src ? `?src=${encodeURIComponent(src)}` : ''}#/job/tl_${encodeURIComponent(requirementId)}`;
 }
 
+// Old links -> the portal at /jobs. /jobs is not a React page, so this is a
+// full page load, not a router navigation.
+//   /job-portal, /careers           -> /jobs/ (?src= kept)
+//   /careers/my-applications        -> /jobs/#/candidate/applications
+//   /careers/<requirement id|slug>  -> that job on the portal (the server
+//                                      resolves the slug: /api/public/job-portal/go/…)
 export default function JobPortalRedirect() {
-  const url = useJobPortalUrl();
+  const { id } = useParams();
   useEffect(() => {
-    // Hard navigation: the portal is another application, not a route here.
-    loadJobPortalUrl().then((u) => window.location.replace(`${u}/`));
-  }, []);
-
-  return (
-    <div className="careers-shell">
-      <main className="careers-content">
-        <div className="small-muted">Opening the TeamLink Job Portal…</div>
-        <p className="small-muted">
-          If nothing happens, <a href={`${url}/`}>open the Job Portal</a>.
-        </p>
-      </main>
-    </div>
-  );
+    const qs = window.location.search || '';
+    if (id === 'my-applications') window.location.replace('/jobs/#/candidate/applications');
+    else if (id) window.location.replace(`/api/public/job-portal/go/${encodeURIComponent(id)}${qs}`);
+    else window.location.replace(`/jobs/${qs}`);
+  }, [id]);
+  return null;
 }

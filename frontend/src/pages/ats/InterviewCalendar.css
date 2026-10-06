@@ -63,3 +63,12 @@
 .ivcal-scope button:first-child{border-radius:8px 0 0 8px}
 .ivcal-scope button:nth-child(2){border-radius:0 8px 8px 0;margin-left:-9px}
 .ivcal-scope button.active{background:var(--navy,#0a3d7a);border-color:var(--navy,#0a3d7a);color:#fff;font-weight:600}
+
+/* Shared list layout (spec 2026-10-03 §B) — the footer already says
+   "Showing 1 to 25 of N", so the pager inside it only pages. */
+.ivcal-page .lph-foot .pager{margin:0}
+.ivcal-page .lph-foot .pager-count{display:none}
+
+/* "Only my interviews" switch on the tabs row (2026-10-03 simplification) */
+.ivcal-mine{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:13px;color:var(--ink,#1b2437);cursor:pointer;white-space:nowrap}
+.ivcal-mine input{width:16px;height:16px;margin:0}

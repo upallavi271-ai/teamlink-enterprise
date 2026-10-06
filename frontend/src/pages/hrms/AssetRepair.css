@@ -1,0 +1,25 @@
+/* Asset repair + vendor slip (AssetRepair.jsx). Scoped under .asrep. */
+.asrep .asrep-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.asrep .asrep-item { border: 1px solid var(--line); border-radius: var(--radius, 10px); padding: 10px 12px; background: var(--paper-raised, #fff); }
+.asrep .asrep-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.asrep .asrep-when { font-size: 12px; color: var(--ink-faint); }
+.asrep .asrep-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+.asrep .asrep-facts dt { color: var(--ink-soft); font-weight: 600; }
+.asrep .asrep-facts dd { margin: 0; word-break: break-word; }
+.asrep .asrep-old { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.asrep .asrep-slip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.asrep .asrep-file { font-size: 12px; color: var(--ink-faint); word-break: break-all; }
+.asrep .asrep-noslip { font-size: 12px; color: var(--amber); font-weight: 600; }
+.asrep .asrep-empty { margin: 4px 0; color: var(--ink-soft); }
+.asrep .asrep-hint { margin: 10px 0 0; font-size: 12px; color: var(--ink-faint); }
+.asrep .asrep-note { border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+.asrep .asrep-note.ok { background: var(--green-tint); color: var(--green); }
+.asrep .asrep-note.bad { background: var(--red-tint); color: var(--red); }
+/* The "Saved" line on the Maintenance & Repair screen. */
+.asrep-flash { border-radius: 8px; padding: 9px 12px; margin: 0 0 12px; font-size: 13px; font-weight: 600; background: var(--green-tint); color: var(--green); }
+.asrep-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .asrep .asrep-facts { grid-template-columns: 1fr; }
+  .asrep .asrep-facts dt { margin-top: 4px; }
+  .asrep-row-actions { justify-content: flex-start; }
+}

@@ -9,6 +9,10 @@ import Pager, { usePaged } from '../components/Pager.jsx';
 import AccountsImport from '../components/AccountsImport.jsx';
 import MatchPanel from './bank/MatchPanel.jsx';
 import HandLoans from './bank/HandLoans.jsx';
+import BankStatements from './bank/BankStatements.jsx';
+import ScrollSync from '../components/accounts/ScrollSync.jsx';
+import { fmtD as fmtLong, todayIso as todayLocal } from './invoices/invFormat';
+import './bank/bank-s6.css';
 
 // Indian digit grouping with paise, as the accounting application prints it.
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
@@ -99,8 +103,16 @@ export default function Bank() {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [dialog, setDialog] = useState(null); // {kind, ...}
+  // S5 / S6: the proof strip, what the bank takes, and the hand-loans pill.
+  const [extras, setExtras] = useState({ proof: null, charges: null, loans: null });
+  const [loansOpen, setLoansOpen] = useState(false);
 
   const load = useCallback(() => {
+    Promise.all([
+      api.get('/bank/proof').then((r) => r.data).catch(() => null),
+      api.get('/bank/charges').then((r) => r.data).catch(() => ({ failed: true, months: [] })),
+      api.get('/bank/hand-loans').then((r) => r.data.summary).catch(() => null),
+    ]).then(([proof, charges, loans]) => setExtras({ proof, charges, loans }));
     api.get('/bank/accounts').then((a) => {
       setAccounts(a.data.accounts);
       setCashInHand(a.data.cashInHand);
@@ -179,10 +191,18 @@ export default function Bank() {
     [invoices],
   );
 
+  // Hand loans is a popup over whichever view is open (S6).
+  const goView = useCallback((v) => (v === 'loans' ? setLoansOpen(true) : setView(v)), []);
   const shared = {
     account, accounts, accountId, setAccountId, transactions, byId, summary, position, invoices,
     openInvoices, clientNames, groups, marks, markById, imports, rules, cashInHand,
-    act, call, busy, picked, setPicked, setDialog, setView, load, canManage,
+    act, call, busy, picked, setPicked, setDialog, setView: goView, load, canManage,
+  };
+  const openReview = () => {
+    const a = [...accounts].sort((x, y) => y.stat.unmatched - x.stat.unmatched)[0];
+    setDialog(null);
+    if (a && !accountId) setAccountId(a.id);
+    setTab('un'); setPill('rev'); setPage(0); setView('account');
   };
 
   return (
@@ -191,7 +211,7 @@ export default function Bank() {
       {note && <div className="notice">{note}</div>}
 
       {view === 'overview' && (
-        <Overview {...shared} />
+        <Overview {...shared} extras={extras} setTab={setTab} setPill={setPill} />
       )}
       {view === 'account' && (
         <AccountView
@@ -200,8 +220,8 @@ export default function Bank() {
           per={per} setPer={setPer} page={page} setPage={setPage}
         />
       )}
-      {view === 'loans' && (
-        <HandLoans canManage={canManage} onBack={() => setView('overview')} onChanged={load} />
+      {loansOpen && (
+        <HandLoans canManage={canManage} onClose={() => setLoansOpen(false)} onChanged={load} />
       )}
       {view === 'recon' && (
         <Recon
@@ -215,7 +235,7 @@ export default function Bank() {
 
       {canManage && dialog && (
         <Dialogs
-          dialog={dialog} setDialog={setDialog} setNote={setNote} {...shared}
+          dialog={dialog} setDialog={setDialog} setNote={setNote} onReview={openReview} {...shared}
         />
       )}
     </div>
@@ -226,157 +246,314 @@ export default function Bank() {
 // 1 · Banking Overview — every account, side by side
 // ===========================================================================
 
-function Overview({ accounts, cashInHand, setAccountId, setView, setDialog, call, canManage }) {
+function Overview({
+  accounts, cashInHand, setAccountId, setView, setDialog, call, canManage, extras, setTab, setPill,
+}) {
+  const [q, setQ] = useState('');
+  const [chargeMonth, setChargeMonth] = useState('');
   const totalUn = accounts.reduce((s, a) => s + a.stat.unmatched, 0);
   const totalBank = accounts.reduce((s, a) => s + (a.stat.inBank != null ? a.stat.inBank : a.stat.inBooks), 0);
   const totalBooks = accounts.reduce((s, a) => s + a.stat.inBooks, 0);
-  const totalGap = accounts.filter((a) => a.stat.inBank != null).reduce((s, a) => s + a.stat.difference, 0);
   const off = accounts.filter((a) => a.stat.difference != null && Math.abs(a.stat.difference) > 1);
   const fixable = off.filter((a) => a.stat.openingGap != null && Math.abs(a.stat.openingGap) > 1);
 
   const open = (id) => { setAccountId(id); setView('account'); };
+  // "Categorise now →" / "Review now →": the account with the most lines to
+  // file, on its Uncategorised tab, with the app's suggestions first.
+  const review = () => {
+    const a = [...accounts].sort((x, y) => y.stat.unmatched - x.stat.unmatched)[0];
+    if (!a) return;
+    setAccountId(a.id); setTab('un'); setPill('rev'); setView('account');
+  };
+
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? accounts.filter((b) => `${b.bank} ${b.name || ''} ${b.accNo || ''}`.toLowerCase().includes(needle))
+    : accounts;
+
+  const proof = extras.proof;
+  const charges = extras.charges;
+  const months = charges?.months || [];
+  const pickMonth = months.find((m) => m.key === chargeMonth) || months[0] || null;
+  const maxCharge = Math.max(1, ...months.map((m) => m.amount));
+  const loans = extras.loans;
 
   return (
-    <div>
-      <div className="page-head">
-        <div>
-          <h1>Bank &amp; Reconciliation</h1>
-          <div className="page-sub">
-            Import the bank statement, match every credit to a client and invoice automatically,
-            and keep the running balance in step with the passbook.
+    <div className="s6-bank">
+      <header className="s6-head" data-sticky-head>
+        <div className="s6-crumb">Teamlink Accounts / Bank &amp; Reconciliation</div>
+        <h1 className="s6-title">Bank &amp; Reconciliation</h1>
+        <div className="s6-desc">
+          Import the bank statement, match every credit to a client and invoice automatically, and keep the running balance in
+          step with the passbook.
+        </div>
+        <div className="s6-head-row">
+          <input
+            className="s6-search"
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search this page..."
+            aria-label="Search this page"
+          />
+          <button
+            type="button"
+            className="s6-bell"
+            title={totalUn ? `${totalUn} transaction(s) to file — open them` : 'Nothing waiting'}
+            aria-label={totalUn ? `${totalUn} transactions to file` : 'Nothing waiting'}
+            onClick={review}
+            disabled={!totalUn}
+          >
+            🔔
+          </button>
+          <a className="s6-btn" href="/api/bank/workbook" onClick={(e) => { e.preventDefault(); downloadWorkbook(); }}>⬇ Whole workbook</a>
+        </div>
+      </header>
+
+      {proof && (
+        <div className={`s6-dash ${proof.missing ? 'amber' : 'green'}`}>
+          <span className={`s6-pill ${proof.missing ? 'amber' : 'green'}`}>{proof.missing ? 'Proof missing' : 'Proof attached'}</span>
+          <span>
+            {!proof.total ? 'No payment is on file yet — each one picks up its bank line as proof when the statement is imported.'
+              : proof.missing
+                ? <><b>{proof.withProof} of {proof.total} payment(s)</b> have a document behind them — <b>{proof.missing}</b> still need one.</>
+                : <>All {proof.total} payment(s) have a document behind them.</>}
+          </span>
+        </div>
+      )}
+
+      <div className="s6-section-row">
+        <h2 className="s6-h2">Banking Overview</h2>
+        <div className="s6-actions">
+          <button type="button" className="s6-pill-btn" onClick={() => setView('loans')}>
+            🤝 Hand loans
+            {loans && <span className="s6-sub">· Took {money(loans.taken)} · Cleared {money(loans.repaid)} · paid out {money(loans.paidOutNoEntry)}</span>}
+          </button>
+          <button type="button" className="s6-btn" onClick={() => setView('recon')}>Reconciliation</button>
+          {canManage && <button type="button" className="s6-btn s6-gold" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
+          {canManage && <button type="button" className="s6-btn s6-primary" onClick={() => setDialog({ kind: 'account', account: null })}>Add bank or credit card</button>}
+        </div>
+      </div>
+      {canManage && (
+        <div className="s6-actions" style={{ marginBottom: 16 }}>
+          <button type="button" className="s6-btn" onClick={() => setDialog({ kind: 'rules' })}>⚙ Manage transaction rules</button>
+        </div>
+      )}
+
+      <section className="s6-card gold-left">
+        <div className="s6-card-head">
+          <div>
+            <h3 className="s6-h3">What the bank takes</h3>
+            <div className="s6-sub">Charges and fees the bank cut — every account, month by month</div>
           </div>
+          {months.length > 0 && (
+            <label className="bks-field">
+              <span className="s6-label">Month</span>
+              <select value={pickMonth?.key || ''} onChange={(e) => setChargeMonth(e.target.value)}>
+                {months.map((m) => <option key={m.key} value={m.key}>{monthLabel(m.key)} · {money(m.amount)}</option>)}
+              </select>
+            </label>
+          )}
         </div>
-      </div>
+        {!charges && <div className="s6-sub">Loading…</div>}
+        {charges?.failed && <div className="s6-sub">The charges could not be loaded just now — they come back on the next refresh.</div>}
+        {charges && !charges.failed && !months.length && <div className="s6-sub">No bank charge on any statement yet — they show here as soon as one is imported.</div>}
+        {charges && months.length > 0 && (
+          <>
+            <div className="s6-stats">
+              <div className="s6-stat gold">
+                <div className="s6-label">{monthLabel(pickMonth.key)}</div>
+                <div className="v">{money(pickMonth.amount)}</div>
+                <div className="c">{pickMonth.count} charge(s) that month</div>
+              </div>
+              <div className="s6-stat">
+                <div className="s6-label">Every month on file</div>
+                <div className="v">{money(charges.total)}</div>
+                <div className="c">{charges.monthsCounted} month(s) counted</div>
+              </div>
+              <div className="s6-stat">
+                <div className="s6-label">Average a month</div>
+                <div className="v">{money(charges.average)}</div>
+                <div className="c">over those months</div>
+              </div>
+              <div className="s6-stat red">
+                <div className="s6-label">Not filed yet</div>
+                <div className="v">{charges.notFiled}</div>
+                <div className="c">{charges.notFiled ? 'still sitting on the statement' : 'every charge is filed'}</div>
+              </div>
+            </div>
+            <div className="s6-tbl fixed">
+              <table>
+                <thead>
+                  <tr><th className="sort">Month</th><th className="num">Charges</th><th className="num">Amount</th><th>How it compares</th></tr>
+                </thead>
+                <tbody>
+                  {months.map((m) => (
+                    <tr key={m.key}>
+                      <td className="s6-mono">{monthLabel(m.key)}</td>
+                      <td className="num s6-mono">{m.count}</td>
+                      <td className="num s6-mono">{money(m.amount)}</td>
+                      <td>
+                        <div className="s6-bar">
+                          <span className="s6-dot" />
+                          <span className="s6-bar-track"><span className="s6-bar-fill gold" style={{ width: `${Math.max(2, (m.amount / maxCharge) * 100)}%` }} /></span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
 
-      <div className="page-head">
-        <h2 style={{ fontSize: 19 }}>Banking Overview</h2>
-        <div className="qa-row">
-          <button className="btn btn-sm" onClick={() => setView('recon')}>🧾 Reconciliation</button>
-          <button className="btn btn-sm" onClick={() => setView('loans')}>🤝 Hand loans</button>
-          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
-          {canManage && <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'account', account: null })}>🏦 Add bank or credit card</button>}
-          {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'rules' })}>⚙ Manage transaction rules</button>}
+      <div className="s6-balances">
+        <div className="s6-stat green">
+          <div className="s6-label">Cash in hand</div>
+          <div className="v">{money2(cashInHand)}</div>
+          <div className="c">cash receipts less cash bills</div>
         </div>
-      </div>
-
-      <div className="statbar">
-        <Stat n={money2(cashInHand)} l="Cash in hand" sub="cash receipts less cash bills" />
-        <Stat n={money2(totalBank)} l="Bank balance" sub="what the statements say" />
-        <div className="statitem">
-          <div className="n">{totalUn}</div>
-          <div className="l">Uncategorised transactions</div>
-          <div className="l">
+        <div className="s6-stat">
+          <div className="s6-label">Bank balance</div>
+          <div className="v">{money2(totalBank)}</div>
+          <div className="c">what the statements say</div>
+        </div>
+        <div className="s6-uncat">
+          <span className="big">{totalUn}</span>
+          <div>
+            <div className="s6-label" style={{ color: 'var(--s6-red)' }}>Uncategorised transactions</div>
             {totalUn
-              ? <button type="button" className="link-btn" onClick={() => open((accounts.find((a) => a.stat.unmatched) || accounts[0]).id)}>Categorise now →</button>
-              : 'everything is filed'}
+              ? <button type="button" className="s6-btn s6-link" onClick={review}>Categorise now →</button>
+              : <span className="s6-sub">everything is filed</span>}
           </div>
         </div>
       </div>
 
-      <div className="card section">
-        <h3>All accounts</h3>
-        <div className="small-muted" style={{ marginBottom: 10 }}>
-          {accounts.length} account{accounts.length === 1 ? '' : 's'} on file
+      <section className="s6-card">
+        <div className="s6-card-head">
+          <div>
+            <h3 className="s6-h3">All accounts</h3>
+            <div className="s6-sub">{accounts.length} account{accounts.length === 1 ? '' : 's'} on file{needle ? ` · ${shown.length} match “${q.trim()}”` : ''}</div>
+          </div>
         </div>
-        <div className="tbl-wrap">
-          <table>
+        <ScrollSync className="s6-tbl" deps={[shown.length]}>
+          <table style={{ minWidth: 980 }}>
             <thead>
               <tr>
-                <th>Account details</th>
+                <th className="sort">Account details</th>
                 <th className="num">Uncategorised</th>
                 <th className="num">Amount in bank</th>
                 <th className="num">Amount in the books</th>
-                <th className="num">Difference</th>
+                <th>Status</th>
+                <th />
                 <th />
               </tr>
             </thead>
             <tbody>
-              {accounts.map((b) => {
+              {shown.map((b) => {
                 const s = b.stat;
                 const canFix = s.openingGap != null && Math.abs(s.openingGap) > 1
                   && s.difference != null && Math.abs(s.difference) > 1;
+                const status = s.inBank == null
+                  ? (s.lines ? 'no balance column on the statement' : 'nothing imported yet')
+                  : (Math.abs(s.difference) < 1 ? 'agrees with the statement'
+                    : (s.implied != null && Math.abs(s.openingGap) > 1
+                      ? `out by ${signedMoney(s.difference)} — opening balance is ${money2(b.openBal)}, the statement says ${money2(s.implied)}`
+                      : `out by ${signedMoney(s.difference)} — a statement is missing —`));
                 return (
                   <tr key={b.id}>
                     <td>
-                      <b><button type="button" className="link-btn" onClick={() => open(b.id)}>{b.bank}{b.name ? ` · ${b.name}` : ''}</button></b>
-                      <div className="small-muted">
+                      <div className="s6-cell-main">{b.bank}{b.name ? ` · ${b.name}` : ''}</div>
+                      <div className="s6-cell-sub">
                         {b.accNo ? `xxxx${String(b.accNo).slice(-4)}` : 'no account number'}
-                        {s.last ? ` · last line ${fmtD(s.last)}` : ' · nothing imported yet'}
+                        {s.last ? ` · last line ${fmtLong(s.last)}` : ' · nothing imported yet'}
                       </div>
                     </td>
                     <td className="num">
                       {s.unmatched
-                        ? <button type="button" className="link-btn" style={{ color: 'var(--red)' }} onClick={() => open(b.id)}>{s.unmatched} transaction{s.unmatched === 1 ? '' : 's'}</button>
-                        : <span className="status priority-low">all filed</span>}
+                        ? <button type="button" className="s6-btn s6-link s6-mono" style={{ color: 'var(--s6-red)' }} onClick={() => open(b.id)}>{s.unmatched} transaction{s.unmatched === 1 ? '' : 's'}</button>
+                        : <span className="s6-pill green">all filed</span>}
                     </td>
-                    <td className="num">{s.inBank == null ? <span className="small-muted">no balance column</span> : money2(s.inBank)}</td>
-                    <td className="num">{money2(s.inBooks)}</td>
-                    <td className="num">
-                      <b style={{ color: gapColor(s.difference) }}>{signedMoney(s.difference)}</b>
-                      {s.difference != null && Math.abs(s.difference) > 1 && (
-                        <div className="small-muted">
-                          {s.implied == null
-                            ? 'no balance column on the statement'
-                            : (Math.abs(s.openingGap) > 1
-                              ? `opening balance is ${money2(b.openBal)}, the statement says it should be ${money2(s.implied)}`
-                              : 'a statement is missing — open the account, the table marks the day')}
+                    <td className="num s6-mono">{s.inBank == null ? '—' : money2(s.inBank)}</td>
+                    <td className="num s6-mono">{money2(s.inBooks)}</td>
+                    <td className="s6-italic" style={{ minWidth: 220 }}>
+                      {status}
+                      {canManage && canFix && (
+                        <div style={{ marginTop: 4 }}>
+                          <button
+                            type="button"
+                            className="s6-btn sm"
+                            title="Work the opening balance back from the first line the statement carries"
+                            onClick={() => call('post', `/bank/accounts/${b.id}/fix-opening`, {}, (d) => `Opening balance set to ${money2(d.implied)} — the statement works it out for you.`)}
+                          >
+                            Fix opening
+                          </button>
                         </div>
                       )}
                     </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {canManage && canFix && (
-                        <button
-                          className="btn btn-sm"
-                          title="Work the opening balance back from the first line the statement carries"
-                          onClick={() => call('post', `/bank/accounts/${b.id}/fix-opening`, {}, (d) => `Opening balance set to ${money2(d.implied)} — the statement works it out for you.`)}
-                        >
-                          Fix opening
-                        </button>
-                      )}
-                      {' '}
-                      <button className="btn btn-sm" onClick={() => open(b.id)}>Open</button>
-                      {' '}
-                      {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account: b })}>⚙</button>}
-                    </td>
+                    <td><button type="button" className="s6-btn sm" onClick={() => open(b.id)}>Open</button></td>
+                    <td>{canManage && <button type="button" className="s6-btn sm" aria-label="Account settings" onClick={() => setDialog({ kind: 'account', account: b })}>⚙</button>}</td>
                   </tr>
                 );
               })}
+              {!shown.length && <tr><td colSpan="7" className="bks-empty">{needle ? 'No account matches that search.' : 'No account yet — press Add bank or credit card.'}</td></tr>}
             </tbody>
-            {accounts.length > 1 && (
+            {shown.length > 1 && (
               <tfoot>
                 <tr>
                   <td>TOTAL</td>
-                  <td className="num">{totalUn}</td>
-                  <td className="num">{money2(totalBank)}</td>
-                  <td className="num">{money2(totalBooks)}</td>
-                  <td className="num"><b style={{ color: gapColor(totalGap) }}>{signedMoney(totalGap)}</b></td>
-                  <td />
+                  <td className="num s6-mono">{shown.reduce((s, a) => s + a.stat.unmatched, 0)}</td>
+                  <td className="num s6-mono">{money2(shown.reduce((s, a) => s + (a.stat.inBank != null ? a.stat.inBank : a.stat.inBooks), 0))}</td>
+                  <td className="num s6-mono">{money2(needle ? shown.reduce((s, a) => s + a.stat.inBooks, 0) : totalBooks)}</td>
+                  <td colSpan="3" />
                 </tr>
               </tfoot>
             )}
           </table>
+        </ScrollSync>
+      </section>
+
+      {off.length > 0 && (
+        <div className="s6-dash amber">
+          <span>
+            <b>{off.length} account{off.length === 1 ? ' does' : 's do'} not agree with the statement.</b>
+            {' '}Almost always this is the <b>opening balance</b>: the app starts from the figure on the account and adds every
+            line you import, so if that starting figure is wrong — or a statement was imported for a period before it — every
+            total after it is out by the same amount.
+            {fixable.length
+              ? ` For ${fixable.length === off.length ? 'each of them' : `${fixable.length} of them`} the statement itself says what the opening balance should be. Press Fix opening on the row and the difference clears — nothing already imported is touched.`
+              : ' Open the account and the reconciliation table marks the exact day a line is missing.'}
+          </span>
         </div>
-        {off.length > 0 && (
-          <div className="notice amber" style={{ marginTop: 12 }}>
-            <span>
-              <b>{off.length} account{off.length === 1 ? ' does' : 's do'} not agree with the statement.</b>
-              {' '}Almost always this is the <b>opening balance</b>: the app starts from the figure on the account and adds every
-              line you import, so if that starting figure is wrong — or a statement was imported for a period before it — every
-              total after it is out by the same amount.
-              {fixable.length
-                ? ` For ${fixable.length === off.length ? 'each of them' : `${fixable.length} of them`} the statement itself says what the opening balance should be. Press Fix opening on the row and the difference clears — nothing already imported is touched.`
-                : ' Open the account and the reconciliation table marks the exact day a line is missing.'}
-            </span>
-          </div>
-        )}
-        <div className="small-muted" style={{ marginTop: 8 }}>
-          <b>Amount in bank</b> is the closing balance printed on the last statement you imported.
-          {' '}<b>Amount in the books</b> is this account&rsquo;s opening balance plus every line imported.
-          {' '}Where they differ, a statement is missing — open the account and the table marks the exact day.
-        </div>
+      )}
+      <div className="s6-foot" style={{ marginBottom: 16 }}>
+        <b>Amount in bank</b> is the closing balance printed on the last statement you imported.
+        {' '}<b>Amount in the books</b> is this account&rsquo;s opening balance plus every line imported.
+        {' '}Where they differ, a statement is missing — open the account and the table marks the exact day.
       </div>
+
+      <BankStatements />
     </div>
   );
+}
+
+// "⬇ Whole workbook" — the file comes from the API with the login's token.
+async function downloadWorkbook() {
+  try {
+    const r = await api.get('/bank/workbook', { responseType: 'blob' });
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bank-and-reconciliation-${todayLocal()}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch {
+    // eslint-disable-next-line no-alert
+    window.alert('The workbook could not be made just now — try again in a moment.');
+  }
 }
 
 // ===========================================================================
@@ -394,6 +571,7 @@ function AccountView({
     if (pill === 'rec') list = list.filter((t) => t.read && t.read.kind !== 'none');
     else if (pill === 'pos') list = list.filter(isPossible);
     else if (pill === 'ex') list = transactions.filter((t) => t.excluded);
+    else if (pill === 'rev') list = list.filter((t) => t.plan);
   }
   const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS });
   const pg = usePaged(lf.rows, 50);
@@ -403,6 +581,8 @@ function AccountView({
   // Credits the narration points at an invoice for, but not clearly enough to
   // post on their own (spec 3 part 3) — waiting for a person to confirm.
   const possibleCount = transactions.filter((t) => !t.excluded && t.state !== 'Reconciled' && !t.category && !t.categoryKind && isPossible(t)).length;
+  // S5: lines the app has a suggestion for — one-click Accept.
+  const reviewCount = transactions.filter((t) => t.plan).length;
   const total = lf.rows.length;
   const shown = pg.slice;
 
@@ -446,7 +626,7 @@ function AccountView({
 
       {tab === 'un' && (
         <div className="filter-row" style={{ alignItems: 'center' }}>
-          {[['all', 'All', s.unmatched], ['rec', 'Recognised', s.recognised], ['pos', 'Possible matches', possibleCount], ['ex', 'Excluded', s.excluded]].map(([k, l, n]) => (
+          {[['all', 'All', s.unmatched], ['rev', 'Needs your review', reviewCount], ['rec', 'Recognised', s.recognised], ['pos', 'Possible matches', possibleCount], ['ex', 'Excluded', s.excluded]].map(([k, l, n]) => (
             <button key={k} className={`btn btn-sm ${pill === k ? 'btn-primary' : ''}`} onClick={() => { setPill(k); setPage(0); }}>
               {l} ({n})
             </button>
@@ -483,7 +663,10 @@ function AccountView({
                     ? <button type="button" className="link-btn" onClick={() => setDialog({ kind: 'catz', txn: t, tab: t.read?.kind === 'expense' ? 'cat' : 'match' })}>{money2(t.amount)}</button>
                     : money2(t.amount))}
                 </td>
-                <td><Thinks txn={t} /></td>
+                <td>
+                  <Thinks txn={t} />
+                  {t.plan && <PlanLine txn={t} canManage={canManage} act={act} busy={busy} />}
+                </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {!canManage ? <span className="cell-muted">—</span> : (t.state === 'Reconciled' || t.category || t.categoryKind) ? (
                     <>
@@ -498,7 +681,10 @@ function AccountView({
                     </>
                   ) : (
                     <>
-                      <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'match' })}>Match</button>{' '}
+                      {/* P4: a client-only line whose client has several open invoices says so. */}
+                      <button className="btn btn-primary btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'match' })}>
+                        {t.type === 'Credit' && t.read?.kind === 'named' && (t.read.options || []).length > 1 ? 'Select invoice' : 'Match'}
+                      </button>{' '}
                       <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'cat' })}>Categorise</button>{' '}
                       <button className="btn btn-sm" onClick={() => act(t.id, 'exclude', { excluded: !t.excluded })}>{t.excluded ? 'Bring back' : 'Exclude'}</button>
                     </>
@@ -525,6 +711,30 @@ function AccountView({
 
       <DuplicatesCard position={position} accountId={accountId} call={call} canManage={canManage} />
       <HowMatchCard position={position} />
+    </div>
+  );
+}
+
+// S5: the app's suggestion for a line nobody has filed, with one-click Accept
+// (POST /bank/:id/accept — the same match + proof the import runs on its own).
+const PLAN_TONE = { high: ['green', 'sure'], medium: ['amber', 'likely'], low: ['red', 'a guess'] };
+function PlanLine({ txn, canManage, act, busy }) {
+  const p = txn.plan;
+  const [tone, word] = PLAN_TONE[p.confidence] || PLAN_TONE.low;
+  return (
+    <div className="bk-plan">
+      <span className={`s6-pill ${tone}`}>{word}</span>
+      <span>Suggested: <b>{p.label}</b></span>
+      {canManage && (
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={busy === `${txn.id}:accept`}
+          onClick={() => act(txn.id, 'accept', { key: p.key }, (d) => `Accepted — ${d.label}. The bank line is filed as its proof${d.rule ? ` · next time "${d.rule.match}" is filed on its own` : ''}.`)}
+        >
+          Accept
+        </button>
+      )}
     </div>
   );
 }
@@ -983,6 +1193,13 @@ function Actions({ txn, openInvoices, picked, onPick, act, busy, setDialog, canM
           Post{multi ? ` all ${r.plan.parts.length}` : ''} to {String(r.client || '').split(' ')[0]}
         </button>
       )}
+      {/* P4 — the narration names only the client and they have several open
+          invoices: pick the one this money is for, with its GST / TDS breakdown. */}
+      {r && r.kind === 'named' && (r.options || []).length > 1 && (
+        <button className="btn btn-sm" title="Pick which of their invoices this is — the panel shows gross, TDS and the net receivable against the bank amount" onClick={() => setDialog({ kind: 'catz', txn, tab: 'match' })}>
+          Select invoice
+        </button>
+      )}
       {txn.suggestion && !sure && (
         <button className="btn btn-primary btn-sm" disabled={waiting('match')} onClick={() => act(txn.id, 'match')}>
           Match to {txn.suggestion.invoiceNumber}
@@ -1334,9 +1551,11 @@ function HowMatchCard({ position }) {
 // Dialogs
 // ===========================================================================
 
-function Dialogs({ dialog, setDialog, setNote, accountId, accounts, call, load, rules, clientNames }) {
+function Dialogs({
+  dialog, setDialog, setNote, accountId, accounts, call, load, rules, clientNames, onReview,
+}) {
   const close = () => setDialog(null);
-  if (dialog.kind === 'import') return <AccountsImport kind="bank" bankAccountId={accountId} onClose={close} onDone={load} />;
+  if (dialog.kind === 'import') return <AccountsImport kind="bank" bankAccountId={accountId} onClose={close} onDone={load} onReview={onReview} />;
   if (dialog.kind === 'account') return <AccountDialog account={dialog.account} accounts={accounts} onClose={close} call={call} />;
   if (dialog.kind === 'entry') return <EntryDialog accountId={accountId} onClose={close} call={call} />;
   if (dialog.kind === 'mark') return <MarkDialog accountId={accountId} onClose={close} call={call} />;

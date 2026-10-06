@@ -113,12 +113,12 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
   const roll = await D.rollOf(prisma, employees);
   const asOf = period.to < D.localDate() ? period.to : D.localDate();
   const onDay = roll.employees.filter((e) => D.onRolls(e, asOf, asOf, roll.lastDayOf));
-  const dayLoad = await D.loadDays(prisma, { employees: onDay, from: asOf, to: asOf, cfg, lastDayOf: roll.lastDayOf });
+  const dayLoad = await D.loadDays(prisma, { employees: onDay, from: asOf, to: asOf, cfg, lastDayOf: roll.lastDayOf, preview: true });
   const dayTally = D.tally(onDay.map((e) => dayLoad.days(e)[0]));
   let computed = null;
   if (period.days <= insights.MAX_DAY_RANGE) {
     const working = roll.employees.filter((e) => D.onRolls(e, period.from, period.to, roll.lastDayOf));
-    const { days } = await D.loadDays(prisma, { employees: working, from: period.from, to: period.to, cfg, lastDayOf: roll.lastDayOf });
+    const { days } = await D.loadDays(prisma, { employees: working, from: period.from, to: period.to, cfg, lastDayOf: roll.lastDayOf, preview: true });
     const per = working.map((e) => {
       const rows = days(e).filter((d) => !['Upcoming', 'Not Joined', 'Left'].includes(d.status));
       return { employee: e, rows, summary: D.summarise(rows) };
@@ -142,22 +142,62 @@ router.get('/', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), async (req,
   const deptCounts = {};
   employees.forEach((e) => { if (e.department) deptCounts[e.department] = (deptCounts[e.department] || 0) + 1; });
 
+  // Spec item 8 — BIRTHDAYS (and work anniversaries) ONLY FOR PEOPLE STILL
+  // WORKING HERE. Inactive, suspended, resigned (serving notice) and exited
+  // employees are left out, whatever filter the dashboard has, and so is any
+  // test row. Soonest first, so "next 30 days" reads in date order.
+  const celebrating = employees.filter((e) => hrStatusOf(e.employmentStatus, e.user && e.user.status) === 'Active'
+    && !/zztest|example\.test/i.test(`${e.name} ${e.email || ''}`));
+  const daysUntil = (dateStr) => {
+    const d = new Date(dateStr);
+    const now = new Date(new Date().toISOString().slice(0, 10));
+    let next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
+    if (next < now) next = new Date(now.getFullYear() + 1, d.getMonth(), d.getDate());
+    return (next - now) / DAY_MS;
+  };
+  const soonest = (field) => (a, b) => daysUntil(a[field]) - daysUntil(b[field]);
   const celebrations = [
-    ...employees.filter((e) => withinNextDays(e.dateOfBirth, 30)).slice(0, 4)
+    ...celebrating.filter((e) => withinNextDays(e.dateOfBirth, 30)).sort(soonest('dateOfBirth')).slice(0, 4)
       .map((e) => ({ name: e.name, kind: 'Birthday', date: e.dateOfBirth })),
-    ...employees.filter((e) => e.dateOfJoining && withinNextDays(e.dateOfJoining, 30) && new Date(e.dateOfJoining).getFullYear() < new Date().getFullYear()).slice(0, 4)
+    ...celebrating.filter((e) => e.dateOfJoining && withinNextDays(e.dateOfJoining, 30) && new Date(e.dateOfJoining).getFullYear() < new Date().getFullYear()).sort(soonest('dateOfJoining')).slice(0, 4)
       .map((e) => ({ name: e.name, kind: 'Work Anniversary', date: e.dateOfJoining })),
   ];
 
   res.json({
     date: today,
     period,
-    filterOptions: {
-      departments: [...new Set(allEmployees.map((e) => e.department).filter(Boolean))].sort(),
-      locations: [...new Set(allEmployees.map((e) => e.location).filter(Boolean))].sort(),
-      statuses: HR_STATUSES,
-      managers: [...new Map(allEmployees.filter((e) => e.reportingManager).map((e) => [e.reportingManagerId, { id: e.reportingManagerId, name: e.reportingManager.name }])).values()],
-    },
+    // THE FILTERS CASCADE (filter rule, 2026-10-03): each list is counted over
+    // the people the OTHER filters leave, and an option with nobody behind it
+    // is not offered (the value already chosen always stays). `counts` holds
+    // the numbers the pickers print beside each option.
+    filterOptions: (() => {
+      const without = (k) => allEmployees.filter((e) => matchesFilters(e, { ...req.query, [k]: '' }));
+      const tally = (list, keyOf) => {
+        const m = new Map();
+        list.forEach((e) => { const k = keyOf(e); if (k) m.set(k, (m.get(k) || 0) + 1); });
+        return m;
+      };
+      const keep = (m, chosen) => { if (chosen && !m.has(chosen)) m.set(chosen, 0); return m; };
+      const dept = keep(tally(without('department'), (e) => e.department), req.query.department);
+      const loc = keep(tally(without('location'), (e) => e.location), req.query.location);
+      const stat = tally(without('status'), (e) => hrStatusOf(e.employmentStatus, e.user && e.user.status));
+      const forMgr = without('manager');
+      const mgr = tally(forMgr, (e) => e.reportingManagerId);
+      // Spec item 7 — every reporting manager of the people on this dashboard.
+      const mgrName = new Map(allEmployees.filter((e) => e.reportingManager).map((e) => [e.reportingManagerId, e.reportingManager.name]));
+      if (req.query.manager && !mgr.has(req.query.manager)) mgr.set(req.query.manager, 0);
+      return {
+        departments: [...dept.keys()].sort(),
+        locations: [...loc.keys()].sort(),
+        statuses: HR_STATUSES.filter((s) => stat.has(s) || s === req.query.status),
+        managers: [...mgr.keys()].filter((id) => mgrName.has(id))
+          .map((id) => ({ id, name: mgrName.get(id), count: mgr.get(id) }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        counts: {
+          department: Object.fromEntries(dept), location: Object.fromEntries(loc), status: Object.fromEntries(stat),
+        },
+      };
+    })(),
     employeeOverview: {
       total: employees.length,
       active: employees.filter((e) => e.employmentStatus === 'Active').length,

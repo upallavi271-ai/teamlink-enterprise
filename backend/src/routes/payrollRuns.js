@@ -15,7 +15,15 @@
 //   POST   /entries/sync     {ids | month}      APPROVED -> SYNCED_TO_ACCOUNTS      (Accounts, SA/Admin)
 //   POST   /entries/mark-paid {ids | month, paidDate?, bankTransactionId?, reference?}
 //                                               SYNCED_TO_ACCOUNTS -> PAID          (Accounts, SA/Admin)
-//   GET    /entries/:id/bank-matches            candidate bank debits for Mark paid
+//   S3 (2026-10-05) — ONE journal per month (utils/payrollPosting.js):
+//     approve that finalizes the month posts it automatically;
+//   GET    /runs/:month/accounts                Posted / Not posted, the JE, the reason
+//   POST   /runs/:month/post                    "Post to Accounts" (finalized, unposted)
+//   POST   /runs/:month/reopen {reason}         reversal JE + records back to Draft
+//   POST   /runs/:month/mark-paid {bankAccountId?, paidDate?, bankTransactionId?, reference?}
+//                                               Dr Salary Payable / Cr Bank
+//   GET    /runs/:month/bank-matches?bankAccountId=  statement debits = the month's net
+//   (/entries/sync and /entries/mark-paid now take {month} and act on the month)
 //   GET    /sync-logs?month=&status=            the delivery log
 //   POST   /sync-logs/:id/retry                 retry one row
 //   POST   /sync-logs/sweep                     run the automatic retry sweep now
@@ -37,6 +45,8 @@ const { monthLabel } = require('../utils/attendanceMath');
 const { NOT_SYSTEM_EMPLOYEE } = require('../utils/systemAccounts');
 const E = require('../utils/payrollEngine');
 const S = require('../utils/payrollSync');
+// S3 (2026-10-05): ONE journal per payroll month (utils/payrollPosting.js).
+const P = require('../utils/payrollPosting');
 const { compliance } = require('../utils/payrollReports');
 const { toCsv, toXlsx } = require('../utils/tabularExport');
 const { notifyDataIo } = require('../utils/dataIoNotify');
@@ -183,7 +193,8 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     return res.json({
       entry: { ...e, statusLabel: E.STATUS_LABEL[e.status] },
       version, history, syncLogs: logs,
-      journalPayload: S.buildAccrualPayload(e, e.employee),
+      // This employee's share of the month's one journal entry.
+      journalPayload: await P.employeeShare(e),
     });
   });
 
@@ -289,60 +300,109 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     return bulk(req, res, 'PENDING_APPROVAL', (e) => E.transition(e.id, 'reject', actor(req), { reason: String(req.body.reason).trim() }));
   });
 
+  // Approve = finalize. When the approval leaves no record of the month in
+  // Draft / Pending, the month's ONE journal is posted to Accounts at once
+  // (S3.1). The approval stands even if posting fails — the month then shows
+  // "Not posted" with the reason, a "Post to Accounts" button and the retry.
   router.post('/entries/approve', need('approve'), async (req, res) => {
-    const access = await accessOf(req);
-    const syncNow = req.body.sync !== false && access.post;
-    return bulk(req, res, 'PENDING_APPROVAL', async (e) => {
-      const approved = await E.transition(e.id, 'approve', actor(req));
-      await S.queueAccrual(approved.id);
-      if (!syncNow) return approved;
-      const r = await S.syncEntry(approved.id, actor(req));
-      // Approval stands even if Accounts is down; the log and the sweep retry it.
-      return { ok: true, entry: r.entry, syncError: r.ok ? null : r.log.lastError };
-    });
-  });
-
-  router.post('/entries/sync', need('post'), (req, res) => bulk(req, res, 'APPROVED', (e) => S.syncEntry(e.id, actor(req))));
-
-  router.post('/entries/mark-paid', need('post'), async (req, res) => {
-    const paidDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.paidDate || '')) ? req.body.paidDate : undefined;
-    const reference = req.body.reference ? String(req.body.reference).slice(0, 120) : undefined;
-    const txnId = req.body.bankTransactionId || null;
-    const t = await targetEntries(req, 'SYNCED_TO_ACCOUNTS');
-    if (!t) return res.status(400).json({ error: 'Pass ids, or a month (YYYY-MM)' });
-    // One bank debit for several records (a salary batch): it must equal their
-    // total net pay, and it is linked once to all of them.
-    const batch = txnId && t.list.length > 1;
-    if (batch) {
-      const txn = await prisma.bankTransaction.findUnique({ where: { id: txnId } });
-      if (!txn || txn.type !== 'Debit') return res.status(400).json({ error: 'That bank transaction is not a debit on the statement' });
-      if (txn.matched || txn.reconStatus !== 'Unmatched') return res.status(409).json({ error: 'That bank transaction is already matched' });
-      const total = t.list.filter((e) => e.status === 'SYNCED_TO_ACCOUNTS').reduce((n, e) => n + Math.round(e.netPay * 100), 0);
-      if (Math.round(txn.amount * 100) !== total) return res.status(400).json({ error: `The bank debit (${txn.amount}) is not the total net pay of these records (${(total / 100).toFixed(2)})` });
-    }
-    const r = await runBulk(req, 'SYNCED_TO_ACCOUNTS', (e) => S.payEntry(e.id, actor(req), {
-      paidDate, reference, bankTransactionId: txnId, batchTxn: !!batch, autoMatch: !txnId,
-    }));
-    if (batch && r.body.ok > 0) {
-      const names = r.body.results.filter((x) => x.ok).map((x) => x.name).join(', ');
-      await S.linkBankTransaction(txnId, `Salary batch: ${names}`, actor(req));
+    const r = await runBulk(req, 'PENDING_APPROVAL', (e) => E.transition(e.id, 'approve', actor(req)));
+    const months = r.body.results.filter((x) => x.ok).length
+      ? (await prisma.employeePayrollRun.findMany({ where: { id: { in: r.body.results.filter((x) => x.ok).map((x) => x.id) } }, select: { month: true } })).map((x) => x.month)
+      : [];
+    if (months.length) {
+      const posting = await P.postIfFinalized(months, { id: req.user.id, name: `${req.user.name || req.user.email} (finalized)` });
+      r.body.posting = posting;
     }
     return res.status(r.status).json(r.body);
   });
 
-  router.get('/entries/:id/bank-matches', need('post'), async (req, res) => {
-    const e = await scopedEntry(req, res);
-    if (!e) return undefined;
-    const cands = await prisma.bankTransaction.findMany({
-      where: { type: 'Debit', matched: false, reconStatus: 'Unmatched', date: { gte: `${e.month}-01` } },
-      orderBy: { date: 'asc' }, take: 200,
-    });
-    const net = Math.round(e.netPay * 100);
-    const auto = await S.findBankMatch(e, e.employee);
-    return res.json({
-      suggested: auto ? auto.id : null,
-      candidates: cands.filter((t) => Math.round(t.amount * 100) === net).map((t) => ({ id: t.id, date: t.date, description: t.description, amount: t.amount, reference: t.reference })),
-    });
+  // ---- The month and Accounts (S3) ----------------------------------------------
+  const monthOf = (req) => (E.isMonth(req.params.month) ? req.params.month : null);
+  const needAny = (...flags) => async (req, res, next) => {
+    try {
+      const a = await accessOf(req);
+      return flags.some((f) => a[f]) ? next() : res.status(403).json(DENIED);
+    } catch (err) { return next(err); }
+  };
+
+  router.get('/runs/:month/accounts', need('view'), async (req, res) => {
+    const month = monthOf(req);
+    if (!month) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const st = await P.monthState(month);
+    return res.json({ ...st, voucherNo: st.journalEntry ? await P.voucherNo(st.journalEntry) : null, access: await accessOf(req) });
+  });
+
+  // "Post to Accounts" — a finalized month that is not posted (e.g. a
+  // mapping was missing, or Accounts was down). Same as the automatic post.
+  router.post('/runs/:month/post', needAny('approve', 'post'), async (req, res) => {
+    const month = monthOf(req);
+    if (!month) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    try {
+      const r = await P.postMonth(month, actor(req));
+      if (!r.ok) return res.status(502).json({ error: `Could not post to Accounts: ${r.error}`, state: r.state });
+      return res.json(r);
+    } catch (err) { return fail(res, err); }
+  });
+
+  // Re-open to correct: the posted journal is REVERSED (never edited), the
+  // records go back to Draft; finalizing again books a new journal.
+  router.post('/runs/:month/reopen', needAny('approve', 'post'), async (req, res) => {
+    const month = monthOf(req);
+    if (!month) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const reason = String((req.body && req.body.reason) || '').trim();
+    if (!reason) return res.status(400).json({ error: 'Say why the payroll is being re-opened.' });
+    try {
+      const r = await P.reverseMonth(month, actor(req), { toStatus: 'DRAFT', reason });
+      if (!r.ok) return res.status(502).json({ error: `Could not book the reversal in Accounts: ${r.error}`, state: r.state });
+      return res.json(r);
+    } catch (err) { return fail(res, err); }
+  });
+
+  // Salary payment: Dr Salary Payable / Cr the chosen bank (S3.4).
+  router.post('/runs/:month/mark-paid', need('post'), async (req, res) => {
+    const month = monthOf(req);
+    if (!month) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const b = req.body || {};
+    try {
+      const r = await P.payMonth(month, actor(req), {
+        bankAccountId: b.bankAccountId || null,
+        paidDate: /^\d{4}-\d{2}-\d{2}$/.test(String(b.paidDate || '')) ? b.paidDate : null,
+        bankTransactionId: b.bankTransactionId || null,
+        reference: b.reference ? String(b.reference).slice(0, 120) : null,
+      });
+      if (!r.ok) return res.status(502).json({ error: `Could not book the payment in Accounts: ${r.error}`, state: r.state });
+      return res.json(r);
+    } catch (err) { return fail(res, err); }
+  });
+
+  router.get('/runs/:month/bank-matches', need('post'), async (req, res) => {
+    const month = monthOf(req);
+    if (!month) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const [m, banks] = await Promise.all([
+      P.bankMatches(month, req.query.bankAccountId ? String(req.query.bankAccountId) : null),
+      prisma.bankAccount.findMany({ where: { active: true }, orderBy: { createdAt: 'asc' }, select: { id: true, bank: true, name: true, accNo: true } }),
+    ]);
+    return res.json({ ...m, banks: banks.map((x) => ({ id: x.id, label: `${x.bank}${x.accNo ? ` ·${String(x.accNo).slice(-4)}` : ''}${x.name ? ` — ${x.name}` : ''}` })) });
+  });
+
+  // The old per-record routes now act on the whole month.
+  router.post('/entries/sync', needAny('approve', 'post'), async (req, res) => {
+    if (!E.isMonth(req.body.month)) return res.status(400).json({ error: 'Payroll is posted to Accounts once for the whole month — pass the month (YYYY-MM).' });
+    try {
+      const r = await P.postMonth(req.body.month, actor(req));
+      return res.status(r.ok ? 200 : 502).json(r.ok ? r : { error: r.error, state: r.state });
+    } catch (err) { return fail(res, err); }
+  });
+
+  router.post('/entries/mark-paid', need('post'), async (req, res) => {
+    if (!E.isMonth(req.body.month)) return res.status(400).json({ error: 'Salary is marked paid for the whole month — pass the month (YYYY-MM).' });
+    try {
+      const r = await P.payMonth(req.body.month, actor(req), {
+        bankAccountId: req.body.bankAccountId || null, paidDate: req.body.paidDate || null,
+        bankTransactionId: req.body.bankTransactionId || null, reference: req.body.reference || null,
+      });
+      return res.status(r.ok ? 200 : 502).json(r.ok ? r : { error: r.error, state: r.state });
+    } catch (err) { return fail(res, err); }
   });
 
   // ---- Sync log ---------------------------------------------------------------------------
@@ -359,7 +419,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const of = new Map(entries.map((e) => [e.id, e]));
     res.json(logs.map((l) => ({
       ...l, payload: l.payload ? JSON.parse(l.payload) : null,
-      employeeName: of.get(l.employeePayrollRunId)?.employee.name || null,
+      employeeName: of.get(l.employeePayrollRunId)?.employee.name || (String(l.kind).startsWith('MONTH') ? `Whole month · ${monthLabel(l.month)}` : null),
       employeeCode: of.get(l.employeePayrollRunId)?.employee.employeeCode || null,
       entryStatus: of.get(l.employeePayrollRunId)?.status || null,
     })));
@@ -367,6 +427,18 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
 
   router.post('/sync-logs/:id/retry', need('post'), async (req, res) => {
     try {
+      const row = await prisma.payrollSyncLog.findUnique({ where: { id: req.params.id } });
+      if (row && String(row.kind).startsWith('MONTH')) {
+        // A month-level booking: run the same action again (idempotent).
+        let r;
+        if (row.kind === 'MONTH') r = await P.postMonth(row.month, actor(req));
+        else if (row.kind === 'MONTH_PAYMENT') {
+          const p = JSON.parse(row.payload || '{}');
+          r = await P.payMonth(row.month, actor(req), { bankAccountId: p.bank_account_id || null, paidDate: p.date, bankTransactionId: p.bank_transaction_id || null });
+        } else r = await P.reverseMonth(row.month, actor(req), { toStatus: 'DRAFT', reason: 'Retry of the reversal' });
+        const log = await prisma.payrollSyncLog.findUnique({ where: { id: row.id } });
+        return res.status(r.ok ? 200 : 502).json({ ok: r.ok, log, error: r.ok ? undefined : r.error });
+      }
       const r = await S.retryLog(req.params.id, actor(req));
       return res.status(r.ok ? 200 : 502).json({ ok: r.ok, log: r.log, entry: r.entry, error: r.ok ? undefined : r.log && r.log.lastError });
     } catch (err) { return fail(res, err); }

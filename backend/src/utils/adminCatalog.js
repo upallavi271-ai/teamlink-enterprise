@@ -64,23 +64,33 @@ const INTEGRATION_CATALOG = [
     desc: 'Auto-create meeting links when an interview is scheduled.',
     fields: [['Provider (Meet / Zoom / Teams)', ''], ['Client ID', ''], ['Client secret', '']] },
   { id: 'calendar', name: 'Calendar Sync', group: 'Scheduling', glyph: '\u{1F4C5}',
-    desc: 'Two-way sync of interview slots with Google or Outlook calendars.',
-    fields: [['Provider (Google / Outlook)', ''], ['Client ID', ''], ['Client secret', ''], ['Default calendar', '']] },
+    // B4 (2026-10-06): REAL for "Create meeting link" on an interview —
+    // Google Calendar API (Meet) or Microsoft Graph (Teams). utils/meetingLinks.js
+    // has the official doc links and the exact setup steps.
+    desc: 'Create real Google Meet / Microsoft Teams links for interviews ("Create meeting link"). Google: Client ID, secret and a refresh token. Microsoft: Tenant ID, Client ID, secret and the organizer mailbox.',
+    fields: [['Provider (Google / Outlook)', 'Google or Outlook'], ['Client ID', ''], ['Client secret', ''], ['Default calendar', 'primary'],
+      ['Refresh token (Google)', 'Google only'], ['Tenant ID (Microsoft)', 'Microsoft only'], ['Organizer email (Microsoft)', 'Microsoft only, e.g. interviews@yourcompany.com']] },
   { id: 'jobportal', name: 'TeamLink Job Portal', group: 'Job Boards', glyph: '\u{1F517}',
     desc: 'The candidate-facing TeamLink Job Portal — syncs candidates, applications, requirements and job status.',
     fields: [['Portal URL / origin', 'file:// or https://'], ['Bridge key', 'tl_job_portal_state_v1'], ['Sync frequency', 'On demand']] },
   { id: 'naukri', name: 'Naukri', group: 'Job Boards', glyph: '\u{1F50D}',
-    desc: 'Post requirements and pull applicant responses into the candidate database.',
-    fields: [['Recruiter account email', ''], ['API key', '']] },
+    // SAVE & POST (2026-10-05) — REAL connectors (utils/jobConnectors.js,
+    // utils/jobBoards/*.js). The fields are exactly what each board's approved
+    // route needs; each list lives with the connector that reads it.
+    desc: 'Save & Post sends jobs to Naukri through Naukri\'s ATS integration "Amplify" (Zwayam). Naukri has no public API: buy the job-posting plan with Amplify from your Naukri account manager or amplify@zwayam.com; they give the API key, secret key and job endpoint.',
+    fields: require('./jobBoards/partner').naukri.FIELDS }, // eslint-disable-line global-require
   { id: 'linkedin', name: 'LinkedIn Recruiter', group: 'Job Boards', glyph: '\u{1F517}',
-    desc: 'Publish jobs and import candidate profiles.',
-    fields: [['Organization ID', ''], ['Client ID', ''], ['Client secret', '']] },
+    desc: 'Save & Post sends jobs through LinkedIn\'s Job Posting API (approved partners only; LinkedIn is not taking new API partners right now). Ask LinkedIn Talent Solutions for partner access, then enter the company page id, app Client ID / secret, poster email and API version.',
+    fields: require('./jobBoards/linkedin').FIELDS }, // eslint-disable-line global-require
   { id: 'indeed', name: 'Indeed', group: 'Job Boards', glyph: '\u{1F4CC}',
-    desc: 'Publish requirements to Indeed and pull applicant responses.',
-    fields: [['Employer account email', ''], ['API key', '']] },
+    desc: 'Save & Post sends jobs through Indeed\'s Job Sync API. Needs an Indeed partner account: sign the Developer Agreement and apply at partners.indeed.com; the Client ID / secret are in the Indeed Partner Console.',
+    fields: require('./jobBoards/indeed').FIELDS }, // eslint-disable-line global-require
   { id: 'shine', name: 'Shine', group: 'Job Boards', glyph: '✨',
-    desc: 'Publish requirements to Shine and pull applicant responses.',
-    fields: [['Recruiter account email', ''], ['API key', '']] },
+    desc: 'Save & Post sends jobs to Shine once Shine gives you an ATS job-posting API account (no public API: ask your Shine employer sales / account manager). Enter the API key and job endpoint they give.',
+    fields: require('./jobBoards/partner').shine.FIELDS }, // eslint-disable-line global-require
+  { id: 'google-jobs', name: 'Google for Jobs', group: 'Job Boards', glyph: '\u{1F50E}',
+    desc: 'Jobs are in our Google Jobs (JobPosting) data at once. With a Google Cloud service account (Indexing API on, added as Owner in Search Console) TeamLink tells Google about each job and confirms when Google shows it.',
+    fields: require('./jobBoards/google').FIELDS }, // eslint-disable-line global-require
   { id: 'website', name: 'TeamLink Website', group: 'Job Boards', glyph: '\u{1F310}',
     desc: 'Publish openings to the careers page on tmlink.in.',
     fields: [['Careers page URL', ''], ['Publish token', '']] },
@@ -99,16 +109,20 @@ const INTEGRATION_CATALOG = [
   // employee's documents, so the fields are the account's, not one document's.
   // Endpoint carries the sandbox or production URL, because getting those two
   // the wrong way round is the usual way a first eSign goes missing.
-  { id: 'esign', name: 'Aadhaar eSign (eMudhra / NSDL / Digio)', group: 'Compliance', glyph: '\u{1F58A}️',
-    desc: 'Legally recognised Aadhaar eSign for client agreements (both sides) and employee documents. '
-      + 'Requires a subscription with a licensed ASP/ESP.',
+  // 2026-10-05: REAL for eMudhra — the emSigner SIGNER GATEWAY (no ASP
+  // registration needed), see utils/emudhra.js for the official doc links.
+  // The client's 4th signing choice on the agreement link appears only when
+  // these are filled; Test checks the setup and never calls eMudhra.
+  { id: 'esign', name: 'eMudhra eSign (Aadhaar)', group: 'Compliance', glyph: '\u{1F58A}️',
+    desc: 'Aadhaar eSign for client agreements through the eMudhra emSigner Signer Gateway. '
+      + 'Needs a Signer Gateway subscription from eMudhra (support@emsigner.com).',
     fields: [
-      ['Provider', 'eMudhra'],
-      ['ASP ID', ''],
-      ['API key', ''],
-      ['API secret', ''],
-      ['Endpoint URL', 'https://…/esign/v3'],
-      ['Callback URL', 'https://your-teamlink-host/api/agreement/esign/callback'],
+      ['Environment', 'Sandbox'],
+      ['Gateway URL', 'https://testgateway.emsigner.com/eMsecure/V3_0/Index'],
+      ['Status / download API base URL', 'https://testgateway.emsigner.com/api'],
+      ['Auth token', ''],
+      ['eMudhra public certificate (PEM)', '-----BEGIN CERTIFICATE----- …'],
+      ['POST field names (Parameter 1,2,3)', 'Parameter1,Parameter2,Parameter3'],
     ] },
   { id: 'tally', name: 'Tally / Accounting', group: 'Finance', glyph: '\u{1F4D2}',
     desc: 'Push invoices and payments into the accounting ledger.',
@@ -134,6 +148,14 @@ const INTEGRATION_CATALOG = [
   // key stays on the server: it is encrypted at rest and is never included in
   // any response. The Agent never acts without the user pressing Confirm, and
   // then only through the app's own routes.
+  // REAL (ATS-100 B9.5). Cloudflare Turnstile on the public careers apply
+  // form (utils/botProtection.js). Until a Site key + Secret key are saved
+  // the apply keeps its honeypot + rate limit and is never blocked.
+  // Setup: dash.cloudflare.com → Turnstile → Add site → copy Site key +
+  // Secret key here → Connect. The secret is encrypted at rest.
+  { id: 'turnstile', name: 'Bot protection (Cloudflare Turnstile)', group: 'Developer', glyph: '\u{1F6E1}️',
+    desc: 'Stops bots on the public careers apply form. Free Cloudflare account: Turnstile → Add site → paste the Site key and Secret key here. Not configured = honeypot + rate limit only, applies never blocked.',
+    fields: [['Site key', '0x4AAAAAAA…'], ['Secret key', '']] },
   { id: 'ai-claude', name: 'AI Assistant (Anthropic Claude)', group: 'AI', glyph: '\u{1F916}',
     desc: 'Claude for the AI Assistant and Agent (when AI_PROVIDER=claude) and the weekly-idea screener — always inside the asking user’s permissions and scope.',
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
@@ -144,7 +166,9 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp'];
+const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+// The job boards Save & Post really posts to (utils/jobConnectors.js).
+const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 
 const INTEGRATION_STATES = ['Not Connected', 'Connected', 'Expired', 'Reconnect Required'];
 
@@ -195,6 +219,7 @@ module.exports = {
   INTEGRATION_CATALOG,
   INTEGRATION_GROUPS,
   LIVE_CHANNELS,
+  JOB_BOARD_CHANNELS,
   INTEGRATION_STATES,
   SYNC_ENTITIES,
   ORG_STRUCTURE_DEFAULT,

@@ -19,6 +19,11 @@ export const CODES = {
   FORBIDDEN:           'FORBIDDEN',
   NOT_FOUND:           'NOT_FOUND',
   DUPLICATE_APPLICATION: 'DUPLICATE_APPLICATION',
+  // A candidate is being entered by hand whose email or mobile already
+  // belongs to somebody. Not an error the recruiter cannot pass - the
+  // form offers to open the existing record or to go on deliberately -
+  // so it carries the matches in `details.duplicates`.
+  DUPLICATE_CANDIDATE: 'DUPLICATE_CANDIDATE',
   JOB_UNAVAILABLE:     'JOB_UNAVAILABLE',
   EMAIL_TAKEN:         'EMAIL_TAKEN',
   UPLOAD_FAILED:       'UPLOAD_FAILED',
@@ -64,9 +69,34 @@ export function fromPgError(err) {
     return conflict(CODES.EMAIL_TAKEN, 'An account with that email already exists.');
   }
 
+  /*
+   * 0091: the hold rules, refused by the database. The message is written
+   * for a person; the DETAIL is JSON the screen uses to offer "Message
+   * <holder>" and "Request admin override".
+   */
+  if (c === 'TLB01' || c === 'TLD01') {
+    let details;
+    try { details = { engagement: JSON.parse(err.detail || '{}') }; } catch { details = undefined; }
+    return new ApiError(409, c === 'TLB01' ? 'ENGAGEMENT_BLOCKED' : 'DUPLICATE_SUBMISSION',
+      String(err.message || 'Another recruiter holds this candidate for this role.'), details);
+  }
+
+  /* 0107: the walk-in ATS stage machine, refused by the database. */
+  if (typeof c === 'string' && /^TLW0\d$/.test(c)) {
+    const map = {
+      TLW01: [409, 'INVALID_TRANSITION'], TLW02: [400, 'REASON_REQUIRED'], TLW03: [409, 'STALE_VERSION'],
+      TLW04: [409, 'OUTSIDE_DRIVE_WINDOW'], TLW05: [400, 'WALKIN_DATE_IN_PAST'], TLW06: [404, CODES.NOT_FOUND],
+      TLW07: [400, 'STAGE_NOT_FOR_JOB_TYPE'], TLW08: [400, CODES.VALIDATION_FAILED],
+    };
+    const [status, code] = map[c] || [400, CODES.VALIDATION_FAILED];
+    let details;
+    try { details = err.detail ? JSON.parse(err.detail) : undefined; } catch { details = undefined; }
+    return new ApiError(status, code, String(err.message || 'That change is not allowed.'), details);
+  }
+
   if (c === '23505') {
     if (constraint.includes('applications_candidate_id_job_id'))
-      return conflict(CODES.DUPLICATE_APPLICATION, 'You have already applied to this role.');
+      return conflict(CODES.DUPLICATE_APPLICATION, 'You have already applied for this position.');
     if (constraint.includes('applications_one_primary'))
       return conflict(CODES.DUPLICATE_APPLICATION, 'This candidate already has a primary application.');
     if (constraint.includes('users_email') || constraint.includes('email_lower'))

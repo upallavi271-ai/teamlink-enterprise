@@ -1,0 +1,85 @@
+/* The Invoice page filters (Accounts spec S7): every filter visible in one
+   grid, small uppercase labels with count badges, equal-height controls, the
+   Show-all switch, Clear all, the chips. Everything is scoped under .invf. */
+
+.invf { display: flex; flex-direction: column; gap: 12px; }
+.invf-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.invf-title { margin: 0; font: 600 15px/1.2 'Inter', system-ui, sans-serif; color: var(--navy); }
+.invf-count { font-size: 12.5px; color: var(--ink-soft); flex: 1 1 260px; min-width: 0; }
+.invf-clear.btn { margin-left: auto; }
+
+/* Show all filters — a plain switch */
+.invf-switch { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 500; color: var(--ink); cursor: pointer; user-select: none; }
+.invf-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.invf-switch-ui { width: 34px; height: 20px; border-radius: 999px; background: #c9d2df; position: relative; transition: background .15s; flex: none; }
+.invf-switch-ui::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform .15s; }
+.invf-switch input:checked + .invf-switch-ui { background: var(--navy); }
+.invf-switch input:checked + .invf-switch-ui::after { transform: translateX(14px); }
+.invf-switch input:focus-visible + .invf-switch-ui { outline: 2px solid rgba(31, 56, 100, .35); outline-offset: 2px; }
+
+.invf-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 20px; align-items: start; }
+.invf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; min-width: 0; }
+.invf-search { grid-column: span 2; }
+
+.invf-field { display: flex; flex-direction: column; gap: 5px; margin: 0; min-width: 0; }
+.invf-lbl { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #6b7a90; line-height: 1.2; white-space: nowrap; }
+.invf-badge { font-weight: 700; font-size: 10px; letter-spacing: 0; min-width: 18px; padding: 1px 6px; border-radius: 999px; background: var(--brand-tint, #E7EDF7); color: var(--navy); text-align: center; }
+.invf-note { font-size: 11px; color: var(--ink-soft); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* Equal input heights: every control in the grid is 38px (the app input height). */
+.invf-grid input, .invf-grid select, .invf-grid .combo input, .invf-ctl,
+.invf-grid .tlpp-trigger { height: 38px; min-height: 38px; box-sizing: border-box; width: 100%; min-width: 0; }
+.invf-grid .combo { width: 100%; min-width: 0; }
+.invf-grid .tlpp { display: flex; width: 100%; }
+.invf-ctl { border: 1px solid #d5dce8; border-radius: 10px; background: #fff; padding: 0 12px; font: inherit; font-size: 13px; color: #16202b; }
+.invf-ctl:focus-visible { outline: 2px solid rgba(31, 56, 100, .35); outline-offset: 1px; }
+
+/* Multi-pick */
+.invf-mp { position: relative; min-width: 0; }
+.invf-mp-btn { display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer; }
+.invf-mp-btn.set .invf-mp-txt { font-weight: 600; color: var(--navy); }
+.invf-mp-txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.invf-caret { flex: none; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #6b7a90; }
+.invf-mp.open .invf-caret { transform: rotate(180deg); }
+.invf-mp-pop { position: absolute; z-index: 70; top: calc(100% + 4px); left: 0; width: max(100%, 300px); max-width: calc(100vw - 32px); background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-md, 0 12px 32px rgba(22, 32, 43, .16)); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.invf-mp-acts { display: flex; justify-content: space-between; gap: 8px; padding: 0 4px; font-size: 12.5px; }
+.invf-mp-list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; }
+.invf-mp-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 13px; cursor: pointer; margin: 0; }
+.invf-mp-opt:hover, .invf-mp-opt:focus-within { background: var(--line-soft, #EDF1F6); }
+.invf-mp-opt input { width: 15px; height: 15px; margin: 0; flex: none; }
+.invf-mp-opt.special { border-bottom: 1px dashed var(--line); border-radius: 8px 8px 0 0; font-style: italic; }
+.invf-mp-lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invf-mp-n { flex: none; font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.invf-mp-none { padding: 8px; }
+
+/* The chips row under the grid */
+.invf .filter-chips { margin: 0; }
+
+/* TDS-to-collect pill (aging header) */
+.invf-tdspill { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 12px; border-radius: 999px; background: var(--line-soft, #EDF1F6); }
+.invf-tdspill.due { background: var(--amber-tint, #FBF3DE); }
+.invf-tdspill-k { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #6b7a90; }
+.inv-chip .c-note { font-size: 10.5px; font-weight: 500; color: var(--ink-soft); }
+.inv-chip[aria-pressed='true'] .c-note { color: rgba(255, 255, 255, .75); }
+.inv-chip.sev-ok .c-a { color: var(--teal); }
+.inv-chip.sev-ok .inv-chip-bar i { background: var(--teal); }
+.inv-page .inv-chips { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+
+.invf-empty h3 { margin: 0 0 8px; }
+
+/* 4–6 per row on desktop (auto-fill above), 2 on tablet, 1 on mobile. */
+@media (max-width: 1100px) {
+  .invf-body { grid-template-columns: 1fr; }
+  .invf-body .inv-fside { min-width: 0; }
+  .inv-page .inv-chips { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .invf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .invf-search { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .invf-grid { grid-template-columns: 1fr; }
+  .invf-search { grid-column: auto; }
+  .invf-clear.btn { margin-left: 0; }
+  .inv-page .inv-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

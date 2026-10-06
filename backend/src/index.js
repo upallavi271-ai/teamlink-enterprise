@@ -1,4 +1,9 @@
 require('dotenv').config();
+// TEST SANDBOX (utils/sandbox.js): only when TEST_MODE=1 / TEAMLINK_SANDBOX=1 —
+// refuses the real DB/port, then hard-disables every outbound channel.
+const sandbox = require('./utils/sandbox');
+sandbox.assertSafe();
+sandbox.installGuards();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -32,6 +37,7 @@ const applicationRoutes = require('./routes/applications');
 const followUpRoutes = require('./routes/followUps');
 const dashboardRoutes = require('./routes/dashboard');
 const employeeRoutes = require('./routes/employees');
+const employeeFieldRoutes = require('./routes/employeeFields'); // HRMS item 15 — Manage Fields
 const attendanceRoutes = require('./routes/attendance');
 const leaveRoutes = require('./routes/leave');
 const payrollRoutes = require('./routes/payroll');
@@ -78,6 +84,17 @@ const app = express();
 // JSON response — no screen reads them.
 const NEVER_SERIALISED = new Set(['passwordHash', 'setPasswordTokenHash', 'agreementOtpHash', 'verifyOtpHash', 'codeHash']);
 app.set('json replacer', (key, value) => (NEVER_SERIALISED.has(key) ? undefined : value));
+// VENDOR PORTAL ISOLATION (utils/vendorAuth.js): a vendor session may reach
+// /api/vendor-portal/* and NOTHING else — every other path answers 403.
+// First, ahead of every proxy, static mount and router, so none can forget it.
+app.use(require('./utils/vendorAuth').vendorSessionGuard);
+// PARTNER PORTAL ISOLATION (B7, utils/partnerAuth.js): a partner session may
+// reach /api/partner-portal/* and NOTHING else — every other path answers 403.
+app.use(require('./utils/partnerAuth').partnerSessionGuard);
+// THE TEAMLINK JOB PORTAL at /jobs (utils/jobPortalEmbed.js): the customer's
+// portal, unchanged, proxied from its internal port. Ahead of every body
+// parser so uploads stream through. JOB_PORTAL_EMBED=0 switches it off.
+app.use(require('./utils/jobPortalEmbed').proxy());
 app.use(cors());
 app.use(express.json());
 
@@ -165,16 +182,24 @@ app.use('/api/job-portal', jobPortalRoutes);
 // Client portal + candidate portal (outside logins) and 'Invite to portal'.
 app.use('/api/portal', require('./routes/portal'));
 app.use('/api/candidates', candidateRoutes);
+// resume_: resume files, versions, edits and the 3-number match (routes/candidateResumes.js).
+app.use('/api/candidate-resumes', require('./routes/candidateResumes'));
+// docfill_: "Fill from a file" for Add job / Add candidate / Add client (routes/docFill.js).
+app.use('/api/doc-fill', require('./routes/docFill'));
+// Rejections read-back, "Do not use" approvals, the Matching tabs (routes/rejections.js).
+app.use('/api/rejections', require('./routes/rejections'));
 app.use('/api/applications', applicationRoutes);
 // followup_: the follow-up record, one per application. See routes/followups.js.
 app.use('/api/followups', followUpRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/employees', employeeRoutes);
+app.use('/api/employee-fields', employeeFieldRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/leave', leaveRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/bank', bankRoutes);
+app.use('/api/banks', require('./routes/banks')); // Accounts S4 — bank-wise statements (read only)
 // Accounts Journal & Ledger (SPEC B): POST /api/accounts/journal-entries (the
 // internal booking API HRMS payroll posts to, service token), the journal,
 // ledger and payroll reconciliation. Per-route guards only — it shares
@@ -184,8 +209,20 @@ app.use('/api/accounts-import', require('./routes/accountsImport'));
 // The new Job Portal's door in: GET /config and the portal's application push.
 // Ahead of publicRoutes, which keeps the classic careers pages and feeds.
 app.use('/api/public/job-portal', require('./routes/jobPortalBridge'));
+// THE JOB PORTAL, BUILT IN (2026-10-05): the public /careers pages read and
+// write this database directly — job list, filters, detail, apply + resume.
+app.use('/api/public/careers', require('./routes/careersPublic'));
+// B9.6: the public jobs sitemap + robots.txt at the site root (same handlers).
+app.get('/sitemap.xml', require('./routes/careersPublic').sitemap);
+app.get('/robots.txt', require('./routes/careersPublic').robots);
+// Job feeds a board pulls (Naukri XML feed mode) — routes/jobFeeds.js (Save & Post).
+app.use('/api/public/feeds', require('./routes/jobFeeds'));
 app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
+// HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
+app.use('/api/recruiter-joinings', require('./routes/recruiterJoinings'));
+// ATS-100 B6: employee referrals, campus drives, campaign costs (routes/sourcing.js).
+app.use('/api/sourcing', require('./routes/sourcing'));
 app.use('/api/lms', lmsRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/surveys', surveyRoutes);
@@ -195,14 +232,31 @@ app.use('/api/announcements', announcementRoutes);
 app.use('/api/audience', require('./routes/audience'));
 // The live master lists every dropdown reads (utils/masters.js; frontend utils/masters.js useMasters()).
 app.use('/api/masters', require('./routes/masters'));
+// Department -> Qualification -> Specialisation master + back-fill review (spec D).
+app.use('/api/specialisations', require('./routes/specialisations'));
 // Email / SMS / WhatsApp channel status and queued bulk send (utils/bulkMessaging.js).
 app.use('/api/messaging', require('./routes/messaging'));
 app.use('/api/admin/view-as', require('./routes/viewAs')); // Super Admin read-only View as
+app.use('/api/admin/integration-health', require('./routes/integrationHealth')); // Job Portal / Email / eSSL / AI health (read-only + person-pressed retry)
 app.use('/api/admin', adminRoutes);
 app.use('/api/reports', reportRoutes);
 // ATS -> Reports: the ten recruitment reports, their drill-down and exports.
 app.use('/api/ats-reports', atsReportRoutes);
+// Recruiter daily report, "Who has pending work", report e-mail setting (routes/atsDaily.js).
+app.use('/api/ats-daily', require('./routes/atsDaily'));
 app.use('/api/office-expenses', officeRoutes);
+// Vendor portal (P3): Accounts review of bills vendors sent (routes/vendorBills.js).
+app.use('/api/vendor-bills', require('./routes/vendorBills'));
+// Admin → Company Setup → Vendor logins (routes/vendorLogins.js).
+app.use('/api/vendor-logins', require('./routes/vendorLogins'));
+// The vendor portal itself — the only API a vendor token can reach.
+app.use('/api/vendor-portal', require('./routes/vendorPortal'));
+// B7 agency / freelancer partners: the master + logins + job shares + report
+// (routes/partners.js), Accounts payouts (routes/partnerPayouts.js), and the
+// partner portal itself — the only API a partner token can reach.
+app.use('/api/partners', require('./routes/partners'));
+app.use('/api/partner-payouts', require('./routes/partnerPayouts'));
+app.use('/api/partner-portal', require('./routes/partnerPortal'));
 // Office & Expenses spec A: GET /api/accounts/combined-summary (salary + office
 // outflow for a month). Per-route guards only, so it can share /api/accounts.
 app.use('/api/accounts', require('./routes/accountsCombined'));
@@ -244,11 +298,15 @@ app.use('/api/targets', employeeRecordRouter('TARGET', { createRoles: true }));
 app.use('/api/resignations', resignationRoutes);
 // One read endpoint for any request on the approval chain (components/ApprovalChain.jsx).
 app.use('/api/approvals', require('./routes/approvals'));
+// Administration → System (Super Admin): backups, restore test, uptime alert (routes/system.js).
+app.use('/api/system', require('./routes/system'));
 app.use('/api/data-import', dataImportRoutes);
 // Per-module export / sample / import + import requests (utils/moduleIo.js, src/io/*.js).
 app.use('/api/io', require('./routes/dataIo'));
 app.use('/api/positions', positionRoutes);
 app.use('/api/agreement', agreementSealRoutes);
+// B3 (2026-10-06): the candidate's offer letter link — public, by token (routes/offerLink.js).
+app.use('/api/offer-link', require('./routes/offerLink'));
 app.use('/api/recognition', employeeRecordRouter('RECOGNITION', { createRoles: true }));
 // Rewards & Recognition -> NOMINATION (hrms-24 §13): Nominated -> Pending Review
 // -> Approved / Rejected -> Awarded. Its own table; see routes/nominations.js.
@@ -264,6 +322,8 @@ app.use('/api/helpdesk', helpdeskRoutes);
 // Company asset inventory (Employee Services → Assets). /api/assets above stays
 // as the employee-raised asset *request* list, which feeds Asset Approval.
 app.use('/api/asset-inventory', assetInventoryRoutes);
+// Stationery / consumables (Employee Services → Stationery): counted items.
+app.use('/api/stationery', require('./routes/stationery'));
 app.use('/api/access-requests', employeeRecordRouter('ACCESS_REQUEST'));
 // Weekly ideas keep the same EmployeeRecord store (type: 'WEEKLY_IDEA') but
 // need AI duplicate screening and scoring on write, plus the quota and
@@ -283,12 +343,21 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`TeamLink API listening on http://localhost:${PORT}`);
+  // Candidates list / Progress board: build their in-memory copy in the
+  // background now, so the first page after a restart is fast. Off in the
+  // sandbox unless CANDIDATE_WARMUP=1 (utils/candidateWarmup.js).
+  require('./utils/candidateWarmup').start();
+  // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
+  if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // The email sending worker. A no-op until Administration → Integrations has
   // an SMTP channel configured; MAIL_WORKER_INTERVAL_MS=0 switches it off.
   mailWorker.start();
-  // Job Portal: a full sync 15s after boot, then hourly (JOB_PORTAL_SYNC_INTERVAL_MS).
+  // The embedded Job Portal (/jobs): started here, kept running, adopted if
+  // a nodemon restart left it up (utils/jobPortalEmbed.js).
+  require('./utils/jobPortalEmbed').start();
+  // Job Portal: a full sync 30s after boot, then hourly (JOB_PORTAL_SYNC_INTERVAL_MS).
   require('./utils/jobPortalBridge').startSchedule();
   // Codes sent but never entered for a day → HR is told (utils/employeeEmailVerification.js).
   require('./utils/employeeEmailVerification').startSweep();
@@ -301,4 +370,23 @@ app.listen(PORT, () => {
   // Attendance: late-login / missing-punch alerts for TODAY only, never
   // backfilled (utils/attendanceAlerts.js; ATTENDANCE_ALERTS_INTERVAL_MS, default 5 min, 0 = off).
   require('./utils/attendanceAlerts').startSweep();
+  // Daily report e-mails (7 PM TL / weekly Manager) — does nothing until a
+  // Super Admin switches them on; OFF by default (utils/dailyReportMail.js).
+  require('./utils/dailyReportMail').startSweep();
+  // Candidate portal logins idle for 12 months -> Archived (a new email code
+  // re-opens them) — daily (utils/portalLogins.js, spec B2).
+  require('./utils/portalLogins').startSweep();
+  // ATS late-work escalation (owner → TL → Manager), every 15 min, IN-APP
+  // only — does nothing until an Admin switches it on (utils/atsEscalation.js).
+  require('./utils/atsEscalation').startSweep();
+  // Interview reminders (day before / 1 hour before / feedback missing /
+  // guarantee ending), every 15 min — OFF until an Admin switches it on
+  // (utils/interviewNotices.js).
+  require('./utils/interviewNotices').startSweep();
+  // Daily backup of the database + upload folders, then a restore test, in a
+  // child process (utils/backup.js; BACKUP_HOUR default 2, BACKUP_SCHEDULE=0 = off).
+  require('./utils/backup').startSchedule();
 });
+// LMS course videos (up to 300 MB, utils/lmsMedia.js) arrive as ONE streamed
+// request; Node's default 5-minute requestTimeout would cut a slow upload off.
+server.requestTimeout = 30 * 60 * 1000;

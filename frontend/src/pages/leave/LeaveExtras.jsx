@@ -19,7 +19,14 @@ const fmtDate = (iso) => {
   const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s);
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
-const daysLabel = (r) => (r.halfDay ? `0.5 (${r.halfDay})` : `${r.days ?? 1}`);
+// HRMS items 4/6: when the days really taken from the balance differ from the
+// days applied (worked the morning of a leave day, sandwich rule), say so.
+const daysLabel = (r) => {
+  const applied = r.halfDay ? `0.5 (${r.halfDay})` : `${r.days ?? 1}`;
+  const taken = r.chargedDays;
+  if (taken == null || r.status === 'Cancelled' || Number(taken) === Number(r.days ?? 1)) return applied;
+  return `${applied} · ${taken} taken`;
+};
 
 function saveBlob(res, fallback) {
   const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || fallback;

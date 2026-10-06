@@ -13,14 +13,15 @@
 // comes from the server's `access` — nothing is decided here.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api';
 import SignatureCapture from './SignatureCapture.jsx';
+import AgreementDocView, { signersFrom } from './AgreementDocView.jsx';
+import { AgreementStepChip } from '../clients/AgreementStep.jsx';
 import './agreements.css';
 
-const LABEL = {
-  DRAFT: 'Draft', SENT: 'Sent', VIEWED: 'Viewed', CLIENT_CONFIRMATION_PENDING: 'Confirmation pending',
-  SIGNED: 'Signed', ACTIVE: 'Active', EXPIRED: 'Expired', REJECTED: 'Rejected',
-};
+// Plain words for the per-channel send result (the value itself is unchanged).
+const OUTCOME_TEXT = { 'Not configured': 'not set up' };
 function when(d) {
   return d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 }
@@ -60,23 +61,35 @@ export async function downloadAgreementPdf(clientId, name) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-export default function AgreementPanel({ clientId, refreshKey, showDocument = false, onChanged }) {
+// `bare` — drawn inside another card (Client 360 → Agreement → Show signing
+// details): sections without their own card border (no nested cards).
+export default function AgreementPanel({
+  clientId, refreshKey, showDocument = false, onChanged, bare = false,
+}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState('');
   const [countersign, setCountersign] = useState(false);
+  // "Cancel agreement" dialog (was a browser prompt): null = closed.
+  const [voidReason, setVoidReason] = useState(null);
+  const box = bare ? 'section' : 'card section';
   const [signer, setSigner] = useState('');
   const [sig, setSig] = useState({ method: 'typed', blob: null });
   const [stamp, setStamp] = useState(null);
   const [dates, setDates] = useState(null);
+  // Every kept signed PDF (older versions stay in history, 2026-10-05).
+  const [versions, setVersions] = useState([]);
 
   const load = useCallback(() => {
     api.get(`/agreement/${clientId}`)
       .then((r) => { setData(r.data); setError(''); })
-      .catch((err) => setError(err.response?.data?.error || 'The agreement could not be loaded.'));
+      .catch((err) => setError(err.response?.data?.error || 'Could not load the agreement. Please try again.'));
   }, [clientId]);
   useEffect(load, [load, refreshKey]);
+  useEffect(() => {
+    api.get(`/agreement/${clientId}/versions`).then((r) => setVersions(r.data || [])).catch(() => setVersions([]));
+  }, [clientId, refreshKey, data?.summary?.status]);
 
   if (error) return <div className="notice red">{error}</div>;
   if (!data) return <div className="small-muted">Loading the agreement…</div>;
@@ -95,7 +108,7 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
       if (onChanged) onChanged();
     } catch (err) {
       setNote('');
-      setError(err.response?.data?.error || 'That did not work.');
+      setError(err.response?.data?.error || 'That did not work. Please try again.');
     } finally { setBusy(''); }
   }
 
@@ -115,7 +128,7 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
         return api.post(`/agreement/${clientId}/company-seal`, g).then((r2) => ({ data: { ...r2.data, autoActivated: r.data.autoActivated || r2.data.autoActivated } }));
       }
       return r;
-    }, (r) => (r.data.autoActivated ? 'Countersigned — the client had already signed, so the agreement is now Active.' : 'Countersigned. It becomes Active automatically when the client signs with their OTP.'));
+    }, (r) => (r.data.autoActivated ? 'Signed. The agreement is now Active.' : 'Signed. It goes Active when the client signs.'));
     setCountersign(false);
   }
 
@@ -123,33 +136,47 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
     <div className="agr-panel">
       {note && <div className="notice" role="status" style={{ marginBottom: 8 }}>{note}</div>}
 
-      <div className="card section">
+      <div className={box}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <h3 style={{ fontSize: 13 }}>
-            Execution — {data.client.name} {s.agreementId ? `· ${s.agreementId}` : ''}
+            Signing {s.agreementId ? `· ${s.agreementId}` : ''}
           </h3>
-          <span className={`status ${s.status === 'ACTIVE' ? 'active' : (['EXPIRED', 'REJECTED'].includes(s.status) ? 'rejected' : 'pending')}`}>{LABEL[s.status] || s.status}</span>
+          <AgreementStepChip status={s.status} />
         </div>
         {s.awaitingCountersign && (
           <div className="notice amber" style={{ marginTop: 8 }}>
-            Signed by the client{s.signedAt ? ` on ${when(s.signedAt)}` : ''} — waiting for TeamLink&apos;s countersign.
-            {edit ? ' Countersign below and it becomes Active automatically.' : ' A Super Admin or Admin countersigns it.'}
+            {`Signed by the client${s.signedAt ? ` on ${when(s.signedAt)}` : ''}. Waiting for TeamLink to sign.`}
+            {edit ? ' Sign below to make it Active.' : ' An Admin signs for TeamLink.'}
           </div>
         )}
-        {s.linkExpired && <div className="notice red" style={{ marginTop: 8 }}>The signing link expired on {when(s.linkExpiresAt)} without a signature. Resend the agreement to issue a new link.</div>}
+        {s.linkExpired && <div className="notice red" style={{ marginTop: 8 }}>{`The signing link ended on ${when(s.linkExpiresAt)}. Make a new link.`}</div>}
 
         {sendRows.length > 0 && (
           <div style={{ marginTop: 10 }}>
             <div className="small-muted" style={{ marginBottom: 4 }}>
-              {data.lastSend.event.startsWith('Agreement signing reminder') ? data.lastSend.event : 'Last sent'} · {when(data.lastSend.at)}
-              {s.linkExpiresAt && !s.linkExpired && ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(s.status) ? ` · link valid until ${when(s.linkExpiresAt)}` : ''}
+              {data.lastSend.event.startsWith('Agreement signing reminder') ? 'Reminder sent' : 'Last sent'} · {when(data.lastSend.at)}
+              {s.linkExpiresAt && !s.linkExpired && ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(s.status) ? ` · link works until ${when(s.linkExpiresAt)}` : ''}
             </div>
             <div className="agr-channels">
-              {sendRows.map(([ch, outcome]) => <span key={ch} className={chipClass(outcome)}>{ch}: {outcome}</span>)}
+              {sendRows.map(([ch, outcome]) => <span key={ch} className={chipClass(outcome)}>{ch}: {OUTCOME_TEXT[outcome] || outcome}</span>)}
             </div>
             {data.lastSend.detail && data.lastSend.detail.includes(' — ') && (
-              <div className="small-muted" style={{ marginTop: 4, fontSize: 11.5 }}>{data.lastSend.detail.split(' · ').filter((p) => p.includes(' — ')).join(' · ')}</div>
+              <div className="small-muted" style={{ marginTop: 4, fontSize: 11.5 }}>Some messages did not go out.</div>
             )}
+          </div>
+        )}
+        {/* Who may do what here, in one line (the server decides). */}
+        <div className="small-muted" style={{ marginTop: 6, fontSize: 12 }}>
+          {edit ? 'You can view and edit this agreement.' : 'You can view and download this agreement.'}
+        </div>
+        {edit && (
+          <div className="agr-actions" style={{ justifyContent: 'flex-start' }}>
+            <Link className="btn btn-sm" to={`/clients/${clientId}?tab=agreement`}>✏️ Edit terms / sign &amp; stamp for TeamLink</Link>
+          </div>
+        )}
+        {data.signingPath && data.access?.as === 'client' && (
+          <div className="agr-actions" style={{ justifyContent: 'flex-start' }}>
+            <a className="btn btn-primary" href={data.signingPath}>Review, sign &amp; stamp →</a>
           </div>
         )}
         {data.signingPath && (
@@ -163,17 +190,18 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
         <div className="agr-sigs" style={{ marginTop: 12 }}>
           <div className="agr-sigbox">
             <b style={{ fontSize: 12.5 }}>Client</b>
-            {s.clientSide.hasSignature ? <AuthImage clientId={clientId} kind="client-sign" alt="Client signature" /> : <div className="small-muted">Not signed yet</div>}
+            {s.clientSide.hasSignature ? <AuthImage clientId={clientId} kind="client-sign" alt="Client signature" />
+              : (s.clientSide.esign ? <div style={{ fontSize: 13 }}><b>Aadhaar eSign (eMudhra)</b><div className="small-muted">{`Transaction ${s.clientSide.esignTxnId || '—'} · the digitally signed PDF is under "Signed copies"`}</div></div> : <div className="small-muted">Not signed yet</div>)}
             {s.clientSide.hasStamp && <AuthImage clientId={clientId} kind="client-stamp" alt="Client stamp" />}
             <div className="small-muted" style={{ fontSize: 12 }}>
               {s.clientSide.signedBy ? `${s.clientSide.signedBy}${s.clientSide.signedByTitle ? `, ${s.clientSide.signedByTitle}` : ''}` : ''}
               {s.clientSide.signMethod ? ` · ${s.clientSide.signMethod}` : ''}
-              {s.verification ? ` · OTP verified ${when(s.verification.verifiedAt)} (${s.verification.sentTo || 'registered contact'})` : ''}
+              {s.verification ? ` · code checked ${when(s.verification.verifiedAt)} (${s.verification.sentTo || 'registered contact'})` : ''}
             </div>
           </div>
           <div className="agr-sigbox">
-            <b style={{ fontSize: 12.5 }}>TeamLink (countersign)</b>
-            {s.company.hasSignature ? <AuthImage clientId={clientId} kind="company-sign" alt="TeamLink signature" /> : <div className="small-muted">Not countersigned yet</div>}
+            <b style={{ fontSize: 12.5 }}>TeamLink</b>
+            {s.company.hasSignature ? <AuthImage clientId={clientId} kind="company-sign" alt="TeamLink signature" /> : <div className="small-muted">Not signed yet</div>}
             {s.company.hasStamp && <AuthImage clientId={clientId} kind="company-stamp" alt="TeamLink stamp" />}
             <div className="small-muted" style={{ fontSize: 12 }}>
               {s.company.signedBy ? `${s.company.signedBy} · ${when(s.company.sealedAt)}` : ''}{s.company.signMethod ? ` · ${s.company.signMethod}` : ''}
@@ -187,33 +215,51 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
               {busy === 'pdf' ? 'Preparing…' : 'Download signed PDF'}
             </button>
           )}
+          {edit && s.pdfAvailable && (
+            <button type="button" className="btn btn-sm" disabled={busy === 'rebuild'} title="Makes a fresh signed PDF from the saved signatures and stamps. The older copy stays below." onClick={() => run('rebuild', () => api.post(`/agreement/${clientId}/pdf/rebuild`, {}), 'Done. A fresh signed PDF is kept; the older copy stays in the list below.').then(() => api.get(`/agreement/${clientId}/versions`).then((r) => setVersions(r.data || [])).catch(() => {}))}>
+              {busy === 'rebuild' ? 'Making…' : 'Make the PDF again'}
+            </button>
+          )}
           {canCountersign && !countersign && (
             <button type="button" className="btn btn-sm" onClick={() => { setCountersign(true); setSigner(''); }}>
-              {s.company.hasSignature ? 'Re-do TeamLink countersign' : 'Countersign for TeamLink'}
+              {s.company.hasSignature ? 'Sign again for TeamLink' : 'Sign for TeamLink'}
             </button>
           )}
           {edit && !dates && (
             <button type="button" className="btn btn-sm" onClick={() => setDates({ agreementStart: data.start || '', agreementEnd: data.end || '' })}>Edit dates</button>
           )}
-          {edit && s.status !== 'DRAFT' && (
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              onClick={() => {
-                // eslint-disable-next-line no-alert
-                const reason = window.prompt('Void this agreement? Both signatures are cleared and it goes back to Draft (requirements are held at Agreement Check again). Reason:');
-                if (reason) run('void', () => api.post(`/agreement/${clientId}/void`, { reason }), 'Agreement voided — regenerate and send it again.');
-              }}
-            >
-              Void…
+          {edit && s.status !== 'DRAFT' && voidReason === null && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setVoidReason('')}>
+              Cancel agreement…
             </button>
           )}
         </div>
 
+        {voidReason !== null && (
+          <div className="agr-card">
+            <h3>Cancel agreement</h3>
+            <div className="small-muted" style={{ marginBottom: 6 }}>Both signatures are cleared. It goes back to Draft.</div>
+            <label className="field"><span>Reason *</span>
+              <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} autoFocus />
+            </label>
+            <div className="agr-actions">
+              <button type="button" className="btn" onClick={() => setVoidReason(null)}>Keep it</button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy === 'void' || !voidReason.trim()}
+                onClick={() => run('void', () => api.post(`/agreement/${clientId}/void`, { reason: voidReason }), 'Cancelled. Make a new draft and send it.').then(() => setVoidReason(null))}
+              >
+                {busy === 'void' ? 'Saving…' : 'Cancel agreement'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {countersign && (
           <div className="agr-card">
-            <h3>TeamLink countersign</h3>
-            <label className="field"><span>Signing for TeamLink (name) *</span>
+            <h3>Sign for TeamLink</h3>
+            <label className="field"><span>Your name *</span>
               <input value={signer} onChange={(e) => setSigner(e.target.value)} placeholder="Authorised signatory" />
             </label>
             <SignatureCapture name={signer} onChange={setSig} />
@@ -223,7 +269,7 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
             <div className="agr-actions">
               <button type="button" className="btn" onClick={() => setCountersign(false)}>Cancel</button>
               <button type="button" className="btn btn-primary" disabled={busy === 'seal' || signer.trim().length < 2 || !sig.blob} onClick={submitCountersign}>
-                {busy === 'seal' ? 'Saving…' : 'Apply countersign'}
+                {busy === 'seal' ? 'Saving…' : 'Save signature'}
               </button>
             </div>
           </div>
@@ -234,7 +280,7 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
             <h3>Agreement dates</h3>
             <div className="agr-fields">
               <label className="field"><span>Start</span><input type="date" value={dates.agreementStart} onChange={(e) => setDates({ ...dates, agreementStart: e.target.value })} /></label>
-              <label className="field"><span>End (blank = renews every 12 months)</span><input type="date" value={dates.agreementEnd} onChange={(e) => setDates({ ...dates, agreementEnd: e.target.value })} /></label>
+              <label className="field"><span>End date (empty = renews yearly)</span><input type="date" value={dates.agreementEnd} onChange={(e) => setDates({ ...dates, agreementEnd: e.target.value })} /></label>
             </div>
             <div className="agr-actions">
               <button type="button" className="btn" onClick={() => setDates(null)}>Cancel</button>
@@ -245,14 +291,42 @@ export default function AgreementPanel({ clientId, refreshKey, showDocument = fa
       </div>
 
       {showDocument && data.document && (
-        <div className="card section">
+        <div className={box}>
           <h3 style={{ fontSize: 13, marginBottom: 6 }}>Agreement text</h3>
-          <div className="agr-doc">{data.document}</div>
+          <div className="agr-doc agr-doc-word">
+            <AgreementDocView
+              text={data.document}
+              {...signersFrom({ ...s, signedAt: s.signedAt, teamlinkName: data.teamlinkName, teamlinkTitle: data.teamlinkTitle }, (kind) => <AuthImage clientId={clientId} kind={kind} alt={kind} />)}
+            />
+          </div>
         </div>
       )}
 
-      <div className="card section">
-        <h3 style={{ fontSize: 13, marginBottom: 6 }}>Audit trail</h3>
+      {versions.length > 0 && (
+        <div className={box}>
+          <h3 style={{ fontSize: 13, marginBottom: 6 }}>Signed copies (kept)</h3>
+          <ul className="agr-timeline">
+            {versions.map((v) => (
+              <li key={v.id}>
+                <span className="when">{when(v.at)}</span>
+                <span>
+                  <b>{v.kind}</b>
+                  {v.sha256 && <div className="small-muted" style={{ fontSize: 11 }}>{`PDF fingerprint (sha256): ${v.sha256.slice(0, 16)}…`}</div>}
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={async () => {
+                    const r = await api.get(`/agreement/${clientId}/pdf`, { responseType: 'blob', params: { copy: v.id } });
+                    const url = URL.createObjectURL(r.data);
+                    const a = document.createElement('a'); a.href = url; a.download = `${s.agreementId || 'agreement'}-signed-${String(v.at).slice(0, 10)}.pdf`;
+                    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+                  }}>Download this copy</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className={box}>
+        <h3 style={{ fontSize: 13, marginBottom: 6 }}>Signing history</h3>
         {data.timeline.length === 0 ? <div className="small-muted">Nothing recorded yet.</div> : (
           <ul className="agr-timeline">
             {[...data.timeline].reverse().map((t, i) => (

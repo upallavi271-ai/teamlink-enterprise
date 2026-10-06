@@ -215,8 +215,19 @@ These are required by the security requirements and cannot be preserved:
 - `submitLogin()` no longer accepts any candidate without a password.
 - `ROLE_CREDENTIALS` (`Admin@123` et al.) is dead — the login form posts to
   `/api/auth/login` and the constant is never read.
-- A recruiter sees their own company's pipeline. An admin still sees
-  everything.
+- A recruiter sees their own pipeline: the requirements they own and the
+  applications on them (0031). An admin still sees everything.
+- Candidates are SHARED (0091): every recruiter and BDE reads every
+  non-private candidate - profile, resume, skills, contact details - but
+  only the recruiter who added them, the recruiter whose job they applied
+  to, or an admin can edit them. Private candidates, private notes,
+  message text and other recruiters' applications stay private; what one
+  recruiter learns about another's work on a person is the summary from
+  `candidate_engagements()`. Two recruiters may not work one person for
+  the same role at once (warn / block, enforced by the database). See
+  docs/SHARED-CANDIDATES.md for the full visibility table.
+- The candidate's availability status (0092) is for recruiters, BDEs and
+  admins only - never sent to a client. See docs/AVAILABILITY-STATUS.md.
 
 ## The offline message that was never about being offline
 
@@ -1004,30 +1015,3 @@ Run the whole stack locally — Postgres, API and the app — with:
 ```
 node tools/dev-server.mjs 4323
 ```
-
-## TeamLink.Enterprise (the ATS) — server-to-server sync
-
-This portal replaced TeamLink.Enterprise's old single-file `/job-portal/`.
-TeamLink requirements are its jobs, and its applications are TeamLink
-pipeline rows. Code: `api/src/integrations/teamlink.js` (portal side) and
-`teamlink-enterprise/backend/src/utils/jobPortalBridge.js` (ATS side).
-
-| direction | call | auth |
-|---|---|---|
-| ATS → portal | `PUT /api/integrations/teamlink/jobs/:requirementId` — upsert one job | `x-teamlink-token: $JOB_PORTAL_SYNC_TOKEN` |
-| ATS → portal | `POST /api/integrations/teamlink/jobs/sync` `{jobs, closeOthers}` — upsert all, close the rest | same |
-| ATS ← portal (pull) | `GET /api/integrations/teamlink/applications?since=` | same |
-| portal → ATS (push) | `POST $TEAMLINK_API_URL/api/public/job-portal/applications` after every apply | `x-job-portal-secret: $JOB_PORTAL_PUSH_SECRET` |
-
-- A TeamLink job's id is `tl_<requirement id>`, under company
-  `TEAMLINK_COMPANY_ID` (default `tmlink`, "TeamLink Consultants"). The client
-  is never named on the board.
-- The token routes run as the database `admin` role (RLS's admin branch). With
-  `JOB_PORTAL_SYNC_TOKEN` unset they answer 503. They need no session, so the
-  CSRF guard does not apply to them.
-- The push is fire-and-forget after the application commits. It never fails an
-  apply. TeamLink pulls the last 30 days of applications at startup, hourly and
-  on "Sync", and ingests them idempotently: the candidate is matched by email,
-  then phone, and one candidate + requirement is one application.
-- A job opened for the first time runs the usual job alerts. A re-sync does not
-  send them again.

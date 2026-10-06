@@ -1,0 +1,95 @@
+/* Follow-ups: Last contact, quick Call / Mail / WhatsApp, timeline, due rules,
+   daily report, who has pending work. Everything is scoped under .fux- so it
+   cannot restyle anything else. Four colours only: green done, blue going on,
+   orange waiting, red problem. */
+
+/* --- Last contact cell --------------------------------------------------- */
+.fux-last { display: inline-flex; flex-direction: column; gap: 3px; line-height: 1.2; }
+.fux-last-when { font-size: 12.5px; color: var(--text, #1f2937); white-space: nowrap; }
+.fux-last-when.is-never { color: var(--red); font-weight: 700; }
+.fux-last-by { font-size: 11px; color: var(--muted, #6b7280); white-space: nowrap; }
+
+/* --- Quick contact buttons ----------------------------------------------- */
+.fux-quick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fux-quick .btn { min-height: 38px; display: inline-flex; align-items: center; gap: 6px; }
+.fux-quick .fux-sms-off { opacity: 0.6; cursor: not-allowed; }
+.fux-quick-note { font-size: 11px; color: var(--muted, #6b7280); }
+
+/* One-tap outcome prompt */
+.fux-outcomes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.fux-outcome {
+  border: 1px solid var(--border, #d1d5db); background: #fff; border-radius: 999px;
+  padding: 8px 14px; font-size: 13px; cursor: pointer; min-height: 38px;
+}
+.fux-outcome.is-on { background: var(--blue, #1d4ed8); border-color: var(--blue, #1d4ed8); color: #fff; font-weight: 600; }
+.fux-saved { margin-top: 10px; font-size: 13px; color: var(--green, #15803d); font-weight: 600; }
+.fux-err { margin-top: 8px; font-size: 13px; color: var(--red); }
+.fux-mail-status { margin-top: 10px; font-size: 14px; font-weight: 600; }
+.fux-mail-status.is-sent { color: var(--green, #15803d); }
+.fux-mail-status.is-failed { color: var(--red); }
+.fux-mail-status.is-wait { color: var(--amber); }
+
+/* --- Timeline ------------------------------------------------------------ */
+.fux-tl { list-style: none; margin: 0; padding: 0; }
+.fux-tl-item { display: grid; grid-template-columns: 34px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-soft, #eef0f3); }
+.fux-tl-item:last-child { border-bottom: 0; }
+.fux-tl-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue-tint, #eef4ff); font-size: 15px; }
+.fux-tl-main { min-width: 0; }
+.fux-tl-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.fux-tl-top b { font-weight: 600; }
+.fux-tl-meta { font-size: 11.5px; color: var(--muted, #6b7280); margin-top: 2px; }
+.fux-tl-said { font-size: 12.5px; margin-top: 4px; color: var(--text, #1f2937); overflow-wrap: anywhere; }
+.fux-tl-more { margin-top: 8px; }
+
+/* --- Rules table / report tables ---------------------------------------- */
+.fux-banner { border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+.fux-banner.is-orange { background: var(--amber-tint, #fff7e6); color: #7a4b00; border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); }
+.fux-banner.is-green { background: var(--green-tint, #eafaf0); color: #14532d; border: 1px solid color-mix(in srgb, var(--green, #15803d) 30%, transparent); }
+.fux-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.fux-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fux-table th, .fux-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-soft, #eef0f3); text-align: left; vertical-align: middle; }
+.fux-table th { font-size: 12px; color: var(--muted, #6b7280); font-weight: 600; background: var(--bg-soft, #f8fafc); white-space: nowrap; }
+.fux-table td.num, .fux-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.fux-table tr.is-click { cursor: pointer; }
+.fux-table tr.is-click:hover td { background: var(--blue-tint, #eef4ff); }
+.fux-table tr.is-today td { background: #f4f8ff; }
+.fux-table tr.is-future td { color: #b0b6bf; }
+.fux-table tr.is-total td { font-weight: 700; border-top: 2px solid var(--border, #d1d5db); }
+.fux-table select, .fux-table input { min-height: 34px; }
+.fux-dash { color: #9aa1ab; }
+.fux-red { color: var(--red); font-weight: 700; }
+.fux-orange { color: var(--amber); font-weight: 700; }
+.fux-green { color: var(--green, #15803d); font-weight: 700; }
+
+/* --- Daily report -------------------------------------------------------- */
+.fux-dr-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
+.fux-dr-bar .field { margin: 0; min-width: 150px; }
+.fux-dr-bar label { font-size: 12px; color: var(--muted, #6b7280); display: block; margin-bottom: 3px; }
+.fux-seg { display: inline-flex; border: 1px solid var(--border, #d1d5db); border-radius: 8px; overflow: hidden; }
+.fux-seg button { border: 0; background: #fff; padding: 8px 16px; font-size: 13px; cursor: pointer; min-height: 38px; }
+.fux-seg button.is-on { background: var(--blue, #1d4ed8); color: #fff; font-weight: 600; }
+.fux-dr-scope { font-size: 12.5px; color: var(--muted, #6b7280); margin-bottom: 10px; }
+.fux-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.fux-target { border: 1px solid var(--border-soft, #e5e7eb); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.fux-target-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+.fux-bar { height: 10px; background: #eef0f3; border-radius: 999px; overflow: hidden; }
+.fux-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--blue, #1d4ed8); }
+.fux-bar.is-done > span { background: var(--green, #15803d); }
+.fux-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.fux-card { border: 1px solid var(--border-soft, #e5e7eb); border-radius: 10px; padding: 10px; background: #fff; }
+.fux-card-n { font-size: 20px; font-weight: 700; }
+.fux-card-l { font-size: 12px; color: var(--muted, #6b7280); }
+.fux-note { font-size: 12px; color: var(--muted, #6b7280); margin-top: 8px; }
+.fux-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fux-section-title { font-size: 14px; font-weight: 700; margin: 16px 0 8px; }
+
+/* --- Departments & teams admin ------------------------------------------ */
+.fux-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fux-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--blue-tint, #eef4ff); color: var(--blue, #1d4ed8); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+.fux-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 0 0 2px; }
+.fux-inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+@media (max-width: 640px) {
+  .fux-dr-bar .field { min-width: 100%; }
+  .fux-quick .btn { flex: 1 1 calc(50% - 8px); justify-content: center; }
+}

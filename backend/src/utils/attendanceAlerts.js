@@ -32,6 +32,9 @@ const { logAudit } = require('./audit');
 const { withoutSystemAccounts } = require('./systemAccounts');
 const { daySplit, toMinutes } = require('./attendanceMath');
 const D = require('./attendanceDays');
+const { withExtras } = require('./attendancePolicy');
+const hrmsNotify = require('./hrmsNotify');
+const leaveCharge = require('./leaveCharge');
 
 const STORE_ID = 'attendance-alerts';
 const LEFT = ['Relieved', 'Exited', 'Exit Process'];
@@ -39,6 +42,10 @@ const TYPES = {
   late: 'Late login',
   missingOut: 'Missing check-out',
   missingIn: 'Missing check-in',
+  // HRMS item 2: checked out before the end of the working day (after the
+  // day is over, so a later check-out still counts). Not raised when a leave
+  // covers the rest of the day.
+  earlyOut: 'Early logout',
 };
 const MON3 = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const dmy = (iso) => `${iso.slice(8, 10)}-${MON3[Number(iso.slice(5, 7)) - 1]}-${iso.slice(0, 4)}`;
@@ -108,14 +115,16 @@ function clockToMin(h, m, ap) {
   if (ap) { const u = ap.toUpperCase(); if (u === 'PM' && hh !== 12) hh += 12; if (u === 'AM' && hh === 12) hh = 0; }
   return hh * 60 + Number(m);
 }
-function shiftOf(employee, patterns) {
+function shiftOf(employee, patterns, cfg = null) {
   const s = String(employee.shift || '');
   const m = /(\d{1,2}):(\d{2})\s*(AM|PM)?\s*[–—-]\s*(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(s);
   if (m) return { name: s, start: clockToMin(m[1], m[2], m[3]), end: clockToMin(m[4], m[5], m[6]) };
   const word = s.split(/[\s(]/)[0].toLowerCase();
   const p = word && patterns.find((x) => x.active && x.name.toLowerCase() === word);
   if (p && toMinutes(p.startTime) != null && toMinutes(p.endTime) != null) return { name: p.name, start: toMinutes(p.startTime), end: toMinutes(p.endTime) };
-  return { name: 'General', start: 540, end: 1080 };
+  // No shift on the record: the working day of the Attendance Policy.
+  const ps = D.policyTimes(cfg || {});
+  return { name: 'General', start: ps.start, end: ps.end };
 }
 
 // ---- detection --------------------------------------------------------------
@@ -127,7 +136,7 @@ async function detect({ now = new Date(), testMode = false, settings, scope = nu
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const goLive = new Date(settings.goLiveAt);
   const at = (min) => new Date(`${today}T${hhmm(min)}:00`); // local time today
-  const cfg = (await prisma.hrConfig.findFirst()) || await prisma.hrConfig.create({ data: {} });
+  const cfg = await withExtras((await prisma.hrConfig.findFirst()) || await prisma.hrConfig.create({ data: {} }));
   const [all, patterns] = await Promise.all([
     prisma.employee.findMany({
       where: withoutSystemAccounts({ employmentStatus: { notIn: LEFT } }),
@@ -157,7 +166,7 @@ async function detect({ now = new Date(), testMode = false, settings, scope = nu
   employees.forEach((e) => {
     const day = loaded.days(e)[0];
     if (['Holiday', 'Weekly Off', 'On Leave', 'Not Joined', 'Left', 'Upcoming'].includes(day.status)) return;
-    const sh = shiftOf(e, patterns);
+    const sh = shiftOf(e, patterns, cfg);
     const ps = punchesOf.get(e.id) || [];
     const split = daySplit(ps);
     const base = { employee: e, shift: sh, date: today };
@@ -170,6 +179,11 @@ async function detect({ now = new Date(), testMode = false, settings, scope = nu
       const outLimit = sh.end + settings.checkOutBufferMinutes;
       if (!split.checkOut && sh.end > sh.start && nowMin >= outLimit && at(outLimit) >= goLive) {
         events.push({ ...base, type: 'missingOut', time: split.checkIn.time, limit: hhmm(outLimit) });
+      }
+      // Early logout: judged once the day is over (shift end + buffer), on
+      // the LAST check-out, by the same day rule the reports use.
+      if (split.checkOut && day.earlyLogout && nowMin >= outLimit && new Date(split.checkOut.createdAt) >= goLive) {
+        events.push({ ...base, type: 'earlyOut', time: split.checkOut.time, limit: hhmm(sh.end) });
       }
     } else if (!feedSilent && !ps.length && !marked.has(e.id)) {
       const inLimit = sh.start + settings.missingCheckInAfterMinutes;
@@ -185,6 +199,7 @@ function employeeText(ev) {
   const end = hhmm(ev.shift.end);
   const fix = 'If this is not right, raise a regularization under Attendance → Regularization.';
   if (ev.type === 'late') return `Your first check-in today (${d}) was at ${ev.time}, after your shift start ${start} plus the grace period (late after ${ev.limit}). ${fix}`;
+  if (ev.type === 'earlyOut') return `You checked out at ${ev.time} today (${d}), before the end of your working day (${end}). If you had permission, ask HR to note it. ${fix}`;
   if (ev.type === 'missingOut') return `You checked in at ${ev.time} today (${d}), but no check-out has been recorded (shift ended ${end}). Please check out on the device, or raise a regularization. ${fix}`;
   return `No check-in has been recorded for you today (${d}); your shift started at ${start}. If you are at work, check in on the device now. ${fix}`;
 }
@@ -229,9 +244,11 @@ async function run({ now = new Date(), dryRun = false, testMode = false, mailer 
     const out = {
       today, dryRun, goLiveAt: settings.goLiveAt, events: events.length, feedSilent,
       byType: Object.fromEntries(Object.keys(TYPES).map((k) => [k, events.filter((x) => x.type === k).length])),
+      emailsWaiting: 0,
       inApp: 0, emails: 0, emailsNotSent: 0, duplicates: 0, digests: 0, list: [],
     };
     const channelsOn = settings.inApp || settings.email;
+    let notifySettings = null;
     for (const ev of events) {
       const e = ev.employee;
       const title = `${TYPES[ev.type]} — ${dmy(today)}`;
@@ -239,7 +256,17 @@ async function run({ now = new Date(), dryRun = false, testMode = false, mailer 
       out.list.push({ employeeCode: e.employeeCode, name: e.name, type: TYPES[ev.type], time: ev.time || null, limit: ev.limit });
       if (!channelsOn) continue;
       if (await alreadyAlerted({ title, userId: e.user && e.user.id, recipient: email, now })) { out.duplicates += 1; continue; }
-      await deliver({ settings, userId: e.user && e.user.id, name: e.name, email, title, text: employeeText(ev), mailer, dryRun, out });
+      if (dryRun) continue;
+      // Item 14: the employee's own alert follows the per-event switches
+      // (utils/hrmsNotify.js) AND the master switches here; its email waits
+      // for the person's ONE daily email instead of going out per event.
+      const ns = notifySettings || (notifySettings = await hrmsNotify.getSettings());
+      const evKey = hrmsNotify.ATTENDANCE_EVENT[ev.type];
+      const sw = ns.events[evKey] || { inApp: true, email: true };
+      const merged = { ...ns, events: { ...ns.events, [evKey]: { inApp: settings.inApp && sw.inApp, email: settings.email && sw.email } } };
+      const r = await hrmsNotify.notify(evKey, { userId: e.user && e.user.id, name: e.name, email }, { title, message: employeeText(ev) }, { now, mailer, settings: merged });
+      if (r.inApp) out.inApp += 1;
+      if (r.email) out.emailsWaiting = (out.emailsWaiting || 0) + 1;
     }
 
     // The digest: one per recipient per day, at or after the digest time.
@@ -301,9 +328,21 @@ function intervalMs() {
 let timer = null;
 function startSweep() {
   if (timer || intervalMs() <= 0) return;
+  let lastChargeSweep = 0;
   const real = () => run().then((o) => {
     if (o && (o.inApp || o.emails || o.digests)) console.log(`[attendance-alerts] ${o.today}: ${o.inApp} in-app, ${o.emails} email(s) sent, ${o.emailsNotSent} not sent, ${o.digests} digest(s)`);
-  }).catch((e) => console.error('[attendance-alerts]', e.message));
+  }).catch((e) => console.error('[attendance-alerts]', e.message))
+    // Item 14: task / target reminders and each person's one daily email.
+    .then(() => hrmsNotify.run()).then((o) => {
+      if (o && o.digests && o.digests.emails) console.log(`[hrms-notify] ${o.digests.emails} daily email(s), ${o.digests.items} item(s)`);
+    }).catch((e) => console.error('[hrms-notify]', e.message))
+    // Items 4/6: re-read the days used by leaves charged through the ledger
+    // (biometric punches arrive without passing a route), once an hour.
+    .then(() => {
+      if (Date.now() - lastChargeSweep < 3600000) return null;
+      lastChargeSweep = Date.now();
+      return leaveCharge.sweep().then((o) => { if (o.moved.length) console.log(`[leave-charge] ${o.moved.length} leave balance(s) corrected`); });
+    }).catch((e) => console.error('[leave-charge]', e.message));
   // On startup: a DRY RUN first, printed to the log, then the real sweeps.
   setTimeout(() => {
     run({ dryRun: true }).then((o) => {
@@ -324,6 +363,7 @@ function registerRoutes(router, { requirePerm }) {
     const preview = await run({ dryRun: true });
     res.json({ ...s, preview });
   });
+  hrmsNotify.registerRoutes(router, { requirePerm });
   router.put('/alerts', configure, async (req, res) => {
     const r = await saveSettings(req.body || {}, req.user.id);
     if (r.error) return res.status(400).json({ error: r.error });

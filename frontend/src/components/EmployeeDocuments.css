@@ -41,3 +41,11 @@
   .edocs-dn{width:100%}
   .edocs-acts{width:100%}
 }
+/* Spec item 25 — Document type dropdown + Add file */
+.edocs-add{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin:4px 0 12px;padding:10px 12px;border:1px solid var(--line,#dde3ee);border-radius:8px;background:var(--paper-raised,#fff)}
+.edocs-add-type{display:flex;flex-direction:column;gap:4px;font-size:12.5px;font-weight:600;min-width:220px;flex:0 1 260px}
+.edocs-add-type select{min-height:36px;font-weight:400}
+.edocs-add .edocs-pick{min-height:36px;display:inline-flex;align-items:center}
+.edocs-pick.is-off{opacity:.5;cursor:not-allowed}
+.edocs-pick.is-off input{cursor:not-allowed}
+@media (max-width:560px){.edocs-add-type{flex:1 1 100%}.edocs-add .edocs-pick{width:100%;justify-content:center}}

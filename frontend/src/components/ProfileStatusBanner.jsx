@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
+import { sectionOf } from '../nav';
 
 // ---------------------------------------------------------------------------
 // The employee's own profile state, said out loud.
@@ -48,6 +49,7 @@ export default function ProfileStatusBanner({ variant = 'landing', employee: giv
   // on top of the admin dashboard was the "double screen" at login — a system
   // account is never prompted through the employee onboarding flow.
   const { user } = useAuth() || {};
+  const { pathname } = useLocation();
   const systemAccount = !!(user && user.systemAccount) && variant !== 'page';
 
   useEffect(() => {
@@ -69,7 +71,8 @@ export default function ProfileStatusBanner({ variant = 'landing', employee: giv
   if (variant === 'shell' && !SHELL_STATES.includes(status)) return null;
   // The shell already carries the two states that need action, so a dashboard
   // copy would say the same thing twice on the same screen.
-  if (variant === 'landing' && SHELL_STATES.includes(status)) return null;
+  // Shell.jsx shows them on HRMS pages only (user, 2026-10-03), so only there.
+  if (variant === 'landing' && SHELL_STATES.includes(status) && sectionOf(pathname, user) === 'hrms') return null;
 
   if (status === 'Profile Incomplete') {
     return (

@@ -44,37 +44,54 @@ function stageMoveNotice(candidateName, toStage, requirement) {
   };
 }
 
+// The history row's data — one shape, whether recordWorkflowMove writes it or
+// a caller writes it inside its own transaction (e2e gap 16).
+async function stageEventData({
+  user, existing, toStage, action, comment, reasonCategory, reasonDetail, rejectionSide,
+}) {
+  const requirement = existing.requirement || {};
+  const client = requirement.client;
+  return {
+    applicationId: existing.id,
+    candidateId: existing.candidateId,
+    fromStage: existing.stage,
+    toStage,
+    action: action || `Moved to ${groupLabelOfStage(toStage)} — ${stageLabel(toStage)}`,
+    comment: comment || null,
+    actorUserId: user.id,
+    actorName: user.name,
+    actorRole: user.atsRole || user.role,
+    ...(await stampFor(user, 'actor')),
+    actorSide: rejectionSide || ([user.atsRole, user.role].includes('CLIENT') ? 'Client' : 'Internal'),
+    requirementId: existing.requirementId,
+    requirementTitle: requirement.title || null,
+    clientId: requirement.clientId || null,
+    clientName: requirement.internal ? 'TeamLink Internal' : (client && client.name) || null,
+    reasonCategory: reasonCategory || null,
+    reasonDetail: reasonDetail || null,
+  };
+}
+
 async function recordWorkflowMove({
   user, existing, application, toStage, action, comment,
-  reasonCategory, reasonDetail, rejectionSide,
+  reasonCategory, reasonDetail, rejectionSide, skipEvent = false,
 }) {
   if (!existing || !toStage || existing.stage === toStage) return;
   const requirement = existing.requirement || {};
   const client = requirement.client;
   const app = application || existing;
 
+  // skipEvent: the caller already wrote the history row in the same
+  // transaction as the stage change (stageEventData below), so a crash can't
+  // leave the stage without its history (e2e gap 16).
   try {
-    await prisma.applicationStageEvent.create({
-      data: {
-        applicationId: existing.id,
-        candidateId: existing.candidateId,
-        fromStage: existing.stage,
-        toStage,
-        action: action || `Moved to ${groupLabelOfStage(toStage)} — ${stageLabel(toStage)}`,
-        comment: comment || null,
-        actorUserId: user.id,
-        actorName: user.name,
-        actorRole: user.atsRole || user.role,
-        ...(await stampFor(user, 'actor')),
-        actorSide: rejectionSide || ([user.atsRole, user.role].includes('CLIENT') ? 'Client' : 'Internal'),
-        requirementId: existing.requirementId,
-        requirementTitle: requirement.title || null,
-        clientId: requirement.clientId || null,
-        clientName: requirement.internal ? 'TeamLink Internal' : (client && client.name) || null,
-        reasonCategory: reasonCategory || null,
-        reasonDetail: reasonDetail || null,
-      },
-    });
+    if (!skipEvent) {
+      await prisma.applicationStageEvent.create({
+        data: await stageEventData({
+          user, existing, toStage, action, comment, reasonCategory, reasonDetail, rejectionSide,
+        }),
+      });
+    }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[stageEvents] could not write the stage event:', err.message);
@@ -128,4 +145,6 @@ async function recordWorkflowMove({
   }
 }
 
-module.exports = { recordWorkflowMove, stageMoveAudience, stageMoveNotice };
+module.exports = {
+  recordWorkflowMove, stageMoveAudience, stageMoveNotice, stageEventData,
+};

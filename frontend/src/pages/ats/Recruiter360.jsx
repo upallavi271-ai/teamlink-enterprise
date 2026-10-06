@@ -38,7 +38,7 @@ export function metricLink(personId, metric) {
 
 const fmt = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('en-IN'));
 const dayTime = (v) => (v ? new Date(v).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
-const DUE = { overdue: ['🔴 Overdue', 'red'], today: ['🟡 Due today', 'amber'], upcoming: ['🟢 Upcoming', 'green'] };
+const DUE = { overdue: ['🔴 Late', 'red'], today: ['🟠 Due today', 'amber'], upcoming: ['🔵 Upcoming', 'blue'] };
 
 function Section({ title, count, to, children }) {
   return (
@@ -74,7 +74,7 @@ function Rows({ sec, empty }) {
           return (
             <div key={r.id} className="r360-row">
               {r.link ? <Link to={`/clients/${r.id}`} className="r360-strong">{r.name}</Link> : <b>{r.name}</b>}
-              <span className="small-muted">{`${fmt(r.openRequirements)} open of ${fmt(r.requirements)} req`}</span>
+              <span className="small-muted">{`${fmt(r.openRequirements)} open of ${fmt(r.requirements)} jobs`}</span>
             </div>
           );
         }
@@ -123,16 +123,16 @@ function Rows({ sec, empty }) {
 }
 
 const EMPTY_TEXT = {
-  requirements: 'No live requirements in your scope.',
-  candidates: 'No active applications.',
-  interviews: 'No applications in the interview phase.',
+  requirements: 'No open jobs in your area.',
+  candidates: 'No people in process.',
+  interviews: 'No interviews right now.',
   pending: 'Nothing is waiting on this person.',
-  clients: 'No clients yet — set this BDE as Owner BDE on Clients.',
-  submissions: 'No candidates submitted to their clients.',
-  feedback: 'No client decisions pending.',
+  clients: 'No clients yet. Set them as client manager on Clients.',
+  submissions: 'No one sent to their clients yet.',
+  feedback: 'Nothing waiting for the client.',
   selections: 'Nobody selected right now.',
   joining: 'No joinings.',
-  recruiters: 'No recruiters report to this TL.',
+  recruiters: 'No recruiters in this team yet.',
   reviews: 'No reviews waiting.',
 };
 
@@ -144,7 +144,7 @@ export default function Recruiter360({ personId, onClose }) {
     setError('');
     api.get(`/ats/team/${encodeURIComponent(personId)}`)
       .then((r) => setD(r.data))
-      .catch((e) => setError(e.response?.data?.error || 'This person could not be opened.'));
+      .catch((e) => setError(e.response?.data?.error || 'Could not open this person. Please try again.'));
   }, [personId]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -204,7 +204,7 @@ export default function Recruiter360({ personId, onClose }) {
               </div>
               {d.bdeEmpty && (
                 <div className="notice r360-note">
-                  No client is owned by this BDE yet. Set them as Owner BDE on Clients (Admin), assign clients on Administration → Users, or name them on a requirement — their numbers fill in from there.
+                  No clients yet. Set them as client manager on Clients and the numbers fill in.
                 </div>
               )}
             </Section>

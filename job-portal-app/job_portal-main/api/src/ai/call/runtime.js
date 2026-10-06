@@ -16,9 +16,14 @@ import { config } from '../../config.js';
 import { toCandidate, toJob } from '../../shapes.js';
 import { telephony, speechToText } from '../../telephony/index.js';
 import { dispatchEvent } from '../../notify/events.js';
+import { blockedByAllowlist } from '../../notify/providers.js';
 import {
   plan, startConversation, openingTurn, nextTurn, callResult, summarise, atsAction, parseWhen,
 } from './agent.js';
+import {
+  loadScreeningSettings, jobQuestionsInternal, prepareAnswers, storeAnswers, rescreen,
+} from '../../screening/service.js';
+import { publicQuestion, prefillFor } from '../../screening/questions.js';
 
 const newId = (p) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
@@ -96,6 +101,89 @@ async function loadContext(sessionId) {
 }
 
 /* ------------------------------------------------------------------ *
+ * screening questions on the call (0097 / 0104)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The application's pending screening questions, for a call that is
+ * already being made - or null. Only when the admin has switched on
+ * "AI calls ask the pending screening questions" (app_settings.screening
+ * .askOnAiCalls, default off) and the application is still 'pending'.
+ * This never decides who is called or when; it only adds to what the
+ * call asks.
+ *
+ * What the agent may speak is the PUBLIC question (text, type, choices):
+ * never a must-have rule, a weight or the job's budget. The pre-fill is
+ * the candidate's own saved answers (with their consent) or profile, the
+ * same as the apply form shows them.
+ */
+export async function screeningForCall(application) {
+  if (!application || application.screening_status !== 'pending') return null;
+  const s = await loadScreeningSettings();
+  if (!s.askOnAiCalls) return null;
+  const set = await jobQuestionsInternal(application.job_id);
+  if (!set.questions.length) return null;
+  const pre = await withUser(ENGINE, async (c) => ({
+    defaults: (await c.query(`select * from candidate_screening_defaults where candidate_id=$1`,
+      [application.candidate_id])).rows[0] || null,
+    cand: (await c.query(`select * from candidates where id=$1`, [application.candidate_id])).rows[0] || null,
+  }));
+  return {
+    questions: set.questions.map(publicQuestion),
+    prefill: prefillFor(set.questions, { defaults: pre.defaults, candidate: pre.cand ? toCandidate(pre.cand) : null }),
+  };
+}
+
+/**
+ * At the end of the call: the answers it collected, stored with source
+ * 'ai_call' through the same validation as every other answer
+ * (prepareAnswers -> validateAnswers -> normaliseAnswer), and the
+ * application screened again. Stored only when every question was
+ * answered and the application is STILL pending - checked under a row
+ * lock, so answers that arrived by the link meanwhile are never
+ * overwritten. A partial set is recorded on the call (event
+ * 'screening.answers') and the application stays pending, so the link
+ * and its reminder carry on.
+ */
+async function storeCallScreening(sessionId, ctx, conv) {
+  const p = conv && conv.plan;
+  if (!p || !p.screening || !p.screening.length || !ctx.application) return null;
+  const given = (conv.data && conv.data.screeningAnswers) || {};
+  const out = { asked: p.screening.length, answered: Object.keys(given).length, stored: false };
+  if (out.answered) {
+    try {
+      const verdict = await withUser(ENGINE, async (c) => {
+        const app = (await c.query(
+          `select id, job_id, screening_status from applications where id=$1 for update`,
+          [ctx.application.id])).rows[0];
+        if (!app) return 'the application no longer exists';
+        if (app.screening_status !== 'pending') return 'already answered';
+        const set = await jobQuestionsInternal(app.job_id, c);
+        if (set.questions.some((q) => !given[q.id])) return 'not every question was answered';
+        const prepared = prepareAnswers(set, set.questions.map((q) => ({ questionId: q.id, answer: given[q.id] })));
+        await storeAnswers(c, app.id, prepared, { source: 'ai_call', by: 'Answered on an AI call' });
+        return 'stored';
+      });
+      out.stored = verdict === 'stored';
+      if (!out.stored) out.reason = verdict;
+    } catch (err) {
+      out.reason = `refused: ${err.message}`;
+    }
+  } else {
+    out.reason = 'no answers';
+  }
+  await withUser(ENGINE, (c) => c.query(
+    `select ai_call_event($1,'screening.answers',null,$2::jsonb,null)`,
+    [sessionId, JSON.stringify({
+      ...out,
+      answers: p.screening.filter((q) => given[q.id])
+        .map((q) => ({ questionId: q.id, question: q.text, answer: given[q.id] })),
+    })])).catch(() => {});
+  if (out.stored) await rescreen(ctx.application.id, 'ai_call');
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
  * queueing and placing
  * ------------------------------------------------------------------ */
 
@@ -122,6 +210,26 @@ export async function queueCall(session, {
  * and whether now is a reasonable time, which is what a person does.
  */
 export async function startCall(sessionId) {
+  /*
+   * THE MASTER SWITCH, CHECKED BEFORE ANYTHING ELSE.
+   *
+   * Separate from the allowlist on purpose, and checked first. The
+   * allowlist answers "may we ring THIS number"; this answers "may we
+   * ring anyone at all", and the second question needs an answer that
+   * does not depend on the first being right. A campaign over a hundred
+   * and thirty-nine sourced candidates is one button, and the cost of
+   * being wrong is a hundred and thirty-nine telephones ringing.
+   *
+   * Default OFF. Outbound calling turns on by somebody deciding to set
+   * OUTBOUND_CALLS_ENABLED=true, which is a deliberate act, rather than
+   * by a default nobody reviewed.
+   */
+  if (String(process.env.OUTBOUND_CALLS_ENABLED || '').toLowerCase() !== 'true') {
+    await withUser(ENGINE, (c) => c.query(
+      `select ai_call_status($1,'failed',$2,null)`, [sessionId, 'blocked']));
+    throw new Error('outbound calling is switched off (OUTBOUND_CALLS_ENABLED is not true)');
+  }
+
   const ctx = await loadContext(sessionId);
   if (!ctx) throw new Error('no such call session');
 
@@ -129,8 +237,12 @@ export async function startCall(sessionId) {
   const candidate = toCandidate(ctx.candidate);
   const job = ctx.job ? { ...toJob(ctx.job), companyName: ctx.job.company_name } : null;
   const application = ctx.application ? { stage: ctx.application.stage, id: ctx.application.id } : null;
+  const screening = await screeningForCall(ctx.application).catch((err) => {
+    console.error('[ai-call] screening questions could not be loaded:', err.message);
+    return null;
+  });
 
-  const p = plan({ candidate, job, application, opts: { objective: ctx.session.objective } });
+  const p = plan({ candidate, job, application, opts: { objective: ctx.session.objective, screening } });
   const conv = startConversation({
     candidate, job, application, settings, plan: p,
     language: ctx.session.language !== 'en' ? ctx.session.language : candidate.preferredLanguage,
@@ -147,7 +259,35 @@ export async function startCall(sessionId) {
 
   await withUser(ENGINE, (c) => c.query(
     `select ai_call_event($1,'plan',null,$2::jsonb,null)`,
-    [sessionId, JSON.stringify({ objective: p.objective, known: p.known, needed: p.needed })]));
+    [sessionId, JSON.stringify({
+      objective: p.objective, known: p.known, needed: p.needed,
+      screeningQuestions: p.screening ? p.screening.length : 0,
+    })]));
+
+  /*
+   * THE OUTBOUND ALLOWLIST, CHECKED AT THE LAST POSSIBLE MOMENT.
+   *
+   * The database already refuses do-not-contact, no number and a call
+   * already in progress. This is the different question: is this number
+   * one we are permitted to ring AT ALL right now. While OUTBOUND_ALLOWLIST
+   * names any number, it names every number that may be dialled, and a
+   * campaign over a hundred and thirty-nine sourced candidates cannot
+   * reach a single one of them by accident.
+   *
+   * Here rather than in queueCall() on purpose: queuing is bookkeeping,
+   * dialling is the thing that rings somebody's telephone, and this must
+   * sit in front of the dialling however the call was queued.
+   */
+  const barred = blockedByAllowlist('ai_call', ctx.session.to_number);
+  if (barred) {
+    await withUser(ENGINE, (c) => c.query(
+      `select ai_call_status($1,'failed',$2,null)`, [sessionId, 'blocked']));
+    await withUser(ENGINE, (c) => c.query(
+      `select ai_call_event($1,'blocked',null,$2::jsonb,null)`,
+      [sessionId, JSON.stringify({ reason: barred.error })]));
+    live.delete(sessionId);
+    throw new Error(barred.error);
+  }
 
   let placed;
   try {
@@ -238,7 +378,8 @@ async function rebuild(sessionId, settings) {
   const candidate = toCandidate(ctx.candidate);
   const job = ctx.job ? { ...toJob(ctx.job), companyName: ctx.job.company_name } : null;
   const application = ctx.application ? { stage: ctx.application.stage } : null;
-  const p = plan({ candidate, job, application, opts: { objective: ctx.session.objective } });
+  const screening = await screeningForCall(ctx.application).catch(() => null);
+  const p = plan({ candidate, job, application, opts: { objective: ctx.session.objective, screening } });
 
   const conv = startConversation({
     candidate, job, application, settings, plan: p, language: ctx.session.language,
@@ -345,12 +486,17 @@ export async function finishCall(sessionId, conv, { status = 'completed' } = {})
      result.interestStatus, result.interestReason,
      JSON.stringify(result), summary, transcript, duration]));
 
+  const screening = await storeCallScreening(sessionId, ctx, c).catch((err) => {
+    console.error('[ai-call] screening answers could not be stored:', err.message);
+    return null;
+  });
+
   const ats = c ? atsAction(c) : { note: 'AI call ended', stage: null };
   await updateAts(ctx, ats, summary, result);
   const notify = await notifyRecruiter(ctx, ats, summary, result);
 
   live.delete(sessionId);
-  return { summary, result, ats, notify };
+  return { summary, result, ats, notify, screening };
 }
 
 /** A call that never got as far as a conversation. */

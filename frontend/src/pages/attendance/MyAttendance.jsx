@@ -33,13 +33,25 @@ const pad = (n) => String(n).padStart(2, '0');
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const thisMonth = () => localToday().slice(0, 7);
 
-export function DayStatus({ status }) {
-  const cls = {
-    Present: 'active', Late: 'pending', 'Half Day': 'pending', Absent: 'rejected',
-    'On Leave': 'applied', 'Missing Check-In': 'rejected', 'Missing Check-Out': 'pending',
-    'Checked In': 'active', 'Not Checked In': 'hold', Holiday: 'interview', 'Weekly Off': 'interview',
-  }[status] || 'pending';
-  return <span className={`status ${cls}`}>{status}</span>;
+// The four colours of the simple-UX rule (same map as the server's
+// utils/attendanceDays.js COLOUR): green done · blue going on · orange
+// waiting · red problem. Days off carry no colour.
+export const DAY_COLOUR = {
+  Present: 'green', 'On Leave': 'green', 'Half Day + Half Leave': 'green',
+  Late: 'orange', 'Early Logout': 'orange', 'Half Day, Under Review': 'orange', 'Leave Under Review': 'orange',
+  'Checked In': 'blue', 'Not Checked In': 'blue', Informed: 'orange',
+  Absent: 'red', 'Half Day': 'red', 'Missing Check-In': 'red', 'Missing Check-Out': 'red', 'Half Leave + Absent': 'red', 'No record': 'red',
+};
+const COLOUR_CLASS = { green: 'active', blue: 'applied', orange: 'pending', red: 'rejected' };
+export function DayStatus({ status, colour, earlyLogout = false }) {
+  const tone = colour || DAY_COLOUR[status] || '';
+  const cls = COLOUR_CLASS[tone] || 'att-off';
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      <span className={`status ${cls}`}>{status}</span>
+      {earlyLogout && status !== 'Early Logout' && <span className="status pending" title="Checked out before the end of the working day">Left early</span>}
+    </span>
+  );
 }
 
 export async function downloadFrom(url, params, filename) {
@@ -207,13 +219,18 @@ export default function MyAttendance() {
           {s && (
             <div style={{ margin: '4px 0 12px' }}>
               <StatRow cells={[
-                { value: s.present, label: 'Present' },
-                { value: s.late, label: 'Late' },
-                { value: s.halfDay, label: 'Half Day' },
-                { value: s.absent, label: 'Absent' },
-                { value: s.onLeave, label: 'On Leave' },
-                { value: s.missingCheckIn, label: 'Missing Check-In' },
-                { value: s.missingCheckOut, label: 'Missing Check-Out' },
+                { value: s.paidDays ?? 0, label: 'Paid days' },
+                // The same cards as HR's Attendance report (server: kpiOf / classifyDay).
+                ...(s.kpi ? [
+                  { value: s.kpi.present, label: 'Present' },
+                  { value: s.kpi.absent, label: 'Absent' },
+                  { value: s.kpi.halfDay, label: `Half day (1st ${s.halfFirst || 0} · 2nd ${s.halfSecond || 0})` },
+                  { value: s.kpi.earlyLogout, label: 'Early logout' },
+                  { value: s.kpi.late, label: 'Late' },
+                  { value: s.kpi.missingCheckIn, label: 'Missing check-in' },
+                  { value: s.kpi.missingCheckOut, label: 'Missing check-out' },
+                  { value: s.kpi.onLeave, label: 'On leave' },
+                ] : []),
               ]} />
             </div>
           )}
@@ -234,7 +251,7 @@ export default function MyAttendance() {
                   <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
                   <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
                   <td className="cell-muted">{r.hours != null ? r.hours : '—'}</td>
-                  <td><DayStatus status={r.status} />{r.note ? <div className="small-muted att-note">{r.note}</div> : null}</td>
+                  <td><DayStatus status={r.status} colour={r.colour} earlyLogout={r.earlyLogout} />{r.reason || r.note ? <div className="small-muted att-note">{r.reason || r.note}</div> : null}</td>
                   <td className="cell-muted">{r.method || '—'}{r.verification ? <div className="small-muted att-note">{r.verification}</div> : null}</td>
                   <td className="cell-muted">{r.locationStatus || '—'}</td>
                   <td className="cell-muted">{r.regularization || '—'}</td>

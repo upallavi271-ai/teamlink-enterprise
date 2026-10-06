@@ -18,6 +18,17 @@
 //             else                         department / agreement status /
 //                                          type / status the screens gate on)
 //
+// PER-ROLE SPEC (2026-10-03) — newest wins:
+//   full      Super Admin, Admin, a Manager (their departments), BDE, Client
+//   status    Assistant Manager: name, owner, open jobs, agreement STATUS —
+//             no contacts, no commercial terms, no revenue
+//   basics    STL: name + basics (overview) — no contacts, no agreement
+//             terms, no revenue
+//   min       TL ("client NAME only where needed"), Recruiter (the user:
+//             "only the client name and the requirement" — no contact of any
+//             kind), HR, everyone else
+// The old 'names' level (TL contact names) is no longer handed out.
+//
 // "Client phone / email never shown to a Recruiter" and "fee %, guarantee
 // period, payment terms only for BDE, Accounts, Admin, Mgmt" are exactly the
 // min / names levels above.
@@ -59,6 +70,15 @@ const CLIENT_COMMERCIAL_FIELDS = [
   'agreementStart', 'agreementEnd', 'agreementActivatedAt', 'agreementSignedBy', 'agreementSignedByTitle',
   'riskFlag', 'riskNotes',
 ];
+// SPEC 6 (2026-10-03) — the agreement as an Assistant Manager VIEWS it: the
+// step, dates, the document and its terms (fee %, guarantee, payment terms).
+// No contacts, no GSTIN / PAN, no revenue (revenue is never a client column).
+const CLIENT_AGREEMENT_VIEW_FIELDS = [
+  'agreementId', 'agreementStatus', 'agreementStart', 'agreementEnd', 'agreementActivatedAt', 'agreementTemplate',
+  'agreementDocument', 'agreementSource', 'agreementSentAt', 'agreementViewedAt', 'agreementSignedAt',
+  'agreementSignedBy', 'agreementSignedByTitle', 'agreementSignedCopyName', 'agreementRejectedAt',
+  'agreementRejectedReason', 'agreementFeePercent', 'guaranteePeriod', 'paymentTerms', 'paymentDue', 'invoiceTrigger',
+];
 // Columns that exist on Client and nowhere else in the schema.
 const CLIENT_MARKERS = ['agreementFeePercent', 'esignToken', 'agreementDocument', 'guaranteePeriod', 'invoiceTrigger', 'contactName', 'gst'];
 
@@ -83,18 +103,38 @@ function clientLevelFor(user) {
   // eslint-disable-next-line global-require
   const { atsViewRole } = require('./scope');
   const role = atsViewRole(user);
-  if (role === 'admin' || role === 'mgmt' || role === 'bde' || role === 'client') return 'full';
+  if (role === 'mgmt') {
+    // eslint-disable-next-line global-require
+    const { atsScopeOf } = require('./scope');
+    return atsScopeOf(user).atsRole === 'ASSISTANT_MANAGER' ? 'status' : 'full';
+  }
+  if (role === 'admin' || role === 'bde' || role === 'client') return 'full';
   if (role === 'accounts') return 'billing';
-  if (role === 'tl') return 'names';
+  if (role === 'stl') return 'basics';
   // A login with no ATS role that is nevertheless the billing desk (an
   // Accountant without ATS reaching a shared endpoint) keeps the billing view.
   if (user.caps && user.caps.clientDetail) return 'billing';
   return 'min';
 }
 
+// 2026-10-05 — a CLIENT login never receives TeamLink's internal notes about
+// it (Add client section 9) nor the bank-account fields; nobody receives the
+// encrypted account number. ('client' is a cut of 'full'.)
+const CLIENT_INTERNAL_FIELDS = ['internalNotes', 'specialInstructions', 'recruitmentInstructions', 'internalRemarks',
+  'bankAccountHolder', 'bankAccountNoEnc', 'bankAccountLast4', 'bankAccountMasked', 'bankIfsc'];
+const isClientLogin = (user) => {
+  // eslint-disable-next-line global-require
+  try { return require('./scope').atsViewRole(user) === 'client'; } catch { return false; }
+};
+
 // One Client row, cut to a level.
 function redactClientRow(o, level) {
   if (!o || typeof o !== 'object') return o;
+  if (level === 'client') {
+    const out = { ...o };
+    CLIENT_INTERNAL_FIELDS.forEach((k) => { delete out[k]; });
+    return out;
+  }
   if (level === 'full') return o;
   if (level === 'billing') {
     const out = { ...o };
@@ -102,7 +142,37 @@ function redactClientRow(o, level) {
     return out;
   }
   if (level === 'names') return pick(o, [...CLIENT_OVERVIEW_FIELDS, ...CLIENT_CONTACT_NAME_FIELDS]);
+  if (level === 'basics') return pick(o, CLIENT_OVERVIEW_FIELDS);
+  if (level === 'status') return pick(o, [...CLIENT_SAFE_FIELDS, 'bdeOwner', 'accountManager', 'permissions', 'displayCode', 'clientCode', ...CLIENT_AGREEMENT_VIEW_FIELDS]);
   return slimClient(o);
+}
+
+// ---------------------------------------------------------------------------
+// A BDE NEVER RECEIVES RECRUITER NOTES OR INTERNAL SCORES (per-role spec
+// 2026-10-03: "Hidden: other BDEs' clients, recruiter notes, internal
+// scores"). Same response-filter approach as the client fields above, so
+// every ATS payload is covered in one place.
+// ---------------------------------------------------------------------------
+const INTERNAL_SCORE_FIELDS = ['matchScore', 'resumeScore', 'aiInterviewScore', 'aiInterviewFeedback', 'aiScore', 'aiRecommendation',
+  // B8: the Fit's version / explanation and the override reason are internal too.
+  'matchVersion', 'matchDetail', 'overrideReason', 'overrideByName', 'overrideById'];
+const RECRUITER_NOTE_ROLES = ['RECRUITER', 'EMPLOYEE'];
+const isNoteRow = (o) => Object.prototype.hasOwnProperty.call(o, 'authorRole') && Object.prototype.hasOwnProperty.call(o, 'body') && Object.prototype.hasOwnProperty.call(o, 'candidateId');
+function stripInternalForBde(value, depth = 0) {
+  if (depth > 20 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value
+      .filter((v) => !(v && typeof v === 'object' && !Array.isArray(v) && isNoteRow(v) && RECRUITER_NOTE_ROLES.includes(String(v.authorRole || '').toUpperCase())))
+      .map((v) => stripInternalForBde(v, depth + 1));
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return value;
+  const out = {};
+  Object.keys(value).forEach((k) => {
+    if (INTERNAL_SCORE_FIELDS.includes(k)) return;
+    out[k] = stripInternalForBde(value[k], depth + 1);
+  });
+  return out;
 }
 
 function redactClients(value, depth = 0, level = 'min') {
@@ -119,7 +189,7 @@ function redactClients(value, depth = 0, level = 'min') {
 // For routes/clients.js: one client record (or a list of them) as this login
 // may see it.
 function redactClientFor(user, client) {
-  const level = clientLevelFor(user);
+  const level = isClientLogin(user) ? 'client' : clientLevelFor(user);
   if (Array.isArray(client)) return client.map((c) => redactClientRow(c, level));
   return redactClientRow(client, level);
 }
@@ -132,8 +202,12 @@ function clientFieldGuard(req, res, next) {
     const user = req.user;
     if (!user) return json(body);
     const level = clientLevelFor(user);
-    if (level === 'full') return json(body);
-    return json(redactClients(body, 0, level));
+    // eslint-disable-next-line global-require
+    const bde = require('./scope').atsViewRole(user) === 'bde';
+    const cut = bde ? stripInternalForBde(body) : body;
+    if (level === 'full' && isClientLogin(user)) return json(redactClients(cut, 0, 'client'));
+    if (level === 'full') return json(cut);
+    return json(redactClients(cut, 0, level));
   };
   next();
 }
@@ -144,9 +218,12 @@ module.exports = {
   redactClientFor,
   redactClientRow,
   clientLevelFor,
+  stripInternalForBde,
   CLIENT_SAFE_FIELDS,
   CLIENT_OVERVIEW_FIELDS,
   CLIENT_CONTACT_NAME_FIELDS,
   CLIENT_CONTACT_DETAIL_FIELDS,
   CLIENT_COMMERCIAL_FIELDS,
+  CLIENT_AGREEMENT_VIEW_FIELDS,
+  CLIENT_INTERNAL_FIELDS,
 };

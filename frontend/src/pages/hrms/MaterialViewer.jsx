@@ -304,14 +304,60 @@ function PdfCanvasViewer({ src, onPages }) {
   );
 }
 
+// --- Plain text, drawn in the app -------------------------------------------
+// Fetched once with the signed link and shown as text (never as HTML), with
+// selection off like every other material.
+function TextViewer({ src }) {
+  const [state, setState] = useState({ loading: true, error: '', text: '' });
+  useEffect(() => {
+    let live = true;
+    fetch(src, { credentials: 'omit', cache: 'no-store' })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.status === 403 ? 'This link has expired or you are not assigned to this course — reopen the material.' : 'Could not load this document.');
+        return r.text();
+      })
+      .then((text) => { if (live) setState({ loading: false, error: '', text }); })
+      .catch((err) => { if (live) setState({ loading: false, error: err.message || 'Could not load this document.', text: '' }); });
+    return () => { live = false; };
+  }, [src]);
+  if (state.loading) return <div className="small-muted" style={{ padding: 10 }}>Loading document…</div>;
+  if (state.error) return <div className="error-text" style={{ padding: 10 }}>{state.error}</div>;
+  return <pre className="lms-text">{state.text}</pre>;
+}
+
+// Word / PowerPoint / Excel: no browser can show these inside a page, so the
+// learner opens them on their own device. Said plainly on the screen — these
+// are the one kind of material that is NOT view-only.
+const OFFICE_NAME = {
+  'application/msword': 'Word', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word',
+  'application/vnd.ms-powerpoint': 'PowerPoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint',
+  'application/vnd.ms-excel': 'Excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel',
+};
+function OfficeFile({ src, material }) {
+  const app = OFFICE_NAME[material.mimeType] || 'Office';
+  return (
+    <div className="lms-office">
+      <div className="lms-office-icon" aria-hidden="true">📄</div>
+      <div>
+        <b>{material.fileName || material.title}</b>
+        <div className="small-muted">This is a {app} file. It can&apos;t be shown inside the app — open it on your device. Keep this screen open while you read it.</div>
+      </div>
+      <button type="button" className="btn btn-primary" onClick={() => window.open(src, '_blank', 'noopener')}>Open file</button>
+    </div>
+  );
+}
+
 // THE DOCUMENT VIEWER. A PDF is drawn in the app by pdf.js; an image is drawn
-// undraggable. `onPages` hears ({ pageCount, pagesViewed }) for a PDF.
+// undraggable; text is drawn as text. `onPages` hears ({ pageCount,
+// pagesViewed }) for a PDF.
 export function SecureDocument({ material, onPages }) {
   const { src, error } = useViewSrc(material.id);
   useBlockSaveKeys();
   if (error) return <div className="error-text">{error}</div>;
   if (!src) return <div className="small-muted">Loading document…</div>;
+  if (OFFICE_NAME[material.mimeType]) return <OfficeFile src={src} material={material} />;
   const isPdf = material.mimeType === 'application/pdf';
+  const isText = material.mimeType === 'text/plain';
   return (
     <div
       className="lms-secure lms-doc"
@@ -323,6 +369,8 @@ export function SecureDocument({ material, onPages }) {
     >
       {isPdf ? (
         <PdfCanvasViewer src={src} onPages={onPages} />
+      ) : isText ? (
+        <TextViewer src={src} />
       ) : (
         <img
           src={src}

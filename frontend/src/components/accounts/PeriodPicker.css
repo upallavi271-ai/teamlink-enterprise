@@ -1,0 +1,77 @@
+/* The shared Accounts period picker (components/accounts/PeriodPicker.jsx,
+   Accounts spec S1.6). Everything is scoped under .tlpp / .tlpp-pop. */
+.tlpp{display:inline-flex;flex-direction:column;gap:4px;min-width:0;vertical-align:top}
+.tlpp-cap{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#6b7a90;line-height:1.2}
+.tlpp-trigger{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;min-width:170px;max-width:100%;
+  background:#fff;border:1px solid #d5dce8;border-radius:10px;color:#16202b;font:inherit;font-size:13px;cursor:pointer;
+  box-shadow:0 1px 2px rgba(22,32,43,.04);text-align:left}
+.tlpp-trigger:hover{border-color:#9fb0c9}
+.tlpp-trigger:focus-visible{outline:2px solid rgba(31,56,100,.35);outline-offset:1px}
+.tlpp-trigger.open{border-color:#1f3864;box-shadow:0 0 0 2px rgba(31,56,100,.16)}
+.tlpp-trigger.set .tlpp-txt{font-weight:600;color:#1f3864}
+.tlpp-ico{flex:none;color:#1f3864}
+.tlpp-txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlpp-caret{flex:none;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid #6b7a90;margin-left:2px}
+.tlpp-trigger.open .tlpp-caret{transform:rotate(180deg)}
+
+.tlpp-pop{position:fixed;z-index:4000;display:flex;background:#fff;border:1px solid #e3e8f0;border-radius:14px;
+  box-shadow:0 18px 48px rgba(22,32,43,.18),0 2px 6px rgba(22,32,43,.06);max-width:calc(100vw - 16px);
+  max-height:calc(100vh - 16px);overflow:auto;font-size:13px;color:#16202b;text-align:left}
+.tlpp-left{flex:none;width:190px;padding:10px;border-right:1px solid #edf1f6;display:flex;flex-direction:column;gap:2px}
+.tlpp-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:9px 11px;border:0;border-radius:9px;
+  background:transparent;color:#16202b;font:inherit;font-size:13px;cursor:pointer;text-align:left}
+.tlpp-item:hover{background:#f0f3f8}
+.tlpp-item.on{background:#1f3864;color:#fff}
+.tlpp-item.on .tlpp-item-t{font-weight:700}
+.tlpp-item-r{font-family:var(--font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:10.5px;opacity:.9;white-space:nowrap}
+.tlpp-right{flex:1;min-width:0;padding:14px 16px 12px;display:flex;flex-direction:column;gap:10px;width:300px}
+.tlpp-pop.two .tlpp-right{width:580px}
+.tlpp-help{font-size:12px;color:#53637a}
+.tlpp-pills{display:flex;flex-wrap:wrap;gap:6px}
+.tlpp-pill{height:30px;padding:0 13px;border-radius:999px;border:1px solid #d5dce8;background:#fff;color:#16202b;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.tlpp-pill:hover{border-color:#1f3864}
+.tlpp-pill.on{background:#1f3864;border-color:#1f3864;color:#fff;font-weight:600}
+.tlpp-nav{display:flex;align-items:center;gap:6px}
+.tlpp-nav select{height:30px;border:1px solid #d5dce8;border-radius:8px;background:#fff;font:inherit;font-size:12.5px;padding:0 6px;color:#16202b}
+.tlpp-nav2{flex:1;text-align:center;font-weight:600;font-size:12.5px;color:#16202b}
+.tlpp-arrow{width:28px;height:28px;flex:none;border-radius:8px;border:1px solid #d5dce8;background:#fff;color:#1f3864;font-size:16px;line-height:1;cursor:pointer;padding:0}
+.tlpp-nav select{flex:1;min-width:0}
+.tlpp-arrow:disabled{opacity:.35;cursor:default}
+.tlpp-months{display:flex;gap:18px}
+.tlpp-month{flex:1;min-width:252px}
+.tlpp-wk{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:4px}
+.tlpp-wk span{text-align:center;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8695a9}
+.tlpp-grid{display:grid;grid-template-columns:repeat(7,1fr);row-gap:3px}
+.tlpp-d{position:relative;height:34px;display:flex;align-items:center;justify-content:center}
+.tlpp-d.in{background:#e4eaf4}
+.tlpp-d.s,.tlpp-d.rowS{border-top-left-radius:8px;border-bottom-left-radius:8px}
+.tlpp-d.e,.tlpp-d.rowE{border-top-right-radius:8px;border-bottom-right-radius:8px}
+.tlpp-d button{width:34px;height:34px;border:0;border-radius:8px;background:transparent;color:#16202b;font:inherit;font-size:12.5px;cursor:pointer;padding:0}
+.tlpp-d button:hover{background:#d3dceb}
+.tlpp-d.today button{box-shadow:inset 0 0 0 1px #9fb0c9}
+.tlpp-d.s button,.tlpp-d.e button{background:#1f3864;color:#fff;font-weight:700}
+.tlpp-dn{font-size:12.5px;color:#c3ccd8;user-select:none}
+.tlpp-apply-to{display:flex;align-items:center;gap:8px;font-size:12px;color:#53637a}
+.tlpp-apply-to span{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
+.tlpp-apply-to select{height:30px;border:1px solid #d5dce8;border-radius:8px;background:#fff;font:inherit;font-size:12.5px;padding:0 6px}
+.tlpp-ft{display:flex;align-items:flex-end;flex-wrap:wrap;gap:8px;border-top:1px solid #edf1f6;padding-top:10px}
+.tlpp-box{display:flex;flex-direction:column;gap:3px;width:118px;padding:5px 8px;border:1px solid #d5dce8;border-radius:9px;background:#fff}
+.tlpp-box:focus-within{border-color:#1f3864}
+.tlpp-box span{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8695a9}
+.tlpp-box input{border:0;outline:0;padding:0;height:18px;font-family:var(--font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:12px;color:#16202b;background:transparent;width:100%}
+.tlpp-gap{flex:1}
+.tlpp-btn{height:34px;padding:0 16px;border-radius:9px;border:1px solid #d5dce8;background:#fff;color:#16202b;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.tlpp-btn:hover{border-color:#9fb0c9}
+.tlpp-btn.pri{background:#1f3864;border-color:#1f3864;color:#fff}
+.tlpp-btn.pri:hover{background:#16294a}
+.tlpp-btn:disabled{opacity:.5;cursor:default}
+
+/* Small screens: the list goes on top as a row of chips, the calendar fills the width. */
+@media (max-width:640px){
+  .tlpp-pop{flex-direction:column;left:8px!important;right:8px;width:auto}
+  .tlpp-left{width:auto;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid #edf1f6}
+  .tlpp-item{width:auto;padding:7px 10px}
+  .tlpp-right,.tlpp-pop.two .tlpp-right{width:auto}
+  .tlpp-months{flex-direction:column}
+  .tlpp-month{min-width:0}
+}

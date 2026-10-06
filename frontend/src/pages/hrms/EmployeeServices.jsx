@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import Helpdesk from './Helpdesk.jsx';
 import Assets from './Assets.jsx';
+import Stationery from './Stationery.jsx';
 import Announcements from './Announcements.jsx';
 import Surveys from './Surveys.jsx';
 import Resignation from './Resignation.jsx';
@@ -16,6 +18,8 @@ import Expenses from './Expenses.jsx';
 const PROTO_TABS = [
   ['helpdesk', 'Help Desk', 'Helpdesk', 'Track and resolve employee IT/HR/Admin/Grievance/Facilities/Payroll tickets.'],
   ['assets', 'Assets', 'Asset Management', 'Company asset inventory, allocation, transfers, maintenance and audit.'],
+  // Counted things (notepads, pens …): pages/hrms/Stationery.jsx.
+  ['stationery', 'Stationery', 'Stationery', 'Notepads, pens and other office things — how many each person got.'],
   ['announcements', 'Announcements', 'Announcements', 'Company-wide notice board.'],
   ['survey', 'Engagement Survey', 'Employee Engagement Surveys', 'Create pulse surveys and review aggregated results.'],
   ['resignation', 'Resignation', 'Resignation', 'Notice period, last working day, exit checklist and relieving.'],
@@ -37,6 +41,12 @@ export default function EmployeeServices() {
   const [tab, setTab] = useState('helpdesk');
   // Which feature-tile screen is open, per tab — the prototype's svcView.
   const [view, setView] = useState(null);
+  // ?tab=announcements — a notification links straight to a tab.
+  const [params] = useSearchParams();
+  const urlTab = params.get('tab');
+  useEffect(() => {
+    if (urlTab && [...PROTO_TABS, ...EXTRA_TABS].some(([k]) => k === urlTab)) { setTab(urlTab); setView(null); }
+  }, [urlTab, params]);
 
   // §17 — SHIFT ROSTER IS NOT SHOWN TO A TL. Rostering is scheduling other
   // people; a TL leads a team but does not set the roster. Role-based
@@ -61,6 +71,7 @@ export default function EmployeeServices() {
   let body = null;
   if (tab === 'helpdesk') body = <Helpdesk view={view} onOpen={open} onBack={back} />;
   else if (tab === 'assets') body = <Assets view={view} onOpen={open} onBack={back} />;
+  else if (tab === 'stationery') body = <Stationery />;
   else if (tab === 'announcements') body = <Announcements view={view} onOpen={open} onBack={back} />;
   else if (tab === 'survey') body = <Surveys view={view} onOpen={open} onBack={back} />;
   else if (tab === 'resignation') body = <Resignation />;

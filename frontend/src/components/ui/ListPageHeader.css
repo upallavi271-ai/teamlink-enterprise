@@ -1,0 +1,42 @@
+/* ListPageHeader / StatusTabs / ListToolbar / ListFooter / FacetSelect —
+   the one list layout of every module (spec 2026-10-03 §B). Scoped under .lph-*. */
+.lph-head{align-items:flex-start}
+.lph-titles{min-width:0}
+.lph-question{font-size:13.5px;color:var(--ink-soft);margin-top:2px}
+.lph-sub{margin-top:2px}
+.lph-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+.lph-actions .atsio{margin-left:0}
+
+.lph-tabs{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 10px}
+.lph-tabs .tabs{margin-bottom:0}
+
+.lph-bar{margin:0 0 10px}
+.lph-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lph-row .lph-search{flex:0 1 auto;width:auto;max-width:100%}
+.lph-filters-btn.on,.lph-filters-btn.set{border-color:var(--brand);color:var(--brand-ink);background:var(--brand-tint)}
+.lph-sort{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft)}
+.lph-sort select{width:auto;min-width:0}
+.lph-right{margin-left:auto;display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lph-panel{margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.lph-panel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 12px;align-items:end}
+.lph-panel-grid>.hier-filter{display:contents}
+.lph-panel-grid .combo,.lph-panel-grid select,.lph-panel-grid input{width:100%;min-width:0}
+.lph-panel-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.lph-facet{display:flex;flex-direction:column;gap:3px;font-size:12px;margin:0;min-width:0}
+.lph-facet.wide{grid-column:span 2}
+.lph-facet-lbl{color:var(--ink-soft);font-weight:600;font-size:11.5px}
+.lph-facet select,.lph-facet input{width:100%;min-width:0}
+.lph-facet-loading{color:var(--ink-soft);font-size:12px}
+.lph-facet .lph-pair{display:flex;gap:6px;align-items:center}
+.lph-facet .lph-pair input{flex:1}
+.lph-chips{margin-top:8px}
+
+.lph-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-soft);margin-top:8px}
+@media (max-width:720px){
+  .lph-row .lph-search{min-width:0 !important;flex:1 1 100%}
+  .lph-right{margin-left:0}
+  .lph-facet.wide{grid-column:auto}
+}
+/* A Pager inside ListFooter: the footer already says "Showing 1 to 25 of N". */
+.lph-foot .pager .pager-count{display:none}
+.lph-foot .pager{margin-left:auto}

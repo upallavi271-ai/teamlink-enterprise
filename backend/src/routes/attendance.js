@@ -17,6 +17,8 @@ const {
   localDate, localTime, MISSING_RULES, isDate, eachDay, loadDays, rollOf, onRolls, tally, bucketOf, BUCKET_LABEL, summarise,
 } = require('../utils/attendanceDays');
 const registerSelfAttendance = require('./attendanceSelf');
+const attendancePolicy = require('../utils/attendancePolicy');
+const leaveCharge = require('../utils/leaveCharge');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -65,7 +67,7 @@ async function dayReport(req, q, from, to) {
   if (q.hrStatus) all = all.filter((e) => hrStatusOf(e.employmentStatus, e.user && e.user.status) === q.hrStatus);
   const roll = await rollOf(prisma, all);
   const employees = roll.employees.filter((e) => onRolls(e, from, to, roll.lastDayOf));
-  const { days, today } = await loadDays(prisma, { employees, from, to, cfg, lastDayOf: roll.lastDayOf });
+  const { days, today } = await loadDays(prisma, { employees, from, to, cfg, lastDayOf: roll.lastDayOf, preview: true });
   const dates = eachDay(from, to);
   const rowsOf = new Map(employees.map((e) => [e.id, days(e)]));
   const at = (id, date) => { const r = rowsOf.get(id); const i = dates.indexOf(date); return r && i >= 0 ? r[i] : null; };
@@ -314,6 +316,8 @@ router.patch('/regularizations/:id/decision', requirePerm(null, 'hrms', 'Attenda
     });
   }
   await logAudit({ userId: req.user.id, action: 'Regularization ' + status.toLowerCase(), entity: 'AttendanceRegularization', entityId: regularization.id, toValue: status });
+  // Items 4/6: a corrected day can change what an approved leave uses.
+  if (status === 'Approved') leaveCharge.afterAttendanceChange(existing.employeeId, existing.date);
   res.json(regularization);
 });
 
@@ -384,15 +388,27 @@ router.put('/checkin-methods', async (req, res) => {
 
 // ---- Attendance policy (grace time, half/full day thresholds) ----
 
+// HrConfig + the working-day / session / early-logout / sandwich settings
+// kept beside it (utils/attendancePolicy.js), as one object.
 router.get('/policy', async (req, res) => {
   let config = await prisma.hrConfig.findFirst();
   if (!config) config = await prisma.hrConfig.create({ data: {} });
-  res.json(config);
+  res.json(await attendancePolicy.withExtras(config));
 });
 
 router.put('/policy', requirePerm(null, 'hrms', 'Attendance & Time', 'configure'), async (req, res) => {
-  const { graceTimeMinutes, graceTime, halfDayHours, fullDayHours, freeLateArrivalsPerMonth, missingCheckInRule, weeklyOffDays } = req.body;
+  const { graceTimeMinutes, graceTime, halfDayHours, fullDayHours, freeLateArrivalsPerMonth, missingCheckInRule, weeklyOffDays, halfDayBySession } = req.body;
   const config = await getConfig();
+  // Items 2/3/6: working day, half-day split, early-logout allowance, sandwich.
+  const extraPatch = Object.fromEntries(attendancePolicy.KEYS.filter((k) => req.body[k] !== undefined).map((k) => [k, req.body[k]]));
+  let extraChanged = [];
+  if (Object.keys(extraPatch).length) {
+    const r = await attendancePolicy.saveExtras(extraPatch);
+    if (r.error) return res.status(400).json({ error: r.error });
+    extraChanged = r.changed;
+  }
+  if (halfDayHours != null && !(Number(halfDayHours) > 0 && Number(halfDayHours) <= 12)) return res.status(400).json({ error: 'The half-day hours must be more than 0 and at most 12.' });
+  if (fullDayHours != null && !(Number(fullDayHours) > 0 && Number(fullDayHours) <= 24)) return res.status(400).json({ error: 'The full-day hours must be more than 0 and at most 24.' });
   if (graceTime != null && toMinutes(graceTime) == null) {
     return res.status(400).json({ error: 'graceTime must be a 24-hour HH:MM clock time (e.g. 09:30)' });
   }
@@ -420,10 +436,11 @@ router.put('/policy', requirePerm(null, 'hrms', 'Attendance & Time', 'configure'
       halfDayHours: halfDayHours != null ? Number(halfDayHours) : undefined,
       fullDayHours: fullDayHours != null ? Number(fullDayHours) : undefined,
       freeLateArrivalsPerMonth: freeLateArrivalsPerMonth != null ? Number(freeLateArrivalsPerMonth) : undefined,
+      halfDayBySession: typeof halfDayBySession === 'boolean' ? halfDayBySession : undefined,
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Attendance policy updated', entity: 'HrConfig', entityId: updated.id });
-  res.json(updated);
+  await logAudit({ userId: req.user.id, action: 'Attendance policy updated', entity: 'HrConfig', entityId: updated.id, toValue: extraChanged.length ? `changed: ${extraChanged.join(', ')}` : undefined });
+  res.json(await attendancePolicy.withExtras(updated));
 });
 
 // ---- Device punches --------------------------------------------------------
@@ -521,6 +538,7 @@ router.post('/punches', async (req, res) => {
   }
 
   await logAudit({ userId: req.user.id, action: `Punch ${punch.direction} recorded`, entity: 'AttendancePunch', entityId: punch.id, toValue: `${punchDate} ${punchTime}` });
+  leaveCharge.afterAttendanceChange(employeeId, punchDate);
   res.status(201).json(punch);
 });
 
@@ -815,6 +833,99 @@ router.get('/dashboard', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   });
 });
 
+// ---- THE ATTENDANCE REPORT (user, 2026-10-05) ----------------------------------
+// GET /attendance/kpi-report?from&to[&department][&employeeId][&kpi][&part][&format=xlsx|csv]
+// One row per person per WORKING day (holidays / week offs are not listed),
+// each on exactly one card, from utils/attendanceDays.js classifyDay (the
+// same function behind every other attendance screen and the employee's own
+// view). Card number = length of its list, always: the list IS the cards'
+// rows filtered by the card. Late is a flag card (days they came late).
+//   kpi    present | absent | halfDay | earlyLogout | late | missingCheckIn |
+//          missingCheckOut | onLeave | inOffice | notYet | noData
+//   part   halfDay: first | second   ·   onLeave: approved | pending | informed
+// Department -> Employee filters cascade (options counted on the server,
+// zero-count options left out).
+// offDay (week off / holiday, nothing worked) is a card too, so the cards add
+// up to the HEADCOUNT — every person on the rolls on every day of the period.
+const KPI_CARD_KEYS = ['present', 'absent', 'halfDay', 'earlyLogout', 'late', 'missingCheckIn', 'missingCheckOut', 'onLeave', 'inOffice', 'notYet', 'noData', 'offDay'];
+const dayKpi = require('../utils/attendanceDays');
+function kpiRowMatches(x, kpi, part) {
+  if (!kpi) return true;
+  if (kpi === 'late') return x.lateDay;
+  if (x.kpi !== kpi) return false;
+  if (kpi === 'halfDay' && part) return part === 'first' ? x.session === 'First half' : part === 'second' ? x.session === 'Second half' : !x.session;
+  if (kpi === 'onLeave' && part) return x.leaveKind === part;
+  return true;
+}
+router.get('/kpi-report', requirePerm(null, 'hrms', 'Attendance & Time', 'export'), async (req, res) => {
+  const r = rangeOfQuery(req.query);
+  if (r.error) return res.status(400).json({ error: r.error });
+  const { from, to } = r;
+  const rep = await dayReport(req, {}, from, to);
+  const cfg = await attendancePolicy.withExtras(rep.cfg);
+  const p = dayKpi.policyTimes(cfg);
+  const all = [];
+  rep.employees.forEach((e) => {
+    (rep.rowsOf.get(e.id) || []).forEach((d) => {
+      if (!d || !d.kpi || d.date < from || d.date > to) return;
+      all.push({
+        employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department || '',
+        date: d.date, weekday: weekdayOf(d.date), checkIn: d.checkIn || null, checkOut: d.checkOut || null,
+        hours: d.hours ?? null, kpi: d.kpi, kpiLabel: dayKpi.KPI_LABEL[d.kpi], status: d.status, reason: d.reason || '',
+        session: d.kpi === 'halfDay' ? (d.session || null) : null,
+        leaveKind: dayKpi.leaveKindOf(d), late: !!d.late, lateDay: dayKpi.isLateDay(d), colour: d.colour || '',
+        workedOnOff: d.workedOnOff || null,
+      });
+    });
+  });
+  // Cascading filters: each option list is counted with the OTHER filter applied.
+  const dept = String(req.query.department || '');
+  const empId = String(req.query.employeeId || '');
+  const people = (rows) => new Set(rows.map((x) => x.employeeId)).size;
+  const deptOpts = new Map();
+  all.filter((x) => !empId || x.employeeId === empId).forEach((x) => {
+    if (!x.department) return;
+    if (!deptOpts.has(x.department)) deptOpts.set(x.department, new Set());
+    deptOpts.get(x.department).add(x.employeeId);
+  });
+  const empOpts = new Map();
+  all.filter((x) => !dept || x.department === dept).forEach((x) => {
+    if (!empOpts.has(x.employeeId)) empOpts.set(x.employeeId, { value: x.employeeId, label: `${x.name} (${x.employeeCode})`, count: 0 });
+    empOpts.get(x.employeeId).count += 1;
+  });
+  const facets = {
+    department: [...deptOpts.entries()].map(([v, s]) => ({ value: v, label: v, count: s.size })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    employeeId: [...empOpts.values()].sort((a, b) => a.label.localeCompare(b.label)),
+  };
+  const rows = all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId));
+  const count = (kpi, part) => rows.filter((x) => kpiRowMatches(x, kpi, part)).length;
+  const cards = Object.fromEntries(KPI_CARD_KEYS.map((k) => [k, count(k)]));
+  const parts = {
+    halfDay: { first: count('halfDay', 'first'), second: count('halfDay', 'second'), marked: count('halfDay', 'marked') },
+    onLeave: { approved: count('onLeave', 'approved'), pending: count('onLeave', 'pending'), informed: count('onLeave', 'informed') },
+  };
+  const kpi = KPI_CARD_KEYS.includes(String(req.query.kpi || '')) ? String(req.query.kpi) : '';
+  const part = kpi ? String(req.query.part || '') : '';
+  const list = rows.filter((x) => kpiRowMatches(x, kpi, part))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
+  const noDataDates = [...new Set(rows.filter((x) => x.kpi === 'noData').map((x) => x.date))].sort();
+
+  const format = String(req.query.format || '').toLowerCase();
+  if (format === 'csv' || format === 'xlsx') {
+    const t12 = (t) => (t ? dayKpi.clock(toMinutes(String(t).slice(0, 5))) : '');
+    const headers = ['Name', 'Employee ID', 'Department', 'Date', 'Day', 'In time', 'Out time', 'Hours', 'Result', 'Half', 'Late', 'Worked on week off / holiday', 'Reason'];
+    const data = list.map((x) => [x.name, x.employeeCode, x.department, x.date, x.weekday, t12(x.checkIn), t12(x.checkOut), x.hours ?? '',
+      x.kpiLabel, x.session === 'First half' ? '1st half' : x.session === 'Second half' ? '2nd half' : '', x.lateDay ? 'Yes' : '', x.workedOnOff ? 'Yes' : '', x.reason]);
+    const tag = `${kpi ? `${dayKpi.KPI_LABEL[kpi].toLowerCase().replace(/\s+/g, '-')}-` : ''}${from === to ? from : `${from}_to_${to}`}`;
+    return sendTabular(res, format, `attendance-${tag}`, headers, data, 'Attendance');
+  }
+  res.json({
+    from, to, today: rep.today, single: from === to,
+    rule: { start: dayKpi.clock(p.start), end: dayKpi.clock(p.end), split: dayKpi.clock(p.split), early: dayKpi.clock(p.early), late: dayKpi.clock(toMinutes(cfg.graceTime)), rulesFrom: cfg.attendanceRulesFrom || '' },
+    people: people(rows), headcount: rows.length, workingDays: rows.filter((x) => x.kpi !== 'offDay').length, workedOnOff: rows.filter((x) => x.workedOnOff).length, cards, parts, kpi, part, total: list.length, rows: list, facets, noDataDates,
+  });
+});
+
 // ---- Biometric & device attendance — DATE-WISE ---------------------------------
 // One row per person on the rolls per day (default: today), with the day's
 // status, every check-in and check-out time (imported log times placed by
@@ -873,6 +984,7 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
         bucketLabel: BUCKET_LABEL[bucket],
         note: d.note || '',
         late: !!(d.late || d.status === 'Late'),
+        earlyLogout: !!d.earlyLogout, colour: d.colour || '',
         // First check-in / last check-out exactly as the day rule saw them (so
         // the list and the KPI counts agree), with the device's seconds.
         checkIn: d.checkIn ? (fin ? clockOf(fin) : d.checkIn) : null,
@@ -898,6 +1010,7 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   // The card filter applies to the rows; the totals stay the whole period's.
   const want = String(req.query.dayStatus || '');
   const wanted = {
+    headcount: (x) => !!x.bucket, // everyone on the rolls that day
     late: (x) => x.late,
     missingCheckOut: (x) => x.status === 'Missing Check-Out',
     punched: (x) => x.punchRows > 0,

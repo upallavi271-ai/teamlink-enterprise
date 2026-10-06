@@ -10,7 +10,7 @@ import './clientsrole.css';
 //
 // Clients is ONE place — ATS → Clients — and Agreements are client-level, so
 // they sit beside it here rather than on a Requirements / Job Portal strip
-// (components/ClientModuleTabs.jsx is retired from these pages). Agreements
+// (the old components/ClientModuleTabs.jsx strip is deleted). Agreements
 // is drawn only for a login with Agreement Lifecycle view (Admin, Management,
 // BDE, Accounts — not a TL). A login without the Clients list (a Recruiter,
 // or an Accounts login reaching /accounts/agreements without ATS) gets no
@@ -21,9 +21,9 @@ export default function ClientsTabs({ active }) {
   const { pathname } = useLocation();
   if (!can(user, 'ats', 'clients', 'Client List', 'view')) return null;
   const tabs = [
-    { key: 'clients', label: 'Clients', to: '/clients', hint: 'Every client in your scope — one record per client' },
+    { key: 'clients', label: 'Clients', to: '/clients', hint: 'All your clients' },
     can(user, 'ats', 'clients', 'Agreement Lifecycle', 'view')
-      && { key: 'agreements', label: 'Agreements', to: '/agreements', hint: 'The service agreement of every client in your scope' },
+      && { key: 'agreements', label: 'Agreements', to: '/agreements', hint: "Each client's agreement" },
   ].filter(Boolean);
   if (tabs.length < 2) return null;
   const current = active || (pathname.includes('agreements') ? 'agreements' : 'clients');

@@ -14,7 +14,10 @@ const API_PORT = 9999;
 let dbHandle, server, client, createApp, hashPassword, getPool, closePool, mockProvider;
 
 test('boot: migrate, seed accounts, start API', async () => {
-  dbHandle = await startTestDb(PORT);
+  // The suite is written against the prototype's demo rows (j1, technova,
+  // cand1, r1, c1, a1, ...). The migrations purge them from the real
+  // portal, so they are re-applied here, in this test database only.
+  dbHandle = await startTestDb(PORT, { demoSeed: true });
   mockProvider = await startMockProvider();
   applyTestEnv(dbHandle.url);
 
@@ -187,6 +190,36 @@ test('applying to a draft job is refused', async () => {
   const res = await client.post('/api/applications', { jobId: 'jsecret' });
   assert.equal(res.status, 404);
   assert.equal(res.body.error.code, 'JOB_UNAVAILABLE');
+});
+
+test('applying while signed out is refused, whatever the page did', async () => {
+  const anon = makeClient(`http://127.0.0.1:${API_PORT}`);
+  const res = await anon.post('/api/applications', { jobId: 'j5' });
+  assert.equal(res.status, 401);
+  const none = await getPool().query(`select count(*)::int n from applications where job_id='j5' and source='portal' and applied_at > now() - interval '1 minute'`);
+  assert.equal(none.rows[0].n, 0, 'a signed-out request created an application');
+});
+
+test('applying to a job that does not exist is refused', async () => {
+  const res = await client.post('/api/applications', { jobId: 'no_such_job_xyz' });
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error.code, 'JOB_UNAVAILABLE');
+});
+
+test('applying to a closed or paused job is refused, and nothing is recorded', async () => {
+  try {
+    for (const set of [`status='closed'`, `status='open', paused=true`]) {
+      await getPool().query(`update jobs set ${set} where id='j2'`);
+      const res = await client.post('/api/applications', { jobId: 'j2' });
+      // 404 when row security hides the job from candidates, 409 when it is visible but not open.
+      assert.ok([404, 409].includes(res.status), `${set}: ${res.status}`);
+      assert.equal(res.body.error.code, 'JOB_UNAVAILABLE');
+    }
+    const none = await getPool().query(`select count(*)::int n from applications where job_id='j2' and candidate_id='cand1'`);
+    assert.equal(none.rows[0].n, 0);
+  } finally {
+    await getPool().query(`update jobs set status='open', paused=false where id='j2'`);
+  }
 });
 
 test('candidate sees only their own notifications', async () => {
@@ -571,11 +604,21 @@ test('another candidate cannot fetch that resume', async () => {
   assert.ok([403, 404].includes(res.status), `resume leaked, status ${res.status}`);
 });
 
+// The four preferences the registration form marks as required. The route
+// refuses a registration without them (0082_registration_preferences.sql,
+// registerSchema in src/routes/auth.js), so every registration below that
+// is meant to get past validation carries them.
+const REQUIRED_PREFS = {
+  preferredLocation: 'Bengaluru', expectedCtc: 12,
+  noticePeriod: '30 days', preferredWorkModes: ['Hybrid'],
+};
+
 test('registration creates a real account that can sign in', async () => {
   const fresh = makeClient(`http://127.0.0.1:${API_PORT}`);
   const email = `new${Date.now()}@test.local`;
   const reg = await fresh.post('/api/auth/register', {
     name: 'New Person', email, password: 'Str0ngPass1', phone: '+91 90000 00000',
+    ...REQUIRED_PREFS,
   });
   assert.equal(reg.status, 201);
   assert.equal(reg.body.session.role, 'candidate');
@@ -593,7 +636,7 @@ test('registration rejects a weak password and a duplicate email', async () => {
   assert.ok(weak.body.error.details.password);
 
   const dupe = await fresh.post('/api/auth/register',
-    { name: 'X Y', email: 'cand1@test.local', password: 'Str0ngPass1' });
+    { name: 'X Y', email: 'cand1@test.local', password: 'Str0ngPass1', ...REQUIRED_PREFS });
   assert.equal(dupe.status, 409);
   assert.equal(dupe.body.error.code, 'EMAIL_TAKEN');
 });

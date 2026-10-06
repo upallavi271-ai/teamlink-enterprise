@@ -1,0 +1,11 @@
+/* B3 — offer link + versions on Offers (pages/ats/Offers.jsx). Scoped .ofl / .ofv-*. */
+.ofl .ofl-url { width: 100%; box-sizing: border-box; font-size: 13px; padding: 8px; border: 1px solid #c9d4e6; border-radius: 8px; background: #f6f9ff; margin: 8px 0; }
+.ofl .ofl-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.ofl .ofl-btns .btn { flex: 1 1 120px; text-align: center; }
+.ofl .ofl-ok { background: #e7f6ec; color: #17663a; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+.ofl .ofl-note { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: #eef4ff; color: #1f3a6b; margin-bottom: 8px; }
+.ofl .ofl-note.is-off { background: #fff4e5; color: #8a4b00; }
+.ofv-list { margin-top: 14px; border-top: 1px solid #e3e8f0; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.ofv-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.ofv-row .ofv-v { font-weight: 700; color: #1f2a44; min-width: 28px; padding-top: 2px; }
+.ofv-row .ofv-main { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; min-width: 0; }

@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const {
-  requirementWhere, matches, scopeOf, OUT_OF_SCOPE, CLIENT_SHARED_STAGES, applicationInScope,
+  requirementWhere, matches, atsScopeOf: scopeOf, OUT_OF_SCOPE, CLIENT_SHARED_STAGES, applicationInScope,
 } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { computeMatch } = require('../utils/matching');
@@ -23,6 +23,8 @@ const {
 // Nothing here writes one; the list and the detail page only READ the current
 // one so the Follow-up column and the Applications tab can show it.
 const { currentFollowUpsByApplication, CALL_RESULTS } = require('../utils/followups');
+// C1 (2026-10-03): Last contact + the Not followed up / Due today / Followed up badge.
+const FV = require('../utils/followupVisibility');
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 // The paged list's in-memory working set (kept current by deltas).
 const { getListState, markCandidateDirty } = require('../utils/candidateListCache');
@@ -213,6 +215,16 @@ async function duplicateMatches(user, { email, phone, name, excludeId }) {
       createdAt: c.createdAt,
       applicationCount: c.applications.length,
       otherTeamApplications: c.applications.length - visible.length,
+      // cand7_ (§7 Add candidate): WHO already has this person — the recruiter
+      // (or TL) and department of their most recent application.
+      heldBy: (() => {
+        const last = [...c.applications].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+        const r = last && last.requirement;
+        if (!r) return null;
+        const who = (r.recruiter && r.recruiter.name) || r.tl || null;
+        return who || r.department ? { name: who, department: r.department || null } : null;
+      })(),
+      archived: c.profileStatus === 'Archived',
       applications: visible
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         .map((a) => ({
@@ -480,7 +492,7 @@ function ownerUserIdOf(app, followUp) {
 // ---------------------------------------------------------------------------
 const candidateCode = (id) => `CAN-${String(id || '').slice(-8).toUpperCase()}`;
 const PIPELINE_SUBS = ['all', 'active', 'hold', 'selected', 'joined', 'rejected'];
-const MASTER_SUBS = ['all', 'duplicates', 'inactive'];
+const MASTER_SUBS = ['all', 'duplicates', 'inactive', 'archived'];
 function normaliseViewSub(view, sub) {
   const v = String(view || '').toLowerCase();
   const s = String(sub || '').toLowerCase();
@@ -590,6 +602,12 @@ const SORTS = {
   activity: (r) => (r.lastActivityAt ? new Date(r.lastActivityAt).getTime() : null),
   created: (r) => new Date(r.createdAt).getTime(),
   masterActivity: (r) => (r.lastApplicationActivityAt ? new Date(r.lastApplicationActivityAt).getTime() : null),
+  // cand7_: Last contact ("Never" = 0, so oldest-first puts them on top) and Fit %.
+  lastContact: (r) => (r.lastContactAt ? new Date(r.lastContactAt).getTime() : 0),
+  fit: (r) => (r.matchScore != null ? r.matchScore : null),
+  // ATS layout v3: the list's Experience and CTC columns.
+  experience: (r) => (r.experienceYears != null ? Number(r.experienceYears) : null),
+  ctc: (r) => salaryLakhs(r.currentSalary),
 };
 
 // SECTION (spec #2 §24): the team of the seat the work sits on ("Team A"),
@@ -619,6 +637,7 @@ const sectionOfCode = (map, code) => (code ? map.get(String(code).toUpperCase())
 // login's scope and the day are unchanged (a page flip or a filter change
 // costs a filter pass, not 17,000 decorate() calls).
 const ROW_MEMO = new Map();
+const ROW_INFLIGHT = new Map();
 const ROW_MEMO_MAX = 8;
 const ROW_MEMO_TTL_MS = 60 * 1000;
 async function pagedRowsFor(user) {
@@ -631,11 +650,17 @@ async function pagedRowsFor(user) {
   ].join('|');
   const hit = ROW_MEMO.get(user.id);
   if (hit && hit.key === key && Date.now() - hit.at < ROW_MEMO_TTL_MS) return hit.rows;
-  const rows = await buildPagedRows(user, st, s);
-  ROW_MEMO.delete(user.id);
-  ROW_MEMO.set(user.id, { key, at: Date.now(), rows });
-  while (ROW_MEMO.size > ROW_MEMO_MAX) ROW_MEMO.delete(ROW_MEMO.keys().next().value);
-  return rows;
+  // Requests that arrive together for the same login share one build.
+  if (ROW_INFLIGHT.has(key)) return ROW_INFLIGHT.get(key);
+  const job = (async () => {
+    const rows = await buildPagedRows(user, st, s);
+    ROW_MEMO.delete(user.id);
+    ROW_MEMO.set(user.id, { key, at: Date.now(), rows });
+    while (ROW_MEMO.size > ROW_MEMO_MAX) ROW_MEMO.delete(ROW_MEMO.keys().next().value);
+    return rows;
+  })().finally(() => { ROW_INFLIGHT.delete(key); });
+  ROW_INFLIGHT.set(key, job);
+  return job;
 }
 
 async function buildPagedRows(user, st, s) {
@@ -701,6 +726,9 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   }
   if (q.location && r.location !== q.location) return false;
   if (q.source && r.source !== q.source) return false;
+  // cand7_: the person's master Qualification / Specialisation ('none' = not mapped).
+  if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
+  if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
   if (q.status) {
     const wanted = String(q.status).split(',');
     const legacy = { 'On Hold': 'Hold', Closed: 'Joined' };
@@ -724,6 +752,8 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.appliedFrom && !any((a) => String(new Date(a.createdAt).toISOString()).slice(0, 10) >= q.appliedFrom)) return false;
   if (q.appliedTo && !any((a) => String(new Date(a.createdAt).toISOString()).slice(0, 10) <= q.appliedTo)) return false;
   if (ctx.personIds && !r.appIds.some((id) => ctx.personIds.has(id))) return false;
+  // ATS layout v3: People → "Available for matching" (the Candidates card).
+  if (q.available === '1' && !availableForMatching(r)) return false;
   return true;
 }
 
@@ -749,9 +779,10 @@ const attributedOf = (fu) => (fu ? {
   bde: { userId: fu.bdeUserId || null, name: fu.bdeName || null },
 } : null);
 const APP_ROW_MEMO = new Map();
+const APP_ROW_INFLIGHT = new Map();
 async function pipelineRowsFor(user) {
-  const st = await getListState();
-  const snap = await ensureNextActionContext();
+  // The two snapshots are independent reads: wait for both at once.
+  const [st, snap] = await Promise.all([getListState(), ensureNextActionContext()]);
   const s = scopeOf(user);
   const key = [
     user.id, st.version, snap.stamp, istDay(new Date()), s.global, s.atsRole, s.departments.join(','),
@@ -760,12 +791,20 @@ async function pipelineRowsFor(user) {
   ].join('|');
   const hit = APP_ROW_MEMO.get(user.id);
   if (hit && hit.key === key && Date.now() - hit.at < ROW_MEMO_TTL_MS) return hit;
-  const built = await buildPipelineRows(user, st, s, snap);
-  const entry = { key, at: Date.now(), ...built };
-  APP_ROW_MEMO.delete(user.id);
-  APP_ROW_MEMO.set(user.id, entry);
-  while (APP_ROW_MEMO.size > ROW_MEMO_MAX) APP_ROW_MEMO.delete(APP_ROW_MEMO.keys().next().value);
-  return entry;
+  // SPEED (2026-10-03): the page asks for the list, the filter counts and the
+  // board at the same moment — all three for the same login. They now share
+  // ONE build instead of building the same rows three times over.
+  if (APP_ROW_INFLIGHT.has(key)) return APP_ROW_INFLIGHT.get(key);
+  const job = (async () => {
+    const built = await buildPipelineRows(user, st, s, snap);
+    const entry = { key, at: Date.now(), ...built };
+    APP_ROW_MEMO.delete(user.id);
+    APP_ROW_MEMO.set(user.id, entry);
+    while (APP_ROW_MEMO.size > ROW_MEMO_MAX) APP_ROW_MEMO.delete(APP_ROW_MEMO.keys().next().value);
+    return entry;
+  })().finally(() => { APP_ROW_INFLIGHT.delete(key); });
+  APP_ROW_INFLIGHT.set(key, job);
+  return job;
 }
 
 async function buildPipelineRows(user, st, s, snap) {
@@ -782,6 +821,23 @@ async function buildPipelineRows(user, st, s, snap) {
   const viewer = { id: me, atsRole: s.atsRole };
   const today = todayIst();
   const sections = await sectionMap();
+  // C1: latest contact per application + the per-stage due rules (only used
+  // once the user has confirmed them) — utils/followupVisibility.js.
+  const [contactIdx, contactRules] = internalViewer
+    ? await Promise.all([FV.contactIndex(snap.stamp), FV.loadRules()]) : [null, null];
+  // cand7_: "Rejected before" (utils/rejections.js index — a count only, so a
+  // recruiter learns THAT, never where) and the Qualification / Specialisation
+  // master names for the Filters panel. Never fatal.
+  let rjIx = null;
+  // eslint-disable-next-line global-require
+  if (internalViewer) { try { rjIx = await require('../utils/rejections').index(); } catch { rjIx = null; } }
+  let specL = null;
+  // eslint-disable-next-line global-require
+  try { specL = await require('../utils/specialisations').labelsFor(); } catch { specL = null; }
+  // B7: "Partner: <name> · yours till <date>" on partner-owned people (TeamLink logins only).
+  let partnerOwners = new Map();
+  // eslint-disable-next-line global-require
+  if (internalViewer) { try { partnerOwners = await require('../utils/partners').ownerMap(candidates); } catch { partnerOwners = new Map(); } }
   const rows = [];
   let preAts = 0;
   let people = 0;
@@ -809,7 +865,13 @@ async function buildPipelineRows(user, st, s, snap) {
         phone: c.phone,
         location: c.location,
         source: c.source,
+        partner: partnerOwners.get(c.id) || null,
         skills: c.skills,
+        experienceYears: c.experienceYears ?? null,
+        noticePeriod: c.noticePeriod || null,
+        expectedSalary: c.expectedSalary || null,
+        // ATS layout v3: the CTC column (TeamLink logins only).
+        ...(kind === 'client' ? {} : { currentSalary: c.currentSalary || null }),
         createdAt: a.createdAt,
         appliedDate: a.createdAt,
         applicationsCount: apps.length,
@@ -853,10 +915,36 @@ async function buildPipelineRows(user, st, s, snap) {
         lastActivityAt: a.updatedAt || a.createdAt,
         aiInterviewStatus: a.aiInterviewStatus || 'Required',
         ...(kind === 'client' ? {} : { matchScore: a.matchScore ?? a.resumeScore ?? null }),
+        // cand7_: person-level facts the Filters panel and the board read.
+        qualificationId: c.qualificationId || null,
+        qualificationName: specL && c.qualificationId ? specL.qual(c.qualificationId) : null,
+        specialisationId: c.specialisationId || null,
+        specialisationName: specL && c.specialisationId ? specL.spec(c.specialisationId) : null,
+        archived: c.profileStatus === 'Archived',
+        doNotUse: c.profileStatus === 'Do Not Use',
+        rejectedCount: rjIx ? (rjIx.byCandidate.get(c.id) || []).length : 0,
+        // Rejections (spec 2026-10-03 §A1): the Rejected tab's Filters — whose decision and the reason.
+        ...(rjIx && a.stage === 'REJECTED' ? (() => {
+          const x = rjIx.byApplication && rjIx.byApplication.get(a.id);
+          return { rejSide: (x && x.side) || 'none', rejReason: (x && x.reason) || 'Not recorded' };
+        })() : {}),
+        candidateAddedAt: c.createdAt,
         needsAction: needsActionBy(a, na, viewer),
         isNew: isNewUnreviewed(a, na, viewer, snap),
         clientFeedbackPending: cfp,
         feedback: cfp ? feedbackWait(a, na, today) : null,
+        // C1: lastContactAt / lastContactMode / lastContactBy / lastContactDays /
+        // contactDue / contactBadge — internal logins only.
+        ...(contactIdx ? FV.contactStatus({
+          stage: a.stage,
+          contact: FV.lastContactOf(contactIdx, a.id, c.id),
+          followUpDue: latestFu && !latestFu.completedAt ? latestFu.dueDate : null,
+          rules: contactRules,
+          enteredAt: na.enteredAt,
+          interviewAt: a.interviewAt,
+          joiningDate: a.joiningDate || (snap.appDates.get(a.id) || {}).joiningDate || null,
+          today,
+        }) : {}),
       };
       row.mine = (fu && fu.ownerUserId === me) || (!!r && (r.recruiterId === me || r.tlId === me || r.bdeId === me
         || String(r.recruiterIds || '').split(',').includes(me)));
@@ -908,8 +996,67 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   const day = r.appliedDate ? new Date(r.appliedDate).toISOString().slice(0, 10) : '';
   if (q.appliedFrom && !(day && day >= q.appliedFrom)) return false;
   if (q.appliedTo && !(day && day <= q.appliedTo)) return false;
+  // Spec 2026-10-03 §B: Skills · Experience · Notice period · Salary · Match ≥ %.
+  if (q.skills) {
+    const have = String(r.skills || '').toLowerCase();
+    if (!String(q.skills).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean).every((s) => have.includes(s))) return false;
+  }
+  if (q.minExp !== undefined && q.minExp !== '' && !(r.experienceYears != null && r.experienceYears >= Number(q.minExp))) return false;
+  if (q.maxExp !== undefined && q.maxExp !== '' && !(r.experienceYears != null && r.experienceYears <= Number(q.maxExp))) return false;
+  if (q.notice && String(r.noticePeriod || '') !== q.notice) return false;
+  if (q.maxSalary !== undefined && q.maxSalary !== '') {
+    const lakhs = salaryLakhs(r.expectedSalary);
+    if (lakhs === null || lakhs > Number(q.maxSalary)) return false;
+  }
+  if (q.minMatch !== undefined && q.minMatch !== '' && !(r.matchScore != null && r.matchScore >= Number(q.minMatch))) return false;
+  // C1: ?contact=never | stale3 | overdue | not_followed | due_today | followed
+  if (q.contact && !FV.matchesContactFilter(q.contact, r)) return false;
+  // cand7_: an ARCHIVED person is hidden from every list (People → Archived
+  // brings them back); Qualification / Specialisation ('none' = not mapped);
+  // Owner (whose move it is now, 'none' = nobody named); Rejected before.
+  if (r.archived && q.archived !== '1') return false;
+  if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
+  if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
+  if (q.owner && ownerKeyOf(r) !== q.owner) return false;
+  if (q.rejectedBefore === 'yes' && !(r.rejectedCount > 0)) return false;
+  if (q.rejectedBefore === 'no' && r.rejectedCount > 0) return false;
+  if (q.rejSide && r.rejSide !== q.rejSide) return false;
+  if (q.rejReason && r.rejReason !== q.rejReason) return false;
+  // ATS layout v3: "Not followed up 7+ / 30+ days" (the Candidates cards).
+  if (q.contactAge && !(contactAgeDays(r) != null && contactAgeDays(r) >= Number(q.contactAge))) return false;
   if (ctx.personIds && !ctx.personIds.has(r.id)) return false;
   return true;
+}
+// Days since anyone last contacted this person about a LIVE (Active) job —
+// counted from the day it was added when nobody ever did. null = not live.
+function contactAgeDays(r) {
+  if (r.pipelineStatus !== 'Active') return null;
+  if (r.lastContactAt) return r.lastContactDays != null ? r.lastContactDays : Math.floor((Date.now() - new Date(r.lastContactAt).getTime()) / 86400000);
+  const from = r.appliedDate || r.createdAt;
+  return from ? Math.max(0, Math.floor((Date.now() - new Date(from).getTime()) / 86400000)) : null;
+}
+// ATS layout v3: "Available for matching" — not archived, not "Do not use",
+// and no live or joined job: every job this login sees ended in a reject, or
+// the person is on no job yet.
+function availableForMatching(r) {
+  if (['Archived', 'Do Not Use'].includes(r.profileStatus)) return false;
+  return (r.applications || []).every((a) => a.stage === 'REJECTED');
+}
+// Whose move it is, as a filter value: a user id, 'none' (live, nobody named),
+// or null for a closed application (Joined / Rejected have no owner).
+function ownerKeyOf(r) {
+  if (!LIVE_STATUSES.includes(r.pipelineStatus)) return null;
+  return r.ownerUserId || 'none';
+}
+// "₹6.5L", "6 LPA", "650000", "6,50,000" -> lakhs per year (6.5); null = not a number.
+function salaryLakhs(v) {
+  const s = String(v || '').toLowerCase().replace(/[,₹\s]/g, '');
+  const m = /(\d+(?:\.\d+)?)/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (/l|lakh|lpa/.test(s.slice(m.index + m[0].length, m.index + m[0].length + 4))) return n;
+  if (/k/.test(s.slice(m.index + m[0].length, m.index + m[0].length + 2))) return (n * 1000 * 12) / 100000;
+  return n >= 1000 ? n / 100000 : n;
 }
 const PIPELINE_HIDDEN = ['hay', 'phoneDigits', 'mine', 'interviewToday'];
 function pipelineOut(r) {
@@ -948,7 +1095,8 @@ async function pipelineList(req, res, sub) {
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
   const ctx = { search: String(q.search || '').trim().toLowerCase(), personIds: att ? att.ids : null };
   const built = await pipelineRowsFor(req.user);
-  const all = built.rows;
+  // cand7_: archived people are not part of any pipeline count.
+  const all = q.archived === '1' ? built.rows : built.rows.filter((r) => !r.archived);
   const noStage = all.filter((r) => pipelineRowMatches(r, q, ctx, { skipStage: true }));
   const filtered = q.stage ? noStage.filter((r) => pipelineStageMatches(r, q)) : noStage;
 
@@ -1011,10 +1159,13 @@ async function pipelineList(req, res, sub) {
   }
   const pg = pageOf(rows, q);
   if (isInternalViewer(req.user)) await attachRejections(pg.pageRows);
+  // "Rejected N×" + who rejected (spec 2026-10-03 §A1, utils/rejections.js), on the copies.
+  const pageOut = pg.pageRows.map(pipelineOut);
+  if (isInternalViewer(req.user)) await require('../utils/rejections').attachRejectionBadges(req.user, pageOut); // eslint-disable-line global-require
   return res.json({
     view: 'pipeline',
     sub: effSub,
-    rows: pg.pageRows.map(pipelineOut),
+    rows: pageOut,
     total: rows.length,
     page: pg.page,
     pages: pg.pages,
@@ -1083,11 +1234,16 @@ async function masterList(req, res, sub) {
   const all = await pagedRowsFor(req.user);
   const kind = viewerKind(req.user);
   const qq = { ...q, stage: '', followUp: '' };
+  // cand7_: People → Archived shows only archived people; every other view hides them.
+  let archivedCount = 0;
+  let liveCount = 0;
   const filtered = all.filter((r) => {
     if (!rowMatches(r, qq, ctx)) return false;
     if (q.hiring === 'internal' && !(r.applications || []).some((a) => a.requirement && a.requirement.internal)) return false;
     if (q.hiring === 'client' && !(r.applications || []).some((a) => a.requirement && !a.requirement.internal)) return false;
-    return true;
+    const archived = r.profileStatus === 'Archived';
+    if (archived) archivedCount += 1; else liveCount += 1;
+    return archived === (sub === 'archived');
   });
   const withActivity = filtered.map((r) => ({ r, last: lastApplicationActivity(r, snap) }));
   const inactiveRows = withActivity.filter((x) => !x.last || x.last < cutoff);
@@ -1095,7 +1251,9 @@ async function masterList(req, res, sub) {
   if (isDupAdmin(req.user)) {
     try { dupCount = (await visibleDuplicateGroups()).groups.contact.length; } catch { dupCount = null; }
   }
-  const subs = { all: filtered.length, inactive: inactiveRows.length, duplicates: dupCount };
+  const subs = {
+    all: liveCount, inactive: inactiveRows.length, duplicates: dupCount, archived: archivedCount,
+  };
   const pick = sub === 'inactive' ? inactiveRows : withActivity;
   const shaped = pick.map(({ r, last }) => {
     const apps = r.applications || [];
@@ -1135,11 +1293,13 @@ async function masterList(req, res, sub) {
   });
   if (q.all === '1') return res.json(sorted.rows.map(outRow));
   const pg = pageOf(sorted.rows, q);
+  const masterOut = pg.pageRows.map(outRow);
+  if (kind === 'internal') await require('../utils/rejections').attachRejectionBadges(req.user, masterOut, (r) => r.id); // eslint-disable-line global-require
   const pipe = await pipelineRowsFor(req.user);
   return res.json({
     view: 'master',
     sub,
-    rows: pg.pageRows.map(outRow),
+    rows: masterOut,
     total: sorted.rows.length,
     page: pg.page,
     pages: pg.pages,
@@ -1242,6 +1402,8 @@ const LIST_FIELDS = [
   'recruiterName', 'positionCode', 'tlName',
   // Why a rejected candidate was rejected, and whose decision it was.
   'rejection',
+  // B7: { name, until } when a partner owns this person.
+  'partner',
 ];
 
 function slimForList(row) {
@@ -1472,7 +1634,7 @@ router.get('/duplicates/groups', requireDupAdmin, async (req, res, next) => {
         },
       }),
       prisma.candidateNote.groupBy({ by: ['candidateId'], where: { candidateId: { in: ids } }, _count: { _all: true } }),
-      prisma.candidateDocument.groupBy({ by: ['candidateId'], where: { candidateId: { in: ids } }, _count: { _all: true } }),
+      prisma.candidateDocument.groupBy({ by: ['candidateId'], where: { candidateId: { in: ids }, deletedAt: null }, _count: { _all: true } }),
       prisma.candidateMessage.groupBy({ by: ['candidateId'], where: { candidateId: { in: ids } }, _count: { _all: true } }),
     ]) : [[], [], [], []];
     const cnt = (arr) => new Map(arr.map((r) => [r.candidateId, r._count._all]));
@@ -1695,7 +1857,8 @@ router.get('/source-analytics', async (req, res) => {
 async function loadInScope(req, res) {
   const candidate = await prisma.candidate.findUnique({
     where: { id: req.params.id },
-    include: { applications: { include: { requirement: { include: { client: { select: { id: true, name: true } }, recruiter: { select: { id: true, name: true } }, bde: { select: { id: true, name: true } } } } } } },
+    // client.status: the Candidate 360 "Client paused" warning (spec 2026-10-03 §A).
+    include: { applications: { include: { requirement: { include: { client: { select: { id: true, name: true, status: true } }, recruiter: { select: { id: true, name: true } }, bde: { select: { id: true, name: true } } } } } } },
   });
   if (!candidate) {
     res.status(404).json({ error: 'Candidate not found' });
@@ -1877,6 +2040,14 @@ async function pipelineHistoryFor(applications, kind) {
   return out.sort((a, b) => new Date(b.when) - new Date(a.when));
 }
 
+// cand7_ (Candidates §7): the Progress board, Archive / bring back and the
+// Super-Admin-only delete (routes/candidatesBoard.js). Mounted before /:id.
+require('./candidatesBoard')(router, {
+  pipelineRowsFor, pipelineRowMatches, QUEUES, hasPersonQuery, attributedApplications, loadInScope, viewerKind,
+  // ATS layout v3: the Candidates cards.
+  pagedRowsFor, rowMatches, availableForMatching, contactAgeDays,
+});
+
 router.get('/:id', async (req, res) => {
   const loaded = await loadInScope(req, res);
   if (!loaded) return undefined;
@@ -2026,7 +2197,8 @@ router.get('/:id', async (req, res) => {
   });
 
   const documents = await prisma.candidateDocument.findMany({
-    where: { candidateId: candidate.id, ...(kind === 'internal' ? {} : { internalOnly: false }) },
+    // b5_: a document deleted with a reason stays in the history, not on the tab.
+    where: { candidateId: candidate.id, deletedAt: null, ...(kind === 'internal' ? {} : { internalOnly: false }) },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -2136,6 +2308,8 @@ router.get('/:id', async (req, res) => {
     code: candidateCode(candidate.id),
     applications,
     ownership,
+    // B7: the partner who owns this person (badge on the profile), internal logins only.
+    partnerOwner: kind === 'internal' ? await require('../utils/partners').ownerInfo(candidate).catch(() => null) : null, // eslint-disable-line global-require
     interviewFeedbacks,
     activity,
     duplicateHint,
@@ -2298,6 +2472,10 @@ router.post('/:id/contact', requirePerm('ats', 'candidates', 'Candidate Master',
     return res.status(403).json({ error: 'Contacting a candidate is not available to this login' });
   }
   const { candidate } = loaded;
+  // b5_: consent withdrawn = do not contact. Record their new yes first (Consent card).
+  if (require('../utils/candidateRecord').isDoNotContact(candidate)) { // eslint-disable-line global-require
+    return res.status(409).json({ error: 'This person asked not to be contacted (consent withdrawn). If they say yes again, record it on the Consent card first.', doNotContact: true });
+  }
 
   const method = String((req.body && req.body.method) || '').trim();
   const METHODS = ['Call', 'WhatsApp', 'SMS', 'Email'];
@@ -2448,9 +2626,13 @@ router.post('/bulk-contact', requirePerm('ats', 'candidates', 'Candidate Master'
     where: { id: { in: ids } },
     include: { applications: { include: { requirement: true } } },
   });
-  const allowed = found.filter((c) => scopeOf(req.user).global
+  const reachable = found.filter((c) => scopeOf(req.user).global
     || visibleApplications(req.user, c.applications).length > 0);
-  const outOfScope = ids.length - allowed.length;
+  const outOfScope = ids.length - reachable.length;
+  // b5_: consent withdrawn = do not contact — counted, never messaged.
+  const { isDoNotContact } = require('../utils/candidateRecord'); // eslint-disable-line global-require
+  const allowed = reachable.filter((c) => !isDoNotContact(c));
+  const doNotContact = reachable.length - allowed.length;
 
   // eslint-disable-next-line global-require
   const emailCfg = await require('../utils/mailer').emailConfig().catch(() => ({ configured: false }));
@@ -2461,7 +2643,7 @@ router.post('/bulk-contact', requirePerm('ats', 'candidates', 'Candidate Master'
     .split('{firstName}').join(String(c.name || 'there').split(/\s+/)[0]);
 
   const result = {
-    candidates: allowed.length, outOfScope, queued: 0, notSent: 0,
+    candidates: allowed.length, outOfScope, doNotContact, queued: 0, notSent: 0,
     skipped: { Email: 0, WhatsApp: 0, SMS: 0 },
   };
   const rows = [];
@@ -2544,7 +2726,8 @@ router.get('/:id/followup-log', async (req, res) => {
     // show the outcome and what was said as two things.
     let outcome = null;
     let said = m.body || null;
-    if (m.channel === 'Call' && m.body) {
+    // A quick log (Call / Mail / WhatsApp buttons) carries only its outcome.
+    if ((m.channel === 'Call' || m.template === 'QUICK_LOG') && m.body) {
       const [first, ...rest] = String(m.body).split(' — ');
       outcome = first || null;
       said = rest.join(' — ') || null;
@@ -2560,6 +2743,10 @@ router.get('/:id/followup-log', async (req, res) => {
       statusDetail: m.statusDetail || null,
       by: m.senderName || null,
       requirement: m.applicationId ? reqOf.get(m.applicationId) || null : null,
+      // C1: a quick log's outcome can be changed by its sender for 24 h.
+      id: m.id,
+      quick: m.template === 'QUICK_LOG',
+      byMe: !!m.senderUserId && m.senderUserId === req.user.id,
     });
   });
   followUps.forEach((f) => {
@@ -2632,6 +2819,10 @@ router.post('/:id/notes', requirePerm('ats', 'candidates', 'Candidate Master', '
   return res.status(201).json(note);
 });
 
+// b5_ (ATS-100 B5): consent, referred by, certifications and documents with a
+// real file — routes/candidateRecord.js, under this router's view check + scope.
+router.use(require('./candidateRecord'));
+
 // --- Documents tab ---------------------------------------------------------
 const DOC_TYPES = ['Resume', 'ID', 'Certificate', 'Offer', 'Joining'];
 
@@ -2640,7 +2831,7 @@ router.get('/:id/documents', async (req, res) => {
   if (!loaded) return undefined;
   const internal = isInternalViewer(req.user);
   const rows = await prisma.candidateDocument.findMany({
-    where: { candidateId: req.params.id, ...(internal ? {} : { internalOnly: false }) },
+    where: { candidateId: req.params.id, deletedAt: null, ...(internal ? {} : { internalOnly: false }) },
     orderBy: { createdAt: 'desc' },
   });
   return res.json({ rows, types: DOC_TYPES });
@@ -2725,6 +2916,11 @@ function pickCandidate(body) {
   for (const key of CANDIDATE_FIELDS.numeric) {
     if (body[key] !== undefined && body[key] !== '' && body[key] !== null) data[key] = Number(body[key]);
   }
+  // "Do not use" is set only by the TL's approval (routes/rejections.js),
+  // never typed into a profile form.
+  if (data.profileStatus === 'Do Not Use') delete data.profileStatus;
+  // cand7_: Archived is set only through POST /:id/archive (role-checked, audited).
+  if (data.profileStatus === 'Archived') delete data.profileStatus;
   // A candidate arriving from a second source updates their latest source; the
   // first source is recorded once and never overwritten.
   if (data.source && !data.firstSource) data.firstSource = data.source;
@@ -2750,6 +2946,37 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
       where: { AND: [{ id: String(req.body.requirementId) }, requirementWhere(req.user)] },
     });
     if (!reqInScope) return res.status(403).json(OUT_OF_SCOPE);
+    // The SAME job checks as POST /applications (e2e gaps 5 / 6): not live
+    // yet, paused, closed, or a paused client → refused before anything is
+    // written, in plain words.
+    // eslint-disable-next-line global-require
+    const { jobRefusalFor, fitAtAdd } = require('./applications');
+    const applyTo = await prisma.requirement.findUnique({ where: { id: String(req.body.requirementId) } });
+    const jobNo = await jobRefusalFor(applyTo);
+    if (jobNo) return res.status(jobNo.status).json(jobNo.body);
+    // B9.11 — the SAME B8 override rule as POST /applications: a person who
+    // does not meet the job's rules (must-have skill, minimum Fit, notice
+    // period, location) goes in only WITH a reason, asked BEFORE anything is
+    // written (so a cancelled prompt leaves no half-made candidate).
+    if (applyTo && typeof fitAtAdd === 'function') {
+      const probe = { ...data, id: 'new-candidate', name: data.name };
+      const fit = await fitAtAdd(req.user, probe, applyTo).catch(() => null);
+      if (fit && fit.overrideWhy.length) {
+        const reason = String(req.body.overrideReason || '').trim().slice(0, 300);
+        if (reason.length < 5) {
+          return res.status(409).json({
+            error: `${data.name} does not meet this job's rules: ${fit.overrideWhy.join('; ')}. To add them anyway, say why.`,
+            code: 'NEEDS_OVERRIDE',
+            why: fit.overrideWhy,
+            fit: fit.match.overall,
+            minFit: fit.match.minFit,
+            candidateName: data.name,
+            requirementTitle: applyTo.title,
+          });
+        }
+        req.applyOverride = { reason, why: fit.overrideWhy };
+      }
+    }
   }
 
   // ONE CANDIDATE MASTER (spec #2 §12). A phone or email that already belongs
@@ -2760,10 +2987,14 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
   // records it was warned about. A name-only resemblance never blocks.
   const found = await duplicateMatches(req.user, { email, phone, name: data.name });
   const strong = found.filter((m) => m.strength === 'strong');
-  const override = req.body.overrideDuplicate === true;
+  // cand7_ (§7): "no second profile" — only a Super Admin / Admin may still
+  // create one over a same-phone / same-email match (audited below).
+  const override = req.body.overrideDuplicate === true && isDupAdmin(req.user);
   if (strong.length && !override) {
     return res.status(409).json({
-      error: 'Candidate already exists',
+      error: req.body.overrideDuplicate === true
+        ? 'This person is already on file. Open the profile or add an application to it — only an Admin can create a second profile.'
+        : 'This person is already on file.',
       duplicate: true,
       matches: strong,
       possible: found.filter((m) => m.strength !== 'strong'),
@@ -2806,37 +3037,50 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
   if (req.body.requirementId) {
     const requirement = await prisma.requirement.findUnique({ where: { id: req.body.requirementId } });
     if (requirement) {
-      const match = computeMatch(candidate, requirement);
-      application = await prisma.application.create({
-        data: {
-          candidateId: candidate.id,
-          requirementId: requirement.id,
-          stage: 'NEW',
-          matchScore: match.overall,
-          resumeScore: candidate.resumeScore ?? null,
-          source: candidate.source,
-          firstSource: candidate.firstSource,
-          sourceCampaign: candidate.sourceCampaign,
-          applicationMethod: req.body.applicationMethod || 'Manual',
-          aiInterviewStatus: 'Required',
-        },
+      // ONE add-to-job path, shared with POST /applications (e2e gap 6): the
+      // hiring type is stored, and an INTERNAL job's candidate lands in the
+      // Job Portal screening (HR Sourcing) instead of skipping it.
+      // eslint-disable-next-line global-require
+      const { addApplication } = require('./applications');
+      application = await addApplication(req.user, {
+        candidate, requirement, from: { applicationMethod: req.body.applicationMethod || 'Manual' },
+        override: req.applyOverride || null, // B9.11: recorded like every other override (column + badge + report)
       });
-      // First link in the pipeline chain — Who / When / Action / Comment.
-      await prisma.applicationStageEvent.create({
-        data: {
-          applicationId: application.id,
-          candidateId: candidate.id,
-          fromStage: null,
-          toStage: 'NEW',
-          action: 'Application created (manual add)',
-          comment: null,
-          actorUserId: req.user.id,
-          actorName: req.user.name,
-          actorRole: req.user.atsRole || req.user.role,
-        },
-      });
-      await logAudit({ userId: req.user.id, action: 'Application created (manual add)', entity: 'Application', entityId: application.id, toValue: 'New' });
     }
+  }
+
+  // b5_/b6_ (ATS-100): Referred by (an employee or a name), the campus drive
+  // they came from, and a consent the recruiter heard — all optional.
+  try {
+    // eslint-disable-next-line global-require
+    const CR = require('../utils/candidateRecord');
+    if (CR.supported()) {
+      const b = req.body || {};
+      const drive = b.campusDriveId ? await prisma.campusDrive.findUnique({ where: { id: String(b.campusDriveId) } }) : null;
+      const emp = b.referredByEmployeeId ? await prisma.employee.findUnique({ where: { id: String(b.referredByEmployeeId) }, select: { id: true, name: true } }) : null;
+      const refName = emp ? emp.name : String(b.referredByName || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      const cd = {};
+      if (drive) cd.campusDriveId = drive.id;
+      if (refName) Object.assign(cd, { referredByEmployeeId: emp ? emp.id : null, referredByName: refName });
+      let fresh = candidate;
+      if (Object.keys(cd).length) fresh = await prisma.candidate.update({ where: { id: candidate.id }, data: cd });
+      if (emp) await CR.recordStaffReferral({ candidate: fresh, application, employeeId: emp.id, actor: req.user });
+      if (application) {
+        await CR.attach({
+          application, candidate: fresh, campusDriveId: drive ? drive.id : null,
+          referredBy: !emp && refName ? { name: refName } : null, utm: b.utm || null, actor: req.user,
+        });
+      }
+      const cs = b.consent && typeof b.consent === 'object' ? b.consent : null;
+      const note = cs ? String(cs.note || '').trim() : '';
+      if (cs && CR.CONSENT_STATUSES.includes(cs.status) && note.length >= 5) {
+        await CR.setConsent(candidate.id, {
+          status: cs.status, purposes: cs.purposes, source: 'recruiter', proof: `${note} — recorded by ${req.user.name}`, byName: req.user.name, userId: req.user.id,
+        });
+      }
+    }
+  } catch (err) {
+    console.error(`[candidates] referral / campus / consent not stored for ${candidate.id}: ${err.message}`);
   }
 
   return res.status(201).json({ ...candidate, application });
@@ -2856,10 +3100,24 @@ router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'),
       .filter((m) => m.strength === 'strong');
     if (clash.length) return res.status(409).json({ error: 'Another candidate already has this phone or email', duplicate: true, matches: clash });
   }
-  const candidate = await prisma.candidate.update({ where: { id: req.params.id }, data: pickCandidate(req.body) });
+  const picked = pickCandidate(req.body);
+  // An approved "Do not use" block is not lifted by editing the profile.
+  if (loaded.candidate.profileStatus === 'Do Not Use') delete picked.profileStatus;
+  if (loaded.candidate.profileStatus === 'Archived') delete picked.profileStatus; // cand7_: bring back via /unarchive
+  const candidate = await prisma.candidate.update({ where: { id: req.params.id }, data: picked });
   markCandidateDirty(candidate.id); // the paged list re-reads this row on its next request
   await logAudit({ userId: req.user.id, action: 'Candidate updated', entity: 'Candidate', entityId: candidate.id });
   return res.json(candidate);
 });
 
 module.exports = router;
+// ATS data I/O (utils/atsFacets.js): filter options with counts are counted
+// over the pipeline's own rows with its own matcher.
+module.exports.pipelineRowsFor = pipelineRowsFor;
+module.exports.pipelineRowMatches = pipelineRowMatches;
+// resume_ (routes/candidateResumes.js): the same record scope + viewer kind.
+module.exports.loadInScope = loadInScope;
+module.exports.viewerKind = viewerKind;
+// ATS data I/O facets follow the pipeline sub-tab the screen is on.
+module.exports.inPipelineSub = inPipelineSub;
+module.exports.normaliseViewSub = normaliseViewSub;

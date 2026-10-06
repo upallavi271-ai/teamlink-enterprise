@@ -53,7 +53,9 @@ const LISTS = {
   gender: ['Male', 'Female', 'Other'],
   experience: ['Fresher', 'Experienced'],
   yesNo: ['Yes', 'No'],
-  clientStatus: ['Active', 'Inactive', 'Suspended'],
+  // Client lifecycle (2026-10-03): an import creates ACTIVE clients only;
+  // Pause / Reactivate / Archive are actions with a reason, never a cell.
+  clientStatus: ['Active'],
   clientType: ['Direct', 'Vendor', 'Partner'],
   priority: ['High', 'Medium', 'Low'],
   requirementStatus: ['DRAFT', 'OPEN', 'CLOSED'],
@@ -405,7 +407,7 @@ const SHEETS = [
       c('Legal Name', 'legalName', { eg: 'Sample Hospitals Pvt Ltd' }),
       c('Industry', 'industry', { eg: 'Healthcare' }),
       c('Client Type', 'clientType', { t: 'list', list: 'clientType', eg: 'Direct' }),
-      c('Status', 'status', { t: 'list', list: 'clientStatus', eg: 'Active' }),
+      c('Status', 'status', { t: 'list', list: 'clientStatus', help: 'New clients only: Active (blank = Active). The status of a client already on file is never changed by an import — use Pause / Reactivate / Archive on the client.', eg: 'Active' }),
       c('Priority', 'priority', { t: 'list', list: 'priority', eg: 'High' }),
       c('Owning Department', 'ownerDepartment', { help: 'Which department of yours handles this client.', eg: 'Medical' }),
       c('Website', 'website', { eg: 'https://hospital.example' }),

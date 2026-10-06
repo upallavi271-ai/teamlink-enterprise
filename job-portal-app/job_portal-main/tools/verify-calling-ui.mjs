@@ -10,6 +10,13 @@
  */
 import { chromium } from 'playwright';
 
+/* The recruiter this deployment actually has. The demo login these
+   checks signed in as went with the demo data, and every failure it
+   caused read as a broken feature. */
+import { login as tlLogin } from './lib/logins.mjs';
+const RECRUITER_LOGIN = tlLogin('recruiter');
+
+
 const BASE = (process.env.TL_URL || 'http://localhost:4323/').replace(/\/$/, '');
 const PASSWORD = process.env.TL_PASSWORD || 'TeamLink@2026';
 
@@ -41,14 +48,18 @@ let candidateId, jobId;
 
 await check('a recruiter reaches Find Candidates with results', async () => {
   await api('post', '/auth/login',
-    { email: 'recruiter@teamlink.com', password: PASSWORD, role: 'recruiter' });
+    { email: RECRUITER_LOGIN.email, password: RECRUITER_LOGIN.password, role: 'recruiter' });
   await page.evaluate(() => window.TL.refresh());
   await page.waitForTimeout(800);
 
   // A candidate with a number, so the call button is offered.
   const reg = await api('post', '/auth/register', {
     name: 'UI Call Target', email: `uicall.${stamp}@example.test`, password: 'UiCall@2026',
+    /* What registration requires now (0082: the four preferences, and a phone). */
+    phone: '9' + String(Math.floor(1e8 + Math.random() * 9e8)), preferredLocation: 'Hyderabad',
+    expectedCtc: 9, noticePeriod: '30 days', preferredWorkModes: ['Hybrid'],
   });
+  if (!reg || !reg.candidateId) throw new Error('registration failed: ' + JSON.stringify(reg).slice(0, 200));
   candidateId = reg.candidateId;
   await api('put', `/candidates/${candidateId}`, {
     phone: '+91 90000 55555', title: 'React Developer', location: 'Hyderabad',
@@ -56,7 +67,7 @@ await check('a recruiter reaches Find Candidates with results', async () => {
   });
   // back to the recruiter, whose session the registration replaced
   await api('post', '/auth/login',
-    { email: 'recruiter@teamlink.com', password: PASSWORD, role: 'recruiter' });
+    { email: RECRUITER_LOGIN.email, password: RECRUITER_LOGIN.password, role: 'recruiter' });
   await page.evaluate(() => window.TL.refresh());
   await page.waitForTimeout(800);
 

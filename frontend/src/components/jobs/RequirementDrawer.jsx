@@ -3,11 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { requirementStatusLabel } from '../../atsVocab';
 import StatusChip from '../ui/StatusChip.jsx';
-import { useJobPortalUrl, jobPortalJobUrl } from '../../pages/JobPortalRedirect.jsx';
 import {
-  PriorityChip, PipelineSteps, candidatesLink, ageText, slaInfo, lastActivityText, fmtWhen, fmtShort, nf, reqStatusTone,
+  PriorityChip, PipelineSteps, slaInfo, lastActivityText, fmtWhen, fmtShort, nf, reqStatusTone,
 } from './reqFormat.jsx';
-import { DrawerReach } from './RequirementReach.jsx';
 
 // ---------------------------------------------------------------------------
 // REQUIREMENT 360 — QUICK DRAWER (ATS review #3 §4; review #2 §7). Opens from
@@ -25,10 +23,12 @@ import { DrawerReach } from './RequirementReach.jsx';
 // latest events. The pipeline counts are the SAME pipelineCounts() the row
 // and the detail page carry (routes/requirements.js). Buttons follow the
 // server's per-row flags (row.mayAssign / row.mayEdit); the API enforces them.
+// Simplified 2026-10-03: four parts — Job, Team, People in process, Recent
+// activity. `actions` (optional) = the row's other actions as plain buttons
+// ({ key, label, danger }), picked through onPick(key).
 // ---------------------------------------------------------------------------
-export default function RequirementDrawer({ row: r, onClose, onAssign }) {
+export default function RequirementDrawer({ row: r, onClose, onAssign, actions, onPick }) {
   const navigate = useNavigate();
-  const portalUrl = useJobPortalUrl();
   const [sum, setSum] = useState(null);
   const [activity, setActivity] = useState(null);
   useEffect(() => {
@@ -51,20 +51,18 @@ export default function RequirementDrawer({ row: r, onClose, onAssign }) {
   const kv = (k, v) => <div className="reqdrw-kv"><span>{k}</span><span>{v || '—'}</span></div>;
   const pipeline = (sum && sum.pipeline) || r.pipeline;
   const team = sum && sum.team;
-  const ag = (sum && sum.agreement) || null;
-  const portal = (sum && sum.portal) || null;
   const person = (p, role) => (
     <div className="req360-person" key={`${role}-${p.id || p.name}`}>
       <span>
         <span className="small-muted">{`${role} · `}</span>
         {p.name || '—'}
       </span>
-      <span className="seat">{p.seat || 'no seat'}</span>
+      {p.seat && <span className="seat">{p.seat}</span>}
     </div>
   );
   return (
     <div className="reqdrw-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside className="reqdrw" role="dialog" aria-label={`Requirement ${r.reqCode || r.title}`}>
+      <aside className="reqdrw reqdrw-big" role="dialog" aria-label={`Job ${r.reqCode || r.title}`}>
         <div className="reqdrw-head">
           <div style={{ minWidth: 0 }}>
             <div className="reqdrw-code">{r.reqCode || r.id.slice(0, 8)}</div>
@@ -72,80 +70,68 @@ export default function RequirementDrawer({ row: r, onClose, onAssign }) {
             <div className="reqdrw-sub">
               <StatusChip status={requirementStatusLabel(r.status)} tone={reqStatusTone(r.status)} />
               <PriorityChip value={r.priority} />
-              {r.agreementPending && <StatusChip status="Agreement Pending" />}
+              {r.agreementPending && <StatusChip tone="amber">Waiting for agreement</StatusChip>}
             </div>
           </div>
           <button type="button" className="reqdrw-x" aria-label="Close" onClick={onClose}>×</button>
         </div>
         <div className="reqdrw-body">
+          {/* Open job + every other action of the row, as plain buttons. */}
+          <div className="reqdrw-actions">
+            <button type="button" className="btn btn-primary" onClick={() => navigate(`/requirements/${r.id}`)}>Open job</button>
+            {/* Everyday actions first; Pause / Close / Delete / Export sit in a
+                quieter second row (user, 2026-10-03: "neat ga"). */}
+            {actions ? actions.filter((a) => !a.danger && !/export|pause/i.test(a.label)).map((a) => (
+              <button key={a.key} type="button" className="btn" onClick={() => onPick(a.key)}>{a.label}</button>
+            )) : (
+              <>
+                {r.mayAssign && <button type="button" className="btn" onClick={() => onAssign(r)}>Assign recruiter</button>}
+                {r.mayEdit && <button type="button" className="btn" onClick={() => navigate(`/requirements/${r.id}?action=edit`)}>Edit</button>}
+              </>
+            )}
+          </div>
+          {actions && actions.some((a) => a.danger || /export|pause/i.test(a.label)) && (
+            <div className="reqdrw-actions2">
+              {actions.filter((a) => a.danger || /export|pause/i.test(a.label)).map((a) => (
+                <button key={a.key} type="button" className={`btn btn-sm btn-ghost${a.danger ? ' reqdrw-danger' : ''}`} onClick={() => onPick(a.key)}>{a.label}</button>
+              ))}
+            </div>
+          )}
+
+          <div className="reqdrw-grid">
+          <div className="reqdrw-col">
           <div className="req360-sec">
-            <h4>Requirement</h4>
-            {kv('Type', r.internal ? 'INTERNAL · Organization: TeamLink' : 'CLIENT')}
+            <h4>Job</h4>
+            {kv('Type', r.internal ? 'Internal' : 'Client')}
             {!r.internal && kv('Client', (sum ? sum.clientLink : r.clientLink) && r.clientId
               ? <Link to={`/clients/${r.clientId}`}>{r.client?.name}</Link>
               : r.client?.name)}
-            {kv('Position', r.title)}
             {kv('Department', [r.department, r.section].filter(Boolean).join(' · '))}
             {kv('Location', r.location)}
-            {kv('Openings', `${nf(r.openings || 1)}${r.filled ? ` · ${nf(r.filled)} filled` : ''}${r.remaining !== undefined ? ` · ${nf(r.remaining)} remaining` : ''}`)}
+            {kv('Openings', `${nf(r.openings || 1)}${r.filled ? ` · ${nf(r.filled)} filled` : ''}${r.remaining !== undefined ? ` · ${nf(r.remaining)} left` : ''}`)}
+            {kv('Days open', r.ageDays === null || r.ageDays === undefined ? null : nf(r.ageDays))}
+            {sla && kv('Late?', <StatusChip tone={{ overdue: 'red', pending: 'amber', active: 'blue' }[sla.cls]} title={sla.title}>{sla.text}</StatusChip>)}
           </div>
 
           <div className="req360-sec">
-            <h4>Assigned Team</h4>
+            <h4>Team</h4>
             {team ? (
               <>
-                {team.tl ? person(team.tl, 'TL') : kv('TL', null)}
+                {team.tl ? person(team.tl, 'Team lead') : kv('Team lead', null)}
                 {team.recruiters.length ? team.recruiters.map((p) => person(p, p.primary ? 'Recruiter' : 'Co-recruiter')) : kv('Recruiter', r.workedBy ? `${r.workedBy}${r.workedByPosition ? ` · ${r.workedByPosition}` : ''}` : null)}
-                {team.bde && kv('BDE', team.bde.name)}
+                {team.bde && kv('Client manager (BDE)', team.bde.name)}
               </>
             ) : <div className="small-muted">{sum ? '—' : 'Loading…'}</div>}
           </div>
 
-          <h4 className="small-muted" style={{ fontSize: 12, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '.03em' }}>Candidates pipeline</h4>
+          </div>
+          <div className="reqdrw-col">
+          <h4 className="reqdrw-h">People in process</h4>
           <PipelineSteps requirementId={r.id} pipeline={pipeline} compact />
 
-          {/* Role spec §7 — Fee / Agreement terms only for BDE, Accounts, Admin
-              and Management; a TL / Recruiter is told only whether the gate
-              holds the requirement (the server sends nothing more). */}
+          {/* Agreement, posting and people nearby are on the job page (Open job). */}
           <div className="req360-sec">
-            <h4>{ag && ag.label ? 'Agreement' : 'Agreement gate'}</h4>
-            {!ag ? <div className="small-muted">Loading…</div> : ag.internal ? <div className="small-muted">Internal hiring — no client agreement.</div> : (
-              <>
-                {ag.label && kv('Status', <StatusChip status={ag.label} tone={ag.active ? 'green' : 'amber'} />)}
-                {kv('Requirement', ag.held ? 'Held at Agreement Check' : ag.active ? 'May go live' : 'Cannot go live until Active')}
-                {sum && sum.commercial && kv('Fee %', sum.commercial.feePercent != null ? `${sum.commercial.feePercent}%` : null)}
-                {sum && sum.commercial && kv('Guarantee', sum.commercial.guaranteeDays ? (/^\d+$/.test(String(sum.commercial.guaranteeDays).trim()) ? `${sum.commercial.guaranteeDays} days` : sum.commercial.guaranteeDays) : null)}
-                {sum && sum.commercial && kv('Payment terms', sum.commercial.paymentTerms)}
-                {ag.canOpen && r.clientId && <Link to={`/clients/${r.clientId}?tab=agreements`} style={{ fontSize: 12 }}>Open the client&apos;s agreement →</Link>}
-              </>
-            )}
-          </div>
-
-          <div className="req360-sec">
-            <h4>Job Portal</h4>
-            {!portal ? <div className="small-muted">Loading…</div> : (
-              <>
-                {kv('Published', portal.published
-                  ? <StatusChip tone="green">{`Published${portal.publishedAt ? ` · ${fmtShort(portal.publishedAt)}` : ''}`}</StatusChip>
-                  : <StatusChip tone="grey">Not published</StatusChip>)}
-                {kv('Applications', portal.applications
-                  ? <Link to={candidatesLink(r.id)}>{nf(portal.applications)}</Link>
-                  : '0')}
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12, marginTop: 2 }}>
-                  {portal.published && <a href={jobPortalJobUrl(portalUrl, r.id)} target="_blank" rel="noreferrer">View on Job Portal ↗</a>}
-                  {portal.workspace && <Link to="/candidates?view=job-portal">Job Portal Candidates →</Link>}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* User notes #7 / #6 — where it is posted, who is nearby. */}
-          <DrawerReach requirementId={r.id} />
-
-          <div className="req360-sec">
-            <h4>Activity</h4>
-            {kv('Aging', ageText(r.ageDays))}
-            {kv('SLA', sla ? <StatusChip tone={{ overdue: 'red', pending: 'amber', active: 'green' }[sla.cls]} title={sla.title}>{sla.text}</StatusChip> : null)}
+            <h4>Recent activity</h4>
             {kv('Last activity', r.lastActivity ? <span title={`${fmtWhen(r.lastActivity.at)}${r.lastActivity.what ? ` — ${r.lastActivity.what}` : ''}`}>{lastActivityText(r.lastActivity)}</span> : 'No activity yet')}
             {activity && activity.length > 0 && (
               <ul className="req360-feed">
@@ -160,11 +146,7 @@ export default function RequirementDrawer({ row: r, onClose, onAssign }) {
               </ul>
             )}
           </div>
-
-          <div className="reqdrw-actions">
-            <button type="button" className="btn btn-primary" onClick={() => navigate(`/requirements/${r.id}`)}>Open Requirement 360</button>
-            {r.mayAssign && <button type="button" className="btn" onClick={() => onAssign(r)}>Assign Recruiter</button>}
-            {r.mayEdit && <button type="button" className="btn" onClick={() => navigate(`/requirements/${r.id}?action=edit`)}>Edit</button>}
+          </div>
           </div>
         </div>
       </aside>

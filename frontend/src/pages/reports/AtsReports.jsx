@@ -1,21 +1,56 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // The actual workflow with live counts (the Workflow tab).
 import WorkflowDiagram from '../../components/workflow/WorkflowDiagram.jsx';
+import DailyReport from './DailyReport.jsx';
+// Job portal numbers — a tab here now, not a sidebar entry of its own.
+import JobPortalReports from './JobPortalReports.jsx';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { canExportReports } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilter, { useAtsWorkers } from '../../components/PeopleFilter.jsx';
-import HierarchyFilter, { toParams, hierarchyLabels, useHierarchy } from '../../components/HierarchyFilter.jsx';
-import FilterChips from '../../components/FilterChips.jsx';
+import ListPageHeader, {
+  ListToolbar, PanelField, FacetSelect, useFacets,
+} from '../../components/ui/ListPageHeader.jsx';
+// Section 17 (2026-10-03): the landing page of report cards, and the small
+// pieces every report uses (compare, "12 of 20", Excel / PDF buttons).
+import ReportsHome, { cardOfTab } from './ReportsHome.jsx';
+// Everyday words + one-line ? tips (user, 2026-10-05: "a new person gets it in 20–30 s").
+import { plainWords } from '../../components/ui/Guide.jsx';
+
+// What a report number means, in one line (by the words in its label).
+const TILE_HELP = [
+  [/reject/i, 'People turned down — by us or by the client'],
+  [/late|overdue|sla|past/i, 'Past the time allowed for that step'],
+  [/join/i, 'People who started the job'],
+  [/select|offer/i, 'People the client chose'],
+  [/interview/i, 'Interviews booked or done in this period'],
+  [/sent|submit|shared/i, 'People we sent to clients'],
+  [/open (job|requirement)|jobs|requirement/i, 'Jobs in this period (open ones are still being filled)'],
+  [/applic|candidate|people/i, 'One person applying to one job counts once'],
+  [/%|ratio|conversion|rate/i, 'Out of 100 people, how many got this far'],
+  [/days|time|avg|average/i, 'Average number of days'],
+  [/revenue|invoice|paid|received|amount/i, 'Money for this period'],
+];
+const tileHelp = (label) => (TILE_HELP.find(([re]) => re.test(String(label || ''))) || [null, 'What this report counts, for your filters'])[1];
+import {
+  Delta, OfBar, CompareToggle, COMPARE_CHOICES, ExportButtons, useReportCatalog,
+} from './ReportBits.jsx';
 import Modal from '../../components/Modal.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
-import DateRangePicker, { RANGE_PRESETS } from '../../components/DateRangePicker.jsx';
-import Chart, { BarList } from '../../components/Chart.jsx';
-import MoreFilters from '../../components/ui/MoreFilters.jsx';
+// ATS layout v3 (2026-10-03): the shared filter bar, cards and charts.
+import PageFilterBar, { usePageFilters, rangeDates } from '../../components/ui/PageFilterBar.jsx';
+import StatCard, { StatRow } from '../../components/ui/StatCard.jsx';
+import ReportCharts from './ReportCharts.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
+import './AtsReports.css';
+// Rejections (spec 2026-10-03 §A3): the same-client rule, shown on the Rejection reasons tab.
+import SameClientRule from '../../components/rejections/SameClientRule.jsx';
+// ATS-100 B6: campaign costs, campus drives, referrals + bonuses (under the Campaigns tab).
+import SourcingManager from '../../components/referrals/SourcingManager.jsx';
+// ATS-100 B7: agency / freelancer partner performance (its own cascading filters).
+import PartnersReport from './PartnersReport.jsx';
 
 // ---------------------------------------------------------------------------
 // ATS REPORTS (§18) — Reports -> ATS Reports.
@@ -50,17 +85,39 @@ import StatusChip from '../../components/ui/StatusChip.jsx';
 export const ATS_REPORT_TABS = [
   ['funnel', 'Recruitment Funnel'],
   ['recruiters', 'Recruiter Performance'],
+  // Day / month view of each recruiter's work (spec 2026-10-03 C2; routes/atsDaily.js).
+  ['daily', 'Daily report'],
   ['clients', 'Client Performance'],
   ['departments', 'Department'],
+  // spec D: Department → Specialization, demand (open jobs) vs supply (candidates).
+  ['specialisations', 'Specialization'],
   ['sources', 'Source'],
-  ['recruitment', 'Pipeline'],
-  ['requirements', 'Requirements'],
+  ['recruitment', 'Progress by team'],
+  ['requirements', 'Jobs'],
   ['candidates', 'Candidates'],
   ['interviews', 'Interviews'],
   ['ai', 'AI Interviews'],
   ['followups', 'Follow-ups'],
   ['joining', 'Joining'],
-  ['sla', 'SLA & Aging'],
+  ['sla', 'Late & waiting'],
+  // Why people are rejected: by reason, side, client, department, recruiter (spec 2026-10-03 §A3).
+  ['rejections', 'Rejection reasons'],
+  // B8: people added to a job although they did not meet its rules (utils/fitReports.js).
+  ['overrides', 'Added by override'],
+  // Section 17 (2026-10-03, utils/reportsPlus.js).
+  ['timetofill', 'Time to fill'],
+  ['quality', 'Source quality'],
+  // ATS-100 B6.3: campaign (utm) / campus drive / referral -> joined, cost per joining.
+  ['campaigns', 'Campaigns'],
+  // ATS-100 B7: agency / freelancer partners — submitted / duplicates / joined / payout / cost per joining.
+  ['partners', 'Partners'],
+  // ATS-100 B9.3: campaign costs + partner payouts + incentives ÷ joinings (utils/costPerHire.js).
+  ['costperhire', 'Cost per hire'],
+  ['targets', 'Results vs target'],
+  ['revenue', 'Client revenue'], // Super Admin / Admin / Accounts only (server-enforced)
+  // ATS-100 B9.7: invoices net of credit notes per recruiter / month / client (same gate as Client revenue).
+  ['recruiter-revenue', 'Recruiter revenue'],
+  ['jobportal', 'Job portal'], // the old Reports → Job Portal Reports page, as a tab
   // The actual workflow (2026-09-29), live counts per box, each box opening its list.
   ['workflow', 'Workflow'],
 ];
@@ -70,32 +127,19 @@ const TAB_IDS = ATS_REPORT_TABS.map(([id]) => id);
 const OLD_TABS = { overview: 'funnel', time: 'sla', department: 'departments', source: 'sources' };
 const RECRUITMENT_VIEWS = ['department', 'team', 'recruiter', 'tl', 'stl', 'bde', 'client', 'source', 'location', 'stage'];
 
-const PRESETS = [['all', 'All Time'], ...RANGE_PRESETS];
 const EMPTY = {
-  range: 'all', from: '', to: '', department: '', clientId: '', requirementId: '', recruiter: '', tl: '',
-  stl: '', bde: '', location: '', source: '', status: '', stage: '', interviewStatus: '', aiStatus: '',
-  joiningStatus: '', positionCode: '', section: '',
+  range: 'all', from: '', to: '', department: '', team: '', tl: '', recruiter: '', clientId: '', requirementId: '',
+  bde: '', stl: '', source: '', location: '', status: '', stage: '', interviewStatus: '', aiStatus: '', joiningStatus: '',
+  people: '',
 };
+// Recruiter Performance (2026-10-05): former people (left in HRMS) keep their
+// old work and carry "· Former"; this picks one side.
+const PEOPLE_CHOICES = [{ id: 'active', label: 'Still working here' }, { id: 'former', label: 'Former (have left)' }];
 const FILTER_KEYS = Object.keys(EMPTY).filter((k) => !['range', 'from', 'to'].includes(k));
-// The ones under "More Filters ▾" (the hierarchy and the date stay visible).
-const MORE_KEYS = ['clientId', 'requirementId', 'source', 'stl', 'bde', 'location', 'status', 'stage', 'interviewStatus', 'aiStatus', 'joiningStatus'];
-
-// Department / Section / TL / Recruiter come from the hierarchy filter
-// (components/HierarchyFilter.jsx). A Recruiter Code is kept in positionCode;
-// the filter's own value spells it "seat:<CODE>".
-const hierOf = (f) => ({
-  department: f.department, section: f.section, tl: f.tl,
-  recruiter: f.positionCode ? `seat:${f.positionCode}` : f.recruiter,
-});
 
 function queryOf(filters, extra = {}) {
   const p = new URLSearchParams();
   const f = { ...filters };
-  // The hierarchy, as the server's parameters: a Section becomes the
-  // comma-separated seat codes it holds (positionCode) — see HierarchyFilter.
-  const h = toParams(hierOf(f));
-  Object.assign(f, { department: h.department || '', tl: h.tl || '', recruiter: h.recruiter || '', positionCode: h.positionCode || '' });
-  delete f.section;
   if (f.range !== 'custom') { f.from = ''; f.to = ''; }
   if (f.range === 'all') f.range = '';
   Object.entries({ ...f, ...extra }).forEach(([k, v]) => {
@@ -107,6 +151,7 @@ function queryOf(filters, extra = {}) {
 const fmt = (v, type) => {
   if (v === null || v === undefined || v === '') return '—';
   if (type === 'pct') return `${v}%`;
+  if (type === 'money') return `₹${Math.round(Number(v) || 0).toLocaleString('en-IN')}`;
   if (typeof v === 'number') return v.toLocaleString('en-IN');
   return v;
 };
@@ -142,18 +187,28 @@ export function AtsReportsRedirect() {
   return <Navigate to={`/reports/ats${search}`} replace />;
 }
 
-const REF_PATH = { cand: '/candidates/', req: '/requirements/', client: '/clients/' };
+const REF_PATH = { cand: '/candidates/', req: '/requirements/', client: '/clients/', inv: '/invoices/' };
 
 // One cell. A drillable figure is a button; zero is not, because an empty
-// list is not worth a click.
-function Cell({ col, value, refs, onDrill }) {
+// list is not worth a click (and it reads "—", never a bare 0). In a
+// comparison the change sits under the number; a result with a target
+// reads "12 of 20" with a bar (section 17).
+function Cell({
+  col, value, refs, onDrill, prev, compare, target,
+}) {
+  const delta = compare && prev !== undefined && ['num', 'pct', 'money'].includes(col.type) && !col.now
+    ? <Delta small cur={value} prev={prev} type={col.type} label={col.label} /> : null;
+  const wrapOf = (inner) => (col.of ? <OfBar value={value} target={target}>{inner}</OfBar> : inner);
   if (col.drill) {
-    if (!value) return <td className="num cell-muted">{fmt(value, col.type)}</td>;
+    if (!value) return <td className="num cell-muted">{wrapOf(col.of ? '0' : '—')}{delta}</td>;
     return (
       <td className="num">
-        <button type="button" className="link-btn" onClick={onDrill} title="Show the list behind this number">
-          {fmt(value, col.type)}
-        </button>
+        {wrapOf(
+          <button type="button" className="link-btn" onClick={onDrill} title="Show who is behind this number">
+            {fmt(value, col.type)}
+          </button>,
+        )}
+        {delta}
       </td>
     );
   }
@@ -162,12 +217,15 @@ function Cell({ col, value, refs, onDrill }) {
   return (
     <td className={col.type !== 'text' ? 'num' : undefined}>
       {id ? <Link to={`${REF_PATH[col.ref]}${id}`}>{text}</Link> : text}
+      {delta}
     </td>
   );
 }
 
 // One table. Its own component so each can page and sort by itself.
-function Section({ sec, onDrill, onGroupBy, onExport }) {
+function Section({
+  sec, onDrill, onGroupBy, onExport, compare = false,
+}) {
   const [sort, setSort] = useState(null); // { i, dir }
   const rows = useMemo(() => {
     if (!sort) return sec.rows;
@@ -185,47 +243,44 @@ function Section({ sec, onDrill, onGroupBy, onExport }) {
   const page = usePaged(rows, 25);
   const list = sec.paged ? page.slice : rows;
   const toggle = (i) => setSort((s) => (s && s.i === i ? { i, dir: -s.dir } : { i, dir: sec.columns[i].type === 'text' ? 1 : -1 }));
+  // Target columns are not drawn on their own — they show as "of 20".
+  const vis = sec.columns.map((c, i) => [c, i]).filter(([c]) => !c.hidden);
+  const ofIdx = (c) => (c.of ? sec.columns.findIndex((x) => x.key === c.of) : -1);
 
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
-        <h3 style={{ fontSize: 14, margin: 0 }}>{sec.title}</h3>
-        <span className="small-muted">{sec.rows.length.toLocaleString('en-IN')} row{sec.rows.length === 1 ? '' : 's'}</span>
-        {/* §12 — export THIS table (the page's Export ▾ still takes them all). */}
+        <h3 style={{ fontSize: 14, margin: 0 }}>{plainWords(sec.title)}</h3>
+        {sec.rows.length > 0 && <span className="small-muted">{sec.rows.length.toLocaleString('en-IN')} row{sec.rows.length === 1 ? '' : 's'}</span>}
+        {/* Export THIS table (the page's Excel / PDF buttons take them all). */}
         {onExport && sec.rows.length > 0 && (
           <span style={{ marginLeft: 'auto' }}>
-            <ExportMenu small formats={[['csv', 'CSV'], ['xlsx', 'Excel']]} label="Export table" onPick={(f) => onExport(sec, f)} />
+            <button type="button" className="btn btn-sm" onClick={() => onExport(sec, 'xlsx')} title="Download this table as an Excel file">⬇ Excel</button>
           </span>
         )}
       </div>
-      {sec.sub && <div className="small-muted" style={{ marginBottom: 8 }}>{sec.sub}</div>}
+      {sec.sub && <div className="small-muted" style={{ marginBottom: 8 }}>{plainWords(sec.sub)}</div>}
       {sec.groupings && (
-        <div className="report-groupby">
-          {sec.groupings.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              className={`report-tab${sec.groupBy === g.id ? ' is-on' : ''}`}
-              onClick={() => onGroupBy(g.id)}
-            >
-              {g.label}
-            </button>
-          ))}
-        </div>
+        <label className="lph-facet" style={{ maxWidth: 260, marginBottom: 8 }}>
+          <span className="lph-facet-lbl">Show by</span>
+          <select value={sec.groupBy || ''} onChange={(e) => onGroupBy(e.target.value)}>
+            {sec.groupings.map((g) => <option key={g.id} value={g.id}>{plainWords(g.label)}</option>)}
+          </select>
+        </label>
       )}
       <div className={`tbl-wrap${sec.paged ? ' tbl-fit' : ''}`}>
         <table>
           <thead>
             <tr>
-              {sec.columns.map((c, i) => (
+              {vis.map(([c, i]) => (
                 <th
                   key={c.key}
                   className={c.type !== 'text' ? 'num' : undefined}
                   style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                   onClick={() => toggle(i)}
-                  title="Sort"
+                  title={c.label === 'TL' ? 'TL = team lead. Click to sort.' : 'Click to sort'}
                 >
-                  {c.label}{sort && sort.i === i ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''}
+                  {plainWords(c.label)}{sort && sort.i === i ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''}
                 </th>
               ))}
             </tr>
@@ -233,23 +288,42 @@ function Section({ sec, onDrill, onGroupBy, onExport }) {
           <tbody>
             {list.map((r) => (
               <tr key={r.key}>
-                {sec.columns.map((c, i) => (
-                  <Cell key={c.key} col={c} value={r.c[i]} refs={r.refs} onDrill={() => onDrill(sec, r.key, c, r.c[0])} />
+                {vis.map(([c, i]) => (
+                  <Cell
+                    key={c.key}
+                    col={c}
+                    value={r.c[i]}
+                    refs={r.refs}
+                    compare={compare}
+                    prev={r.p ? r.p[i] : undefined}
+                    target={ofIdx(c) >= 0 ? r.c[ofIdx(c)] : undefined}
+                    onDrill={() => onDrill(sec, r.key, c, r.c[0])}
+                  />
                 ))}
               </tr>
             ))}
             {sec.rows.length === 0 && (
-              <tr><td colSpan={sec.columns.length} style={{ padding: 0 }}>
-                <EmptyState compact title="Nothing here for these filters." hint="Try a wider date range, or clear a filter — only work inside your scope is counted." />
+              <tr><td colSpan={vis.length} style={{ padding: 0 }}>
+                <EmptyState compact title="Nothing here for these filters." hint="Try a wider date range, or clear a filter." />
               </td></tr>
             )}
           </tbody>
           {sec.total && sec.rows.length > 0 && (
             <tfoot>
               <tr className="report-total">
-                {sec.columns.map((c, i) => (i === 0
+                {vis.map(([c, i]) => (i === 0
                   ? <td key={c.key}><b>Total</b></td>
-                  : <Cell key={c.key} col={c} value={sec.total[i]} onDrill={() => onDrill(sec, '__total__', c, 'Total')} />))}
+                  : (
+                    <Cell
+                      key={c.key}
+                      col={c}
+                      value={sec.total[i]}
+                      compare={compare}
+                      prev={sec.pt ? sec.pt[i] : undefined}
+                      target={ofIdx(c) >= 0 ? sec.total[ofIdx(c)] : undefined}
+                      onDrill={() => onDrill(sec, '__total__', c, 'Total')}
+                    />
+                  )))}
               </tr>
             </tfoot>
           )}
@@ -276,7 +350,7 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
   }, [tab, base, offset]);
 
   const to = data ? Math.min(offset + LIMIT, data.total) : 0;
-  const noun = data ? ({ req: 'requirements', cand: 'candidates', fu: 'follow-ups' }[data.kind] || 'applications') : '';
+  const noun = data ? ({ req: 'jobs', cand: 'people', fu: 'follow-ups', inv: 'invoices', pay: 'payments' }[data.kind] || 'people') : '';
   return (
     <Modal
       size="xwide"
@@ -303,14 +377,13 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
                 if (msg) setError(msg);
               }}
             >
-              Export list (CSV)
+              ⬇ Download list
             </button>
           )}
           <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
         </>
       )}
     >
-      {data && data.section && <div className="small-muted" style={{ marginBottom: 8 }}>{data.report} · {data.section}</div>}
       {error && <div className="error-text">{error}</div>}
       {!data && !error && <div className="small-muted">Loading the list…</div>}
       {data && (
@@ -339,124 +412,86 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
   );
 }
 
-// Export ▾ — CSV / Excel / PDF, and Print, all respecting the applied filters.
-const ALL_FORMATS = [['csv', 'CSV'], ['xlsx', 'Excel'], ['pdf', 'PDF'], ['print', 'Print']];
-function ExportMenu({ busy, onPick, formats = ALL_FORMATS, label = 'Export', small = false }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-  const item = { display: 'block', width: '100%', textAlign: 'left', padding: '7px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13 };
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button type="button" className={`btn${small ? ' btn-sm' : ''}`} disabled={!!busy} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
-        {busy ? 'Preparing…' : `${label} ▾`}
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="card"
-          style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 20, padding: '4px 0', minWidth: 150 }}
-        >
-          {formats.map(([id, text]) => (
-            <button key={id} type="button" role="menuitem" style={item} onClick={() => { setOpen(false); onPick(id); }}>
-              {text}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+// ATS layout v3 §5 — the charts of each report: ReportCharts.jsx (max 3,
+// every mark opens its list). The old one-chart card and the Export ▾
+// dropdown are gone (actions are separate buttons).
 
-// §12 — ONE simple chart per report, drawn from the report's own table (so a
-// bar and its row cannot disagree): one axis, one colour, labelled values,
-// and a Table view of exactly the plotted numbers.
-const CHART_SPECS = {
-  funnel: { section: 'funnel', col: 'count', title: 'Recruitment funnel', sub: 'Applications that reached each step', order: true, extra: ['ofPrev', 'Conversion from previous'] },
-  recruiters: { section: 'recruiters', col: 'candidates', title: 'Candidates by recruiter', top: 10, extra: ['joined', 'Joined'] },
-  clients: { section: 'clients', col: 'candidates', title: 'Candidates by client', top: 10, extra: ['joined', 'Joined'] },
-  departments: { section: 'departments', col: 'applications', title: 'Applications by department', extra: ['joined', 'Joined'] },
-  sources: { section: 'channels', col: 'applications', title: 'Applications by source', order: true, extra: ['joined', 'Joined'] },
-  recruitment: { section: 'recruitment', col: 'applications', title: 'Applications by group', top: 8 },
+// The report filters (FILTER RULE 2026-10-03): options counted on the server
+// over this report's own rows with every OTHER filter applied — cascading,
+// with counts, no zero options (utils/atsFacets.js module 'reports').
+const FACETS = [
+  ['department', 'Department', 'All departments'],
+  ['team', 'Team', 'All teams'],
+  ['tl', 'Team lead (TL)', 'All team leads'],
+  ['recruiter', 'Recruiter', 'All recruiters'],
+  ['clientId', 'Client', 'All clients'],
+  ['requirementId', 'Job', 'All jobs'],
+  ['bde', 'Client manager (BDE)', 'All client managers'],
+  ['stl', 'STL', 'All STLs'],
+  ['source', 'Source', 'All sources'],
+  ['location', 'Location', 'All locations'],
+];
+const REVENUE_FACETS = ['department', 'clientId'];
+// B9.7: Recruiter revenue — the bar's Department / Client / Recruiter, cascading on the server.
+const RECRUITER_REVENUE_FACETS = ['department', 'clientId', 'recruiter'];
+const MONEY_TABS = ['revenue', 'recruiter-revenue'];
+// Picking one level clears the levels inside it.
+const CLEARS = {
+  department: ['team', 'tl', 'recruiter', 'clientId', 'requirementId', 'bde', 'stl', 'location'],
+  team: ['tl', 'recruiter'],
+  tl: ['recruiter'],
+  clientId: ['requirementId'],
 };
-
-function chartRows(data, spec) {
-  const sec = data.sections.find((s) => s.id === spec.section);
-  if (!sec) return null;
-  const i = sec.columns.findIndex((c) => c.key === spec.col);
-  const j = spec.extra ? sec.columns.findIndex((c) => c.key === spec.extra[0]) : -1;
-  if (i < 0) return null;
-  let rows = sec.rows.map((r) => ({
-    label: String(r.c[0] ?? '—'), value: Number(r.c[i]) || 0, extra: j >= 0 ? r.c[j] : undefined,
-    type: j >= 0 ? sec.columns[j].type : 'num',
-  }));
-  if (!spec.order) rows = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value);
-  const all = rows.length;
-  if (spec.top) rows = rows.slice(0, spec.top);
-  return { rows, all, label: sec.columns[0].label, valueLabel: sec.columns[i].label };
+const NO_FILTER_TABS = ['workflow', 'daily', 'jobportal', 'partners'];
+// v3 colours on the cards: green good / yellow pending / red late or rejected.
+const BAD_WORDS = /late|overdue|reject|pending|waiting|not add up|no joining|still to come|drop|no-show|did not/i;
+function tileTone(label) {
+  const l = String(label || '');
+  if (/late|overdue|reject|not add up|no-show|drop/i.test(l)) return 'red';
+  if (/pending|waiting|still to come|hold/i.test(l)) return 'yellow';
+  if (/joined|received/i.test(l)) return 'green';
+  return undefined;
 }
 
-function ChartCard({ data, spec }) {
-  const [view, setView] = useState('chart');
-  const c = chartRows(data, spec);
-  if (!c) return null;
-  const any = c.rows.some((r) => r.value > 0);
-  const toggle = (
-    <div className="report-groupby" style={{ margin: 0 }} role="group" aria-label="Chart or table">
-      {[['chart', 'Chart'], ['table', 'Table']].map(([id, label]) => (
-        <button key={id} type="button" className={`report-tab${view === id ? ' is-on' : ''}`} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>
-      ))}
-    </div>
-  );
-  return (
-    <Chart
-      title={spec.title}
-      sub={spec.sub || (spec.top && c.all > spec.top ? `The ${spec.top} largest of ${c.all.toLocaleString('en-IN')}` : null)}
-      right={any ? toggle : null}
-    >
-      {!any && <EmptyState compact title="Nothing to chart for these filters." hint="Try a wider date range or clear a filter." />}
-      {any && view === 'chart' && (
-        <BarList rows={c.rows.map((r) => ({ label: r.label, value: r.value }))} format={(v) => v.toLocaleString('en-IN')} />
-      )}
-      {any && view === 'table' && (
-        <div className="tbl-wrap tbl-fit">
-          <table>
-            <thead>
-              <tr>
-                <th>{c.label}</th><th className="num">{c.valueLabel}</th>
-                {spec.extra && <th className="num">{spec.extra[1]}</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {c.rows.map((r) => (
-                <tr key={r.label}>
-                  <td>{r.label}</td><td className="num">{r.value.toLocaleString('en-IN')}</td>
-                  {spec.extra && <td className="num">{fmt(r.extra, r.type)}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Chart>
-  );
+// ATS layout v3 §5 — the SAME filter bar as every page (PageFilterBar:
+// Department · Date range · Client · Recruiter / BDE), kept in the URL. These
+// four live there; the panel keeps the rest (Team, TL, Job, Source …).
+const BAR_KEYS = ['department', 'clientId', 'recruiter', 'bde'];
+const PANEL_FACETS = FACETS.filter(([k]) => !BAR_KEYS.includes(k));
+const BAR_URL_KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId'];
+const PF_RANGE = { today: 'today', week: 'this_week', month: 'this_month' };
+// The bar's value -> this report's filter keys. A person from the bar is the
+// report's own facet value ("u:<id>" / "n:<name>"), or a plain user id.
+const personOf = (v) => (!v ? '' : (/^(u|n|id|name):/.test(v) ? v : `id:${v}`));
+function barFilters(pf) {
+  const out = {
+    department: pf.department || '', clientId: pf.clientId || '', recruiter: personOf(pf.recruiterId), bde: personOf(pf.bdeId),
+    range: 'all', from: '', to: '',
+  };
+  if (PF_RANGE[pf.range]) out.range = PF_RANGE[pf.range];
+  else if (pf.range) {
+    const d = rangeDates(pf.range, pf.from, pf.to);
+    if (d.from && d.to) Object.assign(out, { range: 'custom', from: d.from, to: d.to });
+  }
+  return out;
 }
 
-export default function AtsReports() {
+// fixedTab: one report embedded in another page (Accounts Reports shows
+// Client revenue this way) — no landing page, no back link, no views.
+export default function AtsReports({ fixedTab = '' } = {}) {
   const { user } = useAuth();
-  const canExport = canExportReports(user, 'ATS Reports');
+  const cat = useReportCatalog();
   const [params, setParams] = useSearchParams();
-  const asked = params.get('tab');
+  const asked = fixedTab || params.get('tab');
   const legacyView = RECRUITMENT_VIEWS.includes(asked) ? asked : '';
-  const tab = TAB_IDS.includes(asked) ? asked : (OLD_TABS[asked] || (legacyView ? 'recruitment' : 'funnel'));
-  // `draft` is what the filter bar shows; `filters` is what was applied.
+  // No tab = the Reports landing page (the list of report cards).
+  const tab = !asked ? '' : (TAB_IDS.includes(asked) ? asked : (OLD_TABS[asked] || (legacyView ? 'recruitment' : '')));
+  const isRevenue = MONEY_TABS.includes(tab); // Client revenue + Recruiter revenue (B9.7): invoice reports, own routes + facets
+  const canExport = isRevenue ? !!(cat && cat.revenue) : canExportReports(user, 'ATS Reports');
+  // `draft` is what the filter panel shows; `filters` is what was applied.
   const [draft, setDraft] = useState(EMPTY);
   const [filters, setFilters] = useState(EMPTY);
+  const [compare, setCompare] = useState('');
   const [groupBy, setGroupBy] = useState(() => (legacyView ? { recruitment: legacyView } : {}));
   const [options, setOptions] = useState(null);
   const [data, setData] = useState(null);
@@ -466,57 +501,80 @@ export default function AtsReports() {
   const [busy, setBusy] = useState('');
   const [denied, setDenied] = useState(false);
   const seq = useRef(0);
-  const tree = useHierarchy();
-  const people = useAtsWorkers();
-
-  // An old or bare address lands on its tab, with the tab in the URL.
+  const labels = useRef({});
+  const [pf, setPf] = usePageFilters();
+  const bar = barFilters(pf);
+  // Switching report keeps the bar's filters (and which card it was opened from).
+  const goTab = (id, extra = {}) => {
+    const next = {};
+    BAR_URL_KEYS.forEach((k) => { if (params.get(k)) next[k] = params.get(k); });
+    const card0 = params.get('card');
+    if (card0 && id) next.card = card0;
+    setParams(id ? { ...next, ...extra, tab: id } : next);
+  };
+  // A new department / client on the bar clears the panel's levels inside it.
+  const lastBar = useRef({ department: pf.department, clientId: pf.clientId });
   useEffect(() => {
-    if (asked !== tab) setParams({ tab }, { replace: true });
-  }, [asked, tab, setParams]);
+    const was = lastBar.current;
+    lastBar.current = { department: pf.department, clientId: pf.clientId };
+    const clear = {};
+    if (was.department !== pf.department) CLEARS.department.forEach((k) => { if (!BAR_KEYS.includes(k)) clear[k] = ''; });
+    if (was.clientId !== pf.clientId) clear.requirementId = '';
+    if (Object.keys(clear).length) { setDraft((d) => ({ ...d, ...clear })); setFilters((f) => ({ ...f, ...clear })); }
+  }, [pf.department, pf.clientId]);
 
-  // The filter lists, cascading from the department and client being chosen.
+  // An old address lands on its tab, with the tab in the URL.
   useEffect(() => {
-    const q = new URLSearchParams();
-    if (draft.department) q.set('department', draft.department);
-    if (draft.clientId) q.set('clientId', draft.clientId);
-    api.get(`/ats-reports/options?${q.toString()}`)
-      .then((res) => setOptions(res.data))
-      .catch(() => setOptions(null));
-  }, [draft.department, draft.clientId]);
+    if (!fixedTab && asked && asked !== tab) goTab(tab);
+  }, [fixedTab, asked, tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const query = queryOf(filters, { groupBy: groupBy[tab] || '' });
+  // The fixed lists (status, step, interview / AI / joining status).
+  useEffect(() => {
+    if (!tab || isRevenue || NO_FILTER_TABS.includes(tab) || options) return;
+    api.get('/ats-reports/options').then((res) => setOptions(res.data)).catch(() => {});
+  }, [tab, isRevenue, options]);
+
+  const query = queryOf({ ...filters, ...bar }, { groupBy: groupBy[tab] || '', compare });
   const load = useCallback(() => {
     const mine = ++seq.current;
-    // The Workflow tab draws itself (components/workflow/WorkflowDiagram.jsx).
-    if (tab === 'workflow') { setLoading(false); return; }
+    // The landing page, the Workflow and the Daily report draw themselves.
+    if (!tab || NO_FILTER_TABS.includes(tab)) { setLoading(false); return; }
     setLoading(true);
     api.get(`/ats-reports/${tab}?${query}`)
       .then((res) => { if (mine === seq.current) { setData(res.data); setError(''); setDenied(false); } })
       .catch((err) => {
         if (mine !== seq.current) return;
         setDenied(err.response?.status === 403);
-        setError(err.response?.data?.error || 'ATS Reports are not included in your role’s permissions.');
+        setError(err.response?.status === 403 ? 'This report isn’t part of your role.' : 'Couldn’t load this report — try again.');
       })
       .finally(() => { if (mine === seq.current) setLoading(false); });
   }, [tab, query]);
   useEffect(load, [load]);
 
+  // Filter options with counts, for what the panel shows now.
+  const facetParams = useMemo(
+    () => Object.fromEntries(new URLSearchParams(queryOf({ ...draft, ...barFilters(pf) }, { report: tab, compare }))),
+    [draft, tab, compare, pf],
+  );
+  const fac = useFacets('reports', facetParams, { enabled: !!tab && !NO_FILTER_TABS.includes(tab) });
+  useEffect(() => {
+    Object.entries(fac.facets || {}).forEach(([k, list]) => (list || []).forEach((o) => {
+      if (o.count > 0 || !labels.current[`${k}:${o.value}`]) labels.current[`${k}:${o.value}`] = o.label;
+    }));
+  }, [fac.facets]);
+
   function set(patch) {
     setDraft((f) => {
       const next = { ...f, ...patch };
-      // Cascade: a new department invalidates everything chosen inside it; a
-      // new client, the requirement.
-      if ('department' in patch && patch.department !== f.department) {
-        // (Section / TL / Recruiter are narrowed by the hierarchy filter itself.)
-        Object.assign(next, { clientId: '', requirementId: '', stl: '', bde: '', location: '' });
-      }
-      if ('clientId' in patch && patch.clientId !== f.clientId) next.requirementId = '';
+      Object.entries(CLEARS).forEach(([k, inside]) => {
+        if (k in patch && patch[k] !== f[k]) inside.forEach((x) => { if (!(x in patch)) next[x] = ''; });
+      });
       return next;
     });
   }
-  const countOf = (f) => FILTER_KEYS.filter((k) => f[k]).length + (f.range !== 'all' ? 1 : 0);
-  const active = countOf(filters);
-  const dirty = queryOf(draft) !== queryOf(filters);
+  const countOf = (f) => FILTER_KEYS.filter((k) => f[k] && !BAR_KEYS.includes(k)).length;
+  const active = countOf(filters) + (compare ? 1 : 0);
+  const dirty = queryOf({ ...draft, ...bar }) !== queryOf({ ...filters, ...bar });
 
   function openTile(t) {
     if (!t.drill || !t.value) return;
@@ -525,42 +583,47 @@ export default function AtsReports() {
   function openCell(sec, rowKey, col, rowLabel) {
     setDrill({ tab, section: sec.id, row: rowKey, col: col.key, title: `${rowLabel} · ${col.label}`, query });
   }
-
-  // Print: a clean server-rendered page, opened first (so no popup blocker
-  // intervenes) and filled once it arrives.
-  async function print() {
-    const w = window.open('', '_blank');
-    if (!w) { setError('Allow pop-ups for this site to print.'); return; }
-    w.document.write('<p style="font:14px sans-serif;padding:20px">Preparing the report…</p>');
-    try {
-      const res = await api.get(`/ats-reports/${tab}/export?${query}&format=html`, { responseType: 'text' });
-      w.document.open();
-      w.document.write(res.data);
-      w.document.close();
-      w.focus();
-      setTimeout(() => w.print(), 300);
-    } catch (err) {
-      w.close();
-      setError(err.response?.data?.error || 'Could not prepare the print view.');
-    }
-  }
   async function exportAs(format) {
-    if (format === 'print') { print(); return; }
     setBusy(format);
-    const msg = await download(`/ats-reports/${tab}/export?${query}&format=${format}`, `ats-report.${format}`);
+    const msg = await download(`/ats-reports/${tab}/export?${query}${query ? '&' : ''}format=${format}`, `report.${format}`);
     setBusy('');
     if (msg) setError(msg);
   }
   // One table only (server: ?section=<id>).
   async function exportTable(sec, format) {
-    const msg = await download(`/ats-reports/${tab}/export?${query}${query ? '&' : ''}format=${format}&section=${encodeURIComponent(sec.id)}`, `ats-report-${sec.id}.${format}`);
+    const msg = await download(`/ats-reports/${tab}/export?${query}${query ? '&' : ''}format=${format}&section=${encodeURIComponent(sec.id)}`, `report-${sec.id}.${format}`);
     if (msg) setError(msg);
   }
 
-  const o = options || {};
+  // THE LANDING PAGE — one list of report cards.
+  // No Settings tab (user, 2026-10-03): settings live in Administration.
+  if (!tab) return <ReportsHome tabs={ATS_REPORT_TABS} onOpen={(id, cardId) => goTab(id, cardId ? { card: cardId } : {})} />;
 
-  // THE ACTIVE FILTER CHIPS (spec §22) — what is APPLIED, each removable on
-  // its own (removal applies at once; Clear All stays in the filter row).
+  const card = cardOfTab(tab, ATS_REPORT_TABS, params.get('card')) || { title: 'Report', answers: '', views: [[tab, tab]] };
+  const views = (card.views || []).filter(([id]) => TAB_IDS.includes(id));
+  const back = fixedTab ? null : <button type="button" className="rpv-back" onClick={() => goTab('')}>← All reports</button>;
+  const viewSwitch = !fixedTab && views.length > 1 ? (
+    <span className="rpv-views" role="tablist" aria-label="Views of this report">
+      {views.map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={tab === id} className={`rpv-view${tab === id ? ' on' : ''}`} onClick={() => goTab(id)}>{label}</button>
+      ))}
+    </span>
+  ) : null;
+
+  // A login the report refuses gets the refusal, not a filter bar for data
+  // it will never be shown.
+  if (denied && !NO_FILTER_TABS.includes(tab)) {
+    return (
+      <div className="atsrep">
+        {back}
+        <ListPageHeader title={card.title} question={card.answers || null} />
+        <div className="notice">{error}</div>
+      </div>
+    );
+  }
+
+  const o = options || {};
+  const labelOf = (key, v) => labels.current[`${key}:${v}`] || String(v).replace(/^(u|n|id|name):/, '');
   const labelIn = (list, v) => {
     const x = (list || []).find((y) => (typeof y === 'string' ? y === v : y.id === v));
     return x ? (typeof x === 'string' ? x : x.label) : v;
@@ -569,201 +632,203 @@ export default function AtsReports() {
     setFilters((f) => ({ ...f, ...patch }));
     setDraft((d) => ({ ...d, ...patch }));
   };
-  const hl = hierarchyLabels(hierOf(filters), tree.data);
+  // The panel's facets — the bar holds Department / Client / Recruiter / BDE.
+  const facetKeys = isRevenue ? (tab === 'recruiter-revenue' ? RECRUITER_REVENUE_FACETS : REVENUE_FACETS).filter((k) => !BAR_KEYS.includes(k)) : PANEL_FACETS.map(([k]) => k);
   const chips = [
-    filters.range !== 'all' && { key: 'range', label: 'Date', value: data && data.period ? data.period.label : filters.range, onRemove: () => drop({ range: 'all', from: '', to: '' }) },
-    { key: 'department', label: 'Department', value: filters.department && hl.department, onRemove: () => drop({ department: '', section: '', tl: '', recruiter: '', positionCode: '' }) },
-    { key: 'section', label: 'Section', value: filters.section && hl.section, onRemove: () => drop({ section: '', tl: '', recruiter: '', positionCode: '' }) },
-    { key: 'tl', label: 'TL', value: filters.tl && hl.tl, onRemove: () => drop({ tl: '', recruiter: '', positionCode: '' }) },
-    { key: 'recruiter', label: 'Recruiter', value: filters.recruiter && hl.recruiter, onRemove: () => drop({ recruiter: '' }) },
-    { key: 'positionCode', label: 'Recruiter Code', value: filters.positionCode, onRemove: () => drop({ positionCode: '' }) },
-    { key: 'clientId', label: 'Client', value: filters.clientId && labelIn(o.clients, filters.clientId), onRemove: () => drop({ clientId: '', requirementId: '' }) },
-    { key: 'requirementId', label: 'Requirement', value: filters.requirementId && labelIn(o.requirements, filters.requirementId), onRemove: () => drop({ requirementId: '' }) },
-    { key: 'stl', label: 'STL', value: filters.stl && labelIn(o.stls, filters.stl), onRemove: () => drop({ stl: '' }) },
-    { key: 'bde', label: 'BDE', value: filters.bde && ((people.bdes || []).find((w) => w.value === filters.bde) || {}).name || filters.bde.replace(/^(id|name):/, ''), onRemove: () => drop({ bde: '' }) },
-    { key: 'location', label: 'Location', value: filters.location, onRemove: () => drop({ location: '' }) },
-    { key: 'source', label: 'Source', value: filters.source, onRemove: () => drop({ source: '' }) },
-    { key: 'status', label: 'Status', value: filters.status && labelIn(o.statuses, filters.status), onRemove: () => drop({ status: '' }) },
-    { key: 'stage', label: 'Stage', value: filters.stage && labelIn(o.stages, filters.stage), onRemove: () => drop({ stage: '' }) },
-    { key: 'interviewStatus', label: 'Interview', value: filters.interviewStatus && labelIn(o.interviewStatuses, filters.interviewStatus), onRemove: () => drop({ interviewStatus: '' }) },
-    { key: 'aiStatus', label: 'AI interview', value: filters.aiStatus && labelIn(o.aiStatuses, filters.aiStatus), onRemove: () => drop({ aiStatus: '' }) },
-    { key: 'joiningStatus', label: 'Joining', value: filters.joiningStatus && labelIn(o.joiningStatuses, filters.joiningStatus), onRemove: () => drop({ joiningStatus: '' }) },
-  ].filter(Boolean);
-  const pick = (key, label, list, allLabel) => (
-    <Combo value={draft[key]} onChange={(e) => set({ [key]: e.target.value })} title={label}>
-      <option value="">{allLabel}</option>
-      {(list || []).map((x) => (typeof x === 'string'
-        ? <option key={x} value={x}>{x}</option>
-        : <option key={x.id} value={x.id}>{x.label}</option>))}
-    </Combo>
-  );
-  // A login the report refuses gets the refusal, not a filter bar for data it
-  // will never be shown.
-  if (denied && tab !== 'workflow') {
-    return (
-      <div>
-        <div className="page-head"><div><h1>ATS Reports</h1></div></div>
-        <div className="error-text">{error}</div>
-      </div>
-    );
-  }
-
-  const tabLabel = (ATS_REPORT_TABS.find(([id]) => id === tab) || [])[1];
+    compare && { key: 'compare', label: 'Compare', value: (COMPARE_CHOICES.find(([id]) => id === compare) || [])[1], onRemove: () => setCompare('') },
+    ...FACETS.filter(([k]) => facetKeys.includes(k)).map(([k, label]) => ({
+      key: k, label, value: filters[k] && labelOf(k, filters[k]), onRemove: () => drop({ [k]: '', ...Object.fromEntries((CLEARS[k] || []).map((x) => [x, ''])) }),
+    })),
+    ...(isRevenue ? [] : [
+      { key: 'status', label: 'Status', value: filters.status && labelIn(o.statuses, filters.status), onRemove: () => drop({ status: '' }) },
+      { key: 'stage', label: 'Step', value: filters.stage && labelIn(o.stages, filters.stage), onRemove: () => drop({ stage: '' }) },
+      { key: 'interviewStatus', label: 'Interview', value: filters.interviewStatus && labelIn(o.interviewStatuses, filters.interviewStatus), onRemove: () => drop({ interviewStatus: '' }) },
+      { key: 'aiStatus', label: 'AI interview', value: filters.aiStatus && labelIn(o.aiStatuses, filters.aiStatus), onRemove: () => drop({ aiStatus: '' }) },
+      { key: 'joiningStatus', label: 'Joining', value: filters.joiningStatus && labelIn(o.joiningStatuses, filters.joiningStatus), onRemove: () => drop({ joiningStatus: '' }) },
+      { key: 'people', label: 'People', value: filters.people && labelIn(PEOPLE_CHOICES, filters.people), onRemove: () => drop({ people: '' }) },
+    ]),
+  ].filter((c) => c && c.value);
+  // A fixed list in the panel; an empty list is not offered.
+  const pick = (key, label, list, allLabel) => (!(list || []).length && !draft[key] ? null : (
+    <PanelField label={label}>
+      <Combo value={draft[key]} onChange={(e) => set({ [key]: e.target.value })} title={label}>
+        <option value="">{allLabel}</option>
+        {(list || []).map((x) => (typeof x === 'string'
+          ? <option key={x} value={x}>{x}</option>
+          : <option key={x.id} value={x.id}>{x.label}</option>))}
+      </Combo>
+    </PanelField>
+  ));
+  const clearAll = () => { setDraft(EMPTY); setFilters(EMPTY); setCompare(''); };
+  const ff = fac.facets || {};
+  const barOptions = {
+    department: ff.department || [],
+    clientId: ff.clientId || [],
+    people: isRevenue ? [] : [
+      ...(ff.recruiter || []).filter((x) => x.value !== '—').map((x) => ({ ...x, value: `rec:${x.value}`, group: 'Recruiters' })),
+      ...(ff.bde || []).filter((x) => x.value !== '—').map((x) => ({ ...x, value: `bde:${x.value}`, group: 'Client managers (BDE)' })),
+    ],
+  };
+  const hasPanel = !isRevenue || facetKeys.length > 0;
+  // Max 6 cards (v3); the rest of the report's numbers one click away.
+  const [moreTiles, setMoreTiles] = [params.get('more') === '1', (on) => setParams((p0) => { const p1 = new URLSearchParams(p0); if (on) p1.set('more', '1'); else p1.delete('more'); return p1; }, { replace: true })];
+  const scopeLine = data && data.scope ? (
+    <>
+      Your area: <b>{data.scope}</b>
+      {' · '}
+      {data.compare ? `${data.compare.cur.label} vs ${data.compare.prev.label}` : data.period.label}
+      {loading ? ' · updating…' : ''}
+    </>
+  ) : null;
 
   return (
-    <div>
-      <div className="page-head">
-        <div>
-          <h1>ATS Reports</h1>
-          <div className="page-sub">
-            {data && <b className="scope-tag">Scope: {data.scope}</b>}
-            {data && ` · ${tabLabel} · ${data.period.label}`}
-            {active ? ` · ${active} filter${active === 1 ? '' : 's'} applied` : ''}
-            {loading && data ? ' · updating…' : ''}
-          </div>
+    <div className="atsrep">
+      {back}
+      {/* Excel and PDF are two separate buttons (no dropdown), with the
+          filters applied — GET /ats-reports/:tab/export. */}
+      <ListPageHeader
+        title={card.title}
+        question={card.answers || null}
+        sub={NO_FILTER_TABS.includes(tab) ? null : scopeLine}
+        data={canExport && !NO_FILTER_TABS.includes(tab) ? <ExportButtons busy={busy} onPick={exportAs} /> : null}
+      />
+
+      {NO_FILTER_TABS.includes(tab) ? (
+        <>
+          {viewSwitch && <div style={{ marginBottom: 10 }}>{viewSwitch}</div>}
+          {tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : <DailyReport />}
+        </>
+      ) : (<>
+      {/* The same filters as every page (ATS layout v3): Department · Date
+          range · Client · Recruiter / BDE — cascading, with counts. */}
+      <div className="rpv-filters">
+        <PageFilterBar
+          value={pf}
+          onChange={setPf}
+          options={barOptions}
+          show={{ dateRange: !compare, people: tab !== 'revenue' }}
+        />
+        {compare && <span className="small-muted">Compare is on — it shows {compare === 'quarter' ? 'this quarter and last quarter' : 'this month and last month'}.</span>}
+      </div>
+      {/* The report's views, More filters, Compare. Then the chips. */}
+      <ListToolbar
+        className="atsrep-bar"
+        filterCount={active}
+        chips={chips}
+        onClearAll={countOf(draft) || active ? clearAll : undefined}
+        right={<span className="rpv-right">{viewSwitch}<CompareToggle value={compare} onChange={setCompare} /></span>}
+        panelFooter={(
+          <>
+            {dirty && <span className="small-muted">Not applied yet</span>}
+            <button type="button" className="btn btn-sm btn-primary" disabled={!dirty} onClick={() => setFilters(draft)}>Apply filters</button>
+          </>
+        )}
+        panel={hasPanel ? (
+          <>
+            {FACETS.filter(([k]) => facetKeys.includes(k)).map(([k, label, allLabel]) => {
+              const list = (fac.facets || {})[k] || [];
+              // One choice only is no choice: not drawn unless it is set.
+              if (list.filter((x) => x.count > 0).length < 2 && !draft[k]) return null;
+              return <FacetSelect key={k} label={label} value={draft[k]} onChange={(v) => set({ [k]: v })} options={list} allLabel={allLabel} loading={fac.loading} />;
+            })}
+            {!isRevenue && (
+              <>
+                {pick('status', 'Status', o.statuses, 'Any status')}
+                {pick('stage', 'Step', o.stages, 'Any step')}
+                {['interviews', 'clients', 'sla'].includes(tab) && pick('interviewStatus', 'Interview', o.interviewStatuses, 'Any interview')}
+                {tab === 'ai' && pick('aiStatus', 'AI interview', o.aiStatuses, 'Any AI interview')}
+                {['joining', 'timetofill'].includes(tab) && pick('joiningStatus', 'Joining', o.joiningStatuses, 'Any joining')}
+                {tab === 'recruiters' && pick('people', 'Active / Former', PEOPLE_CHOICES, 'Everyone (active + former)')}
+              </>
+            )}
+          </>
+        ) : null}
+      />
+
+      {error && (
+        <div className="notice red" style={{ marginBottom: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span>{error}</span>
+          <button type="button" className="btn btn-sm" onClick={() => { setError(''); load(); }}>Try again</button>
         </div>
-        {canExport && <ExportMenu busy={busy} onPick={exportAs} />}
-      </div>
-
-      <div className="tabbar">
-        {ATS_REPORT_TABS.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            className={`tab-btn${tab === id ? ' active' : ''}`}
-            onClick={() => setParams({ tab: id })}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'workflow' ? <WorkflowDiagram /> : (<>
-      {/* THE COMMON FILTERS — the same on every tab, applied on the server.
-          Review #3 §14: Date range + Department → Section → TL → Recruiter
-          always visible; Client, Requirement, Source and the rest under
-          More Filters ▾. */}
-      {/* .filter-row gives the dropdowns their usual inline width. */}
-      <div className="filter-row" style={{ display: 'block' }}>
-      <MoreFilters
-        storageKey="atsreports"
-        activeMore={MORE_KEYS.filter((k) => draft[k]).length}
-        onClearAll={countOf(draft) || active ? () => { setDraft(EMPTY); setFilters(EMPTY); } : undefined}
-        extra={<button type="button" className="btn btn-sm btn-primary" disabled={!dirty} onClick={() => setFilters(draft)}>Apply Filters</button>}
-        primary={(<>
-        <DateRangePicker
-          presets={PRESETS}
-          apply={false}
-          value={{ range: draft.range, from: draft.from, to: draft.to }}
-          onChange={(v) => set({ range: v.range, from: v.from || '', to: v.to || '' })}
-          period={data && data.period && data.period.key !== 'all' ? data.period : null}
-        />
-        {/* Department -> Section -> TL -> Recruiter (spec §7): one dependent
-            filter, current AND former people, only the levels this login can
-            use. A Recruiter Code counts the work done from that seat. */}
-        <HierarchyFilter
-          value={hierOf(draft)}
-          onChange={(h) => {
-            const seat = h.recruiter.startsWith('seat:') ? h.recruiter.slice(5) : '';
-            set({ department: h.department, section: h.section, tl: h.tl, recruiter: seat ? '' : h.recruiter, positionCode: seat });
-          }}
-        />
-        </>)}
-      >
-        {pick('clientId', 'Client', o.clients, 'All clients')}
-        {pick('requirementId', 'Requirement', o.requirements, 'All requirements')}
-        {/* STL / BDE: current AND former people, the same list as every ATS
-            screen (components/PeopleFilter). The report counts the work
-            attributed to them — the same rule the lists use. */}
-        {pick('stl', 'STL', o.stls, 'All STLs')}
-        <PeopleFilter role="BDE" department={draft.department} value={draft.bde} onChange={(v) => set({ bde: v })} />
-        {pick('location', 'Location', o.locations, 'All locations')}
-        {pick('source', 'Source', o.sources, 'All sources')}
-        <Combo value={draft.status} onChange={(e) => set({ status: e.target.value })} title="Status">
-          <option value="">All statuses</option>
-          <optgroup label="Requirement status">
-            {(o.statuses || []).filter((s) => s.id.startsWith('req:')).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </optgroup>
-          <optgroup label="Candidate status">
-            {(o.statuses || []).filter((s) => s.id.startsWith('cand:')).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </optgroup>
-        </Combo>
-        {pick('stage', 'Stage', o.stages, 'All stages')}
-        {pick('interviewStatus', 'Interview status', o.interviewStatuses, 'All interview statuses')}
-        {pick('aiStatus', 'AI interview status', o.aiStatuses, 'All AI interview statuses')}
-        {pick('joiningStatus', 'Joining status', o.joiningStatuses, 'All joining statuses')}
-      </MoreFilters>
-      </div>
-
-      <FilterChips filters={chips} />
-
-      {error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
+      )}
       {!data && !error && <div className="small-muted">Loading the report…</div>}
 
       {data && data.report === tab && (
         <div style={{ opacity: loading ? 0.55 : 1, transition: 'opacity .15s' }}>
-          {/* The compact summary. */}
-          <div className="statbar">
-            {data.tiles.map((t) => {
+          {/* Max six cards (v3); the report's other numbers one click away. */}
+          {(() => {
+            const card1 = (t) => {
               const clickable = t.drill && t.value > 0;
+              const pctChange = data.compare && !t.now && t.type !== 'pct' && Number(t.prev) > 0
+                ? ((Number(t.value) - Number(t.prev)) / Number(t.prev)) * 100 : null;
               return (
-                <div
+                <StatCard
                   key={t.key}
-                  className="statitem"
-                  data-goto={clickable ? '1' : undefined}
-                  role={clickable ? 'button' : undefined}
-                  tabIndex={clickable ? 0 : undefined}
-                  style={clickable ? { cursor: 'pointer' } : undefined}
-                  title={clickable ? 'Show the list behind this number' : undefined}
-                  onClick={() => openTile(t)}
-                  onKeyDown={(e) => { if (clickable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openTile(t); } }}
-                >
-                  <div className="n">{fmt(t.value, t.type)}</div>
-                  <div className="l">{t.label}</div>
-                  {t.sub && <div className="s">{t.sub}</div>}
-                </div>
+                  label={plainWords(t.label)}
+                  help={tileHelp(t.label)}
+                  value={t.value === null || t.value === undefined ? null : (t.type === 'pct' || t.type === 'money' ? (t.value === 0 ? 0 : fmt(t.value, t.type)) : t.value)}
+                  zeroText="None yet"
+                  tone={tileTone(t.label)}
+                  upIsGood={!BAD_WORDS.test(t.label)}
+                  delta={pctChange}
+                  deltaLabel={data.compare ? `vs ${data.compare.prev.label}` : undefined}
+                  hint={t.sub ? plainWords(t.sub) : undefined}
+                  onClick={clickable ? () => openTile(t) : undefined}
+                  title={clickable ? 'Show who is behind this number' : undefined}
+                />
               );
-            })}
-          </div>
+            };
+            const head = data.tiles.slice(0, 6);
+            const rest = data.tiles.slice(6);
+            return (
+              <>
+                <StatRow>{head.map(card1)}</StatRow>
+                {rest.length > 0 && (
+                  <button type="button" className="rpv-more-tiles" onClick={() => setMoreTiles(!moreTiles)} aria-expanded={moreTiles}>
+                    {moreTiles ? 'Fewer numbers ▲' : `More numbers (${rest.length}) ▼`}
+                  </button>
+                )}
+                {moreTiles && rest.length > 0 && (
+                  <div className="rpv-tiles-extra">
+                    {Array.from({ length: Math.ceil(rest.length / 6) }, (_, i) => <StatRow key={i}>{rest.slice(i * 6, i * 6 + 6).map(card1)}</StatRow>)}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
-          {/* §22 — a report with nothing in it says so, and what to try. */}
           {data.counts && data.counts.applications === 0 && data.counts.requirements === 0 && (
             <EmptyState
-              title="No activity for this date range."
-              hint="Try changing the date range or clearing filters — only work inside your scope is counted."
-              action={filters.range !== 'all' || active
-                ? <button type="button" className="btn btn-sm" onClick={() => { setDraft(EMPTY); setFilters(EMPTY); }}>Show all time, no filters</button>
+              title={isRevenue ? 'No invoices for these filters.' : 'Nothing happened in this period.'}
+              hint="Try a wider date range, or clear a filter."
+              action={bar.range !== 'all' || active
+                ? <button type="button" className="btn btn-sm" onClick={() => { clearAll(); setPf({}); }}>Show all time, no filters</button>
                 : null}
             />
           )}
 
-          {/* One chart per report, drawn from the report's own table, with a
-              Table view of the same numbers. */}
-          {CHART_SPECS[tab] && (
-            <div className="chart-grid">
-              <ChartCard key={`${tab}-${data.sections.map((s) => s.groupBy || '').join('')}`} data={data} spec={CHART_SPECS[tab]} />
-            </div>
-          )}
+          {/* Max three charts, each mark opening its list in place. */}
+          <ReportCharts key={`${tab}-${data.sections.map((x) => x.groupBy || '').join('')}`} tab={tab} data={data} onDrill={openCell} />
 
-          {data.notes.map((n) => <div key={n} className="notice amber" style={{ marginBottom: 12 }}>{n}</div>)}
+          {tab === 'rejections' && <SameClientRule />}
+          {data.notes.map((n) => <div key={n} className={`notice${data.plain ? '' : ' amber'}`} style={{ marginBottom: 12 }}>{plainWords(n)}</div>)}
 
           {data.sections.map((s) => (
             <Section
               key={`${tab}-${s.id}-${s.groupBy || ''}`}
               sec={s}
+              compare={!!data.compare}
               onDrill={openCell}
               onGroupBy={(g) => setGroupBy((m) => ({ ...m, [tab]: g }))}
               onExport={canExport ? exportTable : null}
             />
           ))}
 
-          <div className="notice" style={{ marginTop: 12 }}>
-            Every number opens the list behind it. {data.dateBasis}
-            {' '}Stages are the Candidates screen&apos;s own: New → AI Interview → Recruiter Review → TL Review → BDE Review → Client Review → Interview → Selected → Offer → Joining → Joined, with Hold and Rejected as views.
-            {['funnel', 'departments', 'recruitment', 'requirements', 'recruiters', 'sources', 'clients', 'joining'].includes(tab) && (
-              <> &ldquo;Reached&rdquo; figures are cumulative — someone who reached the interview is also counted as approved and shared.</>
-            )}
+          <div className="rpv-tip">
+            Click any blue number to see who is behind it. {data.dateBasis}
           </div>
+          {/* ATS-100 B6: costs, campus drives, referrals + bonuses — below the tables. */}
+          {tab === 'campaigns' && <SourcingManager />}
         </div>
       )}
 

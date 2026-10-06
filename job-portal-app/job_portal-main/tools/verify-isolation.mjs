@@ -16,10 +16,12 @@
  * What it holds to:
  *
  *   - a recruiter sees their own requirement, and not the other's
- *   - a recruiter sees their own candidates, and not the other's
+ *   - CANDIDATES ARE SHARED (0091): a recruiter sees the other's
+ *     non-private candidates, read-only, and never a private one
  *   - a recruiter sees their own applications, and not the other's
- *   - asking for another recruiter's record BY ID does not return it
- *   - a recruiter cannot edit what they cannot see
+ *   - asking for another recruiter's APPLICATION or draft BY ID does not
+ *     return it; asking for their candidate returns it read-only
+ *   - a recruiter cannot edit another recruiter's candidate
  *   - an admin still sees everything
  *   - a candidate still sees their own applications
  *   - the public job board still works, signed out
@@ -115,6 +117,11 @@ async function deskFor(who, tag) {
 }
 
 let deskA, deskB;
+/* Everything this run creates, so the cleanup at the bottom can take it
+   back out again. Declared here rather than collected at the end,
+   because a check that fails half way still has to be undone. */
+const draftIds = [];
+let isoCandidateId = null;
 await check('each recruiter gets a requirement, a candidate and an application', async () => {
   deskA = await deskFor(A, 'A');
   deskB = await deskFor(B, 'B');
@@ -137,11 +144,31 @@ await check('a recruiter sees their own requirement and not the other one', asyn
     "the recruiter can see another recruiter's requirement");
 });
 
-await check('a recruiter sees their own candidates and not the other\'s', async () => {
-  const mine = await listIds(A, '/candidates?limit=200', 'candidates');
+/*
+ * CHANGED ON PURPOSE (0091). This asserted that a recruiter could NOT see
+ * another recruiter's candidates - 0031's model. The owner replaced it
+ * with one shared candidate database: every recruiter sees every
+ * non-private candidate, read-only, while applications stay with the
+ * job's recruiter. The check still asserts both sides of the line: the
+ * shared one is visible and not editable, a private one is not visible.
+ */
+await check('candidates are shared: a recruiter sees the other\'s, but not a private one', async () => {
+  const mine = await listIds(A, '/candidates?limit=200&availabilityAll=true', 'candidates');
   must(mine.includes(deskA.candidateId), 'the recruiter cannot see their own candidate');
-  must(!mine.includes(deskB.candidateId),
-    "the recruiter can see another recruiter's candidate");
+  must(mine.includes(deskB.candidateId),
+    "the recruiter cannot see another recruiter's (shared) candidate");
+  const theirs = (await A.session.api('get', '/candidates?limit=200&availabilityAll=true')).candidates
+    .find((c) => c.id === deskB.candidateId);
+  must(theirs && theirs.canEdit === false, "another recruiter's candidate is offered as editable");
+
+  // a private one stays with its own recruiter
+  const priv = await B.session.api('post', '/candidates/import', {
+    text: `Name,Email,Phone\nPrivate ${stamp},private.${stamp}@example.test,+91 7${String(stamp).slice(-9)}3`,
+  });
+  deskB.privateId = priv.detail.imported[0].id;
+  await admin.api('put', `/candidates/${deskB.privateId}`, { isPrivate: true });
+  const again = await listIds(A, '/candidates?limit=200&availabilityAll=true', 'candidates');
+  must(!again.includes(deskB.privateId), "another recruiter's PRIVATE candidate is visible");
 });
 
 await check('a recruiter sees their own applications and not the other\'s', async () => {
@@ -171,8 +198,15 @@ const refused = async (who, method, path, body) => {
   }
 };
 
-await check("another recruiter's candidate is not readable by id", async () => {
-  const leak = await refused(A, 'get', `/candidates/${deskB.candidateId}`);
+await check("another recruiter's application is not readable by id; their candidate is, read-only", async () => {
+  const apps = await A.session.api('get', `/applications?candidateId=${deskB.candidateId}`);
+  must(!(apps.applications || []).some((x) => x.id === deskB.applicationId),
+    "another recruiter's application is readable");
+  const shared = await A.session.api('get', `/candidates/${deskB.candidateId}`);
+  must(shared.candidate && shared.candidate.canEdit === false, 'the shared candidate is not read-only');
+  must(!(shared.applications || []).some((x) => x.id === deskB.applicationId),
+    "another recruiter's application came back with the candidate");
+  const leak = await refused(A, 'get', `/candidates/${deskB.privateId}`);
   must(!leak, leak);
 });
 
@@ -187,6 +221,7 @@ await check("another recruiter's UNPUBLISHED requirement is not readable", async
     title: `Isolation draft ${stamp}`, companyId: COMPANY,
     location: 'Hyderabad', skills: ['Java'], status: 'draft',
   })).job;
+  draftIds.push(draft.id);
 
   const leak = await refused(A, 'get', `/jobs/${draft.id}`);
   must(!leak, leak);
@@ -195,7 +230,7 @@ await check("another recruiter's UNPUBLISHED requirement is not readable", async
   must(!mine.includes(draft.id), "a draft of another recruiter is in the list");
 });
 
-await check('a recruiter cannot edit what they cannot see', async () => {
+await check("a recruiter cannot edit another recruiter's candidate", async () => {
   let changed = false;
   try {
     await A.session.api('put', `/candidates/${deskB.candidateId}`,
@@ -232,8 +267,9 @@ await check('the public job board still works, signed out', async () => {
 await check('a candidate still sees their own applications', async () => {
   const cand = await open();
   const email = `iso.cand.${stamp}@example.test`;
-  await cand.api('post', '/auth/register',
+  const reg = await cand.api('post', '/auth/register',
     { name: `Iso Candidate ${stamp}`, email, password: 'IsoCand@2026' });
+  isoCandidateId = reg.candidateId;
   const open1 = (await cand.api('get', '/jobs?limit=20')).jobs
     .find((j) => j.status === 'open' && !j.paused && !j.archived);
   if (!open1) { console.log('        (no open job to apply to - skipped)'); return; }
@@ -242,8 +278,52 @@ await check('a candidate still sees their own applications', async () => {
   must(applications.length >= 1, 'a candidate cannot see their own application');
 });
 
+/* ------------------------------------------------------------------ *
+ * put the database back
+ *
+ * THIS WAS MISSING AND IT MATTERED. Every run left two recruiters and
+ * three requirements behind, so after three runs the board carried nine
+ * requirements called "Isolation A/B/draft ..." owned by accounts nobody
+ * could sign in as - and the FIRST OPEN JOB on the board became one of
+ * them. `verify:notifications` applies to whatever is at the top, so it
+ * began applying to another recruiter's requirement, every stage move
+ * after that was correctly refused, and a suite about notifications
+ * failed because of leftovers from a suite about isolation.
+ *
+ * It runs whether the checks passed or failed. A failed run leaves the
+ * most mess, which is exactly when cleanup is skipped if it is put
+ * behind a success.
+ * ------------------------------------------------------------------ */
+try {
+  let jobsGone = 0;
+  let candsGone = 0;
+  const purge = async (candidateId) => {
+    if (!candidateId) return;
+    await admin.api('post', '/admin/purge-test-candidate', { candidateId })
+      .then(() => { candsGone += 1; }, () => {});
+  };
+  const dropJob = async (id) => {
+    if (!id) return;
+    await admin.api('del', `/jobs/${id}`).then(() => { jobsGone += 1; }, () => {});
+  };
+
+  for (const desk of [deskA, deskB].filter(Boolean)) {
+    await purge(desk.privateId);
+    await purge(desk.candidateId);      // takes the application and the login too
+    await dropJob(desk.jobId);
+  }
+  for (const id of draftIds) await dropJob(id);
+  await purge(isoCandidateId);
+
+  console.log(`  cleaned up: ${jobsGone} requirement(s), ${candsGone} candidate(s)`);
+  console.log('  the two throwaway recruiter logins have no delete route — remove them with:');
+  console.log('    node tools/purge-verify-leftovers.mjs --confirm');
+} catch (err) {
+  console.log(`  cleanup did not finish: ${err.message}`);
+}
+
 await browser.close();
 console.log(failed
   ? `\n  ${failed} FAILED\n`
-  : '\n  ISOLATION VERIFIED — one recruiter cannot reach another recruiter\'s desk\n');
+  : '\n  ISOLATION VERIFIED — candidates shared read-only, desks (jobs, applications, notes) private\n');
 process.exitCode = failed ? 1 : 0;

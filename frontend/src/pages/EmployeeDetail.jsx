@@ -7,6 +7,7 @@ import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx
 import Combo from '../components/Combo.jsx';
 import EmployeeProfileForm from '../components/EmployeeProfileForm.jsx';
 import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
+import ExtraFields from '../components/employees/ExtraFields.jsx';
 import ExportMenu from '../components/ExportMenu.jsx';
 
 
@@ -67,6 +68,7 @@ export default function EmployeeDetail() {
   const [showHistory, setShowHistory] = useState(false);
   // The Documents section inside the Edit form; Save changes uploads its files.
   const docsRef = useRef(null);
+  const extraRef = useRef(null); // HRMS item 15 — the fields added in Manage Fields
   const [pendingDocs, setPendingDocs] = useState(0);
 
   function load() {
@@ -118,7 +120,12 @@ export default function EmployeeDetail() {
 
   async function saveEdit(e) {
     e.preventDefault();
-    setError(''); setNotice(''); setSaving(true);
+    setError(''); setNotice('');
+    // The extra fields are checked BEFORE anything is saved, so a missing
+    // required one is said in words and nothing half-saves.
+    const extraWhy = extraRef.current ? extraRef.current.validate() : '';
+    if (extraWhy) { setError(extraWhy); return; }
+    setSaving(true);
     try {
       const { roleCode, employeeCode, ...body } = form;
       if (!body.aadhaarNumber) delete body.aadhaarNumber;
@@ -133,6 +140,7 @@ export default function EmployeeDetail() {
       // DOCUMENTS ARE PART OF THIS FORM: files picked in its Documents section
       // go up once the fields have saved. A failed file keeps the form open
       // with its reason and a Retry; the field changes are already saved.
+      if (extraRef.current) await extraRef.current.save();
       const up = docsRef.current ? await docsRef.current.uploadAll(id) : { total: 0, failed: 0 };
       const saved = res.data?.designationWarning || 'Saved — every changed field is recorded in the history (old → new).';
       if (up.failed) {
@@ -143,7 +151,7 @@ export default function EmployeeDetail() {
       }
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'The changes could not be saved.');
+      setError(err.response?.data?.error || (!err.response && err.message) || 'The changes could not be saved.');
     } finally { setSaving(false); }
   }
 
@@ -555,6 +563,7 @@ export default function EmployeeDetail() {
               </>
             )}
           />
+          <ExtraFields ref={extraRef} employeeId={employee.id} editable />
 
           {/* Save / Cancel close the WHOLE form — fields and documents — and
               stay in reach at the bottom of the view while it scrolls. */}
@@ -612,6 +621,7 @@ export default function EmployeeDetail() {
           component asks the server what this caller may do: HR uploads and
           deletes, a view-only Manager / Assistant Manager views and downloads,
           and a role the server refuses (403) sees no section at all. */}
+      {!editing && <ExtraFields employeeId={employee.id} />}
       {!editing && (
         <EmployeeDocuments
           employeeId={employee.id}

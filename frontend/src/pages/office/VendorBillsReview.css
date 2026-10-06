@@ -1,0 +1,23 @@
+/* Office & Accounts → Bills from vendors (P3). Scoped .vb-* */
+.vb-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.vb-bar select,.vb-bar input{height:34px;margin:0}
+.vb-bar input{flex:1 1 220px;min-width:180px}
+.vb-status{display:flex;flex-wrap:wrap;gap:6px}
+.vb-chip{border:1px solid var(--line);background:var(--paper-raised);border-radius:999px;padding:5px 12px;font-size:12.5px;cursor:pointer;color:var(--ink)}
+.vb-chip b{margin-left:4px}
+.vb-chip.on.vb-yellow{background:var(--amber-tint);border-color:var(--amber);color:var(--amber)}
+.vb-chip.on.vb-blue{background:var(--blue-tint);border-color:var(--blue);color:var(--blue)}
+.vb-chip.on.vb-green{background:var(--green-tint);border-color:var(--green);color:var(--green)}
+.vb-chip.on.vb-red{background:var(--red-tint);border-color:var(--red);color:var(--red)}
+.vb-table td.num,.vb-table th.num{text-align:right;white-space:nowrap}
+.vb-table td{vertical-align:top}
+.vb-detail .vp-dl{grid-template-columns:160px 1fr}
+.vb-red{color:var(--red)}
+.vb-files{display:flex;flex-wrap:wrap;gap:10px}
+.vb-step{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.vb-step select,.vb-step input,.vb-step textarea{width:100%}
+.vb-bar select{flex:0 1 220px}
+.vb-nowrap{white-space:nowrap}
+.vb-src{display:inline-block;margin-top:3px;font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-tint);border-radius:999px;padding:1px 8px}
+.vb-table td{font-size:13px}
+.vb-badge{display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:var(--amber);color:#fff;font-weight:700;font-size:12px;text-align:center}

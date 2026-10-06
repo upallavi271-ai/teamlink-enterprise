@@ -520,25 +520,24 @@ export default function ExpenseModal({
         {editing || !acc.approver ? (
           <div className="field"><span>Status</span>
             <div className="oe-static"><span className={`oe-appr ${(APPROVAL[status] || APPROVAL.PENDING).cls}`}>{(APPROVAL[status] || APPROVAL.PENDING).long}</span></div>
-            <Hint>{editing ? 'Approve, reject and mark paid from the row' : 'Every new expense waits for the Accounts Admin / Approver'}</Hint>
+            <Hint>{editing ? 'Mark it paid from the row' : 'Every new expense waits for the Accounts Admin / Approver to mark it paid'}</Hint>
           </div>
         ) : (
           <label className="field"><span>Status on saving</span>
             <select value={form.approvalStatus} onChange={(e) => set('approvalStatus', e.target.value)}>
-              <option value="PENDING">Pending approval</option>
-              <option value="APPROVED">Approved (by me)</option>
-              <option value="PAID">Paid (approved by me)</option>
+              <option value="PENDING">Pending</option>
+              <option value="PAID">Paid (signed off by me)</option>
             </select>
-            <Hint>Approver only — recorded as your approval</Hint>
+            <Hint>Approver only — recorded as your sign-off</Hint>
           </label>
         )}
 
-        {/* Due date · Approved by */}
+        {/* Due date · Signed off by */}
         <label className="field"><span>Due date</span>
           <input type="date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} />
         </label>
-        <div className="field"><span>Approved by</span>
-          <div className="oe-static">{row && row.approvedBy ? row.approvedBy : <span className="small-muted">set when it is approved</span>}</div>
+        <div className="field"><span>Signed off by</span>
+          <div className="oe-static">{row && row.approvedBy ? row.approvedBy : <span className="small-muted">set when it is marked paid</span>}</div>
         </div>
         <label className="field"><span>Location</span>
           <input value={form.location} onChange={(e) => set('location', e.target.value)} placeholder="Office or branch" />

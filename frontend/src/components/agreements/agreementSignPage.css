@@ -1,0 +1,36 @@
+/* The client's one-page agreement (pages/AgreementSigning.jsx, 2026-10-05).
+   Scoped under .agrs-* only. */
+.agrs-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.agrs-terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 10px 0 12px; }
+.agrs-term { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.agrs-term .k { font-size: 12px; color: var(--ink-soft); }
+.agrs-term .v { font-size: 15px; font-weight: 700; color: var(--ink); margin-top: 2px; overflow-wrap: anywhere; }
+.agrs-sign h3 { font-size: 17px; }
+.agrs-step { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.agrs-step:first-of-type { border-top: 0; }
+.agrs-num { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: var(--blue-tint); color: var(--blue); font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.agrs-codebtn { margin-top: 8px; min-height: 40px; }
+.agrs-fields { grid-template-columns: 1fr 1fr 1fr; margin-top: 6px; }
+.agrs-main { margin-top: 12px; min-height: 46px; padding: 0 26px; font-size: 15px; }
+.agrs-hint { font-size: 12px; margin-top: 6px; }
+.agrs-stop { border-color: var(--red); }
+.agrs-stop h3 { color: var(--red); }
+@media (max-width: 640px) {
+  .agrs-fields { grid-template-columns: 1fr; }
+  .agrs-main, .agrs-codebtn { width: 100%; justify-content: center; }
+  .agrs-title h1 { font-size: 19px; }
+}
+@media print {
+  .agrs-noprint { display: none !important; }
+  .agrs-doc { max-height: none !important; overflow: visible !important; border: 0; padding: 0; }
+  .agrs-page { padding: 0; }
+  .agrs-term { break-inside: avoid; }
+}
+.agrs-have { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 13px; margin: 6px 0 10px; }
+.agrs-have img { max-height: 60px; max-width: 160px; border: 1px solid var(--line); border-radius: 6px; background: #fff; vertical-align: middle; }
+.agrs-have span { display: inline-flex; gap: 6px; align-items: center; }
+.agrs-steps { margin-top: 4px; }
+.agrs-doc-read { max-height: 60vh; }
+.agrs-emudhra { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 6px; }
+.agrs-emudhra-btn { width: 100%; min-height: 44px; }
+.agrs-emudhra-btn.is-off { opacity: .5; cursor: not-allowed; }

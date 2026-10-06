@@ -17,10 +17,51 @@
 // Every write goes through routes/bank.js, which enforces the Bank &
 // Reconciliation edit permission itself; the panel only opens for a login
 // that holds it.
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { money2, fmtD } from '../invoices/invFormat';
+import { pct } from '../invoices/invTax';
 import './bank.css';
+import './bankTax.css';
+
+// P4 — an invoice's calculation set against this bank line: the bank amount is
+// compared with the NET RECEIVABLE still to come (after GST − TDS − already
+// received), never with the base; when it differs, the panel says why.
+function Breakdown({ x }) {
+  const b = x.breakdown;
+  const c = x.compare;
+  if (!b || !c) return null;
+  return (
+    <div className="bkp-bd">
+      <table>
+        <tbody>
+          <tr><td>Amount before GST</td><td className="n">{money2(b.base)}</td></tr>
+          <tr><td>+ GST {b.gst > 0.005 ? `@ ${pct(b.gstPercent)} · ${b.gstTypeLabel}` : '· none'}</td><td className="n">{money2(b.gst)}</td></tr>
+          <tr className="sep"><td>= Gross (after GST)</td><td className="n">{money2(b.gross)}</td></tr>
+          <tr><td>− TDS {b.tds > 0.005 ? `@ ${pct(b.tdsPercent)} on the amount ${b.tdsBase === 'gross' ? 'after' : 'before'} GST` : '· none'}</td><td className="n">({money2(b.tds)})</td></tr>
+          <tr className="sep k"><td>= Net receivable</td><td className="n">{money2(b.net)}</td></tr>
+          {b.received > 0.5 && <tr><td>− Already received</td><td className="n">({money2(b.received)})</td></tr>}
+        </tbody>
+      </table>
+      <table>
+        <tbody>
+          <tr className="k"><td>Expected receipt</td><td className="n">{money2(c.expected)}</td></tr>
+          <tr><td>Bank amount</td><td className="n">{money2(c.bank)}</td></tr>
+          <tr className="sep k">
+            <td>Difference</td>
+            <td className="n">{c.matched ? <span className="bkp-ok">✓ Matched</span> : <span className="bkp-off">{c.diff > 0 ? '+' : '−'}{money2(Math.abs(c.diff))}</span>}</td>
+          </tr>
+        </tbody>
+      </table>
+      {!c.matched && (
+        <div className="bkp-why" style={{ gridColumn: '1 / -1' }}>
+          <h5>Why is this amount different?</h5>
+          <ul>{c.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
@@ -66,6 +107,8 @@ export default function MatchPanel({
   const [errs, setErrs] = useState({});
   const [file, setFile] = useState(null);
   const [loans, setLoans] = useState([]);
+  const [shown, setShown] = useState(null); // the invoice row whose calculation is open
+  const [pick, setPick] = useState(''); // "Select invoice" for a client-only line
   const [f, setF] = useState({
     kind: isCredit ? 'other' : 'expense',
     expenseAccount: '',
@@ -222,7 +265,8 @@ export default function MatchPanel({
   const lineLoans = data?.loans || [];
 
   const row = (x) => (
-    <tr key={x.id}>
+    <Fragment key={x.id}>
+    <tr>
       <td className="bkp-tick">
         <input type="checkbox" aria-label="Tick" checked={ticked.includes(x.id)} onChange={(e) => tick(x.id, e.target.checked)} />
       </td>
@@ -231,7 +275,14 @@ export default function MatchPanel({
           <td><b className="bkp-mono">{x.invoiceNumber}</b>{x.pointed && <span className="status priority-low bkp-chip">named in the narration</span>}</td>
           <td>{x.client}</td>
           <td>{fmtD(x.invoiceDate)}</td>
-          <td className="num">{money2(x.outstanding)}<div className="small-muted">pending</div></td>
+          <td className="num">
+            {money2(x.outstanding)}<div className="small-muted">net still to come</div>
+            {x.breakdown && (
+              <button type="button" className="link-btn bkp-bdbtn" aria-expanded={shown === x.id} onClick={() => setShown(shown === x.id ? null : x.id)}>
+                {shown === x.id ? 'Hide calculation' : (x.compare && !x.compare.matched ? 'Why different?' : 'Calculation')}
+              </button>
+            )}
+          </td>
         </>
       ) : (
         <>
@@ -244,7 +295,14 @@ export default function MatchPanel({
       <td className="num">{Math.abs(x.diff) < 0.5 ? <span className="status priority-low">exact</span> : `${x.diff > 0 ? '+' : '−'}${money2(Math.abs(x.diff))}`}</td>
       <td className="num"><button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => matchIds([x.id])}>Match</button></td>
     </tr>
+    {isCredit && shown === x.id && x.breakdown && (
+      <tr className="bkp-bdrow"><td colSpan={7}><Breakdown x={x} /></td></tr>
+    )}
+    </Fragment>
   );
+  // "Select invoice" (P4): the narration names only the client, who has several open invoices.
+  const sel = isCredit ? data?.selectInvoice : null;
+  const picked = sel ? sel.invoices.find((i) => i.id === pick) : null;
   const head = (
     <thead>
       <tr>
@@ -302,6 +360,41 @@ export default function MatchPanel({
                     {data.payment.linkable
                       ? <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => post(`/bank/${txn.id}/link-payment`, { paymentId: data.payment.id }, () => 'Linked as the proof of the receipt already recorded — nothing was posted twice.')}>Link as proof</button>
                       : <span className="small-muted">already backed by another bank line</span>}
+                  </div>
+                </section>
+              )}
+              {sel && (
+                <section className="bkp-card" aria-label="Select invoice">
+                  <div className="bkp-card-h">
+                    <h4>Select invoice <span className="bkp-count">{sel.invoices.length}</span></h4>
+                  </div>
+                  <p className="bkp-empty" style={{ marginTop: 0 }}>
+                    The bank line names <b>{sel.client}</b> only, and they have {sel.invoices.length} open invoices. Pick the one this money is for —
+                    its calculation is shown against the bank amount before you confirm.
+                  </p>
+                  <div className="bkp-pick" role="radiogroup">
+                    {sel.invoices.map((i) => (
+                      <label key={i.id} className={pick === i.id ? 'on' : ''}>
+                        <input type="radio" name="bkp-pick" checked={pick === i.id} onChange={() => setPick(i.id)} />
+                        <span className="bkp-pick-main">
+                          <b className="bkp-mono">{i.invoiceNumber}</b> · {i.kind}{i.candidate ? ` · ${i.candidate}` : ''}
+                          <div className="small-muted">{i.fy || '—'} · dated {fmtD(i.invoiceDate)}{i.dueDate ? ` · due ${fmtD(i.dueDate)}` : ''}</div>
+                        </span>
+                        <span className="bkp-pick-amt">
+                          {money2(i.outstanding)}
+                          <div className="small-muted">
+                            {i.compare?.matched ? '✓ matches the bank amount'
+                              : `bank is ${money2(Math.abs(i.compare?.diff || 0))} ${(i.compare?.diff || 0) < 0 ? 'less' : 'more'}`}
+                          </div>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {picked && <Breakdown x={picked} />}
+                  <div className="bkp-pickfoot">
+                    <button type="button" className="btn btn-primary" disabled={busy || !picked} onClick={() => matchIds([picked.id])}>
+                      {picked ? `Confirm — post ${money2(Math.min(amount, picked.outstanding))} to ${picked.invoiceNumber}` : 'Pick an invoice to confirm'}
+                    </button>
                   </div>
                 </section>
               )}

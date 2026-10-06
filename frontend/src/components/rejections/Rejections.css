@@ -1,0 +1,58 @@
+/* Rejections (spec 2026-10-03 §A) — everything scoped under .rjx-
+   Four colours only: green done · blue going on · orange waiting · red problem. */
+
+/* --- The "Rejected 2×" badge on list rows -------------------------------- */
+.rjx-badge{display:inline-block;margin-left:6px;padding:0 7px;border-radius:9px;font-size:11px;font-weight:600;line-height:18px;
+  background:var(--red-tint);color:var(--red);white-space:nowrap;cursor:help;vertical-align:middle}
+.rjx-badge.is-wait{background:var(--amber-tint);color:var(--amber)}
+
+/* --- The reject form ------------------------------------------------------ */
+.rjx-kinds{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 10px}
+@media (max-width:560px){.rjx-kinds{grid-template-columns:1fr}}
+.rjx-kind{display:flex;gap:8px;align-items:flex-start;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;
+  cursor:pointer;background:#fff;font-size:13px;line-height:1.35}
+.rjx-kind input{margin-top:3px}
+.rjx-kind b{display:block;font-size:13.5px}
+.rjx-kind.is-on{border-color:var(--blue);background:var(--blue-tint)}
+.rjx-kind.is-dnu.is-on{border-color:var(--red);background:var(--red-tint)}
+.rjx-field{display:block;margin-top:8px}
+.rjx-field > span{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:3px}
+.rjx-field textarea{width:100%;box-sizing:border-box}
+
+/* --- Warnings ------------------------------------------------------------- */
+.rjx-warn{border:1px solid #e6c9c1;background:var(--red-tint);color:var(--red);border-radius:8px;padding:9px 12px;font-size:13px;margin:8px 0}
+.rjx-warn b{font-weight:700}
+.rjx-warn .rjx-row{margin-top:8px}
+.rjx-wait{border:1px solid #ecd7ac;background:var(--amber-tint);color:var(--amber);border-radius:8px;padding:9px 12px;font-size:13px;margin:8px 0}
+.rjx-ok{color:var(--green);background:var(--green-tint);border-radius:6px;padding:2px 7px;font-size:12px;display:inline-block;margin-top:3px}
+.rjx-bad{color:var(--red);font-size:12px;margin-top:3px}
+.rjx-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* --- Rejection history on the profile ------------------------------------- */
+.rjx-hist{margin-top:12px}
+.rjx-hist h3{font-size:14px;margin:0 0 8px}
+.rjx-item{border-left:3px solid var(--red);padding:6px 10px;margin-bottom:8px;background:#fff;font-size:13px}
+.rjx-item.is-dnu{border-left-color:var(--red);background:var(--red-tint)}
+.rjx-item .rjx-top{font-weight:600}
+.rjx-item .rjx-sub{color:var(--ink-soft);font-size:12.5px;margin-top:2px}
+.rjx-said{margin-top:3px;font-style:italic;color:var(--ink)}
+.rjx-req{border:1px solid #ecd7ac;background:var(--amber-tint);border-radius:8px;padding:9px 12px;margin:8px 0;font-size:13px}
+.rjx-req input{width:100%;box-sizing:border-box;margin-top:6px}
+
+/* --- Match tabs on the job page -------------------------------------------- */
+.rjx-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}
+.rjx-tab{border:1.5px solid var(--line);background:#fff;border-radius:18px;padding:6px 14px;font-size:13px;cursor:pointer;color:var(--ink)}
+.rjx-tab b{margin-left:4px}
+.rjx-tab.is-on{border-color:var(--blue);background:var(--blue-tint);color:var(--blue);font-weight:600}
+.rjx-blocked td{background:var(--red-tint)}
+.rjx-why{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.rjx-why span{background:var(--amber-tint);color:var(--amber);border-radius:9px;padding:2px 9px;font-size:12px}
+.rjx-flag{display:block;font-size:12px;margin-top:3px}
+.rjx-flag.is-red{color:var(--red)}
+.rjx-flag.is-orange{color:var(--amber)}
+
+/* --- Same-client rule (Rejection reasons report) --------------------------- */
+.rjx-rule{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+/* The Matching panel (resume/fit agent) sits inside the tabs card: no second card, no second heading. */
+.rjx-embed > .card{border:0;box-shadow:none;padding:0;margin:0;background:transparent}
+.rjx-embed > .card > h3{display:none}

@@ -9,14 +9,14 @@ const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { computeMatch } = require('../utils/matching');
 const { stageLabel, STAGE_OWNER_ACTION } = require('../utils/atsVocab');
-const { applicationWhere, scopeOf, CLIENT_SHARED_STAGES } = require('../utils/scope');
+const { applicationWhere, atsScopeOf: scopeOf, CLIENT_SHARED_STAGES } = require('../utils/scope');
 const { raiseAutoFollowUp } = require('../utils/followups');
 const { groupLabelOfStage } = require('../utils/pipelineView');
 const { recordStageCommunications } = require('../utils/candidateComms');
 // Hiring Type, the invoice-on-joining path and the internal-hire path all live
 // in ONE place so the pipeline and the Joining workspace cannot drift apart.
 const {
-  hiringTypeOf, onApplicationJoined, stageAllowedForHiringType,
+  hiringTypeOf, onApplicationJoined, stageAllowedForHiringType, feeOverrideFor,
 } = require('../utils/joining');
 const { REJECTED_BY, REJECTED_BY_LABEL, stageMoveProblem } = require('../utils/atsVocab');
 // §12 stage chain + §32 who hears about a move (utils/stageEvents.js).
@@ -120,24 +120,163 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
   // Only onto a requirement this login may work (the same rule as the list).
   const reqInScope = await prisma.requirement.count({ where: { AND: [{ id: requirementId }, require('../utils/scope').requirementWhere(req.user)] } });
   if (!reqInScope) return res.status(403).json(OUT_OF_SCOPE);
-  const match = computeMatch(candidate, requirement);
-  // INTERNAL REQUIREMENT → HR SOURCING → CANDIDATES → JOB PORTAL (the actual
-  // workflow). A candidate added to one of TeamLink's own openings lands in
-  // the Job Portal screening (source "HR Sourcing", not yet Sent to ATS) and
-  // reaches HR Review only through Duplicate Check → Resume Score → AI
-  // Interview → Recruiter Review → Send to ATS. A candidate added to a client
-  // requirement goes straight into the ATS as before.
-  const hrSourced = hiringTypeOf(null, requirement) === 'TeamLink Internal Hire';
+  // A job that is not live, paused or closed takes no new candidates, and
+  // neither does a job of a paused / archived client (jobRefusalFor below).
+  const jobNo = await jobRefusalFor(requirement);
+  if (jobNo) return res.status(jobNo.status).json(jobNo.body);
+  // REJECTIONS (spec 2026-10-03 §A, utils/rejections.js). A "Do not use"
+  // candidate (approved by the TL) goes into no pipeline, by any button. A
+  // RE-CONSIDER (reconsider: true) starts with the earlier rejection as its
+  // note, and when THIS client rejected them before it must be confirmed.
+  // eslint-disable-next-line global-require
+  const rj = require('../utils/rejections');
+  if (candidate.profileStatus === rj.DNU_STATUS) {
+    return res.status(409).json({ error: `${candidate.name} is marked "Do not use" (approved by the TL) and cannot be added to any requirement.`, code: 'DO_NOT_USE' });
+  }
+  if (req.body.reconsider === true) {
+    const chk = await rj.checkCandidateFor(candidateId, requirement);
+    if (chk.sameClient.length && req.body.confirmSameClient !== true) {
+      return res.status(409).json({ error: `${chk.warning}. Confirm to re-consider anyway.`, code: 'SAME_CLIENT_REJECTED', warning: chk.warning });
+    }
+    req.body.comment = rj.reconsiderNote(chk.sameClient[0] || chk.others[0]);
+  }
+  // B8 OVERRIDE. The Fit the recruiter saw on the lists (resume-aware, the
+  // job's own minimum). A person who fails a must-have skill, the minimum
+  // Fit, the notice period or the location goes in only WITH a reason — and
+  // that is recorded as an override (column + audit row + badge).
+  const fit = await fitAtAdd(req.user, candidate, requirement);
+  let override = null;
+  if (fit.overrideWhy.length) {
+    const reason = String(req.body.overrideReason || '').trim().slice(0, 300);
+    if (reason.length < 5) {
+      return res.status(409).json({
+        error: `${candidate.name} does not meet this job's rules: ${fit.overrideWhy.join('; ')}. To add them anyway, say why.`,
+        code: 'NEEDS_OVERRIDE',
+        why: fit.overrideWhy,
+        fit: fit.match.overall,
+        minFit: fit.match.minFit,
+        candidateName: candidate.name,
+        requirementTitle: requirement.title,
+      });
+    }
+    override = { reason, why: fit.overrideWhy };
+  }
+  const application = await addApplication(req.user, {
+    candidate, requirement, comment: req.body.comment, fit, override,
+  });
+  res.status(201).json(application);
+});
 
+// ---------------------------------------------------------------------------
+// ADD TO A JOB — shared by POST /applications and the Add Candidate form's
+// "Apply to job" (routes/candidates.js), so the two can't drift (e2e gaps 5/6).
+//
+// jobRefusalFor(requirement) → { status, body } | null
+//   * a CLIENT job that is not live yet (Draft / Agreement Check) takes no
+//     candidates — it isn't open for work until the agreement is Active
+//   * a paused or closed job takes no new candidates (change list §5)
+//   * neither does a job of a paused / archived client (§6)
+// addApplication(user, { candidate, requirement, comment, from })
+//   creates the application at New + its first history row + the audit row.
+//   INTERNAL REQUIREMENT → HR SOURCING → JOB PORTAL (the actual workflow): a
+//   candidate added to one of TeamLink's own openings lands in the Job Portal
+//   screening (source "HR Sourcing", not yet Sent to ATS). `from` (the Add
+//   Candidate form) keeps the form's own source for a client job.
+// ---------------------------------------------------------------------------
+async function jobRefusalFor(requirement) {
+  if (!requirement) return { status: 404, body: { error: 'Job not found' } };
+  if (!requirement.internal && ['DRAFT', 'AGREEMENT_CHECK'].includes(requirement.status)) {
+    return {
+      status: 409,
+      body: {
+        error: requirement.status === 'DRAFT'
+          ? 'This job is not live yet (it is still a draft), so no candidates can be added. Make the job live first.'
+          : "This job is not live yet — it is waiting for the client's agreement (Agreement Check). Candidates can be added once the job is live.",
+        code: 'JOB_NOT_LIVE',
+      },
+    };
+  }
+  if (['ON_HOLD', 'CLOSED'].includes(requirement.status)) {
+    return {
+      status: 409,
+      body: {
+        error: requirement.status === 'ON_HOLD'
+          ? 'This job is paused, so no new candidates can be added. Resume the job first.'
+          : 'This job is closed, so no new candidates can be added. Reopen the job first.',
+        code: requirement.status === 'ON_HOLD' ? 'JOB_PAUSED' : 'JOB_CLOSED',
+      },
+    };
+  }
+  if (!requirement.internal) {
+    // eslint-disable-next-line global-require
+    const paused = await require('../utils/clientLifecycle').newWorkRefusalFor(requirement.clientId, 'new candidates');
+    if (paused) return { status: 409, body: paused };
+  }
+  return null;
+}
+
+// B8: the Fit at the moment someone is added — what the lists show (resume
+// when on file, the job's minimum, the meaning-based part when it is on).
+async function fitAtAdd(user, candidate, requirement) {
+  // eslint-disable-next-line global-require
+  const rm = require('../utils/resumeMatch');
+  const evidence = (await rm.currentResumeEvidence([candidate.id])).get(candidate.id);
+  let sim;
+  let engine = 'off';
+  if (rm.semanticOn()) {
+    // eslint-disable-next-line global-require
+    const sims = await require('../utils/semanticMatch').similarities(requirement, [candidate], evidence ? new Map([[candidate.id, evidence]]) : new Map(), { user, settings: await rm.loadFitSettings() });
+    sim = sims.map.get(candidate.id);
+    engine = sims.engine;
+  }
+  const match = rm.threeNumbers(candidate, requirement, evidence, undefined, sim);
+  return {
+    match, sim, engine, overrideWhy: (match.notEligibleBecause || []).filter((w) => !/lists no must-have skills/.test(w)),
+  };
+}
+
+async function addApplication(user, {
+  candidate, requirement, comment = null, from = null, fit = null, override = null,
+}) {
+  // eslint-disable-next-line global-require
+  const rm = require('../utils/resumeMatch');
+  // B8: the stored number is the same profile reading as before (so no Fit
+  // moves while "Match by meaning" is off), plus the meaning-based part when on.
+  const fitNow = fit || await fitAtAdd(user, candidate, requirement).catch(() => null);
+  const so = rm.semanticOpts(fitNow && fitNow.sim);
+  const match = computeMatch(candidate, requirement, so ? { semantic: so } : {});
+  const versioned = rm.versionFields();
+  const detail = versioned ? JSON.stringify(rm.scoreSnapshot({
+    ...match,
+    eligible: fitNow ? fitNow.match.eligible : null,
+    notEligibleBecause: fitNow ? fitNow.match.notEligibleBecause : [],
+    minFit: fitNow ? fitNow.match.minFit : rm.thresholdFor(requirement),
+  }, {
+    engine: fitNow ? fitNow.engine : 'off',
+    // What the Fit lists showed when the person was added (resume-aware).
+    listView: fitNow ? { overall: fitNow.match.overall, resumeSource: fitNow.match.resumeSource } : null,
+  })) : null;
+  const hrSourced = hiringTypeOf(null, requirement) === 'TeamLink Internal Hire';
+  // eslint-disable-next-line no-nested-ternary
+  const source = hrSourced ? HR_SOURCING_SOURCE : (from ? (candidate.source || null) : 'ATS Match');
   const application = await prisma.application.create({
     data: {
-      candidateId,
-      requirementId,
+      candidateId: candidate.id,
+      requirementId: requirement.id,
       stage: 'NEW',
       matchScore: match.overall,
+      // B8: the scoring version + explanation + (when ineligible) the override.
+      ...(versioned ? {
+        matchVersion: match.fitVersion,
+        matchDetail: detail,
+        ...(override ? {
+          overrideReason: override.reason, overrideAt: new Date(), overrideById: user.id, overrideByName: user.name,
+        } : {}),
+      } : {}),
       resumeScore: candidate.resumeScore ?? null,
-      source: hrSourced ? HR_SOURCING_SOURCE : 'ATS Match',
-      applicationMethod: 'Manual',
+      source,
+      ...(from ? { firstSource: candidate.firstSource || null, sourceCampaign: candidate.sourceCampaign || null } : {}),
+      applicationMethod: (from && from.applicationMethod) || 'Manual',
       aiInterviewStatus: 'Required',
       // Client Placement vs TeamLink Internal Hire, decided once, here, from
       // the requirement it is raised against — and stored, not re-guessed.
@@ -145,25 +284,44 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
     },
   });
   // The first link in the pipeline chain the Candidate Detail screen renders.
+  // eslint-disable-next-line no-nested-ternary
+  const action = hrSourced ? 'HR sourcing — added to the Job Portal screening' : (from ? 'Application created (manual add)' : 'Added to pipeline');
   await prisma.applicationStageEvent.create({
     data: {
       applicationId: application.id,
-      candidateId,
+      candidateId: candidate.id,
       fromStage: null,
       toStage: 'NEW',
-      action: hrSourced ? 'HR sourcing — added to the Job Portal screening' : 'Added to pipeline',
-      comment: req.body.comment || null,
-      actorUserId: req.user.id,
-      actorName: req.user.name,
-      actorRole: req.user.atsRole || req.user.role,
+      action,
+      comment: comment || null,
+      actorUserId: user.id,
+      actorName: user.name,
+      actorRole: user.atsRole || user.role,
       // THE SEAT, beside the person — so this stays MED-1 work after the
       // person in MED-1 changes. Contributes nothing where no seat is held.
-      ...(await stampFor(req.user, 'actor')),
+      ...(await stampFor(user, 'actor')),
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Candidate added to pipeline', entity: 'Application', entityId: application.id, toValue: 'New' });
-  res.status(201).json(application);
-});
+  await logAudit({
+    userId: user.id, action: from ? 'Application created (manual add)' : 'Candidate added to pipeline', entity: 'Application', entityId: application.id, toValue: 'New',
+  });
+  // B8: an override is its own audit row — who, why, and what the person failed.
+  if (override) {
+    await logAudit({
+      userId: user.id,
+      actorName: user.name,
+      action: 'Added by override',
+      entity: 'Application',
+      entityId: application.id,
+      field: 'fit',
+      fieldLabel: `${candidate.name} → ${requirement.title}`,
+      fromValue: override.why.join('; '),
+      toValue: `Fit ${fitNow ? fitNow.match.overall : match.overall}% (${rm.versionLabel()})`,
+      reason: override.reason,
+    });
+  }
+  return application;
+}
 
 // ---------------------------------------------------------------------------
 // THE stage move. Extracted from the PATCH handler so that the route and the
@@ -175,7 +333,15 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
 // Returns { status, body } rather than writing to a response, because one of
 // its two callers is not an HTTP handler.
 // ---------------------------------------------------------------------------
-async function applyStageMove(user, applicationId, body = {}) {
+// opts (server callers only, never the request body):
+//   sendBackFrom  ATS layout v3 "Send back" by the BDE (routes/candidatesBoard.js):
+//                 a move BACK into TL check that the BDE does not own. The
+//                 product permission is still checked; the move is allowed
+//                 only from the stages listed here.
+//   viaFlow       the Offers / Joining flows: may set Offer, Offer accepted,
+//                 Joined, Hired (refused to everyone else but Admins).
+//   skipNotice    the caller tells the same people itself (interview booking).
+async function applyStageMove(user, applicationId, body = {}, opts = {}) {
   const { stage, interviewAt, comment } = body;
   if (!stage) return { status: 400, body: { error: 'stage is required' } };
 
@@ -206,13 +372,74 @@ async function applyStageMove(user, applicationId, body = {}) {
     if (!String(body.reasonCategory || '').trim() && !String(body.reasonDetail || '').trim()) {
       return { status: 400, body: { error: 'Give a reason for the rejection.' } };
     }
+    // A reason CATEGORY is always stored (spec §10 "category + short note"):
+    // free text alone files under "Other", so the report can count it. The
+    // dialogs ask for both; "Other" and "Do not use" cannot go without a note.
+    if (!String(body.reasonCategory || '').trim()) body.reasonCategory = 'Other';
+    const rejectNote = String(body.reasonDetail || '').trim() || String(body.comment || '').trim();
+    if (!rejectNote && (body.reasonCategory === 'Other' || body.rejectKind === 'do_not_use')) {
+      return { status: 400, body: { error: 'Add a short note saying what happened.' } };
+    }
+    // Two kinds (spec 2026-10-03 §A1): "not_suitable" (default, this job
+    // only) or "do_not_use" (fake resume / abuse / absconded), which waits
+    // for the TL's approval. A client login never raises the second kind.
+    if (body.rejectKind && !['not_suitable', 'do_not_use'].includes(body.rejectKind)) {
+      return { status: 400, body: { error: 'Reject kind must be "Not suitable for this job" or "Do not use".' } };
+    }
+    if (body.rejectKind === 'do_not_use' && clientLogin) {
+      return { status: 403, body: { error: 'Only TeamLink can mark a candidate "Do not use".' } };
+    }
+  }
+
+  // cand7_ HOLD (Candidates §10): a TeamLink login says WHY, and WHEN to look
+  // again ("review again on", default a week). That date comes back as a task
+  // (a follow-up, purpose 'Hold review') — raised below, after the move.
+  let holdReviewOn = null;
+  if (stage === 'HOLD' && ![user.atsRole, user.role].includes('CLIENT')) {
+    if (!String(body.reasonCategory || '').trim() && !String(body.reasonDetail || '').trim() && !String(comment || '').trim()) {
+      return { status: 400, body: { error: 'Say why this person is on hold.' } };
+    }
+    const ist = Date.now() + 330 * 60000;
+    const todayYmd = new Date(ist).toISOString().slice(0, 10);
+    const maxYmd = new Date(ist + 366 * 86400000).toISOString().slice(0, 10);
+    if (body.reviewOn) {
+      const d = String(body.reviewOn).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < todayYmd || d > maxYmd) {
+        return { status: 400, body: { error: 'Pick a "review again on" date from today up to one year ahead.' } };
+      }
+      holdReviewOn = d;
+    } else {
+      holdReviewOn = new Date(ist + 7 * 86400000).toISOString().slice(0, 10);
+    }
   }
 
   // BOTH HALVES, in the engine. Access first (may this login act on the
   // pipeline at all, resolved against its ATS product role), then WORKFLOW
   // OWNERSHIP (does its ATS role own this stage) — seeing a record has never
   // implied acting on it and neither does being able to edit one.
-  const refusal = await canMoveToStage(user, stage);
+  // ATS layout v3 — the Joined popup: final CTC + commission %. The
+  // commission is a commercial term, so only a login that may see the
+  // client's terms can set it (utils/joining.js feeOverrideFor); otherwise
+  // the agreement's fee % applies, exactly as before.
+  let feeOverride = null;
+  if (stage === 'JOINED' && body.feePercent !== undefined && body.feePercent !== null && body.feePercent !== '') {
+    const n = Number(body.feePercent);
+    if (!Number.isFinite(n) || n <= 0 || n > 50) return { status: 400, body: { error: 'Commission must be a number between 0 and 50 %.' } };
+    feeOverride = feeOverrideFor(user, n);
+  }
+  if (stage === 'JOINED' && body.offeredCtc !== undefined && body.offeredCtc !== null && body.offeredCtc !== '') {
+    const n = Number(body.offeredCtc);
+    if (!Number.isFinite(n) || n <= 0 || n > 100000000) return { status: 400, body: { error: 'Final CTC must be the yearly amount in rupees, e.g. 850000.' } };
+  }
+
+  let refusal;
+  if (Array.isArray(opts.sendBackFrom) && opts.sendBackFrom.length) {
+    // eslint-disable-next-line global-require
+    const okPerm = await require('../utils/permissions').can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
+    refusal = okPerm ? null : { status: 403, body: { error: "This action isn't included in your role's permissions" } };
+  } else {
+    refusal = await canMoveToStage(user, stage);
+  }
   if (refusal) return refusal;
 
   const existing = await prisma.application.findUnique({
@@ -220,12 +447,76 @@ async function applyStageMove(user, applicationId, body = {}) {
     include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
   });
   if (!existing) return { status: 404, body: { error: 'Application not found' } };
+  if (Array.isArray(opts.sendBackFrom) && opts.sendBackFrom.length && !opts.sendBackFrom.includes(existing.stage)) {
+    return { status: 409, body: { error: `Only a person at ${opts.sendBackFrom.map((s) => stageLabel(s)).join(' / ')} can be sent back from here — this one is at ${stageLabel(existing.stage)}.` } };
+  }
 
   // SCOPE FIRST: seeing the stage in your role is not reaching THIS candidate.
   // The record was loaded by id alone, so a recruiter could move another
   // team's candidate by id. Same rule as every list (utils/scope.js). Checked
   // before anything else so an outsider learns nothing about the record.
   if (!applicationInScope(user, existing)) return { status: 403, body: OUT_OF_SCOPE };
+
+  // ALREADY THERE → nothing to do (e2e gap 13). A move to the step the person
+  // is already at used to write a second history row, audit row and notices.
+  // (A Rejected person can still be raised to "Do not use".)
+  if (existing.stage === stage && !(stage === 'REJECTED' && body.rejectKind === 'do_not_use')) {
+    // eslint-disable-next-line no-unused-vars
+    const { candidate: _c, requirement: _r, ...plain } = existing;
+    return { status: 200, body: { ...plain, unchanged: true } };
+  }
+
+  // OFFER / OFFER ACCEPTED / JOINED / HIRED HAVE THEIR OWN FLOWS (e2e gap 2).
+  // "Move step" (and the board) used to walk a recruiter Selected → Offer →
+  // Offer accepted → Joined — skipping the TL's offer approval and the joining
+  // checklist, and raising a client invoice. Those steps are set by the Offers
+  // flow (Prepare offer → TL Approve & send → the candidate's answer) and the
+  // Joining checklist (documents → joining date → call → Joined), which write
+  // the stage themselves. A server caller that IS such a flow passes
+  // opts.viaFlow. Super Admin / Admin stay exempt (data correction).
+  // Only a FORWARD move into them is refused: going back to where the person
+  // already was (resuming from Hold, an Undo, a step back) still works.
+  const FLOW_RANK = {
+    OFFER: 1, OFFER_ACCEPTED: 2, JOINED: 3, HIRED: 4,
+  };
+  let flowBase = existing.stage;
+  if (FLOW_RANK[stage] && ['HOLD', 'REJECTED'].includes(existing.stage)) {
+    const parkedAt = await prisma.applicationStageEvent.findFirst({
+      where: { applicationId: existing.id, toStage: existing.stage },
+      orderBy: { createdAt: 'desc' },
+      select: { fromStage: true },
+    });
+    flowBase = (parkedAt && parkedAt.fromStage) || 'RECRUITER_REVIEW';
+  }
+  if (FLOW_RANK[stage] && FLOW_RANK[stage] > (FLOW_RANK[flowBase] || 0) && !opts.viaFlow && !stageGlobal(user)) {
+    const who = existing.candidate ? existing.candidate.name : 'This person';
+    const why = {
+      OFFER: `An offer is made with "Prepare offer" on ${who}'s profile (or the Offers screen). The TL approves it and it is sent to the candidate — "Move step" can't skip that.`,
+      OFFER_ACCEPTED: `Record ${who}'s answer to the offer on the Offers screen ("Offer accepted"), or the candidate presses Accept on their own page.`,
+      JOINED: `Mark the joining on the Joining checklist: documents, joining date, the call, then "Joined". "Move step" can't skip it.`,
+      HIRED: `Mark the joining on the Joining checklist; the HRMS employee is then made from there.`,
+    }[stage];
+    return { status: 409, body: { error: why, code: 'USE_OFFER_OR_JOINING_FLOW' } };
+  }
+  // A "did not join" person is never moved to Joined (it raised an invoice).
+  // Setting a new joining date on the Joining checklist re-opens the joining.
+  if (stage === 'JOINED' && existing.joiningStatus === 'Dropped') {
+    return {
+      status: 409,
+      body: { error: `${existing.candidate ? existing.candidate.name : 'This person'} is marked "Did not join", so they can't be moved to Joined. If they are joining after all, set a new joining date on the Joining checklist first.`, code: 'DID_NOT_JOIN' },
+    };
+  }
+  // A CLIENT JOB THAT IS NOT LIVE YET (Draft / Agreement Check) is not open
+  // for work (e2e gap 5): people already on it can only be put on hold or
+  // rejected until it goes live. Super Admin / Admin stay exempt.
+  if (existing.requirement && !existing.requirement.internal
+    && ['DRAFT', 'AGREEMENT_CHECK'].includes(existing.requirement.status)
+    && !['HOLD', 'REJECTED'].includes(stage) && !stageGlobal(user)) {
+    return {
+      status: 409,
+      body: { error: `${existing.requirement.title || 'This job'} is not live yet (${existing.requirement.status === 'DRAFT' ? 'still a draft' : "waiting for the client's agreement"}). People on it move on once the job is live.`, code: 'JOB_NOT_LIVE' },
+    };
+  }
 
   // THE HIRING-TYPE BRANCH. Checked here rather than in canMoveToStage()
   // because that one is handed a user and a stage and nothing else, and this
@@ -257,9 +548,48 @@ async function applyStageMove(user, applicationId, body = {}) {
       body: { error: `Held at Agreement Check — the service agreement with ${existing.requirement.client.name} is ${label}, not Active. Profiles can be shared once it is Active.` },
     };
   }
+  // A PAUSED / ARCHIVED CLIENT takes no NEW submission (spec 2026-10-03 §A):
+  // a profile not yet in front of the client cannot be shared now. Profiles
+  // already shared keep moving (feedback, interviews, joining) untouched.
+  if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage) && existing.requirement
+    && !existing.requirement.internal
+    && !['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED',
+      'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(existing.stage)) {
+    // eslint-disable-next-line global-require
+    const paused = require('../utils/clientLifecycle').newWorkRefusal(existing.requirement.client, 'a new candidate submission');
+    if (paused) return { status: 409, body: paused };
+  }
   // A client acts only on profiles that have actually been shared with them.
   if ([user.atsRole, user.role].includes('CLIENT') && !CLIENT_SHARED_STAGES.includes(existing.stage)) {
     return { status: 403, body: OUT_OF_SCOPE };
+  }
+  // REJECTIONS (spec 2026-10-03 §A1, utils/rejections.js).
+  //  * "Do not use" (approved by the TL) blocks the person everywhere: only a
+  //    Reject or a Hold is still recorded on their open applications.
+  //  * SAME CLIENT AGAIN: sending someone to a client that already rejected
+  //    them warns and needs { confirmSameClient: true } — or is refused, when
+  //    the rule (Rejection reasons → Same-client rule) is set to Block.
+  if (!['REJECTED', 'HOLD'].includes(stage)) {
+    // eslint-disable-next-line global-require
+    const rj = require('../utils/rejections');
+    if (existing.candidate && existing.candidate.profileStatus === rj.DNU_STATUS) {
+      return { status: 409, body: { error: `${existing.candidate.name} is marked "Do not use" (approved by the TL). They cannot be moved forward on any job.`, code: 'DO_NOT_USE' } };
+    }
+    const toClient = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)
+      && !['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(existing.stage)
+      && existing.requirement && !existing.requirement.internal;
+    if (toClient) {
+      const chk = await rj.checkCandidateFor(existing.candidateId, existing.requirement);
+      if (chk.sameClient.length) {
+        const rule = (await rj.rejectionRules()).sameClient;
+        if (rule === 'block') {
+          return { status: 409, body: { error: `${chk.warning}. Sending to the same client again is blocked by the company rule.`, code: 'SAME_CLIENT_BLOCKED', warning: chk.warning } };
+        }
+        if (body.confirmSameClient !== true) {
+          return { status: 409, body: { error: `${chk.warning}. Send again anyway?`, code: 'SAME_CLIENT_REJECTED', warning: chk.warning } };
+        }
+      }
+    }
   }
 
   // §12 THE CHAIN: forward at most one phase (utils/atsVocab.js
@@ -319,8 +649,13 @@ async function applyStageMove(user, applicationId, body = {}) {
   // (line 9099): fee = CTC x agreed fee %, GST 18%, TDS at the client's rate,
   // invoice 6 days after joining, payment due 6 days after that.
   if (stage === 'JOINED') {
-    await onApplicationJoined({ application, existing, userId: user.id });
+    await onApplicationJoined({
+      application, existing, userId: user.id, ...(feeOverride != null ? { feePercent: feeOverride } : {}),
+    });
   }
+  // B7: a partner-sourced application tells its partner the new step (in-portal
+  // notice; email only behind the Partner emails switch). Never fatal.
+  try { await require('../utils/partners').syncSubmission(application.id, { userId: user.id, note: body.comment || body.reason || null }); } catch { /* optional */ } // eslint-disable-line global-require
 
   // §18-§20 — THE CHASE IS RAISED BY THE MOVE, not by somebody remembering.
   // Sharing with a client owes a decision chase, scheduling an interview owes
@@ -329,6 +664,11 @@ async function applyStageMove(user, applicationId, body = {}) {
   try {
     await raiseAutoFollowUp({
       application, requirement: existing.requirement, user, stage,
+    });
+    // The client answered → the "Chase the client" task is done (e2e gap 8).
+    // eslint-disable-next-line global-require
+    await require('../utils/followups').closeClientChaseOnLeave({
+      applicationId: application.id, fromStage: existing.stage, toStage: stage, user,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -354,13 +694,17 @@ async function applyStageMove(user, applicationId, body = {}) {
   // Hold dialog — a missing reason must not lose a move that already happened.
   // The dialog on the Candidate Detail screen is what actually asks for them.
   const clientOfRequirement = existing.requirement && existing.requirement.client;
-  await prisma.applicationStageEvent.create({
+  const stageEvent = await prisma.applicationStageEvent.create({
     data: {
       applicationId: application.id,
       candidateId: existing.candidateId,
       fromStage: existing.stage,
       toStage: stage,
-      action: `Moved to ${groupLabelOfStage(stage)} — ${stageLabel(stage)}`,
+      // Internal hires read in their own words ("Check by HR", "Dept head /
+      // team lead") — e2e gap 14.
+      action: hiringTypeOf(existing, existing.requirement) === 'TeamLink Internal Hire'
+        ? `Moved to ${stageLabelFor(stage, { internal: true })}`
+        : `Moved to ${groupLabelOfStage(stage)} — ${stageLabel(stage)}`,
       comment: comment || null,
       actorUserId: user.id,
       actorName: user.name,
@@ -379,6 +723,23 @@ async function applyStageMove(user, applicationId, body = {}) {
       reasonDetail: body.reasonDetail || null,
     },
   });
+
+  // REJECTIONS (utils/rejections.js): the read-back index is refreshed, and a
+  // "Do not use" reject raises its approval request for the TL of this
+  // requirement's team. Never fatal: the reject itself is already recorded.
+  if (stage === 'REJECTED') {
+    try {
+      // eslint-disable-next-line global-require
+      const rj = require('../utils/rejections');
+      rj.invalidate();
+      if (body.rejectKind === 'do_not_use') {
+        await rj.requestDoNotUse({ user, eventId: stageEvent.id, requirement: existing.requirement, candidate: existing.candidate });
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[rejections] could not raise the do-not-use request:', err.message);
+    }
+  }
 
   // --- Candidate communication ---------------------------------------------
   // Stage changes trigger the candidate-facing Email / SMS / WhatsApp records
@@ -427,6 +788,57 @@ async function applyStageMove(user, applicationId, body = {}) {
     }
   }
 
+  // Leaving Hold closes its review task.
+  if (existing.stage === 'HOLD' && stage !== 'HOLD') {
+    try {
+      await prisma.applicationFollowUp.updateMany({
+        where: { applicationId: application.id, completedAt: null, purpose: 'Hold review' },
+        data: { completedAt: new Date(), completedById: user.id, completedNote: `Hold reviewed — moved to ${stageLabel(stage)}.` },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[hold] could not close the hold review task:', err.message);
+    }
+  }
+  // cand7_ HOLD → "review again on" comes back as a task for whoever put it
+  // on hold. The open chase is closed (the hold replaces it). Never fatal.
+  if (stage === 'HOLD' && holdReviewOn) {
+    try {
+      // eslint-disable-next-line global-require
+      const { chainSnapshot, resolveNames } = require('../utils/followups');
+      // eslint-disable-next-line global-require
+      const { atsRoleLabel } = require('../utils/atsVocab');
+      await prisma.applicationFollowUp.updateMany({
+        where: { applicationId: application.id, completedAt: null },
+        data: { completedAt: new Date(), completedById: user.id, completedNote: 'Closed — put on hold; a hold review replaces it.' },
+      });
+      const names = await resolveNames([existing.requirement]);
+      const snap = chainSnapshot(application, existing.requirement, names);
+      const why = [body.reasonCategory, body.reasonDetail || comment].filter((x) => String(x || '').trim()).join(' — ').slice(0, 300);
+      await prisma.applicationFollowUp.create({
+        data: {
+          applicationId: application.id,
+          candidateId: existing.candidateId,
+          requirementId: existing.requirementId,
+          ...snap,
+          ownerUserId: user.id,
+          ownerName: user.name,
+          ownerRole: atsRoleLabel(user.atsRole || user.role) || snap.ownerRole || null,
+          ...(await stampFor(user, 'owner')),
+          nextAction: `Review the hold${why ? ` — ${why}` : ''}`,
+          purpose: 'Hold review',
+          dueDate: holdReviewOn,
+          notes: why || null,
+          createdById: user.id,
+          createdByName: user.name,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[hold] could not raise the hold review task:', err.message);
+    }
+  }
+
   await logAudit({
     userId: user.id,
     action: 'Application stage changed',
@@ -451,11 +863,23 @@ async function applyStageMove(user, applicationId, body = {}) {
     });
     audience.push(...clientUsers.map((u) => u.id));
   }
-  await notifyUsers(audience, {
-    ...stageMoveNotice(existing.candidate.name, stage, existing.requirement),
-    exceptUserId: user.id,
-  });
+  // opts.skipNotice: the caller sends its own, fuller notice to the same
+  // people (the interview booking — utils/interviewNotices.js), so they are
+  // not told twice (e2e gap 12).
+  if (!opts.skipNotice) {
+    await notifyUsers(audience, {
+      ...stageMoveNotice(existing.candidate.name, stage, existing.requirement),
+      exceptUserId: user.id,
+    });
+  }
 
+  // An internal hire whose HRMS employee was just made goes on to Hired
+  // (e2e gap 9) — after the Joined history row above, so it reads in order.
+  if (stage === 'JOINED' && hiringTypeOf(existing, existing.requirement) === 'TeamLink Internal Hire') {
+    // eslint-disable-next-line global-require
+    const hired = await require('../utils/joining').finishInternalHire(application.id, user);
+    if (hired) return { status: 200, body: hired };
+  }
   return { status: 200, body: application };
 }
 
@@ -585,6 +1009,8 @@ router.post('/bulk', async (req, res, next) => {
           rejectedBy: b.rejectedBy,
           reasonCategory: b.reasonCategory,
           reasonDetail: b.reasonDetail,
+          rejectKind: b.rejectKind,
+          reviewOn: b.reviewOn, // cand7_: Hold → "review again on"
           interviewAt: b.interviewAt,
           interviewer: b.interviewer,
           interviewMode: b.interviewMode,
@@ -696,3 +1122,6 @@ module.exports = router;
 // working and there is still only ONE table.
 module.exports.STAGE_OWNERS = require('../utils/permissions').STAGE_OWNERS;
 module.exports.applyStageMove = applyStageMove;
+module.exports.jobRefusalFor = jobRefusalFor;
+module.exports.addApplication = addApplication;
+module.exports.fitAtAdd = fitAtAdd; // B9.11: Add Candidate → "Apply to job" asks the same override reason

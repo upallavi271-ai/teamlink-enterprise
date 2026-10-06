@@ -1,0 +1,12 @@
+/* HRMS item 23 — Leave KPI cards and the scrolling Requests list. Scoped to lvk-. */
+.lvk-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}
+.lvk-card{border-radius:12px;padding:14px 16px;border:1px solid transparent;min-height:72px;display:flex;flex-direction:column;justify-content:center}
+.lvk-v{font-size:26px;font-weight:700;line-height:1.1}
+.lvk-l{font-size:13px;font-weight:600;margin-top:2px}
+.lvk-green{background:var(--teal-tint,#e6f6f2);color:var(--teal,#0f766e);border-color:#cdebe3}
+.lvk-orange{background:var(--amber-tint,#fdf3e2);color:var(--amber,#b45309);border-color:#f3e0bf}
+.lvk-red{background:var(--red-tint,#fdecea);color:var(--red,#b91c1c);border-color:#f5d2cf}
+.lvk-blue{background:var(--blue-tint,#e8f0fe);color:var(--blue,#1d4ed8);border-color:#d3e2fb}
+@media (max-width:760px){.lvk-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lvk-scroll{max-height:62vh;overflow:auto}
+.lvk-scroll thead th{position:sticky;top:0;z-index:1;background:var(--panel,#fff)}

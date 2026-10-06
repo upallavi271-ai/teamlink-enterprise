@@ -4,6 +4,7 @@
 // works the same without it). `openSignal` changes when the page jumps here
 // (an old ?tab= link), which opens it.
 import { useEffect, useState } from 'react';
+import InfoTip from './InfoTip.jsx';
 
 const KEY = (id) => `oe-sec-open-${id}`;
 function readOpen(id, dflt) {
@@ -14,7 +15,7 @@ function readOpen(id, dflt) {
 }
 
 export default function Section({
-  id, n, title, sub, right, children, defaultOpen = true, openSignal,
+  id, n, title, sub, info, right, children, defaultOpen = true, openSignal,
 }) {
   const [open, setOpen] = useState(() => readOpen(id, defaultOpen));
   useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
@@ -31,6 +32,7 @@ export default function Section({
           {n && <span className="oe-sec-n" aria-hidden="true">{n}</span>}
           <span className="oe-sec-t" id={`oe-sec-${id}-t`}>{title}</span>
         </button>
+        {info && <InfoTip text={info} />}
         {sub && <span className="oe-sec-sub">{sub}</span>}
         {right && open && <div className="oe-sec-r">{right}</div>}
       </div>

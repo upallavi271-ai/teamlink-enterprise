@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../api';
 import EmptyState from '../components/ui/EmptyState.jsx';
+import Modal from '../components/Modal.jsx';
 import {
   Chip, Tabs, Stat, InterviewLine, fmtDate, openFile,
 } from './portal/portalUi.jsx';
@@ -58,6 +59,13 @@ export default function CandidateHome() {
   const [uploading, setUploading] = useState(false);
   const [jobQ, setJobQ] = useState('');
   const fileRef = useRef(null);
+  // Spec B2 self-service: documents, offer answer, withdraw, delete-my-data, password.
+  const [extras, setExtras] = useState(null);
+  const [docType, setDocType] = useState('');
+  const [ask, setAsk] = useState(null); // { kind: 'decline'|'withdraw'|'privacy', app? }
+  const [askText, setAskText] = useState('');
+  const [pw, setPw] = useState('');
+  const docRef = useRef(null);
 
   const load = useCallback(() => {
     api.get('/portal/candidate')
@@ -68,8 +76,37 @@ export default function CandidateHome() {
         setError('');
       })
       .catch((e) => setError(e.response?.data?.error || 'Could not load your applications.'));
+    api.get('/portal/candidate/extras').then((r) => setExtras(r.data)).catch(() => setExtras(null));
   }, []);
   useEffect(load, [load]);
+  useEffect(() => {
+    try {
+      const n = sessionStorage.getItem('tl_portal_notice');
+      if (n) { setNotice(n); sessionStorage.removeItem('tl_portal_notice'); }
+    } catch { /* ignore */ }
+  }, []);
+
+  function post(path, body, okMsg) {
+    setError(''); setNotice('');
+    return api.post(path, body || {})
+      .then((r) => { setNotice(r.data.message || okMsg || 'Saved.'); setAsk(null); setAskText(''); load(); })
+      .catch((err) => setError(err.response?.data?.error || 'That did not work. Please try again.'));
+  }
+
+  function uploadDoc(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('docType', docType || 'Other');
+    fd.append('file', file);
+    setUploading(true); setError(''); setNotice('');
+    api.post('/portal/candidate/documents', fd)
+      .then((r) => { setNotice(r.data.message || 'Uploaded.'); load(); })
+      .catch((err) => setError(err.response?.data?.error || 'Could not upload the file.'))
+      .finally(() => { setUploading(false); if (docRef.current) docRef.current.value = ''; });
+  }
+  const withdrawAsked = (id) => (extras?.requests || []).some((r) => r.kind === 'CANDIDATE_WITHDRAW' && r.status === 'Pending' && r.applicationId === id);
+  const privacyAsked = (extras?.requests || []).some((r) => r.kind === 'CANDIDATE_PRIVACY' && r.status === 'Pending');
 
   function saveProfile(e) {
     e.preventDefault();
@@ -169,6 +206,19 @@ export default function CandidateHome() {
                         a.offer.documents ? `documents: ${a.offer.documents}` : null,
                         a.offer.joinedAt ? `joined ${fmtDate(a.offer.joinedAt)}` : null].filter(Boolean).join(' · ') || 'Your recruiter will share the details.'}
                     </div>
+                    {a.offer.canRespond && (
+                      <div className="tlp-actions">
+                        <button type="button" className="btn btn-primary" onClick={() => window.confirm(`Accept the offer for ${a.jobTitle}?`) && post(`/portal/candidate/applications/${a.id}/offer`, { decision: 'accept' })}>Accept offer</button>
+                        <button type="button" className="btn" onClick={() => { setAsk({ kind: 'decline', app: a }); setAskText(''); }}>Decline</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {a.canWithdraw && (
+                  <div className="tlp-meta" style={{ marginTop: 6 }}>
+                    {withdrawAsked(a.id)
+                      ? 'You asked to withdraw — your recruiter will close this application.'
+                      : <button type="button" className="link-btn" onClick={() => { setAsk({ kind: 'withdraw', app: a }); setAskText(''); }}>Withdraw this application</button>}
                   </div>
                 )}
               </div>
@@ -236,7 +286,84 @@ export default function CandidateHome() {
             </div>
             <div className="tlp-muted" style={{ marginTop: 8 }}>PDF only, up to 5 MB. Your recruiter sees the latest one.</div>
           </div>
+          {extras && (
+            <div className="tlp-card">
+              <h3>Documents for joining</h3>
+              {extras.documents.length
+                ? extras.documents.map((d) => <div className="tlp-meta" key={d.id}><b>{d.docType}</b> · {d.name} · {fmtDate(d.createdAt)}</div>)
+                : <div className="tlp-meta">No documents uploaded yet. Your recruiter will tell you which ones are needed.</div>}
+              <div className="tlp-actions">
+                <select value={docType} onChange={(e) => setDocType(e.target.value)} aria-label="Document type">
+                  <option value="">Choose the document…</option>
+                  {extras.documentTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <label className={`btn btn-sm btn-primary${docType ? '' : ' disabled'}`} style={{ cursor: docType ? 'pointer' : 'not-allowed', opacity: docType ? 1 : 0.6 }}>
+                  {uploading ? 'Uploading…' : 'Upload'}
+                  <input ref={docRef} type="file" accept="application/pdf,image/png,image/jpeg" hidden onChange={uploadDoc} disabled={uploading || !docType} />
+                </label>
+              </div>
+              <div className="tlp-muted" style={{ marginTop: 8 }}>PDF, JPG or PNG, up to 5 MB.</div>
+            </div>
+          )}
+          {extras && (
+            <div className="tlp-card">
+              <h3>Sign-in</h3>
+              <div className="tlp-meta">
+                {extras.passwordSet ? 'You have a password. You can also sign in with a code by email.' : 'You sign in with a code sent to your email. A password is optional.'}
+              </div>
+              <div className="tlp-actions">
+                <input type="password" autoComplete="new-password" placeholder={extras.passwordSet ? 'New password' : 'Choose a password (optional)'} value={pw} onChange={(e) => setPw(e.target.value)} />
+                <button type="button" className="btn btn-sm" disabled={pw.length < 8} onClick={() => post('/portal/candidate/password', { password: pw }).then(() => setPw(''))}>Save password</button>
+              </div>
+            </div>
+          )}
+          {extras && (
+            <div className="tlp-card">
+              <h3>Your data</h3>
+              <div className="tlp-meta">
+                {privacyAsked
+                  ? 'Your "delete my data" request is with our team. We will contact you before anything is removed.'
+                  : 'You can ask TeamLink to delete your data. A person from our team handles it and contacts you first.'}
+              </div>
+              {!privacyAsked && (
+                <div className="tlp-actions">
+                  <button type="button" className="btn btn-sm btn-danger" onClick={() => { setAsk({ kind: 'privacy' }); setAskText(''); }}>Ask to delete my data</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+      )}
+
+      {ask && (
+        <Modal
+          title={{ decline: 'Decline the offer', withdraw: 'Withdraw this application', privacy: 'Delete my data' }[ask.kind]}
+          note={ask.app ? ask.app.jobTitle : 'Nothing is deleted straight away — our team contacts you first.'}
+          onClose={() => setAsk(null)}
+          footer={(
+            <>
+              <button type="button" className="btn" onClick={() => setAsk(null)}>Cancel</button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={ask.kind === 'decline' && !askText.trim()}
+                onClick={() => {
+                  if (ask.kind === 'decline') post(`/portal/candidate/applications/${ask.app.id}/offer`, { decision: 'decline', reason: askText });
+                  else if (ask.kind === 'withdraw') post(`/portal/candidate/applications/${ask.app.id}/withdraw`, { reason: askText });
+                  else post('/portal/candidate/privacy-request', { reason: askText });
+                }}
+              >
+                {{ decline: 'Decline offer', withdraw: 'Withdraw', privacy: 'Send request' }[ask.kind]}
+              </button>
+            </>
+          )}
+        >
+          <label className="field">
+            <span>{ask.kind === 'decline' ? 'Why? (a few words)' : 'Why? (optional)'}</span>
+            <input value={askText} onChange={(e) => setAskText(e.target.value)} />
+          </label>
+          {error && <div className="notice red"><span>{error}</span></div>}
+        </Modal>
       )}
 
       {tab === 'jobs' && (

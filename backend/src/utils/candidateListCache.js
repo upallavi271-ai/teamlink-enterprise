@@ -16,8 +16,11 @@
 //   * rows were added or   -> only those rows are re-read (updatedAt >= the
 //     updated                last stamp) and patched in
 //   * a count went DOWN,   -> the whole copy is rebuilt
-//     the day changed, or
-//     the copy is 10 min old
+//     or the day changed
+//   * the copy is 10 min   -> the delta as above, and a fresh copy is built in
+//     old                    the background and swapped in on a later read
+// utils/candidateWarmup.js builds the first copy right after
+// the server starts, so the first person in does not wait for it.
 // A candidate edited in place (PUT /candidates/:id) has no updatedAt column, so
 // that route calls markCandidateDirty() and the next read re-reads that row.
 //
@@ -35,6 +38,15 @@ const CHUNK = 500;
 const CANDIDATE_SELECT = {
   id: true, name: true, email: true, phone: true, location: true,
   source: true, firstSource: true, skills: true, createdAt: true,
+  // The Candidates filters Experience / Notice period / Salary (spec 2026-10-03 §B).
+  experienceYears: true, noticePeriod: true, expectedSalary: true,
+  // ATS layout v3: the list's CTC column (current CTC).
+  currentSalary: true,
+  // Candidates (2026-10-03 §7): Archived / Do Not Use, and the Qualification /
+  // Specialisation masters the Filters panel offers.
+  profileStatus: true, qualificationId: true, specialisationId: true,
+  // B7: the partner who owns this person (the "Partner: X" badge).
+  ownerPartnerId: true, ownerUntil: true,
 };
 // The application columns decorate(), the list and the filters read.
 const APPLICATION_SELECT = {
@@ -83,11 +95,23 @@ function sortCandidates(list) {
   list.sort((x, y) => new Date(y.createdAt) - new Date(x.createdAt));
 }
 
-async function fullBuild(stamp) {
-  const [candidates, applications, requirements] = await Promise.all([
+// Build a whole copy from the database. Returns the new state WITHOUT
+// installing it; fullBuild() installs it at once, the background rebuild only
+// once it is done (the old copy keeps serving meanwhile).
+async function buildState(stamp) {
+  // SPEED (2026-10-03): the follow-ups used to be read AFTER the other three
+  // (they need the application ids), which made the cold build the sum of four
+  // reads. The ids alone are a quick read, so the follow-ups now load in
+  // parallel with the rest, through the very same currentFollowUpsByApplication()
+  // — same rows, same "current follow-up" rule. An application added between the
+  // id read and the full read has updatedAt >= the stamp, so the first delta
+  // re-reads its follow-up (applyDelta step 4).
+  const appIds = (await prisma.application.findMany({ select: { id: true } })).map((a) => a.id);
+  const [candidates, applications, requirements, followUps] = await Promise.all([
     prisma.candidate.findMany({ select: CANDIDATE_SELECT, orderBy: { createdAt: 'desc' } }),
     prisma.application.findMany({ select: APPLICATION_SELECT }),
     prisma.requirement.findMany({ include: REQUIREMENT_INCLUDE }),
+    currentFollowUpsByApplication(appIds),
   ]);
   const reqs = new Map(requirements.map((r) => [r.id, r]));
   const byId = new Map();
@@ -99,14 +123,43 @@ async function fullBuild(stamp) {
     const c = byId.get(a.candidateId);
     if (c) c.applications.push(a);
   });
-  const followUps = await currentFollowUpsByApplication([...apps.keys()]);
-  dirtyCandidates.clear();
-  state = {
-    built: Date.now(), day: todayStr(), stamp, candidates, byId, apps, reqs, followUps,
-    // Bumped whenever the copy changes, so a caller can memoise work over it.
-    version: (state ? state.version : 0) + 1,
-  };
+  // Exactly the applications this copy holds (one deleted between the two
+  // reads must not leave a follow-up behind).
+  followUps.forEach((_v, k) => { if (!apps.has(k)) followUps.delete(k); });
+  return { built: Date.now(), day: todayStr(), stamp, candidates, byId, apps, reqs, followUps };
+}
+
+function install(next) {
+  // Bumped whenever the copy changes, so a caller can memoise work over it.
+  next.version = (state ? state.version : 0) + 1;
+  state = next;
   return state;
+}
+
+async function fullBuild(stamp) {
+  dirtyCandidates.clear();
+  return install(await buildState(stamp));
+}
+
+// THE 10-MINUTE SAFETY REBUILD RUNS IN THE BACKGROUND (2026-10-03). It used to
+// block whichever request found the copy too old — a 6-20 s wait every ten
+// minutes. Now that request is answered from the copy brought up to date by
+// the ordinary delta (exactly what the database holds), and a fresh copy is
+// built alongside. It is swapped in at the start of the NEXT refresh (refresh
+// calls never overlap, so a delta never runs half on the old copy and half on
+// the new), and that refresh then applies every change since the new copy's
+// stamp. Dirty candidates are left marked, so they are simply re-read.
+let rebuilding = null;
+let ready = null;
+function rebuildInBackground() {
+  if (rebuilding || ready) return;
+  rebuilding = (async () => {
+    const stamp = await stampNow();
+    ready = await buildState(stamp);
+  })().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('[candidateListCache] background rebuild failed:', err.message);
+  }).finally(() => { rebuilding = null; });
 }
 
 async function refreshFollowUps(appIds) {
@@ -204,8 +257,16 @@ async function applyDelta(now) {
 }
 
 async function refresh() {
+  // A background rebuild finished: swap it in BEFORE the stamp is read, so the
+  // check below brings it up to date from its own stamp.
+  if (ready) {
+    const next = ready;
+    ready = null;
+    if (next.day === todayStr() && (!state || next.built >= state.built)) install(next);
+  }
   const now = await stampNow();
-  if (!state || state.day !== todayStr() || Date.now() - state.built > MAX_AGE_MS) return fullBuild(now);
+  if (!state || state.day !== todayStr()) return fullBuild(now);
+  if (Date.now() - state.built > MAX_AGE_MS) rebuildInBackground();
   const was = state.stamp;
   const same = !dirtyCandidates.size && ['apps', 'appsMax', 'cands', 'candsMax', 'reqs', 'reqsMax', 'fus', 'fusMax']
     .every((k) => was[k] === now[k]);

@@ -13,11 +13,12 @@
 }
 .clrole-viewbar .clrole-view button + button { border-left: 1px solid var(--line); }
 .clrole-viewbar .clrole-view button.on { background: var(--navy); color: #fff; }
-.clrole-alert {
-  display: flex; align-items: center; gap: 10px; border: 1px solid #f0c36d; background: #fffaf0; color: #8a5300;
-  border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
-}
-.clrole-alert .btn { margin-left: auto; }
+/* Daily chips row (simplicity checklist #5): Ending soon · Pause requests. */
+.clrole-daily { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+.clrole-daily:empty { display: none; }
+.clrole-daily > .cllc-panel { flex: 1 1 100%; margin: 0; }
+.clrole-daychip { border-color: #f0c36d; color: #8a5300; background: #fffaf0; }
+.clrole-daychip.on { background: var(--amber); border-color: var(--amber); color: #fff; }
 
 /* --- Health badge (§8.1) --------------------------------------------------- */
 .clrole-health { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
@@ -40,17 +41,6 @@
   font-size: 12px; cursor: pointer; text-decoration: none;
 }
 .clrole-quick:hover { border-color: var(--blue); background: var(--blue-tint); }
-.clrole-more { position: relative; }
-.clrole-menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 180px; background: var(--paper-raised);
-  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(20, 30, 50, .14); padding: 4px;
-}
-.clrole-menu button {
-  display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; font: inherit; font-size: 12.5px;
-  color: var(--ink); border-radius: 6px; cursor: pointer;
-}
-.clrole-menu button:hover { background: var(--line-soft); }
-.clrole-menu button.danger { color: var(--red); }
 
 .clrole-money { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .clrole-money.bad { color: var(--red); font-weight: 600; }

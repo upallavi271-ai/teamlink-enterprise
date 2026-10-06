@@ -318,11 +318,9 @@ export default function QuickExpenseModal({
           <label className="field"><span>Status</span>
             <select value={f.status} onChange={set('status')} disabled={!acc.approver}>
               <option value="PENDING">Pending</option>
-              {acc.approver && <option value="APPROVED">Approved</option>}
               {acc.approver && <option value="PAID">Paid</option>}
-              {acc.approver && <option value="REIMBURSED">Reimbursed</option>}
             </select>
-            <em className="oe-qx-hint">{acc.approver ? 'Anything but Pending is recorded as your approval' : 'A new expense waits for the Accounts Admin / Approver'}</em>
+            <em className="oe-qx-hint">{acc.approver ? 'Paid is recorded as your sign-off' : 'A new expense waits for the Accounts Admin / Approver to mark it paid'}</em>
           </label>
         )}
         {overriding && (

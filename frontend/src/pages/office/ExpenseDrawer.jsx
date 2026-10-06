@@ -1,8 +1,8 @@
 // The right-side DETAILS DRAWER of the one-page Expenses table (spec 12):
 // every field of one expense, the bill, who added and who last changed it,
-// and — for the Accounts Admin / Approver — the approval actions the row
-// accordion had (Approve, Reject with a reason, Mark as Paid) plus Mark as
-// Reimbursed. Edit, Edit (full details), Delete and Close. No page change.
+// and — for the Accounts Admin / Approver — Mark as Paid (Approve, Reject and
+// Mark as Reimbursed were retired by Accounts spec S1.3c, 2026-10-05). Edit,
+// Edit (full details), Delete and Close. No page change.
 import { useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
@@ -29,8 +29,6 @@ export default function ExpenseDrawer({
   const [d, setD] = useState(() => detailCache.get(id) || null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
-  const [rejecting, setRejecting] = useState(false);
-  const [reason, setReason] = useState('');
   const [adding, setAdding] = useState(false);
   const [note, setNote] = useState('');
   const [line, setLine] = useState(null);
@@ -46,7 +44,7 @@ export default function ExpenseDrawer({
   useEffect(() => {
     const hit = detailCache.get(id);
     if (hit) setD(hit); else { setD(null); load(); }
-    setRejecting(false); setReason(''); setAdding(false); setNote('');
+    setAdding(false); setNote('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   useEffect(() => {
@@ -70,7 +68,6 @@ export default function ExpenseDrawer({
       const r = await api.patch(`/office-expenses/${id}/status`, { action, ...extra });
       detailCache.set(id, r.data);
       setD(r.data);
-      setRejecting(false); setReason('');
       onChanged();
     } catch (e) {
       setErr(e.response?.data?.error || 'That could not be done.');
@@ -175,7 +172,7 @@ export default function ExpenseDrawer({
                   ? <>{x.effGstin} {x.gstinSource === 'vendor' && <em className="small-muted">(from the vendor)</em>} {!x.gstinOnFile && <span className="status priority-high">fails the check</span>}</>
                   : (x.gst > 0.5 ? <span className="status priority-high">missing — the GST cannot be claimed</span> : <em className="small-muted">not needed — no GST</em>)}
               </Row>
-              <Row k="Approved">{x.approvedByUser ? `${x.approvedByUser.name}${x.approvedAt ? ` · ${when(x.approvedAt)}` : ''}` : <em className="small-muted">{['PAID', 'REIMBURSED'].includes(st) ? 'before approvals were recorded' : 'not yet'}</em>}</Row>
+              <Row k="Signed off by">{x.approvedByUser ? `${x.approvedByUser.name}${x.approvedAt ? ` · ${when(x.approvedAt)}` : ''}` : <em className="small-muted">{['PAID', 'REIMBURSED'].includes(st) ? 'not recorded' : 'not yet'}</em>}</Row>
               {x.paidByUser && <Row k="Marked paid">{x.paidByUser.name} · {when(x.paidAt)}</Row>}
               {st === 'REIMBURSED' && x.reimbursedByUser && <Row k="Reimbursed">{x.reimbursedByUser.name} · {when(x.reimbursedAt)}</Row>}
               {st === 'REJECTED' && <Row k="Rejected">{x.rejectedBy?.name || '—'} · {when(x.rejectedAt)} — <b>{x.rejectionReason}</b></Row>}
@@ -188,29 +185,13 @@ export default function ExpenseDrawer({
             </>
           )}
 
-          {rejecting && (
-            <div className="oe-acc-reject">
-              <label className="field"><span>Why is it rejected? *</span>
-                <textarea rows={2} value={reason} autoFocus onChange={(e) => setReason(e.target.value)} placeholder="e.g. Duplicate of the rent bill already paid on 5 Sep" />
-              </label>
-              <div className="oe-acc-reject-a">
-                <button type="button" className="btn btn-sm" onClick={() => { setRejecting(false); setReason(''); }}>Cancel</button>
-                <button type="button" className="btn btn-sm oe-del" disabled={reason.trim().length < 3 || !!busy} onClick={() => act('reject', { reason: reason.trim() })}>
-                  {busy === 'reject' ? 'Rejecting…' : 'Reject expense'}
-                </button>
-              </div>
-            </div>
-          )}
           {adding && d && <AddGstin bill={x} onCancel={() => setAdding(false)} onSaved={() => { setAdding(false); refresh(); }} />}
         </div>
 
         <div className="oe-drw-foot">
-          {d && (can.approve || can.reject || can.markPaid || can.markReimbursed) && (
+          {d && can.markPaid && (
             <div className="oe-drw-acts">
-              {can.approve && <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => act('approve')}>{busy === 'approve' ? 'Approving…' : '✓ Approve'}</button>}
-              {can.reject && !rejecting && <button type="button" className="btn btn-sm oe-del" disabled={!!busy} onClick={() => setRejecting(true)}>✕ Reject</button>}
-              {can.markPaid && <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => act('mark_paid')}>{busy === 'mark_paid' ? 'Saving…' : '₹ Mark as Paid'}</button>}
-              {can.markReimbursed && <button type="button" className="btn btn-sm" disabled={!!busy} title="Someone paid this out of pocket and the office has paid them back" onClick={() => act('mark_reimbursed')}>{busy === 'mark_reimbursed' ? 'Saving…' : 'Mark as Reimbursed'}</button>}
+              <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => act('mark_paid')}>{busy === 'mark_paid' ? 'Saving…' : '₹ Mark as Paid'}</button>
             </div>
           )}
           <div className="oe-drw-acts">

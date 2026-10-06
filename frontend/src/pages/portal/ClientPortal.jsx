@@ -7,6 +7,11 @@ import { REJECTION_REASONS_BY_SIDE } from '../../atsVocab';
 import {
   Chip, Tabs, Stat, KV, InterviewLine, fmtDate, fmtDateTime, openFile,
 } from './portalUi.jsx';
+// Per-role spec 2026-10-03: request a new requirement + own company reports.
+import { useAuth } from '../../context/AuthContext.jsx';
+import { can } from '../../permissions';
+import RequestJobModal from '../../components/jobs/RequestJobModal.jsx';
+import OwnResults from '../../components/OwnResults.jsx';
 
 // ---------------------------------------------------------------------------
 // THE CLIENT PORTAL (user notes #4, point 3) — what a client login sees.
@@ -34,7 +39,32 @@ const DECISIONS = {
   REQUEST_INTERVIEW: { title: 'Request interview', verb: 'Request interview', hint: 'Suggest days / times — the recruiter will fix the slot.' },
 };
 
+// FIRST-LOGIN GUIDE (spec B1): three short lines the first time a client
+// signs in, until they press Got it (remembered in this browser only).
+const GUIDE = {
+  BILLING: ['Here are your invoices from TeamLink.', 'Each line shows the amount, the due date and whether it is paid.', 'Questions about a bill? Reply to the invoice email.'],
+  VIEWER: ['Your jobs: the openings TeamLink is filling for you.', 'Candidates: the people we sent you, with their resume.', 'Interviews: dates and times. You can view everything; your colleague with a Reviewer login gives the decisions.'],
+  DEFAULT: ['Your jobs: the openings TeamLink is filling for you.', 'Candidates for review: open a person, read the resume, then press Shortlist, Hold or Reject.', 'Interviews: confirm the time, and after the interview tell us how it went.'],
+};
+function FirstLoginGuide({ user, type }) {
+  const key = `tl_client_guide_${user?.id || ''}`;
+  const [seen, setSeen] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
+  if (seen || !user) return null;
+  const lines = GUIDE[type] || GUIDE.DEFAULT;
+  return (
+    <div className="tlp-banner" role="note" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
+      <b>Welcome! Here is how your portal works:</b>
+      <ol style={{ margin: 0, paddingLeft: 18 }}>{lines.map((l) => <li key={l}>{l}</li>)}</ol>
+      <button type="button" className="btn btn-sm btn-primary" onClick={() => { try { localStorage.setItem(key, '1'); } catch { /* ignore */ } setSeen(true); }}>Got it</button>
+    </div>
+  );
+}
+
 export default function ClientPortal() {
+  const { user } = useAuth();
+  const mayRequest = can(user, 'ats', 'requirements', 'Requirement Request', 'create');
+  const mayReports = can(user, null, 'reports', 'Client Reports', 'view');
+  const [requesting, setRequesting] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -82,6 +112,39 @@ export default function ClientPortal() {
   if (error && !data) return <div className="tlp"><div className="notice red"><span>{error}</span></div></div>;
   if (!data) return <div className="tlp small-muted">Loading your portal…</div>;
 
+  // BILLING login (spec B1): invoices only — the server sends nothing else.
+  if (data.billingOnly) {
+    return (
+      <div className="tlp">
+        <div className="page-head">
+          <div>
+            <h1 className="tlp-hello">{data.company.name}</h1>
+            <div className="tlp-sub">Your invoices from TeamLink</div>
+          </div>
+        </div>
+        <FirstLoginGuide user={user} type="BILLING" />
+        {data.invoices.length ? (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th>Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                {data.invoices.map((v) => (
+                  <tr key={v.id}>
+                    <td><b>{v.invoiceNumber || v.id.slice(-6).toUpperCase()}</b></td>
+                    <td>{v.invoiceDate || '—'}</td>
+                    <td>{v.dueDate || '—'}</td>
+                    <td>₹{Number((v.amount || 0) + (v.gst || 0)).toLocaleString('en-IN')}</td>
+                    <td><Chip label={v.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <EmptyState icon="🧾" title="No invoices yet" hint="When TeamLink raises an invoice for your company, it shows here." />}
+      </div>
+    );
+  }
+
   const { company, requirements, interviews, hires, agreement, invoices, totals, permissions } = data;
   const canDecide = !!permissions?.decide;
   const upcoming = interviews.filter((i) => i.upcoming);
@@ -94,16 +157,35 @@ export default function ClientPortal() {
           <h1 className="tlp-hello">{company.name}</h1>
           <div className="tlp-sub">Your TeamLink client portal — requirements, candidates, interviews and joinings in one place</div>
         </div>
+        {mayRequest && (
+          <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Request a new requirement</button>
+        )}
       </div>
+      {requesting && (
+        <RequestJobModal
+          endpoint="/portal/client/requirement-requests"
+          onClose={() => setRequesting(false)}
+          onSent={(r) => { setRequesting(false); setNotice(r?.message || 'Request sent — TeamLink will review it.'); }}
+        />
+      )}
 
       {agreement?.needsYou && (
         <div className="tlp-banner amber">
           <span>Your service agreement is waiting for you: <b>{agreement.status}</b>.</span>
-          <Link className="btn btn-sm btn-primary" to={agreement.viewPath}>Review &amp; sign →</Link>
+          {agreement.signPath
+            ? <a className="btn btn-sm btn-primary" href={agreement.signPath}>Review, sign &amp; stamp →</a>
+            : <Link className="btn btn-sm btn-primary" to={agreement.viewPath}>Review &amp; sign →</Link>}
+        </div>
+      )}
+      {/* 2026-10-05: one obvious way to the agreement (view + download the PDF). */}
+      {agreement && !agreement.needsYou && (
+        <div style={{ margin: '0 0 10px' }}>
+          <Link className="btn btn-sm" to={agreement.viewPath}>📄 View my agreement</Link>
         </div>
       )}
       {error && <div className="notice red"><span>{error}</span></div>}
       {notice && <div className="notice"><span>{notice}</span></div>}
+      <FirstLoginGuide user={user} type={data.portalType} />
 
       <div className="tlp-stats">
         <Stat value={totals.openRequirements} label="Open requirements" onClick={() => setTab('requirements')} />
@@ -125,8 +207,19 @@ export default function ClientPortal() {
           { id: 'hires', label: 'Selected & Joined', count: hires.length },
           { id: 'agreement', label: 'Agreement' },
           invoices ? { id: 'invoices', label: 'Invoices', count: invoices.length } : null,
+          mayReports ? { id: 'reports', label: 'Reports' } : null,
         ]}
       />
+
+      {tab === 'reports' && mayReports && (
+        <OwnResults
+          endpoint="/portal/client/reports"
+          title="Company report"
+          sub="Your requirements and the candidates sent to you"
+          mayExport={can(user, null, 'reports', 'Client Reports', 'export')}
+          compact
+        />
+      )}
 
       {tab === 'overview' && (
         <div className="tlp-grid">

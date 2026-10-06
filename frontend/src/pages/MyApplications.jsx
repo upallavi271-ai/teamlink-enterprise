@@ -1,82 +1,135 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
+// Shown inside the built-in job portal's header and footer (2026-10-05).
+import CareersChrome from './careers/CareersChrome.jsx';
 
-// Public "My Applications" page (/careers/my-applications) for someone who
-// applied through the job portal.
+// Public "My Applications" page (/careers/my-applications).
 //
-// It USED to look applications up by email with no login, which let anyone
-// who knew an address read that person's applications and employers. Now the
-// candidate gets their OWN LOGIN instead (user notes #4, point 4): they type
-// the email they applied with and a single-use, expiring "set your password"
-// link is MAILED to that address (POST /api/portal/public/claim). Nothing
-// about the applications is ever shown on this public page. After signing in
-// they land on their candidate portal (/my-applications).
+// SAFE BY DESIGN (spec B2 + the "My applications by email" fix, 2026-10-03):
+// nothing about a person is shown here. The visitor types their email, gets a
+// 6-digit ONE-TIME CODE in that inbox (POST /api/portal/public/otp/request —
+// the same answer whether or not the email is known), and only a right code
+// signs them in to their own candidate portal (/my-applications). A new person
+// with no applications yet is asked for their name and becomes a candidate
+// (careers-portal self-registration).
+const keepToken = (token) => {
+  try { localStorage.setItem('tl_token', token); } catch { /* storage blocked */ }
+  window.location.assign('/my-applications');
+};
+
 export default function MyApplications() {
+  const [step, setStep] = useState('email'); // email | code | name
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState('');
+  const [info, setInfo] = useState('');
   const [error, setError] = useState('');
 
-  async function claim(e) {
-    e.preventDefault();
-    setBusy(true);
-    setError('');
+  async function sendCode(e) {
+    if (e) e.preventDefault();
+    setBusy(true); setError('');
     try {
-      const res = await api.post('/portal/public/claim', { email });
-      setDone(res.data.message);
+      const res = await api.post('/portal/public/otp/request', { email });
+      setInfo(res.data.message);
+      setCode('');
+      setStep('code');
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not send the link right now — please try again.');
+      setError(err.response?.data?.error || 'Could not send the code right now. Please try again in a minute.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verify(e) {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const body = { email, code };
+      if (step === 'name') Object.assign(body, { name, phone });
+      const res = await api.post('/portal/public/otp/verify', body);
+      if (res.data.needsName) {
+        setInfo(res.data.message);
+        setStep('name');
+        return;
+      }
+      if (res.data.token) keepToken(res.data.token);
+    } catch (err) {
+      setError(err.response?.data?.error || 'That did not work. Ask for a new code and try again.');
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="careers-shell">
-      <header className="careers-header">
-        <div className="logo-lockup">
-          <div className="mark">TL</div>
-          <div>
-            <div style={{ fontWeight: 600 }}>TeamLink Consultants</div>
-            <div className="small-muted">My Applications</div>
-          </div>
-        </div>
-      </header>
-      <main className="careers-content" style={{ maxWidth: 560 }}>
-        <Link className="small-muted" to="/careers/classic">← Back to open positions</Link>
+    <CareersChrome>
+      <div className="jp-wrap jp-otp">
+        <Link className="jp-back" to="/careers">← All jobs</Link>
         <h1 style={{ marginTop: 10 }}>See your applications</h1>
-        <p className="small-muted">
-          Already have a password? <Link to="/login">Sign in</Link> to see every application, its status,
-          your interview details and offers — and to update your profile and resume.
-        </p>
+
         <div className="card section">
-          <h3 style={{ marginTop: 0 }}>First time here?</h3>
-          <p className="small-muted">
-            Enter the email address you applied with. We will email you a link to set your password.
-            The link works once and expires in 48 hours.
-          </p>
-          {done ? (
-            <div className="notice"><span>{done}</span></div>
-          ) : (
-            <form className="filter-row" onSubmit={claim}>
+          {step === 'email' && (
+            <form onSubmit={sendCode}>
+              <h3 style={{ marginTop: 0 }}>Step 1 of 2 — your email</h3>
+              <p className="small-muted">Type the email you applied with. We will send a 6-digit code to it.</p>
               <input
-                style={{ flex: 1, minWidth: 0 }}
+                style={{ width: '100%' }}
                 required
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                aria-label="Email you applied with"
+                placeholder="you@gmail.com"
+                aria-label="Your email"
               />
-              <button className="btn btn-sm btn-primary" type="submit" disabled={busy}>
-                {busy ? 'Sending…' : 'Get my sign-in link'}
+              <button className="btn btn-primary" style={{ marginTop: 12, width: '100%' }} type="submit" disabled={busy}>
+                {busy ? 'Sending…' : 'Send me a code'}
               </button>
             </form>
           )}
-          {error && <div className="error-text">{error}</div>}
+
+          {(step === 'code' || step === 'name') && (
+            <form onSubmit={verify}>
+              <h3 style={{ marginTop: 0 }}>{step === 'code' ? 'Step 2 of 2 — the code' : 'Last step — your name'}</h3>
+              {info && <div className="notice" style={{ marginBottom: 10 }}><span>{info}</span></div>}
+              {step === 'code' && (
+                <input
+                  style={{ width: '100%', fontSize: 22, letterSpacing: 6, textAlign: 'center' }}
+                  required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="6-digit code"
+                  aria-label="6-digit code"
+                />
+              )}
+              {step === 'name' && (
+                <>
+                  <label htmlFor="maName">Your full name</label>
+                  <input id="maName" style={{ width: '100%' }} required value={name} onChange={(e) => setName(e.target.value)} />
+                  <label htmlFor="maPhone" style={{ marginTop: 8, display: 'block' }}>Mobile number (optional)</label>
+                  <input id="maPhone" style={{ width: '100%' }} inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                </>
+              )}
+              <button className="btn btn-primary" style={{ marginTop: 12, width: '100%' }} type="submit" disabled={busy || (step === 'code' && code.length !== 6)}>
+                {busy ? 'Checking…' : (step === 'code' ? 'Show my applications' : 'Create my profile')}
+              </button>
+              <div className="small-muted" style={{ marginTop: 10 }}>
+                No code? Check spam, or{' '}
+                <button type="button" className="link-btn" onClick={() => { setStep('email'); setInfo(''); setError(''); }}>use another email / send again</button>.
+              </div>
+            </form>
+          )}
+          {error && <div className="error-text" style={{ marginTop: 10 }}>{error}</div>}
         </div>
-      </main>
-    </div>
+        <p className="small-muted">
+          Have a password already? <Link to="/login">Sign in here</Link>. TeamLink never asks for your code on a call or chat.
+        </p>
+      </div>
+    </CareersChrome>
   );
 }

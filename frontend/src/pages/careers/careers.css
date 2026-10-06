@@ -1,0 +1,155 @@
+/* ===========================================================================
+   TeamLink Job Portal (built in) — /careers, /careers/:id, /careers/my-applications.
+   Everything is scoped under .jp. It reads the app's own tokens (styles.css
+   :root), so it is the TeamLink look, with the old portal's layout: a search
+   band, a filter column with counts, job cards, and a two-column job page.
+   Works at phone width: 16px gutter, no sideways scroll.
+   =========================================================================== */
+.jp{
+  min-height:100vh;display:flex;flex-direction:column;
+  background:var(--paper,#EFF3F1);color:var(--ink,#22333B);
+  font-size:15px;line-height:1.55;overflow-x:clip;
+}
+.jp *,.jp *::before,.jp *::after{box-sizing:border-box}
+:where(.jp) a{color:inherit;text-decoration:none}
+:where(.jp) :is(h1,h2,h3){margin:0;color:var(--ink,#22333B)}
+:where(.jp) p{margin:0}
+.jp-wrap{width:100%;max-width:1160px;margin:0 auto;padding:0 24px}
+.jp-body{flex:1}
+.jp-muted{color:var(--ink-soft,#56666E);font-size:13px}
+.jp-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.jp :focus-visible{outline:3px solid var(--brand-ring,rgba(94,139,126,.34));outline-offset:2px;border-radius:6px}
+
+/* header / footer */
+.jp-header{background:var(--paper-raised,#fff);border-bottom:1px solid var(--line,#dde5e2);position:sticky;top:0;z-index:5}
+.jp-header-in{display:flex;align-items:center;gap:16px;min-height:62px;flex-wrap:wrap}
+.jp-brand{display:flex;align-items:center;gap:10px}
+.jp-brand img{display:block;height:auto}
+.jp-brand-tag{font-weight:700;font-size:13px;color:var(--brand,#4A6F64);background:var(--brand-tint,#e6efeb);border-radius:999px;padding:2px 10px}
+.jp-nav{margin-left:auto;display:flex;gap:4px}
+.jp-nav a{padding:8px 12px;border-radius:8px;font-weight:600;font-size:14px;color:var(--ink-soft,#56666E)}
+.jp-nav a:hover{background:var(--line-soft,#e9efec);color:var(--ink,#22333B)}
+.jp-nav a.active{color:var(--brand-ink,#2A4139);background:var(--brand-tint,#e6efeb)}
+.jp-footer{border-top:1px solid var(--line,#dde5e2);background:var(--paper-raised,#fff);padding:18px 0;margin-top:40px;font-size:13px;color:var(--ink-soft,#56666E)}
+.jp-footer .jp-wrap{display:flex;gap:6px 18px;flex-wrap:wrap;align-items:center}
+.jp-footer a{text-decoration:underline}
+.jp-footer-note{margin-left:auto}
+
+/* buttons, chips, notes */
+.jp-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:42px;padding:0 18px;border-radius:9px;
+  border:1px solid var(--line,#dde5e2);background:var(--paper-raised,#fff);color:var(--ink,#22333B);font:inherit;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+.jp-btn-primary{background:var(--brand,#4A6F64);border-color:var(--brand,#4A6F64);color:#fff}
+.jp-btn-primary:hover{background:var(--brand-strong,#3C5A51)}
+.jp-btn-primary:disabled{opacity:.6;cursor:wait}
+.jp-btn-ghost:hover{background:var(--line-soft,#e9efec)}
+.jp-btn-block{width:100%}
+.jp-link{background:none;border:0;padding:4px 0;font:inherit;font-size:13.5px;font-weight:700;color:var(--brand-ink,#2A4139);cursor:pointer;text-decoration:underline}
+.jp-chip{display:inline-flex;align-items:center;gap:6px;margin:0 6px 6px 0;padding:6px 11px;border-radius:999px;border:1px solid var(--line,#dde5e2);
+  background:var(--paper-raised,#fff);font:inherit;font-size:13px;color:var(--ink,#22333B);cursor:pointer;text-align:left}
+.jp-chip:hover{border-color:var(--brand-bright,#5E8B7E)}
+.jp-chip.is-on{background:var(--brand,#4A6F64);border-color:var(--brand,#4A6F64);color:#fff}
+.jp-chip-n{font-size:12px;color:var(--ink-faint,#64767D)}
+.jp-chip.is-on .jp-chip-n{color:#e6efeb}
+.jp-note{border-radius:10px;padding:12px 14px;margin:10px 0;font-size:14px;display:flex;flex-direction:column;gap:8px;border:1px solid transparent}
+.jp-note.is-red{background:var(--st-red-tint,#fbebea);color:var(--st-red-ink,#B02318);border-color:#f2cdca}
+.jp-note.is-green{background:var(--st-green-tint,#e5f0ea);color:var(--st-green-ink,#0F6B4F);border-color:#c5e0d1}
+.jp-note.is-orange{background:var(--st-yellow-tint,#fdf3d6);color:var(--st-yellow-ink,#7a5600);border-color:#f0dc9f}
+.jp-note b{font-size:15px}
+
+/* hero search */
+.jp-hero{background:var(--navy,#22333B);color:#fff;padding:34px 0 30px}
+.jp-hero h1{color:#fff;font-size:30px;line-height:1.2;letter-spacing:-.01em}
+.jp-hero p{color:#c9d6d2;margin-top:6px}
+.jp-search{display:grid;grid-template-columns:2fr 1.2fr auto;gap:10px;margin-top:18px;background:var(--paper-raised,#fff);padding:8px;border-radius:12px}
+.jp-search input{min-height:44px;border:1px solid var(--line,#dde5e2);border-radius:8px;padding:0 12px;font:inherit;color:var(--ink,#22333B);min-width:0;width:100%}
+
+/* results */
+.jp-results{display:grid;grid-template-columns:250px minmax(0,1fr);gap:22px;margin-top:22px;align-items:start}
+.jp-filters{background:var(--paper-raised,#fff);border:1px solid var(--line,#dde5e2);border-radius:var(--radius,10px);padding:14px 14px 6px;position:sticky;top:76px}
+.jp-filters-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.jp-filters-head h2{font-size:15px}
+.jp-facet{border:0;margin:0 0 10px;padding:0}
+.jp-facet legend{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft,#56666E);margin-bottom:6px;padding:0}
+.jp-list{min-width:0}
+.jp-list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.jp-list-head b{font-size:16px}
+.jp-list-tools{display:flex;gap:8px;align-items:center}
+.jp-sort{display:inline-flex;border:1px solid var(--line,#dde5e2);border-radius:9px;overflow:hidden;background:var(--paper-raised,#fff)}
+.jp-sort button{border:0;background:none;padding:8px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink-soft,#56666E)}
+.jp-sort button.is-on{background:var(--brand-tint,#e6efeb);color:var(--brand-ink,#2A4139)}
+.jp-active{margin-bottom:6px}
+.jp-only-phone{display:none}
+
+.jp-card{background:var(--paper-raised,#fff);border:1px solid var(--line,#dde5e2);border-radius:var(--radius,10px);margin-bottom:12px;box-shadow:var(--shadow-sm,none);overflow:hidden}
+.jp-card:hover{border-color:var(--brand-bright,#5E8B7E)}
+.jp-card-main{display:block;padding:16px 18px 10px}
+.jp-card h3{font-size:17px;line-height:1.3}
+.jp-card-co{color:var(--ink-soft,#56666E);font-size:13.5px;margin-top:2px}
+.jp-meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font-size:13px;color:var(--ink,#22333B)}
+.jp-snippet{margin-top:8px;font-size:13.5px;color:var(--ink-soft,#56666E);overflow-wrap:anywhere}
+.jp-skills{margin-top:6px;font-size:12.5px;color:var(--ink-faint,#64767D);overflow-wrap:anywhere}
+.jp-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 18px 14px;border-top:1px solid var(--line-soft,#e9efec)}
+.jp-empty{background:var(--paper-raised,#fff);border:1px dashed var(--line,#dde5e2);border-radius:var(--radius,10px);padding:30px 20px;text-align:center;display:flex;flex-direction:column;gap:8px;align-items:center}
+.jp-empty b{font-size:16px}
+
+/* job page */
+.jp-page{padding-top:18px}
+.jp-back{display:inline-block;font-weight:700;font-size:14px;color:var(--brand-ink,#2A4139);margin-bottom:12px}
+.jp-detail{display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-areas:"head side" "main side";gap:0 22px;align-items:start}
+.jp-detail-head{grid-area:head}
+.jp-detail-main{grid-area:main;min-width:0}
+.jp-detail-side{grid-area:side;position:sticky;top:76px}
+.jp-detail-head h1{font-size:24px;line-height:1.25}
+.jp-panel{background:var(--paper-raised,#fff);border:1px solid var(--line,#dde5e2);border-radius:var(--radius,10px);padding:16px 18px;margin-bottom:14px}
+.jp-panel h2{font-size:16px;margin-bottom:8px}
+.jp-panel ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.jp-pre{white-space:pre-line;overflow-wrap:anywhere}
+.jp-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.jp-tag{background:var(--brand-tint,#e6efeb);color:var(--brand-ink,#2A4139);border-radius:999px;padding:3px 10px;font-size:13px}
+.jp-tag.is-soft{background:var(--line-soft,#e9efec);color:var(--ink-soft,#56666E)}
+.jp-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0}
+.jp-kv dt{color:var(--ink-soft,#56666E);font-size:13px}
+.jp-kv dd{margin:0}
+.jp-similar{display:flex;flex-direction:column;gap:8px}
+.jp-similar a{display:flex;flex-direction:column;padding:8px 10px;border:1px solid var(--line,#dde5e2);border-radius:8px}
+.jp-similar a:hover{border-color:var(--brand-bright,#5E8B7E)}
+
+/* apply form */
+.jp-apply{border-color:var(--brand-tint-2,#c9dcd4)}
+.jp-form{display:flex;flex-direction:column}
+.jp-form label{font-size:13px;font-weight:700;margin:10px 0 4px}
+.jp-form input[type=text],.jp-form input:not([type]),.jp-form input[type=email],.jp-form input[type=file]{
+  min-height:42px;border:1px solid var(--line,#dde5e2);border-radius:8px;padding:8px 10px;font:inherit;color:var(--ink,#22333B);background:#fff;width:100%;min-width:0}
+.jp-form input[type=file]{padding:8px}
+.jp-form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.jp-form .jp-link{align-self:flex-start;margin-top:10px}
+.jp-file{font-size:13px;color:var(--ink-soft,#56666E);margin-top:4px;overflow-wrap:anywhere}
+.jp-check{display:flex !important;gap:8px;align-items:flex-start;font-weight:400 !important;margin:14px 0 6px !important;font-size:13px}
+.jp-check input{margin-top:3px;width:18px;height:18px;flex:none}
+.jp-form .jp-btn-block{margin-top:10px}
+.jp-hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
+
+/* the one-time-code page (MyApplications.jsx) inside the portal chrome */
+.jp .jp-otp{max-width:520px;margin:0 auto;padding-top:22px}
+.jp .jp-otp .careers-content{padding:0}
+
+/* phone */
+@media (max-width: 860px){
+  .jp-wrap{padding:0 16px}
+  .jp-results{grid-template-columns:minmax(0,1fr);gap:12px}
+  .jp-filters{display:none;position:static}
+  .jp-filters.is-open{display:block}
+  .jp-only-phone{display:inline-flex}
+  .jp-detail{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "side" "main"}
+  .jp-detail-side{position:static}
+}
+@media (max-width: 560px){
+  .jp-hero{padding:24px 0 20px}
+  .jp-hero h1{font-size:24px}
+  .jp-search{grid-template-columns:minmax(0,1fr)}
+  .jp-nav a{padding:8px 8px;font-size:13px}
+  .jp-brand img{width:112px}
+  .jp-footer-note{margin-left:0}
+  .jp-form-row{grid-template-columns:minmax(0,1fr)}
+  .jp-card-foot{flex-wrap:wrap}
+}

@@ -27,7 +27,9 @@ const SAMPLE_COLUMNS = {
   invoices: [['line', 'Row'], ['invoiceNumber', 'Invoice no'], ['invoiceDate', 'Date', d], ['client', 'Client'], ['candidate', 'Candidate'], ['amount', 'Before GST', inr], ['gst', 'GST', (v) => (v == null ? 'client rate' : inr(v))], ['received', 'Received', inr]],
 };
 
-export default function AccountsImport({ kind: fixedKind = '', bankAccountId = '', onClose, onDone }) {
+export default function AccountsImport({
+  kind: fixedKind = '', bankAccountId = '', onClose, onDone, onReview,
+}) {
   const [file, setFile] = useState(null);
   const [pasted, setPasted] = useState('');
   const [kind, setKind] = useState(fixedKind);
@@ -116,10 +118,23 @@ export default function AccountsImport({ kind: fixedKind = '', bankAccountId = '
             {result.duplicates > 0 && <> {result.duplicates} already on file — skipped, nothing overwritten.</>}
           </span>
         </div>
+        {result.kind === 'bank' && result.autoMatched != null && result.imported > 0 && (
+          <div className="notice" role="status" style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ flex: 1 }}>
+              <b>{result.imported} line(s) imported · {result.autoMatched} matched and proof attached · {result.needsReview} need your review</b>
+            </span>
+            {result.needsReview > 0 && onReview && (
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => { onReview(); }}>Review now →</button>
+            )}
+          </div>
+        )}
         <ul className="small-muted" style={{ margin: '10px 0 0 18px', lineHeight: 1.7 }}>
           {result.value != null && <li>Value {inr(result.value)}.</li>}
           {result.openingSetTo != null && <li>Opening balance worked out from the statement: {inr(result.openingSetTo)}.</li>}
           {result.autoPosted > 0 && <li>{result.autoPosted} credit(s) posted against client invoices — each can be undone on the Bank screen.</li>}
+          {result.kind === 'bank' && result.loansLinked > 0 && <li>{result.loansLinked} hand-loan line(s) filed against the person, with the line as proof.</li>}
+          {result.kind === 'bank' && result.billsFiled > 0 && <li>{result.billsFiled} office bill(s) filed or settled, with the line as proof.</li>}
+          {result.kind === 'bank' && result.chargesFiled > 0 && <li>{result.chargesFiled} bank charge(s) filed under What the bank takes.</li>}
           {result.clientsCreated > 0 && <li>{result.clientsCreated} new client(s) added — fill in their GST and terms on the Clients screen.</li>}
           {result.paymentsRecorded > 0 && <li>{result.paymentsRecorded} receipt(s) recorded from the sheet.</li>}
           {result.noClient > 0 && <li>{result.noClient} line(s) not imported — no client on file with that name.</li>}

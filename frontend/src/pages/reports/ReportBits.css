@@ -1,0 +1,47 @@
+/* Reports — section 17 pieces (ReportBits.jsx, ReportsHome.jsx). Scoped rpb- / .rphome. */
+.rpb-delta{display:inline-block;font-size:12px;font-weight:600;margin-left:6px;white-space:nowrap}
+.rpb-delta.rpb-small{display:block;margin:1px 0 0;font-size:11px;font-weight:500}
+.rpb-up{color:#15803d}
+.rpb-down{color:#b91c1c}
+.rpb-same{color:#64748b}
+
+.rpb-of{display:inline-flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:92px}
+.rpb-of-txt{white-space:nowrap}
+.rpb-of-t{color:#64748b;font-weight:400}
+.rpb-of-none{color:#94a3b8;font-size:11px}
+.rpb-bar{display:block;width:92px;height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden}
+.rpb-bar i{display:block;height:100%;border-radius:3px}
+.rpb-bar.rpb-done i{background:#16a34a}
+.rpb-bar.rpb-going i{background:#2563eb}
+.rpb-bar.rpb-behind i{background:#f59e0b}
+
+.rpb-compare{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.rpb-compare-lbl{font-size:12px;color:#64748b;margin-right:2px}
+.rpb-seg{border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;color:#1f2a44}
+.rpb-seg.on{background:#1e3a8a;border-color:#1e3a8a;color:#fff}
+.rpb-export{display:inline-flex;gap:6px}
+
+/* The landing page: one list of report cards. */
+.rphome .rphome-scope{margin:-4px 0 14px;color:#475569;font-size:13px}
+.rphome h2{font-size:14px;color:#475569;font-weight:600;margin:18px 0 8px;text-transform:none}
+.rphome-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.rphome-card{display:flex;gap:12px;align-items:flex-start;text-align:left;border:1px solid #dbe3ef;background:#fff;border-radius:12px;padding:14px 16px;cursor:pointer;color:inherit;text-decoration:none;font:inherit;width:100%}
+.rphome-card:hover,.rphome-card:focus-visible{border-color:#2563eb;box-shadow:0 2px 8px rgba(37,99,235,.12);outline:none}
+.rphome-ic{font-size:22px;line-height:1;flex:none;width:30px;text-align:center}
+.rphome-t{display:block;font-weight:600;font-size:15px;color:#1e3a8a;margin-bottom:3px}
+.rphome-a{display:block;font-size:13px;color:#475569;line-height:1.35}
+.rphome-lock{display:block;font-size:11px;color:#94a3b8;margin-top:4px}
+
+/* The report screen: back link + its views in one row with the filters. */
+.atsrep .rpv-back{background:none;border:none;color:#2563eb;cursor:pointer;padding:0;font:inherit;font-size:13px;margin-bottom:4px}
+.atsrep .rpv-views{display:inline-flex;gap:4px;flex-wrap:wrap;margin-right:8px}
+.atsrep .rpv-view{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:4px 12px;font-size:13px;cursor:pointer;color:#1f2a44}
+.atsrep .rpv-view.on{background:#eff6ff;border-color:#2563eb;color:#1e3a8a;font-weight:600}
+.atsrep .rpv-right{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.atsrep .statitem .rpb-delta{display:block;margin:2px 0 0}
+.atsrep .rpv-tip{color:#64748b;font-size:12px;margin-top:10px}
+
+@media (max-width:640px){
+  .rphome-grid{grid-template-columns:1fr}
+  .atsrep .rpv-right{width:100%}
+}

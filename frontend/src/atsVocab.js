@@ -36,24 +36,26 @@ export const EXTRA_STAGE_CODES = ['REJECTED', 'HOLD'];
 export const ALL_STAGE_CODES = [...STAGE_CODES, ...EXTRA_STAGE_CODES];
 
 export const STAGE_LABELS = {
+  // Everyday words (simplicity pass 2026-10-03, spec section 2): "Check by
+  // recruiter / team lead" instead of "Recruiter Review / TL Review". Labels
+  // only — the stage CODES (keys) are what the API and the DB use.
   NEW: 'New',
-  AI_INTERVIEW_REQUIRED: 'AI Interview Required',
-  AI_INTERVIEW_SCHEDULED: 'AI Interview Scheduled',
-  AI_INTERVIEW_COMPLETED: 'AI Interview Completed',
-  RECRUITER_REVIEW: 'Recruiter Review',
-  RECRUITER_APPROVED: 'Recruiter Approved',
-  TL_REVIEW: 'TL Review',
-  // §31 one terminology: the BDE's stage reads 'BDE Review' everywhere.
-  WITH_BDE: 'BDE Review',
-  BDE_APPROVED: 'BDE Approved',
-  SHARED_WITH_CLIENT: 'Shared with Client',
-  CLIENT_REVIEW: 'Client Review',
-  CLIENT_SHORTLISTED: 'Client Shortlisted',
-  INTERVIEW_SCHEDULED: 'Interview Scheduled',
-  INTERVIEW_COMPLETED: 'Interview Completed',
+  AI_INTERVIEW_REQUIRED: 'AI interview needed',
+  AI_INTERVIEW_SCHEDULED: 'AI interview booked',
+  AI_INTERVIEW_COMPLETED: 'AI interview done',
+  RECRUITER_REVIEW: 'Check by recruiter',
+  RECRUITER_APPROVED: 'Approved by recruiter',
+  TL_REVIEW: 'Check by team lead',
+  WITH_BDE: 'Check by client manager',
+  BDE_APPROVED: 'Ready to send to client',
+  SHARED_WITH_CLIENT: 'Sent to client',
+  CLIENT_REVIEW: 'Client checking',
+  CLIENT_SHORTLISTED: 'Client shortlisted',
+  INTERVIEW_SCHEDULED: 'Interview booked',
+  INTERVIEW_COMPLETED: 'Interview done',
   SELECTED: 'Selected',
   OFFER: 'Offer',
-  OFFER_ACCEPTED: 'Offer Accepted',
+  OFFER_ACCEPTED: 'Offer accepted',
   JOINED: 'Joined',
   HIRED: 'Hired',
   REJECTED: 'Rejected',
@@ -68,12 +70,12 @@ export function stageLabel(code) {
 // WORKFLOW_TERMS. Dashboard, candidate page, notifications, reports and
 // pending actions all say exactly these words.
 export const WORKFLOW_TERMS = {
-  RECRUITER_REVIEW: 'Recruiter Review',
-  TL_REVIEW: 'TL Review',
-  BDE_REVIEW: 'BDE Review',
-  CLIENT_REVIEW: 'Client Review',
-  INTERVIEW_FEEDBACK: 'Interview Feedback',
-  JOINING_CONFIRMATION: 'Joining Confirmation',
+  RECRUITER_REVIEW: 'Check by recruiter',
+  TL_REVIEW: 'Check by team lead',
+  BDE_REVIEW: 'Check by client manager',
+  CLIENT_REVIEW: 'Client checking',
+  INTERVIEW_FEEDBACK: 'Interview feedback',
+  JOINING_CONFIRMATION: 'Waiting to join',
 };
 const PENDING_TERM_OF_STAGE = {
   NEW: WORKFLOW_TERMS.RECRUITER_REVIEW,
@@ -106,10 +108,10 @@ export function pendingTermOfStage(code) {
 export const STATUS_TONE = { green: 'active', amber: 'pending', red: 'rejected', blue: 'new' };
 const GREEN_WORDS = ['active', 'open', 'completed', 'complete', 'selected', 'joined', 'hired', 'approved', 'accepted',
   'offer accepted', 'verified', 'signed', 'paid', 'invoiced', 'feedback submitted'];
-const AMBER_WORDS = ['pending', 'hold', 'on hold', 'waiting', 'agreement pending', 'agreement check', 'draft',
+const AMBER_WORDS = ['pending', 'hold', 'on hold', 'waiting', 'waiting to join','agreement pending', 'agreement check', 'draft',
   'due today', 'rescheduled', 'pending feedback', 'offer released', 'not scheduled', 'billing pending', 'required',
   'submitted', 'sent', 'viewed', 'client confirmation pending', 'manual review requested'];
-const RED_WORDS = ['overdue', 'rejected', 'cancelled', 'canceled', 'no show', 'expired', 'declined', 'offer declined',
+const RED_WORDS = ['overdue', 'late', 'rejected', 'cancelled', 'canceled', 'no show', 'expired', 'declined', 'offer declined',
   'dropped', 'failed'];
 export function toneClass(word) {
   const w = String(word || '').trim().toLowerCase();
@@ -222,10 +224,10 @@ export const INTERVIEW_STATUS_LABELS = {
   CONFIRMED: 'Confirmed',
   STARTED: 'Started',
   COMPLETED: 'Completed',
-  PENDING_FEEDBACK: 'Pending Feedback',
-  FEEDBACK_SUBMITTED: 'Feedback Submitted',
+  PENDING_FEEDBACK: 'Waiting for feedback',
+  FEEDBACK_SUBMITTED: 'Feedback in',
   CANCELLED: 'Cancelled',
-  NO_SHOW: 'No Show',
+  NO_SHOW: 'No show',
   RESCHEDULED: 'Rescheduled',
 };
 
@@ -257,7 +259,7 @@ export const INTERVIEW_TYPES = ['Client Interview', 'Recruiter Interview', 'TL I
 // shown apart from it (none of them rejects the candidate).
 export const INTERVIEW_LIFECYCLE = [
   ['SHORTLISTED', 'Client Shortlisted'], ['SCHEDULED', 'Scheduled'], ['CONFIRMED', 'Confirmed'],
-  ['STARTED', 'Started'], ['COMPLETED', 'Completed'], ['FEEDBACK_PENDING', 'Feedback Pending'],
+  ['STARTED', 'Started'], ['COMPLETED', 'Completed'], ['FEEDBACK_PENDING', 'Waiting for feedback'],
   ['SELECTED', 'Selected'], ['REJECTED', 'Rejected'], ['HOLD', 'Hold'],
 ];
 export const INTERVIEW_EXCEPTIONS = [['CANCELLED', 'Cancelled'], ['NO_SHOW', 'No Show'], ['RESCHEDULED', 'Rescheduled']];
@@ -266,37 +268,37 @@ export const INTERVIEW_EXCEPTIONS = [['CANCELLED', 'Cancelled'], ['NO_SHOW', 'No
 // in backend/src/utils/atsVocab.js (the server sends it as `nextAction` on
 // every list row); this copy is for screens that only hold a stage code.
 export const NEXT_ACTION_BY_STAGE = {
-  NEW: 'Review Candidate',
-  AI_INTERVIEW_REQUIRED: 'Send AI Interview',
-  AI_INTERVIEW_SCHEDULED: 'Await AI Interview',
-  AI_INTERVIEW_COMPLETED: 'Review Candidate',
-  RECRUITER_REVIEW: 'Send to TL',
-  RECRUITER_APPROVED: 'Send to TL',
+  NEW: 'Check candidate',
+  AI_INTERVIEW_REQUIRED: 'Send AI interview',
+  AI_INTERVIEW_SCHEDULED: 'Wait for AI interview',
+  AI_INTERVIEW_COMPLETED: 'Check candidate',
+  RECRUITER_REVIEW: 'Send to team lead',
+  RECRUITER_APPROVED: 'Send to team lead',
   TL_REVIEW: 'Approve / Reject / Hold',
   // 2026-09-29 workflow: BDE Review → Client Submission → Client Decision.
-  WITH_BDE: 'Submit to Client',
-  BDE_APPROVED: 'Submit to Client',
-  SHARED_WITH_CLIENT: 'Follow up for Client Decision',
-  CLIENT_REVIEW: 'Follow up for Client Decision',
-  CLIENT_SHORTLISTED: 'Schedule Client Interview',
-  INTERVIEW_SCHEDULED: 'Confirm Interview',
-  INTERVIEW_COMPLETED: 'Record Feedback',
-  SELECTED: 'Prepare / Send Offer',
-  OFFER: 'Follow Up Offer',
-  OFFER_ACCEPTED: 'Confirm Joining',
-  JOINED: 'Raise Invoice / Track Guarantee',
+  WITH_BDE: 'Send to client',
+  BDE_APPROVED: 'Send to client',
+  SHARED_WITH_CLIENT: 'Ask client for a decision',
+  CLIENT_REVIEW: 'Ask client for a decision',
+  CLIENT_SHORTLISTED: 'Book client interview',
+  INTERVIEW_SCHEDULED: 'Confirm interview',
+  INTERVIEW_COMPLETED: 'Add feedback',
+  SELECTED: 'Send offer',
+  OFFER: 'Follow up offer',
+  OFFER_ACCEPTED: 'Confirm joining',
+  JOINED: 'Raise invoice / watch guarantee',
   HIRED: 'No Action',
-  HOLD: 'Review Hold',
+  HOLD: 'Check the hold',
   REJECTED: 'No Action',
 };
 // Mirrors backend NEXT_ACTION_INTERNAL — the internal chain's own words.
 export const NEXT_ACTION_INTERNAL = {
-  NEW: 'HR Review',
-  RECRUITER_REVIEW: 'Send to Dept Head / TL',
-  RECRUITER_APPROVED: 'Send to Dept Head / TL',
-  TL_REVIEW: 'Approve → Interview / Reject',
-  SELECTED: 'Prepare / Send Offer',
-  JOINED: 'Create HRMS Employee',
+  NEW: 'Check by HR',
+  RECRUITER_REVIEW: 'Send to dept head / team lead',
+  RECRUITER_APPROVED: 'Send to dept head / team lead',
+  TL_REVIEW: 'Approve for interview / Reject',
+  SELECTED: 'Send offer',
+  JOINED: 'Add as employee',
 };
 export function nextActionForStage(stage, { internal = false } = {}) {
   if (internal && NEXT_ACTION_INTERNAL[stage]) return NEXT_ACTION_INTERNAL[stage];
@@ -387,7 +389,7 @@ export const CANDIDATE_WORK_MODES = ['Work From Office', 'Hybrid', 'Remote'];
 export const CANDIDATE_EDUCATION = ['B.Tech', 'B.E', 'MCA', 'MBA', 'M.Tech', 'B.Sc', 'M.Sc', 'Diploma', 'Other'];
 
 export const CANDIDATE_SOURCES = [
-  'Direct', 'Referral', 'Job Portal', 'Naukri', 'Indeed', 'Shine', 'LinkedIn', 'TeamLink Website', 'Social Media',
+  'Direct', 'Referral', 'Campus', 'Job Portal', 'Naukri', 'Indeed', 'Shine', 'LinkedIn', 'TeamLink Website', 'Social Media',
 ];
 export const CANDIDATE_FIRST_SOURCES = ['Direct', 'Referral', 'Job Portal', 'Naukri', 'Indeed', 'LinkedIn'];
 export const CANDIDATE_FILTER_SOURCES = [
@@ -518,10 +520,13 @@ export const REJECTED_BY_LABEL = { Client: 'Client', Internal: 'TeamLink', Candi
 export const REJECTION_REASONS_BY_SIDE = {
   Client: [
     'Skills Mismatch', 'Insufficient Experience', 'Interview Performance', 'Communication',
-    'Salary Expectation', 'Not Shortlisted', 'Not Selected', 'Position Filled', 'Position Closed', 'Other',
+    'Salary Expectation', 'Location / Relocation', 'Notice Period', 'Culture Fit',
+    'Not Shortlisted', 'Not Selected', 'Position Filled', 'Position Closed', 'Other',
   ],
   Internal: [
-    'Profile Not Matching', 'Not Eligible', 'Failed Screening', 'Low AI Interview Score',
+    'Profile Not Matching', 'Skills Mismatch', 'Insufficient Experience', 'Communication',
+    'Salary Expectation', 'Location / Relocation', 'Notice Period', 'Culture Fit',
+    'Not Eligible', 'Failed Screening', 'Low AI Interview Score',
     'Duplicate Profile', 'Background / Documentation', 'Other',
   ],
   Candidate: [
@@ -651,16 +656,16 @@ export const WORKFLOW_STAGE_GROUPS = {
   AI_INTERVIEW_PENDING: { label: 'AI Interview', side: 'pre', hiring: 'any', stages: ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED'], rule: 'AI_INTERVIEW_PENDING' },
   AI_SCORE_READY: { label: 'AI Interview Score', side: 'pre', hiring: 'any', stages: ['AI_INTERVIEW_COMPLETED'] },
   SCREENING_PENDING: { label: 'Screening pending', side: 'pre', hiring: 'any', stages: ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'] },
-  RECRUITER_REVIEW_PENDING: { label: 'Recruiter Review (ready to send to ATS)', side: 'pre', hiring: 'any', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  RECRUITER_REVIEW_PENDING: { label: 'Check by recruiter (ready to send to ATS)',side: 'pre', hiring: 'any', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
   PRE_ATS_REJECTED: { label: 'Screened out in the Job Portal', side: 'pre', hiring: 'any', stages: ['REJECTED'] },
   SENT_TO_ATS: { label: 'Sent to ATS', side: 'ats', hiring: 'any', stages: null, rule: 'SENT_TO_ATS', timestampField: 'portalImportedAt' },
 
   // ---- Client hiring (ATS) -------------------------------------------------
-  RECRUITER_REVIEW: { label: 'Recruiter Review', side: 'ats', hiring: 'client', stages: REVIEW_STAGES },
-  TL_REVIEW: { label: 'TL Review', side: 'ats', hiring: 'client', stages: ['TL_REVIEW'] },
-  TL_RETURNED: { label: 'Returned by TL (changes needed)', side: 'ats', hiring: 'any', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'], rule: 'TL_RETURNED' },
-  BDE_READY_TO_SUBMIT: { label: 'BDE Review', side: 'ats', hiring: 'client', stages: ['WITH_BDE', 'BDE_APPROVED'] },
-  CLIENT_SUBMISSION: { label: 'Client Submission', side: 'ats', hiring: 'client', stages: ['SHARED_WITH_CLIENT'] },
+  RECRUITER_REVIEW: { label: 'Check by recruiter', side: 'ats', hiring: 'client', stages: REVIEW_STAGES },
+  TL_REVIEW: { label: 'Check by team lead', side: 'ats', hiring: 'client', stages: ['TL_REVIEW'] },
+  TL_RETURNED: { label: 'Sent back by team lead (changes needed)', side: 'ats', hiring: 'any', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'], rule: 'TL_RETURNED' },
+  BDE_READY_TO_SUBMIT: { label: 'Check by client manager', side: 'ats', hiring: 'client', stages: ['WITH_BDE', 'BDE_APPROVED'] },
+  CLIENT_SUBMISSION: { label: 'Sent to client',side: 'ats', hiring: 'client', stages: ['SHARED_WITH_CLIENT'] },
   CLIENT_DECISION_PENDING: { label: 'Client Decision pending', side: 'ats', hiring: 'client', stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'] },
   CLIENT_DECISION: { label: 'Client Decision', side: 'ats', hiring: 'client', stages: ['CLIENT_REVIEW', 'CLIENT_SHORTLISTED'] },
   INTERVIEW: { label: 'Interview', side: 'ats', hiring: 'client', stages: ['INTERVIEW_SCHEDULED'] },
@@ -748,10 +753,10 @@ export function inWorkflowGroup(id, a, ctx = {}) {
 // The flow diagram — boxes in order, each naming the group it counts.
 export const WORKFLOW_FLOW = {
   requirement: [
-    { id: 'client_requirement', label: 'Client Requirement', count: 'requirements.client' },
+    { id: 'client_requirement', label: 'Client job', count: 'requirements.client' },
     { id: 'job_posting', label: 'Job Posting', count: 'requirements.published' },
     { id: 'multiple_sources', label: 'Multiple Sources', count: 'sources' },
-    { id: 'internal_requirement', label: 'Internal Requirement', count: 'requirements.internal' },
+    { id: 'internal_requirement', label: 'Internal job', count: 'requirements.internal' },
     { id: 'hr_sourcing', label: 'HR Sourcing', count: 'hrSourced' },
   ],
   pre: [
@@ -760,14 +765,14 @@ export const WORKFLOW_FLOW = {
     { id: 'resume_score', label: 'Resume Parsing / Score', group: 'RESUME_SCORE_PENDING' },
     { id: 'ai_interview', label: 'AI Interview', group: 'AI_INTERVIEW_PENDING' },
     { id: 'ai_score', label: 'AI Interview Score', group: 'AI_SCORE_READY' },
-    { id: 'recruiter_review_pre', label: 'Recruiter Review', group: 'RECRUITER_REVIEW_PENDING' },
+    { id: 'recruiter_review_pre', label: 'Check by recruiter', group: 'RECRUITER_REVIEW_PENDING' },
     { id: 'send_to_ats', label: 'Send to ATS', group: 'SENT_TO_ATS' },
   ],
   client: [
-    { id: 'recruiter_review', label: 'Recruiter Review', group: 'RECRUITER_REVIEW' },
-    { id: 'tl_review', label: 'TL Review', group: 'TL_REVIEW' },
-    { id: 'bde_review', label: 'BDE Review', group: 'BDE_READY_TO_SUBMIT' },
-    { id: 'client_submission', label: 'Client Submission', group: 'CLIENT_SUBMISSION' },
+    { id: 'recruiter_review', label: 'Check by recruiter', group: 'RECRUITER_REVIEW' },
+    { id: 'tl_review', label: 'Check by team lead', group: 'TL_REVIEW' },
+    { id: 'bde_review', label: 'Check by client manager', group: 'BDE_READY_TO_SUBMIT' },
+    { id: 'client_submission', label: 'Sent to client', group: 'CLIENT_SUBMISSION' },
     { id: 'client_decision', label: 'Client Decision', group: 'CLIENT_DECISION' },
     { id: 'interview', label: 'Interview', group: 'INTERVIEW' },
     { id: 'feedback', label: 'Feedback', group: 'FEEDBACK_PENDING' },
@@ -796,10 +801,10 @@ export const WORKFLOW_FLOW = {
 // Stage names on an INTERNAL hire read the internal chain's words: the
 // recruiter's review is HR's, the TL's approval is the Dept Head / TL's.
 export const INTERNAL_STAGE_LABELS = {
-  RECRUITER_REVIEW: 'HR Review',
-  RECRUITER_APPROVED: 'HR Review',
-  TL_REVIEW: 'Dept Head / TL Review',
-  HIRED: 'HRMS Employee Created',
+  RECRUITER_REVIEW: 'Check by HR',
+  RECRUITER_APPROVED: 'Check by HR',
+  TL_REVIEW: 'Check by dept head / team lead',
+  HIRED: 'Employee record made',
 };
 export function stageLabelFor(code, { internal = false } = {}) {
   if (internal && INTERNAL_STAGE_LABELS[code]) return INTERNAL_STAGE_LABELS[code];

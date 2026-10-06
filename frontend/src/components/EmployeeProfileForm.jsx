@@ -260,7 +260,10 @@ export default function EmployeeProfileForm({
             <span>Reporting Manager</span>
             <Combo value={form.reportingManagerId || ''} onChange={set('reportingManagerId')}>
               <option value="">No reporting manager</option>
-              {(hrOptions.reportingManagers || []).filter((m) => m.id !== employee?.id).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {(hrOptions.reportingManagers || []).filter((m) => m.id !== employee?.id).map((m) => <option key={m.id} value={m.id}>{m.label || m.name}</option>)}
+              {/* The manager on file stays pickable even if they have since left. */}
+              {form.reportingManagerId && employee?.reportingManager && form.reportingManagerId === employee.reportingManagerId && !(hrOptions.reportingManagers || []).some((m) => m.id === form.reportingManagerId)
+                && <option value={form.reportingManagerId}>{employee.reportingManager.name} (no longer active)</option>}
             </Combo>
           </label>
         ) : shown('reportingManager', 'Reporting Manager')}

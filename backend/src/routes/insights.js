@@ -269,7 +269,7 @@ async function attendanceRows(req, reach, period) {
   const roll = await D.rollOf(prisma, await scopedEmployees(req, reach));
   const employees = roll.employees.filter((e) => D.onRolls(e, period.from, period.to, roll.lastDayOf));
   const cfg = await hrConfig();
-  const { days } = await D.loadDays(prisma, { employees, from: period.from, to: period.to, cfg, lastDayOf: roll.lastDayOf });
+  const { days } = await D.loadDays(prisma, { employees, from: period.from, to: period.to, cfg, lastDayOf: roll.lastDayOf, preview: true });
   return employees.map((e) => {
     const rows = days(e).filter((d) => !['Upcoming', 'Not Joined', 'Left'].includes(d.status));
     const summary = D.summarise(rows);
@@ -278,7 +278,7 @@ async function attendanceRows(req, reach, period) {
   });
 }
 
-const PRESENTISH = ['Present', 'Late'];
+const PRESENTISH = ['Present', 'Late', 'Early Logout'];
 async function attendanceInsights(req, reach, period) {
   return buildAttendance(await attendanceRows(req, reach, period), period);
 }
@@ -291,7 +291,8 @@ function buildAttendance(per, period) {
   const allDays = per.flatMap((p) => p.rows.map((d) => ({ ...d, department: p.employee.department })));
   const S = ['Present', 'Half Day', 'Absent', 'On Leave', 'Missing punch'];
   const seriesOf = (d) => (PRESENTISH.includes(d.status) ? 'Present'
-    : d.status === 'Missing Check-In' || d.status === 'Missing Check-Out' ? 'Missing punch' : d.status);
+    : d.status === 'Missing Check-In' || d.status === 'Missing Check-Out' ? 'Missing punch'
+      : String(d.status).startsWith('Half Day') ? 'Half Day' : d.status === 'Half Leave + Absent' ? 'On Leave' : d.status === 'Leave Under Review' ? 'Absent' : d.status);
   const counted = allDays.filter((d) => d.counted);
   return {
     employees: per.length,
@@ -672,7 +673,7 @@ async function timesheetData(req, reach, period) {
     orderBy: { name: 'asc' },
   });
   const cfg = await hrConfig();
-  const { days } = await D.loadDays(prisma, { employees, from: period.from, to: period.to, cfg });
+  const { days } = await D.loadDays(prisma, { employees, from: period.from, to: period.to, cfg, preview: true });
   const visible = await tasksRoute.visibleWhere(req.user);
   const tasks = await prisma.task.findMany({
     where: {
@@ -1056,7 +1057,7 @@ router.get('/employee/:id/summary', guarded(async (req, res) => {
   const period = periodFor(req);
   checkDays(period);
   const cfg = await hrConfig();
-  const { days } = await D.loadDays(prisma, { employees: [e], from: period.from, to: period.to, cfg });
+  const { days } = await D.loadDays(prisma, { employees: [e], from: period.from, to: period.to, cfg, preview: true });
   const att = D.summarise(days(e).filter((d) => !['Upcoming', 'Not Joined'].includes(d.status)));
   const [leave, courses, assets, slips] = await Promise.all([
     prisma.leaveRequest.findMany({ where: { employeeId: e.id, fromDate: { lte: period.to }, toDate: { gte: period.from } } }),

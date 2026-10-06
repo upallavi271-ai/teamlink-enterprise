@@ -402,7 +402,28 @@ async function raiseAutoFollowUp({ application, requirement, user, stage }) {
   });
 }
 
+// LEAVING THE CLIENT'S REVIEW closes the "Chase the client for their review"
+// task: the client answered (e2e gap 8, 2026-10-03). Used by the pipeline's
+// own move (routes/applications.js) and the client's portal decision
+// (routes/jobPortal.js). Never fatal for the caller.
+const CLIENT_REVIEW_STAGES = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'];
+async function closeClientChaseOnLeave({
+  applicationId, fromStage, toStage, user = null,
+}) {
+  if (!CLIENT_REVIEW_STAGES.includes(fromStage) || CLIENT_REVIEW_STAGES.includes(toStage)) return 0;
+  const r = await prisma.applicationFollowUp.updateMany({
+    where: { applicationId, completedAt: null, purpose: AUTO_FOLLOWUPS.SHARED_WITH_CLIENT.purpose },
+    data: {
+      completedAt: new Date(),
+      completedById: user ? user.id : null,
+      completedNote: `Closed automatically — the client answered (${stageLabel(toStage)}).`,
+    },
+  });
+  return r.count;
+}
+
 module.exports = {
+  closeClientChaseOnLeave,
   FOLLOWUP_STATUSES,
   CONTACT_MODES,
   CALL_RESULTS,

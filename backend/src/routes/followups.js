@@ -21,7 +21,7 @@ const { stampFor } = require('../utils/positions');
 const { leadsOfPosition } = require('../utils/positionScope');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const {
-  applicationWhere, isAssignedTo, scopeOf, scopeLabel, OUT_OF_SCOPE,
+  applicationWhere, isAssignedTo, atsScopeOf: scopeOf, scopeLabel, OUT_OF_SCOPE,
 } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
@@ -677,6 +677,184 @@ router.delete('/purposes/:id', async (req, res) => {
   await prisma.contactPurpose.delete({ where: { id: row.id } });
   await logAudit({ userId: req.user.id, action: 'Contact purpose removed', entity: 'ContactPurpose', entityId: row.id, fromValue: `${row.audience}: ${row.label}` });
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// QUICK LOG (spec 2026-10-03 C1) — the Call / Mail / WhatsApp buttons.
+//
+// Clicking Call (tel:), Mail (mailto:) or WhatsApp (wa.me) on a candidate
+// records the attempt AT ONCE, with a sensible default outcome, so the
+// recruiter never types it again; the small prompt that follows only lets them
+// change the outcome (PATCH below). It writes the SAME CandidateMessage row the
+// Contact panel writes (template QUICK_LOG, trigger Manual), and moves the open
+// follow-up's "last contacted / by what / outcome" exactly as the panel does —
+// no second store. Nothing is transmitted: the call / mail / WhatsApp happens
+// on the recruiter's own device.
+// ---------------------------------------------------------------------------
+const FV = require('../utils/followupVisibility');
+
+const QUICK_CHANNELS = { Call: 'Call', Mail: 'Email', Email: 'Email', WhatsApp: 'WhatsApp' };
+const QUICK_OUTCOMES = {
+  Call: ['Answered', 'Interested', 'Not interested', 'Not picked', 'Busy', 'Switched off', 'Wrong number', 'Call back later'],
+  Email: ['Sent', 'Replied', 'Interested', 'Not interested', 'No response'],
+  WhatsApp: ['Sent', 'Replied', 'Interested', 'Not interested', 'No response'],
+};
+const QUICK_DEFAULT = { Call: 'Answered', Email: 'Sent', WhatsApp: 'Sent' };
+// The follow-up record's own vocabulary (utils/followups.js CALL_RESULTS /
+// FOLLOWUP_OUTCOMES), so the Follow-ups screens and reports read one word list.
+const OUTCOME_ON_FOLLOWUP = {
+  Answered: 'Answered', Interested: 'Interested', 'Not interested': 'Not Interested', 'Not picked': 'Not Answered',
+  Busy: 'Busy', 'Switched off': 'Switched Off', 'Wrong number': 'Wrong Number', 'Call back later': 'Call Back',
+  Replied: 'Answered', 'No response': 'No Response', Sent: null,
+};
+const QUICK_EDIT_HOURS = 24;
+
+function internalLogin(user) {
+  const s = scopeOf(user);
+  return !['CLIENT', 'CANDIDATE'].includes(s.role) && !['CLIENT', 'CANDIDATE'].includes(s.atsRole);
+}
+
+async function touchForQuickLog(candidateId, applicationId, mode, outcome) {
+  const mapped = OUTCOME_ON_FOLLOWUP[outcome];
+  const where = { candidateId, completedAt: null, ...(applicationId ? { applicationId } : {}) };
+  const r = await prisma.applicationFollowUp.updateMany({
+    where,
+    data: { lastContactedAt: new Date(), contactMode: mode, ...(mapped ? { outcome: mapped } : {}) },
+  });
+  return r.count;
+}
+
+router.get('/quick-log/options', (req, res) => {
+  res.json({ outcomes: QUICK_OUTCOMES, defaults: QUICK_DEFAULT, editHours: QUICK_EDIT_HOURS });
+});
+
+router.post('/quick-log', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res, next) => {
+  try {
+    if (!internalLogin(req.user)) return res.status(403).json({ error: 'Not available to this login' });
+    const b = req.body || {};
+    const channel = QUICK_CHANNELS[String(b.channel || '').trim()];
+    if (!channel) return res.status(400).json({ error: 'channel must be Call, Mail or WhatsApp.' });
+    const { candidateWhere } = require('../utils/scope'); // eslint-disable-line global-require
+    const candidate = await prisma.candidate.findFirst({
+      where: { AND: [{ id: String(b.candidateId || '') }, candidateWhere(req.user)] },
+      select: { id: true, name: true, phone: true, email: true },
+    });
+    if (!candidate) return res.status(403).json(OUT_OF_SCOPE);
+    let applicationId = b.applicationId ? String(b.applicationId) : null;
+    if (applicationId) {
+      const app = await prisma.application.findFirst({
+        where: { AND: [{ id: applicationId, candidateId: candidate.id }, applicationWhere(req.user)] },
+        select: { id: true },
+      });
+      if (!app) applicationId = null; // not theirs to name — logged against the person
+    }
+    const outcome = b.outcome ? String(b.outcome).trim() : QUICK_DEFAULT[channel];
+    if (!QUICK_OUTCOMES[channel].includes(outcome)) {
+      return res.status(400).json({ error: `Outcome must be one of: ${QUICK_OUTCOMES[channel].join(', ')}.` });
+    }
+    const recipient = channel === 'Email' ? candidate.email : candidate.phone;
+    if (!recipient) return res.status(400).json({ error: `No ${channel === 'Email' ? 'email address' : 'phone number'} on this candidate.` });
+    // eslint-disable-next-line global-require
+    const { senderIdentity } = require('../utils/candidateComms');
+    const via = { Call: 'Call made from the sender\'s own phone / dialler (tel: link)', Email: 'Opened in the sender\'s own mail app (mailto: link) — the app cannot see whether it was sent', WhatsApp: 'Opened in the sender\'s own WhatsApp (wa.me link) — the app cannot see whether it was sent' }[channel];
+    const row = await prisma.candidateMessage.create({
+      data: {
+        candidateId: candidate.id,
+        applicationId,
+        channel,
+        template: 'QUICK_LOG',
+        templateLabel: String(b.purpose || '').trim().slice(0, 120) || 'Follow-up',
+        trigger: 'Manual',
+        recipient,
+        body: outcome,
+        status: channel === 'Call' ? 'LOGGED' : 'OPENED_ON_DEVICE',
+        statusDetail: via,
+        ...(await senderIdentity(req.user)),
+      },
+    });
+    const action = channel === 'Call' ? `Called candidate — ${outcome}`
+      : `${channel} to candidate (opened on the sender's device) — ${outcome}`;
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action, entity: 'Candidate', entityId: candidate.id, toValue: 'Quick log',
+    });
+    const followUpsTouched = await touchForQuickLog(candidate.id, applicationId, channel, outcome);
+    FV.touchContactIndex();
+    return res.status(201).json({
+      id: row.id, channel, outcome, outcomes: QUICK_OUTCOMES[channel], default: QUICK_DEFAULT[channel], applicationId, followUpsTouched, at: row.createdAt,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Change the outcome of a quick log — the sender only, within 24 hours.
+router.patch('/quick-log/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res, next) => {
+  try {
+    const row = await prisma.candidateMessage.findUnique({ where: { id: req.params.id } });
+    if (!row || row.template !== 'QUICK_LOG') return res.status(404).json({ error: 'Quick log not found' });
+    if (row.senderUserId !== req.user.id) return res.status(403).json({ error: 'Only the person who made the contact can change its outcome.' });
+    if (Date.now() - new Date(row.createdAt).getTime() > QUICK_EDIT_HOURS * 3600000) {
+      return res.status(400).json({ error: `The outcome can be changed for ${QUICK_EDIT_HOURS} hours after the contact.` });
+    }
+    const outcome = String((req.body && req.body.outcome) || '').trim();
+    if (!(QUICK_OUTCOMES[row.channel] || []).includes(outcome)) {
+      return res.status(400).json({ error: `Outcome must be one of: ${(QUICK_OUTCOMES[row.channel] || []).join(', ')}.` });
+    }
+    if (outcome === row.body) return res.json({ id: row.id, channel: row.channel, outcome });
+    await prisma.candidateMessage.update({ where: { id: row.id }, data: { body: outcome } });
+    const mapped = OUTCOME_ON_FOLLOWUP[outcome];
+    if (mapped) {
+      await prisma.applicationFollowUp.updateMany({
+        where: { candidateId: row.candidateId, completedAt: null, ...(row.applicationId ? { applicationId: row.applicationId } : {}) },
+        data: { outcome: mapped },
+      });
+    }
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Follow-up outcome changed', entity: 'Candidate', entityId: row.candidateId,
+      fromValue: `${row.channel}: ${row.body}`, toValue: `${row.channel}: ${outcome}`,
+    });
+    FV.touchContactIndex();
+    return res.json({ id: row.id, channel: row.channel, outcome });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// FOLLOW-UP DUE RULES PER STAGE — the editable settings table (Admin). Until
+// the user confirms them they are SUGGESTED and nothing reads them; see
+// utils/followupVisibility.js. Everyone who sees follow-ups may read them.
+// ---------------------------------------------------------------------------
+const rulesAdmin = (user) => scopeOf(user).global === true; // Super Admin / Admin (ATS)
+
+router.get('/rules', async (req, res, next) => {
+  try {
+    return res.json({ ...(await FV.rulesTable()), canEdit: rulesAdmin(req.user) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.put('/rules', async (req, res, next) => {
+  try {
+    if (!rulesAdmin(req.user)) return res.status(403).json({ error: 'Only a Super Admin or Admin can change the follow-up due rules.' });
+    const out = await FV.saveRules(req.user, req.body || {});
+    if (out.error) return res.status(400).json({ error: out.error });
+    return res.json({ ...out.table, canEdit: true });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// "N candidates not followed up yet" — the caller's own scope (the ATS
+// dashboard's line; utils/followupVisibility.js notFollowedUpSummary).
+router.get('/not-followed-summary', async (req, res, next) => {
+  try {
+    if (!internalLogin(req.user)) return res.status(403).json({ error: 'Not available to this login' });
+    return res.json(await FV.notFollowedUpSummary(req.user, { sample: Math.min(Number(req.query.sample) || 0, 50) }));
+  } catch (err) {
+    return next(err);
+  }
 });
 
 module.exports = router;

@@ -1,0 +1,20 @@
+/* components/accounts/ScrollSync.jsx — synced top + bottom horizontal bars
+   (Accounts spec S1.1). Scoped under .tlss. */
+.tlss{position:relative;min-width:0;max-width:100%}
+.tlss-body{overflow-x:auto;overflow-y:hidden;max-width:100%;scrollbar-width:none;-ms-overflow-style:none}
+.tlss-body::-webkit-scrollbar{display:none;height:0}
+.tlss-bar{overflow-x:scroll;overflow-y:hidden;height:14px;background:#eef2f8;border-radius:7px;z-index:6;cursor:pointer}
+.tlss-bar[hidden]{display:none}
+.tlss-inner{height:1px}
+.tlss-top{position:sticky;top:var(--tlss-top,0px);margin-bottom:4px;box-shadow:0 2px 4px rgba(22,32,43,.06)}
+.tlss-bot{position:sticky;bottom:0;margin-top:4px;box-shadow:0 -2px 4px rgba(22,32,43,.06)}
+.tlss-bar::-webkit-scrollbar{height:14px}
+.tlss-bar::-webkit-scrollbar-track{background:#e4eaf4;border-radius:7px}
+.tlss-bar::-webkit-scrollbar-thumb{background:#8ea0bd;border-radius:7px;border:3px solid #e4eaf4}
+.tlss-bar::-webkit-scrollbar-thumb:hover{background:#1f3864}
+@-moz-document url-prefix(){.tlss-bar{scrollbar-width:auto;scrollbar-color:#8ea0bd #e4eaf4}}
+/* The lifted header / TOTAL rows paint over the rows they pass. */
+.tlss-body thead th{position:relative;z-index:3;will-change:transform}
+.tlss-body tfoot td,.tlss-body tfoot th{position:relative;z-index:3;will-change:transform}
+.tlss-body thead.tlss-lifted th{box-shadow:0 3px 6px rgba(22,32,43,.12)}
+.tlss-body tfoot.tlss-lifted td,.tlss-body tfoot.tlss-lifted th{box-shadow:0 -3px 6px rgba(22,32,43,.12)}

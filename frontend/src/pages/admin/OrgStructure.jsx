@@ -53,7 +53,7 @@ export default function OrgStructure() {
   }
 
   async function saveAdd() {
-    const ok = await run(() => api.post('/admin/org-structure', adding), 'Role added to the approval chain.');
+    const ok = await run(() => api.post('/admin/org-structure', adding), `${adding.name} added just below Super Admin. It sees new requests now — to make it approve them, set it to "Required approver" in Leave → Approval Workflow Levels.`);
     if (ok) setAdding(null);
   }
 
@@ -82,9 +82,8 @@ export default function OrgStructure() {
       <div className="page-head">
         <div><h1>Organization Structure</h1>
           <div className="page-sub">
-            Your office hierarchy and approval workflow. Requests — leave, attendance, alerts, issues —
-            escalate top-to-bottom through this chain. Drag a role to reorder the workflow. Roles can be
-            edited or paused, but not deleted.
+            Who approves requests (leave, attendance fixes, resignations). Add a role and it joins the
+            approval chain. Pause a role and it stops approving. Remove a role and it leaves the chain.
           </div></div>
       </div>
 
@@ -94,7 +93,8 @@ export default function OrgStructure() {
       <div className="panel panel-pad">
         <h3 style={{ fontSize: 14, marginBottom: 4 }}>Approval &amp; escalation workflow</h3>
         <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 16 }}>
-          Top = highest authority. Drag the ⠿ handle to change the order. Roles can be edited or paused, but not deleted.
+          Top = highest authority. A new role is placed just below Super Admin — drag the ⠿ handle to move it.
+          Roles below “Employee” do not approve anything.
         </div>
         {data.roles.map((r, i) => (
           <div key={r.id}>
@@ -109,9 +109,17 @@ export default function OrgStructure() {
               <span style={{ cursor: 'grab', color: 'var(--ink-soft)', fontSize: 14 }} title="Drag to reorder">⠿</span>
               <span style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--navy-tint)', color: 'var(--navy)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, flex: '0 0 auto' }}>{i + 1}</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13.5, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   {r.name}
-                  {r.system ? <span className="status active">System</span> : (r.paused ? <span className="status pending">Paused</span> : null)}
+                  {r.system ? <span className="status active">System</span> : (r.paused ? <span className="status pending">Paused — skipped</span> : null)}
+                  {(() => {
+                    // Spec item 19 — say plainly what this row means for approvals.
+                    const c = (data.chain || []).find((x) => x.id === r.id);
+                    if (!c || r.paused) return null;
+                    return c.inChain
+                      ? <span className="status active">Approves requests</span>
+                      : <span className="cell-muted" style={{ fontWeight: 400, fontSize: 12 }}>Not an approver — move it above Employee to add it</span>;
+                  })()}
                 </div>
                 <div className="cell-muted" style={{ fontSize: 12, marginTop: 2 }}>
                   {r.description}
@@ -123,8 +131,19 @@ export default function OrgStructure() {
               <div style={{ display: 'flex', gap: 6 }}>
                 <button className="btn btn-sm" onClick={() => setEditing({ id: r.id, name: r.name, description: r.description })}>Edit</button>
                 {!r.system && (
-                  <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/org-structure/${r.id}/toggle-pause`), `${r.name}${r.paused ? ' resumed.' : ' paused.'}`)}>
+                  <button className="btn btn-sm" onClick={() => run(() => api.post(`/admin/org-structure/${r.id}/toggle-pause`), `${r.name}${r.paused ? ' resumed — it approves new requests again.' : ' paused — it will not approve requests until you resume it.'}`)}>
                     {r.paused ? 'Resume' : 'Pause'}
+                  </button>
+                )}
+                {!r.system && (
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={() => {
+                      if (!confirm(`Remove "${r.name}" from the approval chain? Requests waiting on it move to the next approver.`)) return;
+                      run(() => api.delete(`/admin/org-structure/${r.id}`), `${r.name} removed from the approval chain.`);
+                    }}
+                  >
+                    Remove
                   </button>
                 )}
               </div>

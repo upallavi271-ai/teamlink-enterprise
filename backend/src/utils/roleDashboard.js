@@ -26,10 +26,10 @@
 const prisma = require('../db');
 const V = require('./atsVocab');
 const {
-  applicationWhere, requirementWhere, scopeOf, invoiceWhere,
+  applicationWhere, requirementWhere, atsScopeOf: scopeOf, invoiceWhere,
 } = require('./scope');
 const { loadContexts, listWorkflowGroup, guaranteeDaysOf } = require('./workflowFlow');
-const { hiringTypeOf, INTERNAL_HIRE } = require('./joining');
+const { hiringTypeOf, INTERNAL_HIRE, didNotJoin } = require('./joining');
 const A = require('./accounts');
 const dateRange = require('./dateRange');
 
@@ -790,8 +790,11 @@ async function managementBoard(c, req) {
       where: and(invoiceWhere(c.user), f.clientId ? { clientId: f.clientId } : null),
       select: { id: true, clientId: true, amount: true, gst: true, tds: true, receivedAmount: true, status: true, invoiceDate: true, dueDate: true, client: { select: { name: true } } },
     });
+    // B9.9: revenue NET of issued credit / debit notes (utils/creditNotes.js decorateNet).
+    const CNU = require('./creditNotes'); // eslint-disable-line global-require
+    await CNU.decorateNet(invs);
     const live = invs.filter((i) => A.deriveInvoiceStatus(i) !== 'Cancelled');
-    const billing = (list) => A.ROUND(list.reduce((s, i) => s + Number(i.amount || 0), 0));
+    const billing = (list) => A.ROUND(list.reduce((s, i) => s + CNU.billedOf(i), 0));
     const inDays = (i, from, to) => { const d = String(i.invoiceDate || '').slice(0, 10); return d >= from && d <= to; };
     const month = live.filter((i) => inDays(i, D.monthStart, D.t));
     const quarter = live.filter((i) => inDays(i, D.quarterStart, D.t));
@@ -799,7 +802,7 @@ async function managementBoard(c, req) {
     const byClient = new Map();
     inRangeInv.forEach((i) => {
       const k = i.client ? i.client.name : '—';
-      byClient.set(k, A.ROUND((byClient.get(k) || 0) + Number(i.amount || 0)));
+      byClient.set(k, A.ROUND((byClient.get(k) || 0) + CNU.billedOf(i)));
     });
     const fq = (() => { const mm = D.m + 1; const fy = mm >= 4 ? D.y : D.y - 1; const qn = mm >= 4 && mm <= 6 ? 1 : mm <= 9 && mm >= 7 ? 2 : mm >= 10 ? 3 : 4; return `Q${qn}:${fy}`; })();
     money = {
@@ -902,7 +905,8 @@ async function managementBoard(c, req) {
 
   // Replacement / dropout
   const droppedAfterSel = new Set(events.filter((e) => ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(e.fromStage) && e.toStage === 'REJECTED').map((e) => e.applicationId));
-  const dropIds = apps.filter((a) => a.offerStatus === 'Offer Declined' || a.joiningStatus === 'Dropped' || droppedAfterSel.has(a.id)).map((a) => a.id);
+  // B9.8: "Did not join" at any step — the same rule as the Joining report (utils/joining.js didNotJoin).
+  const dropIds = apps.filter((a) => a.offerStatus === 'Offer Declined' || didNotJoin(a) || droppedAfterSel.has(a.id)).map((a) => a.id);
   const replIds = joinedApps.filter((a) => [V.JOINING_REPLACEMENT_DUE, V.JOINING_REPLACED, V.JOINING_LEFT_AFTER_GUARANTEE].includes(a.joiningStatus)).map((a) => a.id);
   addSet(b, 'dropouts', { kind: 'app', title: `Dropouts after selection — ${period.name}`, ids: dropIds });
   addSet(b, 'replacements', { kind: 'app', title: `Joined then left — ${period.name}`, ids: replIds });
@@ -952,7 +956,12 @@ async function adminBoard(c) {
   const activeUsers = (users.find((g) => g.status === 'Active') || { _count: { _all: 0 } })._count._all;
   addSet(b, 'active-today', { kind: 'user', title: 'Signed in today', ids: activeToday.map((u) => u.id) });
   const intFailed = integrations.filter((i) => i.recordsFailed > 0 || /reconnect|expired/i.test(i.state) || i.error).length;
-  const syncIssues = syncFailed + portalFailed + intFailed;
+  // SYSTEM ALERTS (Job Portal / integration failures) — Super Admin by
+  // default; an Admin only when Role Catalog grants Dashboard / System
+  // Alerts (per-role spec 2026-10-03).
+  // eslint-disable-next-line global-require
+  const systemAlerts = await require('../middleware/auth').can(c.user, null, 'dashboard', 'System Alerts', 'view');
+  const syncIssues = systemAlerts ? syncFailed + portalFailed + intFailed : 0;
   b.counts.push(
     { id: 'users', label: 'Total users', value: totalUsers, sub: `${fmtN(activeUsers)} active`, to: '/admin/users' },
     { id: 'active-today', label: 'Active today', value: activeToday.length, sub: 'signed in today', drill: 'active-today' },
@@ -961,9 +970,11 @@ async function adminBoard(c) {
     {
       id: 'failed', label: 'Failed / duplicate entries', value: syncIssues, sub: 'sync failures + duplicate groups', to: '/admin/integrations',
       parts: [
-        { id: 'sync', label: 'Job-portal sync failures (30 days)', value: syncFailed, to: '/admin/integrations?tab=jobportal' },
-        { id: 'portal', label: 'Requirements failed to post', value: portalFailed, to: '/admin/integrations?tab=jobportal' },
-        { id: 'integrations', label: 'Integrations with errors', value: intFailed, to: '/admin/integrations' },
+        ...(systemAlerts ? [
+          { id: 'sync', label: 'Job-portal sync failures (30 days)', value: syncFailed, to: '/admin/integrations?tab=jobportal' },
+          { id: 'portal', label: 'Requirements failed to post', value: portalFailed, to: '/admin/integrations?tab=jobportal' },
+          { id: 'integrations', label: 'Integrations with errors', value: intFailed, to: '/admin/integrations' },
+        ] : []),
         // Filled in the browser from the existing admin endpoints
         // (/candidates/duplicates/summary, /client-merge/count).
         { id: 'dup-candidates', label: 'Duplicate candidate groups', value: null, to: '/candidates/duplicates', fetch: '/candidates/duplicates/summary' },
@@ -982,7 +993,7 @@ async function adminBoard(c) {
       detail: [x.fromValue, x.toValue].filter(Boolean).join(' → ').slice(0, 140),
     })),
   });
-  b.widgets.push({
+  if (systemAlerts) b.widgets.push({
     id: 'sync', type: 'sync', title: 'Job source sync status', to: '/admin/integrations?tab=jobportal',
     rows: integrations.map((i) => ({
       id: i.id, state: i.state, enabled: i.enabled, lastSync: i.lastSync, synced: i.recordsSynced, failed: i.recordsFailed, error: i.error,
@@ -1162,14 +1173,11 @@ function accJoinRow(a) {
 // WHICH BOARDS A LOGIN GETS
 // ===========================================================================
 function viewsFor(user) {
-  const s = scopeOf(user);
-  const r = s.atsRole;
-  if (['SUPER_ADMIN', 'ADMIN'].includes(r)) return ['overview', 'management', 'admin'];
-  if (['MANAGER', 'ASSISTANT_MANAGER'].includes(r)) return ['management', 'overview'];
-  if (r === 'TL' || r === 'STL') return ['tl'];
-  if (r === 'BDE') return ['bde'];
-  if (r === 'RECRUITER' || r === 'HR') return ['recruiter'];
-  return s.global ? ['overview', 'management'] : ['recruiter'];
+  // User feedback 2026-10-03 #3: no Operations / Management / Admin tabs —
+  // every role, Super Admin included, has ONE view: the ATS home
+  // ('overview', utils/atsHome.js), built for its role and scope.
+  void user;
+  return ['overview'];
 }
 
 async function buildBoard(user, view, req) {

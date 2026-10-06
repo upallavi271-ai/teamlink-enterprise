@@ -50,6 +50,7 @@ const emailVerify = require('../utils/employeeEmailVerification');
 // Super Admin is a system account, not an employee: it drops out of every
 // employee list, count, export and import below.
 const { withoutSystemAccounts } = require('../utils/systemAccounts');
+const { activeOnly, hasColumn } = require('../utils/masters');
 // Employee ID: the next TL<nnn> and the checks on a changed one.
 const employeeCodes = require('../utils/employeeCode');
 // Every export / import tells the Super Admin (in-app + throttled email).
@@ -1261,6 +1262,40 @@ function addEmployeeDesignations(req, rows) {
   });
 }
 
+// Spec item 7 — the Reporting Manager / STL / TL pickers.
+//   reportingManagers [{ id, name, label, role, department }]
+//   managerNames      names for the STL / TL pickers
+// Leads first (TL, STL, Manager …), then everyone else in scope; leavers,
+// switched-off logins and test rows never appear.
+const LEAD_ROLES = ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR', 'ADMIN', 'SUPER_ADMIN'];
+const LEAD_LABEL = { TL: 'TL', STL: 'STL', MANAGER: 'Manager', ASSISTANT_MANAGER: 'Assistant Manager', HR: 'HR', ADMIN: 'Admin', SUPER_ADMIN: 'Super Admin' };
+const NOT_WORKING_STATUSES = ['Relieved', 'Exited', 'Exit Process', 'Inactive', 'Suspended'];
+async function reportingManagerOptions(inScope) {
+  const ids = inScope.map((e) => e.id);
+  const rows = await prisma.employee.findMany({
+    where: {
+      employmentStatus: { notIn: NOT_WORKING_STATUSES },
+      OR: [
+        { id: { in: ids } },
+        { user: { is: { OR: [{ hrmsRole: { in: LEAD_ROLES } }, { role: { in: LEAD_ROLES } }] } } },
+      ],
+    },
+    select: { id: true, name: true, email: true, department: true, designation: true, user: { select: { status: true, role: true, hrmsRole: true } } },
+    orderBy: { name: 'asc' },
+  });
+  const shaped = rows
+    .filter((e) => !(e.user && ['Inactive', 'Suspended'].includes(e.user.status)))
+    .filter((e) => !/zztest|example\.test/i.test(`${e.name} ${e.email || ''}`))
+    .map((e) => {
+      const r = e.user ? ((e.user.hrmsRole && e.user.hrmsRole !== 'NONE' && e.user.hrmsRole !== 'EMPLOYEE') ? e.user.hrmsRole : e.user.role) : null;
+      const role = LEAD_ROLES.includes(r) ? r : null;
+      const bits = [role ? LEAD_LABEL[role] : (e.designation || null), e.department].filter(Boolean);
+      return { id: e.id, name: e.name, label: bits.length ? `${e.name} — ${bits.join(', ')}` : e.name, role, department: e.department || null };
+    });
+  shaped.sort((a, b) => (a.role ? 0 : 1) - (b.role ? 0 : 1) || a.name.localeCompare(b.name));
+  return { reportingManagers: shaped, managerNames: [...new Set(shaped.map((m) => m.name))] };
+}
+
 router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const [employees, departments, rows, nextEmployeeCode, cfg, clients, positions, seatHolders] = await Promise.all([
     prisma.employee.findMany({
@@ -1273,8 +1308,9 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     // nine departments in the Edit Scope checklist and all four clients.
     // Both are now held to the caller's own scope.
     prisma.department.findMany({
-      where: scopeDepartments(req) === undefined ? {} : { name: { in: scopeDepartments(req) } },
-      include: { teams: true },
+      // Spec item 18 — switched-off departments / teams are never offered.
+      where: { ...(scopeDepartments(req) === undefined ? {} : { name: { in: scopeDepartments(req) } }), ...activeOnly('Department') },
+      include: { teams: { where: activeOnly('Team') } },
       orderBy: { name: 'asc' },
     }),
     designationRows(),
@@ -1304,6 +1340,10 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
   const inUse = (key) => employees.map((e) => e[key]).filter(Boolean);
   const union = (base, used) => [...new Set([...base, ...used])].sort((a, b) => a.localeCompare(b));
   const masterDepts = departments.length ? departments.map((d) => d.name) : DEPTS;
+  // Names switched off in Departments & Teams stay out of the in-use union too.
+  const offDepts = hasColumn('Department', 'active')
+    ? new Set((await prisma.department.findMany({ where: { active: false }, select: { name: true } })).map((d) => d.name))
+    : new Set();
   const allowed = scopeDepartments(req);
 
 
@@ -1331,7 +1371,7 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     // A department-scoped caller is offered only the departments they hold —
     // the same list assertDepartmentAllowed() then enforces on the write.
     departments: allowed === undefined
-      ? union(masterDepts, inUse('department'))
+      ? union(masterDepts, inUse('department')).filter((d) => !offDepts.has(d))
       : allowed,
     // Departments with their teams, for the Edit Scope checklists.
     departmentTree: departments.map((d) => ({
@@ -1339,8 +1379,11 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     })),
     clients,
     locations: union(LOCS, inUse('location')),
-    managerNames: [...new Set(employees.map((e) => e.name))],
-    reportingManagers: employees.map((e) => ({ id: e.id, name: e.name })),
+    // Spec item 7 — REPORTING MANAGERS, PROPERLY. People still working here
+    // (never a leaver, never a test row), plus every lead / manager in the
+    // company even outside the caller's departments (a Medical TL's own
+    // manager sits above Medical), each labelled with role and department.
+    ...(await reportingManagerOptions(employees)),
     // ROLES ARE DATA (utils/roleRegistry.js): active system + custom roles.
     // `roles` stays a list of codes for the readers that expect one;
     // `roleCatalog` is the Add Employee Role dropdown — only the roles this

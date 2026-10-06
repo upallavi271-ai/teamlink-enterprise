@@ -274,6 +274,11 @@ async function claudeStatus() {
   if (cfg.configured && rejectedKeyHash && rejectedKeyHash === keyHash(cfg.apiKey)) {
     cfg = { ...cfg, configured: false, reason: KEY_REJECTED };
   }
+  // Out of API credits (utils/aiAgent.js creditHeld): say so, not "not configured".
+  if (cfg.configured && require('./aiAgent').creditHeld(cfg.apiKey)) {
+    const { NO_CREDITS } = require('./aiAgent');
+    return { provider: 'claude', available: false, modelPulled: false, model: cfg.model || 'claude-opus-5', reason: NO_CREDITS };
+  }
   return {
     provider: 'claude',
     available: !!cfg.configured,
@@ -288,6 +293,9 @@ async function claudeStatus() {
 // Super Admin "View as" is read-only and must not spend model tokens
 // (utils/viewAs.js). Lazy require: no load-order coupling.
 function refuseWhileViewingAs() {
+  // TEST SANDBOX: no model call unless TEST_ALLOW_AI=1 (utils/sandbox.js).
+  const sb = require('./sandbox');
+  if (sb.isSandbox() && !sb.allowAi()) throw new AiError(sb.aiRefusal(), 503, 'sandbox');
   if (require('./viewAs').isViewingAs()) {
     throw new AiError('The AI Assistant is switched off while you are viewing as someone (read-only).', 403, 'view_as');
   }
@@ -318,6 +326,8 @@ async function chatJson(systemPrompt, history) {
 let statusCache = null; // { at, provider, value }
 async function checkStatus() {
   const which = provider();
+  const sb = require('./sandbox');
+  if (sb.isSandbox() && !sb.allowAi()) return { provider: which, available: false, modelPulled: false, model: null, reason: sb.aiRefusal() };
   if (statusCache && statusCache.provider === which && Date.now() - statusCache.at < STATUS_CACHE_MS) {
     return statusCache.value;
   }

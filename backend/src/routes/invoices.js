@@ -17,6 +17,8 @@ const { raiseJoiningInvoice, isInternalHire } = require('../utils/joining');
 const {
   REQ_ATTR_SELECT, loadHierarchy, attributeApplication, hierarchyPayload, attributionData,
 } = require('../utils/invoiceHierarchy');
+// P4 — GST & TDS: the one calculation (utils/invoiceTax.js).
+const TAX = require('../utils/invoiceTax');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -24,6 +26,9 @@ router.use(requireAuth);
 // (scoped by utils/scope.js); a recruiter reaches none.
 router.use(requireProduct('accounts'));
 router.use(requirePerm('accounts', 'accounts', 'Invoices', 'view'));
+// B2 — credit / debit notes + placement margin (routes/creditNotes.js), before '/:id'.
+router.use(require('./creditNotes'));
+const CNU = require('../utils/creditNotes');
 
 
 // Everything an invoice row needs on screen, computed the same way everywhere:
@@ -230,8 +235,11 @@ router.post('/register/raise', requirePerm('accounts', 'accounts', 'Invoices', '
     const rows = g.rows.filter((r) => r.billable);
     if (!rows.length) continue;
     const amount = ROUND(rows.reduce((s, r) => s + r.billing, 0));
-    const gstPct = client?.gstPercent ?? 0;
-    const tdsPct = client?.tdsPercent ?? 0;
+    // P4: the client's rates and GST / TDS Applicable flags, the GST type from
+    // the two states, worked out by the one calculation (utils/invoiceTax.js).
+    // eslint-disable-next-line no-await-in-loop
+    const def = TAX.defaultsFor(client, (await prisma.company.findFirst()) || {}, { gst: 0, tds: 0 });
+    const tax = TAX.calcTax({ base: amount, ...def });
     const terms = client?.paymentTerms || 'Net 30';
     const d = new Date(today);
     d.setDate(d.getDate() + termDays(terms));
@@ -240,11 +248,7 @@ router.post('/register/raise', requirePerm('accounts', 'accounts', 'Invoices', '
       data: {
         clientId: g.clientId,
         candidateId: rows[0].candidateId,
-        amount,
-        gst: ROUND(amount * gstPct / 100),
-        tds: ROUND(amount * tdsPct / 100),
-        gstPercent: gstPct,
-        tdsPercent: tdsPct,
+        ...TAX.writeData(tax, {}),
         invoiceDate: today,
         dueDate: toIsoDate(d),
         paymentTerms: terms,
@@ -322,6 +326,7 @@ async function placementFacts(invoices, hier) {
       requirementId: true,
       stage: true,
       joiningDate: true,
+      joiningStatus: true,
       offeredCtc: true,
       requirement: {
         select: {
@@ -368,6 +373,9 @@ async function placementFacts(invoices, hier) {
       recruiter: inv.requirement?.recruiter?.name || app?.requirement?.recruiter?.name || null,
       joiningDate: inv.joiningDate || app?.joiningDate || null,
       offeredCtc: inv.offeredCtc ?? app?.offeredCtc ?? null,
+      // The ATS's own joining status ("Joined", "Dropped" …) — the Invoice
+      // page counts drop-outs from it; nothing is billed from it.
+      joiningStatus: app?.joiningStatus || null,
     };
   };
 }
@@ -391,14 +399,24 @@ async function buildRegister(user, query) {
   const hier = await loadHierarchy();
   const factsOf = await placementFacts(invoices, hier);
   const facts = new Map(invoices.map((i) => [i.id, factsOf(i)]));
+  // Our state (Company GSTIN) for each invoice's CGST + SGST / IGST reading.
+  const company = (await prisma.company.findFirst()) || {};
+  // B2 — issued credit / debit notes per invoice (utils/invoiceTax.js withNotes).
+  const notesOf = await CNU.notesByInvoice(null, { issuedOnly: true });
 
   const row = (i) => {
     const status = deriveInvoiceStatus(i);
     const fx = facts.get(i.id) || {};
-    const billing = ROUND(Number(i.amount || 0));
-    const gst = ROUND(Number(i.gst || 0));
-    const tds = ROUND(Number(i.tds || 0));
-    const receivable = invoiceTotal(i);
+    // P4: GST / TDS detail, read off the STORED amounts (never rewritten).
+    const tx = TAX.taxView(i, { company });
+    // B2 — with an issued note the money figures are AFTER the notes (the
+    // stored invoice figures stay in asBilled); without one they are the
+    // stored figures exactly as before.
+    const wn = TAX.withNotes(i, notesOf.get(i.id) || []);
+    const billing = wn.hasNotes ? wn.billing : ROUND(Number(i.amount || 0));
+    const gst = wn.hasNotes ? wn.gst : ROUND(Number(i.gst || 0));
+    const tds = wn.hasNotes ? wn.tds : ROUND(Number(i.tds || 0));
+    const receivable = wn.hasNotes ? wn.receivable : invoiceTotal(i);
     const received = ROUND(Number(i.receivedAmount || 0));
     const who = fx.who || {};
     const sec = who.sectionKey ? hier.sectionByKey.get(who.sectionKey) : null;
@@ -443,6 +461,11 @@ async function buildRegister(user, query) {
       bde: i.requirement?.bde?.name || null,
       candidates: i.candidateId ? 1 : 0,
       candidateName: i.candidate?.name || null,
+      // Read only by the Invoice page's search box ("Search anything") and the
+      // Payment-date period filter — no figure is worked out from them.
+      candidatePhone: i.candidate?.phone || null,
+      joiningStatus: fx.joiningStatus || null,
+      paidDate: i.paidDate || null,
       clientPayingGst: gst > 0.5,
       // Money, in the prototype's own column order: before GST, GST, after GST,
       // TDS, receivable. Receivable is amount + GST − TDS.
@@ -452,7 +475,14 @@ async function buildRegister(user, query) {
       tds,
       receivable,
       received,
-      pending: ROUND(receivable - received),
+      // B2: pending = receivable − received + refund due (a credit beyond the balance is owed back, never a negative balance).
+      pending: wn.hasNotes ? wn.pending : ROUND(receivable - received),
+      asBilled: wn.asBilled,
+      noteCredit: wn.hasNotes ? { count: wn.credit.count, base: wn.credit.base, gst: wn.credit.gst, tds: wn.credit.tds, net: wn.credit.net, applied: wn.credit.applied, numbers: wn.credit.numbers } : null,
+      noteDebit: wn.debit.count ? { count: wn.debit.count, base: wn.debit.base, gst: wn.debit.gst, tds: wn.debit.tds, net: wn.debit.net, numbers: wn.debit.numbers } : null,
+      refundDue: wn.refundDue,
+      refundOpen: wn.refundOpen,
+      applicationId: fx.app ? fx.app.id : null,
       paymentCount: i.payments.length,
       paymentMethods: [...new Set(i.payments.map((p) => p.method || '—'))],
       proof: i.payments.length ? (i.payments.some((p) => !p.reference) ? `${i.payments.filter((p) => !p.reference).length} pending` : 'attached') : null,
@@ -470,8 +500,25 @@ async function buildRegister(user, query) {
       daysOverdue: daysOverdue(i.dueDate),
       sentVia: i.sentVia,
       sentDate: i.sentDate,
-      gstPercent: i.gstPercent ?? i.client?.gstPercent ?? null,
-      tdsPercent: i.tdsPercent ?? i.client?.tdsPercent ?? null,
+      // P4 — the rates as charged on THIS invoice (0 = not applicable), the
+      // GST split and the TDS detail. billing / gst / invoiceValue / tds /
+      // receivable / received / pending above stay the stored figures, so the
+      // Accounts Dashboard (utils/accountsControl.js) ties to this page.
+      gstPercent: tx.gstPercent,
+      tdsPercent: tx.tdsPercent,
+      gstApplicable: tx.gstApplicable,
+      gstType: tx.gstType,
+      gstTypeLabel: tx.gstTypeLabel,
+      gstTypeFrom: tx.gstTypeFrom,
+      cgst: tx.cgst,
+      sgst: tx.sgst,
+      igst: tx.igst,
+      tdsApplicable: tx.tdsApplicable,
+      tdsBase: tx.tdsBase,
+      tdsSection: tx.tdsSection,
+      tdsDeductedOn: tx.tdsDeductedOn,
+      tdsStatus: status === 'Cancelled' ? 'Not Applicable' : tx.tdsStatus,
+      taxCheck: tx.check.level === 'ok' ? null : { level: tx.check.level, issues: tx.check.issues.filter((x) => x.level !== 'info').map((x) => x.text) },
       payments: i.payments.map((p) => ({ id: p.id, date: p.date, amount: p.amount, method: p.method, reference: p.reference, recordedBy: p.recordedBy })),
     };
   };
@@ -562,6 +609,13 @@ async function buildRegister(user, query) {
       pending: sum('pending'),
       overdueCount: overdue.length,
       overdueValue: ROUND(overdue.reduce((s, r) => s + r.pending, 0)),
+      // B2 — issued notes inside the figures above, and refunds still owed back.
+      creditNotes: ROUND(live.reduce((s, r) => s + (r.noteCredit ? r.noteCredit.net : 0), 0)),
+      creditNotesBase: ROUND(live.reduce((s, r) => s + (r.noteCredit ? r.noteCredit.base : 0), 0)),
+      debitNotes: ROUND(live.reduce((s, r) => s + (r.noteDebit ? r.noteDebit.net : 0), 0)),
+      refundDue: sum('refundDue'),
+      refundOpen: sum('refundOpen'),
+      withNotes: live.filter((r) => r.noteCredit || r.noteDebit).length,
     },
     ageing,
     tdsCertificates: {
@@ -572,6 +626,16 @@ async function buildRegister(user, query) {
     },
     hierarchy,
     attribution,
+    // P4 — older invoices whose stored GST / TDS do not match their own %s
+    // (reported, never changed), and the words the edit form offers.
+    taxChecks: allRows.filter((r) => r.taxCheck && r.taxCheck.level === 'mismatch')
+      .map((r) => ({ id: r.id, invoiceNumber: r.invoiceNumber, client: r.client, issues: r.taxCheck.issues })),
+    taxOptions: {
+      gstTypes: TAX.GST_TYPES.map((v) => ({ value: v, label: TAX.GST_TYPE_LABEL[v] })),
+      tdsBases: TAX.TDS_BASES.map((v) => ({ value: v, label: TAX.TDS_BASE_LABEL[v] })),
+      tdsStatuses: TAX.TDS_STATUSES,
+      tdsSections: TAX.TDS_SECTIONS,
+    },
     departments: [...new Set([...hierarchy.departments.map((x) => x.name), ...allRows.map((r) => r.department)].filter((x) => x && x !== '—'))].sort(),
     recruiters: [...new Set(allRows.map((r) => r.recruiter).filter(Boolean))].sort(),
     sections: [...new Set(allRows.map((r) => r.section).filter(Boolean))].sort(),
@@ -595,7 +659,10 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
   const periodLabel = (reg.period.options.find((o) => o.value === reg.period.sel) || {}).label || reg.period.sel || 'All';
   const head = ['Invoice no', 'Invoice date', 'Client', 'Client GSTIN', 'Billing type', 'Candidate', 'Role', 'Section',
     'Department', 'Recruiter', 'GST charged', 'Before GST', 'GST', 'After GST', 'TDS', 'Receivable', 'Received',
-    'Pending', 'Status', 'Due date', 'Age', 'Sent to client', 'TDS certificate'];
+    'Pending', 'Status', 'Due date', 'Age', 'Sent to client', 'TDS certificate',
+    'GST type', 'GST %', 'CGST', 'SGST', 'IGST', 'TDS %', 'TDS on', 'TDS status',
+    // B2 — money columns above are after issued notes; these say by how much.
+    'Credit notes (net)', 'Debit notes (net)', 'Refund due', 'Note numbers'];
   const aoa = [
     ['Invoices'],
     [`Period: ${periodLabel}`],
@@ -607,7 +674,11 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
     aoa.push([r.invoiceNumber, r.invoiceDate || '', r.client, r.clientGstin || '', r.billingType, r.candidateName || '',
       r.role || '', r.section || '', r.department || '', r.recruiter || '', r.clientPayingGst ? 'Yes' : 'No',
       r.billing, r.gst, r.invoiceValue, r.tds, r.receivable, r.received, r.pending, r.status, r.dueDate || '', r.age,
-      r.sentVia ? `${r.sentVia} · ${r.sentDate || ''}` : 'Not sent', r.tdsCert || 'no TDS']);
+      r.sentVia ? `${r.sentVia} · ${r.sentDate || ''}` : 'Not sent', r.tdsCert || 'no TDS',
+      r.gstTypeLabel || '', r.gstPercent || 0, r.cgst || 0, r.sgst || 0, r.igst || 0, r.tdsPercent || 0,
+      r.tdsApplicable ? (r.tdsBase === 'gross' ? 'After GST' : 'Before GST') : '', r.tdsStatus || '',
+      r.noteCredit ? r.noteCredit.net : 0, r.noteDebit ? r.noteDebit.net : 0, r.refundDue || 0,
+      [...(r.noteCredit ? r.noteCredit.numbers : []), ...(r.noteDebit ? r.noteDebit.numbers : [])].join(', ')]);
   });
   if (!list.length) aoa.push(['No invoice matches these filters']);
   const sumOf = (k) => ROUND(list.reduce((a, r) => a + Number(r[k] || 0), 0));
@@ -615,13 +686,13 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
     sumOf('billing'), sumOf('gst'), sumOf('invoiceValue'), sumOf('tds'), sumOf('receivable'), sumOf('received'), sumOf('pending')]);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   for (let i = 5; i < aoa.length; i += 1) {
-    for (let c = 11; c <= 17; c += 1) {
+    for (const c of [11, 12, 13, 14, 15, 16, 17, 25, 26, 27, 31, 32, 33]) {
       const ref = XLSX.utils.encode_cell({ r: i, c });
       if (ws[ref] && typeof ws[ref].v === 'number') ws[ref].z = '#,##0.00';
     }
   }
-  ws['!cols'] = [14, 12, 34, 18, 22, 24, 22, 24, 14, 18, 8, 13, 12, 13, 12, 13, 13, 13, 14, 12, 12, 18, 14].map((wch) => ({ wch }));
-  ws['!autofilter'] = { ref: `A5:W${aoa.length}` };
+  ws['!cols'] = [14, 12, 34, 18, 22, 24, 22, 24, 14, 18, 8, 13, 12, 13, 12, 13, 13, 13, 14, 12, 12, 18, 14, 12, 7, 12, 12, 12, 7, 11, 18, 13, 13, 12, 22].map((wch) => ({ wch }));
+  ws['!autofilter'] = { ref: `A5:AI${aoa.length}` };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -633,11 +704,144 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
   return res.send(buf);
 });
 
+// The Invoice page's two other downloads — "Invoice accounts" and
+// "Instalments" — over exactly the invoices the screen shows (the same ids +
+// filters line as ⭳ Excel). Read-only: every figure is the register's own.
+async function pickedRegister(req) {
+  const reg = await buildRegister(req.user, { period: req.body?.period, includeCancelled: req.body?.includeCancelled });
+  const byId = new Map(reg.rows.map((r) => [r.id, r]));
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : null;
+  const list = ids ? ids.map((id) => byId.get(id)).filter(Boolean) : reg.rows;
+  return { reg, list, filtersLine: String(req.body?.filters || '').slice(0, 400) || 'none' };
+}
+function sendBook(res, wb, name) {
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  return res.send(buf);
+}
+function moneyCols(ws, fromRow, toRow, cols) {
+  for (let i = fromRow; i < toRow; i += 1) {
+    cols.forEach((c) => {
+      const ref = XLSX.utils.encode_cell({ r: i, c });
+      if (ws[ref] && typeof ws[ref].v === 'number') ws[ref].z = '#,##0.00';
+    });
+  }
+}
+// What was received on an invoice beyond its receipt rows (older imports
+// carry the received figure only) — the client ledger's own rule.
+const unrecordedOf = (r) => ROUND(Number(r.received || 0) - (r.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0));
+
+// Invoice accounts: one line per client (billed / received / pending) and the
+// ledger behind it — invoice raised (debit = receivable), receipts (credit),
+// running balance per client — as GET /client-account/:clientId builds it.
+router.post('/register/accounts.xlsx', requirePerm('accounts', 'accounts', 'Invoices', 'export'), async (req, res) => {
+  const { list, filtersLine } = await pickedRegister(req);
+  const live = list.filter((r) => r.status !== 'Cancelled');
+  const byClient = new Map();
+  live.forEach((r) => { if (!byClient.has(r.client)) byClient.set(r.client, []); byClient.get(r.client).push(r); });
+  const clients = [...byClient.keys()].sort((a, b) => a.localeCompare(b));
+  const s = (rs, k) => ROUND(rs.reduce((a, r) => a + Number(r[k] || 0), 0));
+  const sumHead = ['Client', 'Invoices', 'Before GST', 'GST', 'After GST', 'TDS', 'Receivable', 'Received', 'Pending', 'Overdue invoices', 'Oldest open due date'];
+  const sumAoa = [['Invoice accounts — by client'], [`Filters: ${filtersLine}`], [], sumHead];
+  clients.forEach((c) => {
+    const rs = byClient.get(c);
+    const open = rs.filter((r) => r.pending > 0.5);
+    sumAoa.push([c, rs.length, s(rs, 'billing'), s(rs, 'gst'), s(rs, 'invoiceValue'), s(rs, 'tds'), s(rs, 'receivable'), s(rs, 'received'), s(rs, 'pending'),
+      open.filter((r) => r.daysOverdue != null && r.daysOverdue > 0).length,
+      open.map((r) => r.dueDate).filter(Boolean).sort()[0] || '']);
+  });
+  if (!clients.length) sumAoa.push(['No invoice matches these filters']);
+  sumAoa.push(['TOTAL', live.length, s(live, 'billing'), s(live, 'gst'), s(live, 'invoiceValue'), s(live, 'tds'), s(live, 'receivable'), s(live, 'received'), s(live, 'pending')]);
+  const ws1 = XLSX.utils.aoa_to_sheet(sumAoa);
+  moneyCols(ws1, 4, sumAoa.length, [2, 3, 4, 5, 6, 7, 8]);
+  ws1['!cols'] = [34, 9, 14, 13, 14, 12, 14, 14, 14, 10, 14].map((wch) => ({ wch }));
+
+  const ledHead = ['Client', 'Date', 'Invoice no', 'Particulars', 'Debit', 'Credit', 'Balance'];
+  const ledAoa = [['Invoice accounts — ledger'], [`Filters: ${filtersLine}`], [], ledHead];
+  clients.forEach((c) => {
+    const lines = [];
+    byClient.get(c).forEach((r) => {
+      lines.push({ date: r.invoiceDate, inv: true, no: r.invoiceNumber, text: `Invoice ${r.invoiceNumber}${r.candidateName ? ` · ${r.candidateName}` : ''}`, debit: r.receivable, credit: 0 });
+      (r.payments || []).forEach((p) => lines.push({
+        date: p.date, no: r.invoiceNumber, text: `Received · ${p.method || '—'}${p.reference ? ` · ${p.reference}` : ''}`, debit: 0, credit: ROUND(Number(p.amount || 0)),
+      }));
+      const extra = unrecordedOf(r);
+      if (extra > 0.5) lines.push({ date: r.paidDate || r.invoiceDate, no: r.invoiceNumber, text: 'Received (imported total, no receipt detail)', debit: 0, credit: extra });
+    });
+    lines.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.inv ? -1 : 1));
+    let bal = 0;
+    lines.forEach((l) => { bal = ROUND(bal + l.debit - l.credit); ledAoa.push([c, l.date || '', l.no, l.text, l.debit || '', l.credit || '', bal]); });
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(ledAoa);
+  moneyCols(ws2, 4, ledAoa.length, [4, 5, 6]);
+  ws2['!cols'] = [34, 12, 14, 48, 14, 14, 14].map((wch) => ({ wch }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws1, 'By client');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Ledger');
+  await logAudit({ userId: req.user.id, action: 'Invoice accounts exported', entity: 'Invoice', toValue: `${live.length} invoice(s) · ${clients.length} client(s)` });
+  return sendBook(res, wb, 'invoice-accounts');
+});
+
+// Instalments: one line per payment received against the invoices shown, plus
+// any received total an older import carried without receipt detail.
+router.post('/register/instalments.xlsx', requirePerm('accounts', 'accounts', 'Invoices', 'export'), async (req, res) => {
+  const { list, filtersLine } = await pickedRegister(req);
+  const head = ['Invoice no', 'Invoice date', 'Client', 'Candidate', 'Instalment', 'Payment date', 'Amount', 'Method', 'Reference', 'Recorded by', 'Invoice receivable', 'Invoice pending'];
+  const aoa = [['Instalments'], [`Filters: ${filtersLine}`], [], head];
+  let total = 0;
+  let lines = 0;
+  list.forEach((r) => {
+    (r.payments || []).forEach((p, ix) => {
+      const amt = ROUND(Number(p.amount || 0));
+      total = ROUND(total + amt); lines += 1;
+      aoa.push([r.invoiceNumber, r.invoiceDate || '', r.client, r.candidateName || '', ix + 1, p.date || '', amt, p.method || '', p.reference || '', p.recordedBy || '', r.receivable, r.pending]);
+    });
+    const extra = unrecordedOf(r);
+    if (extra > 0.5) {
+      total = ROUND(total + extra); lines += 1;
+      aoa.push([r.invoiceNumber, r.invoiceDate || '', r.client, r.candidateName || '', '—', r.paidDate || '', extra, 'Imported total (no receipt detail)', '', '', r.receivable, r.pending]);
+    }
+  });
+  if (!lines) aoa.push(['No payment has been received on these invoices yet']);
+  aoa.push(['TOTAL', '', `${list.length} invoice(s)`, '', `${lines} line(s)`, '', total]);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  moneyCols(ws, 4, aoa.length, [6, 10, 11]);
+  ws['!cols'] = [14, 12, 34, 24, 10, 12, 14, 26, 22, 18, 14, 14].map((wch) => ({ wch }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Instalments');
+  await logAudit({ userId: req.user.id, action: 'Instalments exported', entity: 'Invoice', toValue: `${lines} line(s) · ${list.length} invoice(s)` });
+  return sendBook(res, wb, 'instalments');
+});
+
 // ＋ New join — every joining still waiting for its invoice, with what the
 // invoice would be raised for.
 router.get('/joinings', async (req, res) => {
   const plan = await pendingJoinGroups();
-  res.json({ rows: plan.all, nextNumber: plan.nextNumber });
+  // P4 — what each joining's invoice starts with: the client's GST / TDS
+  // (Applicable flags, rates) and CGST + SGST vs IGST from the two states.
+  const company = (await prisma.company.findFirst()) || {};
+  const ids = [...new Set(plan.all.map((r) => r.clientId).filter(Boolean))];
+  const clients = ids.length ? await prisma.client.findMany({ where: { id: { in: ids } } }) : [];
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  const rows = plan.all.map((r) => {
+    const d = TAX.defaultsFor(byId.get(r.clientId) || {}, company, { gst: 18, tds: 10 });
+    return {
+      ...r,
+      taxDefaults: {
+        gstType: d.gstType, gstTypeFrom: d.gstTypeFrom, gstPercent: d.gstPercent, tdsPercent: d.tdsPercent, tdsBase: d.tdsBase, supplyWhy: d.supply.why,
+      },
+    };
+  });
+  res.json({
+    rows,
+    nextNumber: plan.nextNumber,
+    taxOptions: {
+      gstTypes: TAX.GST_TYPES.map((v) => ({ value: v, label: TAX.GST_TYPE_LABEL[v] })),
+      tdsBases: TAX.TDS_BASES.map((v) => ({ value: v, label: TAX.TDS_BASE_LABEL[v] })),
+      tdsSections: TAX.TDS_SECTIONS,
+    },
+  });
 });
 
 // Raise the invoice for ONE joined candidate through the ATS's own
@@ -668,6 +872,18 @@ router.post('/joinings/:applicationId/raise', requirePerm('accounts', 'accounts'
   const fee = body.feePercent !== undefined && body.feePercent !== '' && body.feePercent !== null ? Number(body.feePercent) : null;
   if (fee != null && !(fee > 0 && fee <= 100)) return res.status(400).json({ error: 'The fee % must be more than 0 and at most 100' });
 
+  // P4 — the GST / TDS the screen chose (client defaults otherwise), checked
+  // BEFORE anything is written. The amount before GST is the fee on the CTC.
+  const cli = app.requirement.client;
+  const taxDef = TAX.defaultsFor(cli, (await prisma.company.findFirst()) || {}, { gst: 18, tds: 10 });
+  const feeUsed = fee != null ? fee : (cli.agreementFeePercent != null ? cli.agreementFeePercent : 8.33);
+  const taxBody = {
+    gstApplicable: body.gstApplicable, gstType: body.gstType, gstPercent: body.gstPercent, gst: body.gst,
+    tdsApplicable: body.tdsApplicable, tdsPercent: body.tdsPercent, tdsBase: body.tdsBase, tds: body.tds, tdsSection: body.tdsSection,
+  };
+  const taxIn = TAX.readTaxInput({ ...taxBody, amount: Math.round((ctc * feeUsed) / 100) }, {}, taxDef);
+  if (taxIn.error) return res.status(400).json({ error: taxIn.error });
+
   await prisma.application.update({ where: { id: app.id }, data: { offeredCtc: ctc, joiningDate } });
   const raised = await raiseJoiningInvoice({
     application: { ...app, offeredCtc: ctc, joiningDate },
@@ -675,16 +891,18 @@ router.post('/joinings/:applicationId/raise', requirePerm('accounts', 'accounts'
     userId: req.user.id,
   });
   if (!raised) return res.status(400).json({ error: 'This joining cannot be invoiced' });
+  // B7: a partner-sourced joining invoiced later still gets its payout draft.
+  try { await require('../utils/partners').onJoined({ applicationId: app.id, invoice: raised, userId: req.user.id }); } catch { /* optional */ } // eslint-disable-line global-require
 
   const data = {};
-  if (fee != null && fee !== raised.feePercent) {
-    const amount = Math.round((ctc * fee) / 100);
-    Object.assign(data, {
-      feePercent: fee,
-      amount,
-      gst: Math.round(amount * (Number(raised.gstPercent || 0) / 100)),
-      tds: Math.round(amount * (Number(raised.tdsPercent || 0) / 100)),
-    });
+  if (fee != null && fee !== raised.feePercent) data.feePercent = fee;
+  // The base the invoice was raised for (the fee on the CTC), taxed exactly as chosen.
+  const finalBase = data.feePercent != null ? Math.round((ctc * fee) / 100) : Number(raised.amount);
+  const finalTax = TAX.readTaxInput({ ...taxBody, gst: undefined, tds: undefined, amount: finalBase }, {}, taxDef);
+  if (!finalTax.error) {
+    const want = finalTax.data;
+    const moved = Object.keys(want).some((k) => want[k] !== undefined && want[k] !== raised[k]);
+    if (moved) Object.assign(data, want);
   }
   if (!raised.invoiceNumber) data.invoiceNumber = await nextInvoiceNumber();
   const invoice = Object.keys(data).length
@@ -733,10 +951,17 @@ router.get('/:id/document', async (req, res) => {
   const paid = ROUND(Number(invoice.receivedAmount || 0));
   // TDS never reaches us — the client withholds it and pays it to Government on
   // our behalf, so what is owed is the invoice less TDS, less what has come in.
-  const balance = ROUND((tds > 0 ? receivable : invoiceValue) - paid);
+  // B2 — issued credit notes set against it / debit notes added (0 without one).
+  const noteCredited = ROUND(Number(invoice.creditedAmount || 0));
+  const noteDebited = ROUND(Number(invoice.debitedAmount || 0));
+  const balance = ROUND((tds > 0 ? receivable : invoiceValue) - paid - noteCredited + noteDebited);
 
-  const gstPct = invoice.gstPercent ?? cli.gstPercent ?? 0;
-  const tdsPct = invoice.tdsPercent ?? cli.tdsPercent ?? 0;
+  // P4 — the invoice's own GST / TDS reading (utils/invoiceTax.js): the rate
+  // as charged (0 when no GST / TDS), the GST type saved on it or read from
+  // the two states, and the CGST / SGST / IGST split of the STORED GST.
+  const tx = TAX.taxView(invoice, { company: co });
+  const gstPct = tx.gstPercent;
+  const tdsPct = tx.tdsPercent;
 
   // CGST + SGST within the state, IGST across states. Our state comes from
   // the Company GSTIN's first two digits (else the state on the Company row);
@@ -750,9 +975,9 @@ router.get('/:id/document', async (req, res) => {
   };
   const cs = gstinState(cli.gst) || stateOf(`${clientAddress} ${cli.state || ''}`);
   const hs = gstinState(co.gstin) || stateOf(co.state || co.address || '');
-  const inter = !!(cs && hs && cs.code !== hs.code);
+  const inter = tx.gstType === 'IGST';
   const fx = (await placementFacts([invoice]))(invoice);
-  const half = ROUND(gst / 2);
+  const half = tx.cgst;
 
   const coAddr = [co.address, [co.city, co.state].filter(Boolean).join(', '), co.pin, 'India']
     .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
@@ -781,9 +1006,14 @@ router.get('/:id/document', async (req, res) => {
       },
     },
     client: {
-      name: cli.name || '—',
-      addressLines: clientAddress ? clientAddress.split(',').map((s) => s.trim()).filter(Boolean) : [],
+      // Add client section 6 (2026-10-05): the legal name and the billing
+      // address when the client record has them.
+      name: cli.legalName || cli.name || '—',
+      addressLines: (!cli.billingSameAsAddress && String(cli.billingAddress || '').trim())
+        ? String(cli.billingAddress).split(/,|\n/).map((s) => s.trim()).filter(Boolean)
+        : (clientAddress ? clientAddress.split(',').map((s) => s.trim()).filter(Boolean) : []),
       gstin: cli.gst || '',
+      email: cli.invoiceEmail || cli.billingEmail || cli.billingContactEmail || '',
     },
     invoiceNumber: invoice.invoiceNumber || invoice.id.slice(-6),
     invoiceDate: invoice.invoiceDate,
@@ -798,6 +1028,11 @@ router.get('/:id/document', async (req, res) => {
     gstPct,
     halfPct: ROUND(gstPct / 2),
     tdsPct,
+    gstType: tx.gstType,
+    gstTypeLabel: tx.gstTypeLabel,
+    tdsBase: tx.tdsBase,
+    tdsBaseLabel: tx.tdsBaseLabel,
+    tdsSection: tx.tdsSection || '194J',
     lines: [{
       n: 1,
       candidate: invoice.candidate?.name || null,
@@ -818,7 +1053,7 @@ router.get('/:id/document', async (req, res) => {
       amount: billing,
     }],
     totals: {
-      subTotal: billing, gst, cgst: half, sgst: ROUND(gst - half), invoiceValue, tds, receivable, paid, balance: balance > 0 ? balance : 0,
+      subTotal: billing, gst, cgst: half, sgst: ROUND(gst - half), invoiceValue, tds, receivable, paid, credited: noteCredited, debited: noteDebited, balance: balance > 0 ? balance : 0,
     },
     words: {
       total: wordsINR(invoiceValue),
@@ -857,8 +1092,52 @@ router.get('/:id', async (req, res) => {
     };
   }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const { tdsCertFile, ...rest } = decorate(synced);
-  res.json({ ...rest, tdsCertHasFile: !!tdsCertFile, proofLines });
+  // P4 — the GST / TDS summary and what the Edit form offers.
+  const company = (await prisma.company.findFirst()) || {};
+  // B2 — this invoice's credit / debit notes and its figures after them.
+  const notes = CNU.ready() ? ((await CNU.notesByInvoice([invoice.id])).get(invoice.id) || []) : [];
+  const wn = TAX.withNotes(synced, notes);
+  res.json({
+    ...rest, tdsCertHasFile: !!tdsCertFile, proofLines, ...taxPayload(synced, company),
+    notesReady: CNU.ready(),
+    creditNotes: notes.map((n) => CNU.shapeNote(n, invoice)),
+    afterNotes: wn.hasNotes ? {
+      billing: wn.billing, gst: wn.gst, tds: wn.tds, receivable: wn.receivable, pending: wn.pending, refundDue: wn.refundDue, refundOpen: wn.refundOpen, credit: wn.credit, debit: wn.debit,
+    } : null,
+    canApproveNotes: CNU.ready() ? await CNU.isNoteApprover(req.user) : false,
+    margin: await invoiceMargin(synced, wn),
+  });
 });
+
+// B2 — the placement margin of this one invoice, by the same rule as the
+// Placement margin report (utils/creditNotes.js marginRows).
+async function invoiceMargin(invoice, wn) {
+  const fx = (await placementFacts([invoice]))(invoice);
+  const appId = fx.app ? fx.app.id : null;
+  const { costs } = await CNU.directCosts();
+  const c = (appId && costs.get(appId)) || { incentive: 0, payout: 0, incentiveStatus: 'Incentive not decided', decided: false };
+  const fee = wn.asBilled.billing;
+  const net = ROUND(fee - wn.credit.base + wn.debit.base);
+  const margin = ROUND(net - c.incentive - c.payout);
+  return {
+    fee, credit: wn.credit.base, debit: wn.debit.base, net, incentive: ROUND(c.incentive), incentiveStatus: c.incentiveStatus, payout: ROUND(c.payout), margin,
+    marginPct: fee > 0 ? Math.round((margin / fee) * 1000) / 10 : null, applicationId: appId,
+  };
+}
+
+// The invoice's GST / TDS reading (stored figures), plus the Edit form's options.
+function taxPayload(invoice, company) {
+  const def = TAX.defaultsFor(invoice.client || {}, company, { gst: 0, tds: 0 });
+  return {
+    tax: TAX.taxView(invoice, { company }),
+    taxDefaults: { gstType: def.gstType, gstPercent: def.gstPercent, tdsPercent: def.tdsPercent, supplyWhy: def.supply.why },
+    taxOptions: {
+      gstTypes: TAX.GST_TYPES.map((v) => ({ value: v, label: TAX.GST_TYPE_LABEL[v] })),
+      tdsBases: TAX.TDS_BASES.map((v) => ({ value: v, label: TAX.TDS_BASE_LABEL[v] })),
+      tdsSections: TAX.TDS_SECTIONS,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // The client's account — every invoice raised to one client and every receipt
@@ -878,6 +1157,7 @@ router.get('/client-account/:clientId', async (req, res) => {
     orderBy: { invoiceDate: 'asc' },
   });
   const lines = [];
+  const accNotes = await CNU.notesByInvoice(invoices.map((i) => i.id), { issuedOnly: true });
   invoices.forEach((i) => {
     const status = deriveInvoiceStatus(i);
     if (status === 'Cancelled') return;
@@ -893,6 +1173,23 @@ router.get('/client-account/:clientId', async (req, res) => {
       particulars: `Received · ${p.method || '—'}${p.reference ? ` · ${p.reference}` : ''} · against ${no}`,
       debit: 0, credit: ROUND(p.amount), fromBank: !!p.bankTxnId,
     }));
+    // B2 — issued notes: a credit note is a credit, a debit note a debit, and
+    // a refund paid back to the client a debit (a credit beyond the balance
+    // shows as money owed to the client until then).
+    (accNotes.get(i.id) || []).forEach((n) => {
+      lines.push({
+        date: n.noteDate, kind: n.kind === 'debit' ? 'debit-note' : 'credit-note', invoiceId: i.id, invoiceNumber: no,
+        particulars: `${n.kind === 'debit' ? 'Debit' : 'Credit'} note ${n.number} · ${TAX.reasonLabel(n.kind, n.reason)} · against ${no}`,
+        debit: n.kind === 'debit' ? ROUND(n.net) : 0, credit: n.kind === 'debit' ? 0 : ROUND(n.net),
+      });
+      if (n.kind !== 'debit' && n.refundPaidOn && Number(n.refundDue || 0) > 0.005) {
+        lines.push({
+          date: n.refundPaidOn, kind: 'refund', invoiceId: i.id, invoiceNumber: no,
+          particulars: `Refund paid to the client · ${n.number}${n.refundRef ? ` · ${n.refundRef}` : ''}`,
+          debit: ROUND(n.refundDue), credit: 0,
+        });
+      }
+    });
     // Money on the invoice with no receipt row behind it (older imports carry
     // the received figure only) still belongs in the account.
     const unrecorded = ROUND(Number(i.receivedAmount || 0) - recorded);
@@ -995,21 +1292,19 @@ router.post('/', requirePerm('accounts', 'accounts', 'Invoices', 'create'), asyn
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) return res.status(400).json({ error: 'That client does not exist' });
   const terms = paymentTerms || client.paymentTerms || 'Net 30';
-  // GST and TDS ride on the client's own agreed rates — never a hardcoded
-  // figure — unless this deal overrides them explicitly.
-  const gstPct = req.body.gstPercent != null ? Number(req.body.gstPercent) : (client.gstPercent ?? 0);
-  const tdsPct = req.body.tdsPercent != null ? Number(req.body.tdsPercent) : (client.tdsPercent ?? 0);
-  const base = Number(amount);
+  // GST and TDS ride on the client's own agreed rates (and its GST / TDS
+  // Applicable flags) — never a hardcoded figure — unless this deal overrides
+  // them. P4: the amounts are ALWAYS the percentages' (utils/invoiceTax.js); an
+  // amount sent that does not match its % is refused, not stored.
+  const company = (await prisma.company.findFirst()) || {};
+  const taxIn = TAX.readTaxInput({ ...req.body, gst, tds }, {}, TAX.defaultsFor(client, company, { gst: 0, tds: 0 }));
+  if (taxIn.error) return res.status(400).json({ error: taxIn.error });
   const invoice = await prisma.invoice.create({
     data: {
       clientId,
       candidateId: candidateId || null,
       requirementId: requirementId || null,
-      amount: base,
-      gst: gst != null ? Number(gst) || 0 : ROUND(base * gstPct / 100),
-      tds: tds != null ? Number(tds) || 0 : ROUND(base * tdsPct / 100),
-      gstPercent: gstPct,
-      tdsPercent: tdsPct,
+      ...taxIn.data,
       invoiceDate,
       // A blank due date is derived from the payment terms rather than left empty,
       // otherwise nothing can ever go Overdue.
@@ -1021,6 +1316,50 @@ router.post('/', requirePerm('accounts', 'accounts', 'Invoices', 'create'), asyn
   });
   await logAudit({ userId: req.user.id, action: 'Invoice created', entity: 'Invoice', entityId: invoice.id, toValue: invoice.invoiceNumber });
   res.status(201).json(decorate(invoice));
+});
+
+// ---------------------------------------------------------------------------
+// P4 — EDIT AN INVOICE'S AMOUNT BEFORE GST, GST and TDS. Every amount is
+// recalculated from the percentages here (an amount that disagrees with its %
+// is refused); the status follows the receipts as always. Money already
+// received can never end up above the new net receivable.
+// ---------------------------------------------------------------------------
+const taxLine = (x) => `before GST ₹${x.amount} · GST ${x.gstPercent || 0}% ₹${x.gst} · TDS ${x.tdsPercent || 0}% ₹${x.tds} · net ₹${ROUND(Number(x.amount) + Number(x.gst) - Number(x.tds))}`;
+router.patch('/:id', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  if (invoice.status === 'Cancelled') return res.status(400).json({ error: 'This invoice is cancelled — it cannot be edited.' });
+  if (CNU.ready() && await prisma.creditNote.count({ where: { invoiceId: invoice.id, status: 'Issued' } })) {
+    return res.status(400).json({ error: 'This invoice has an issued credit / debit note worked out on its GST / TDS — cancel the note first, then edit.' });
+  }
+  const company = (await prisma.company.findFirst()) || {};
+  const now = TAX.taxView(invoice, { company });
+  // An older invoice keeps what it reads as today unless the form changes it.
+  const start = {
+    ...invoice, gstType: now.gstType, tdsBase: now.tdsBase, gstPercent: now.gstPercent, tdsPercent: now.tdsPercent,
+  };
+  const taxIn = TAX.readTaxInput(req.body || {}, start, TAX.defaultsFor(invoice.client, company, { gst: 0, tds: 0 }));
+  if (taxIn.error) return res.status(400).json({ error: taxIn.error });
+  const received = ROUND(Number(invoice.receivedAmount || 0));
+  if (received > taxIn.calc.net + 0.5) {
+    return res.status(400).json({ error: `₹${received.toLocaleString('en-IN')} has already been received — more than the new net receivable ₹${taxIn.calc.net.toLocaleString('en-IN')}. Remove a payment first, or check the amounts.` });
+  }
+  const data = taxIn.data;
+  const changed = Object.keys(data).filter((k) => data[k] !== undefined && String(data[k] ?? '') !== String(invoice[k] ?? ''));
+  if (!changed.length) {
+    return res.json({ ...decorate(invoice), ...taxPayload(invoice, company), unchanged: true });
+  }
+  const status = deriveInvoiceStatus({ ...invoice, ...data });
+  const today = new Date().toISOString().slice(0, 10);
+  data.status = status;
+  data.paidDate = status === 'Paid' ? (invoice.paidDate || today) : (invoice.status === 'Paid' ? null : invoice.paidDate);
+  const updated = await prisma.invoice.update({ where: { id: invoice.id }, data, include: { client: true } });
+  await logAudit({
+    userId: req.user.id, action: 'Invoice GST / TDS edited', entity: 'Invoice', entityId: invoice.id,
+    fromValue: taxLine(invoice), toValue: taxLine(updated),
+  });
+  return res.json({ ...decorate(updated), ...taxPayload(updated, company), changed });
 });
 
 // Record a receipt. Several of these can land on one invoice, which is how an
@@ -1068,6 +1407,9 @@ router.delete('/:id/payments/:paymentId', requirePerm('accounts', 'accounts', 'P
     return res.status(400).json({ error: 'This receipt came from a reconciled bank line — unmatch the transaction instead' });
   }
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+  if (CNU.ready() && await prisma.creditNote.count({ where: { invoiceId: invoice.id, status: 'Issued', refundDue: { gt: 0.005 } } })) {
+    return res.status(400).json({ error: 'A credit note on this invoice has a refund worked out from the payments received — cancel that note first, then remove the payment.' });
+  }
   await prisma.invoicePayment.delete({ where: { id: payment.id } });
   const received = ROUND(Math.max(0, Number(invoice.receivedAmount || 0) - Number(payment.amount || 0)));
   const status = deriveInvoiceStatus({ ...invoice, receivedAmount: received });
@@ -1097,7 +1439,7 @@ router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit')
   });
   const updated = await prisma.invoice.update({
     where: { id: invoice.id },
-    data: { receivedAmount: invoiceTotal(invoice), status: 'Paid', paidDate: date },
+    data: { receivedAmount: ROUND(Number(invoice.receivedAmount || 0) + outstanding), status: 'Paid', paidDate: date },
   });
   await logAudit({ userId: req.user.id, action: 'Invoice paid', entity: 'Invoice', entityId: invoice.id, fromValue: invoice.status, toValue: 'Paid' });
   res.json(decorate(updated));
@@ -1107,6 +1449,9 @@ router.patch('/:id/cancel', requirePerm('accounts', 'accounts', 'Invoices', 'edi
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   if (invoice.status === 'Cancelled') return res.status(400).json({ error: 'Already cancelled' });
+  if (CNU.ready() && await prisma.creditNote.count({ where: { invoiceId: invoice.id, status: { not: 'Cancelled' } } })) {
+    return res.status(400).json({ error: 'This invoice has a credit / debit note — cancel or remove the note first.' });
+  }
   if (Number(invoice.receivedAmount || 0) > 0) {
     return res.status(400).json({ error: 'Money has already been received against this invoice — it cannot be cancelled' });
   }
@@ -1154,4 +1499,7 @@ router.patch('/:id/sent', requirePerm('accounts', 'accounts', 'Invoices', 'edit'
 });
 
 router.nextInvoiceNumber = nextInvoiceNumber;
+// The Accounts Dashboard (utils/accountsControl.js) reads the SAME register
+// rows as this page, so its Total / Received / Pending can never differ.
+router.buildRegister = buildRegister;
 module.exports = router;

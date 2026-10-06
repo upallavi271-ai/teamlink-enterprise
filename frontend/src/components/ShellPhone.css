@@ -1,0 +1,7 @@
+/* Top bar on a phone (simplicity pass 2026-10-03): the role chip and the
+   ● AI pill do not fit at 375 px. The 🤖 button (bottom right) still opens
+   the AI panel, and the role shows on the Profile page. */
+@media (max-width: 600px) {
+  .topbar .tb-role,
+  .topbar .tb-ai { display: none !important; }
+}

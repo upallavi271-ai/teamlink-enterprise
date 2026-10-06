@@ -1,0 +1,54 @@
+/* The client form in 9 sections (ClientForm.jsx, 2026-10-05). Scoped .cf-*. */
+.cf { display: flex; flex-direction: column; gap: 10px; }
+.cf-sec { border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised, #fff); }
+.cf-sec.bad { border-color: var(--red); }
+.cf-sec-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: none; border: 0; cursor: pointer; text-align: left; color: var(--ink); min-height: 52px; }
+.cf-sec-arrow { width: 14px; color: var(--ink-soft); }
+.cf-sec-title { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.cf-sec-title b { font-size: 14px; }
+.cf-sec-title small { font-size: 12px; color: var(--ink-soft); }
+.cf-sec-count { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.cf-tick { color: var(--teal); font-weight: 700; }
+.cf-bang { color: var(--red); font-weight: 700; }
+.cf-sec-body { padding: 4px 12px 14px; border-top: 1px solid var(--line-soft); }
+.cf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+.cf-wide { grid-column: 1 / -1; }
+.cf-field > span { display: inline-flex; align-items: center; gap: 4px; }
+.cf-req { color: var(--red); }
+.cf-hint { font-size: 11.5px; color: var(--ink-soft); }
+.cf-err { font-size: 12px; color: var(--red); }
+.cf-bad input, .cf-bad select, .cf-bad textarea { border-color: var(--red) !important; }
+.cf-check { display: flex; gap: 6px; align-items: center; font-size: 13px; margin: 2px 0 4px; }
+.cf-check input { width: auto; }
+.cf-inline { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.cf-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.cf-seg-btn { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; min-height: 34px; color: var(--ink); }
+.cf-seg-btn.on { border-color: var(--blue); background: var(--blue-tint); color: var(--blue); font-weight: 600; }
+.cf-seg-btn:disabled { opacity: .6; cursor: default; }
+.cf-lock { font-size: 12.5px; color: var(--amber); background: var(--amber-tint); border-radius: 8px; padding: 6px 10px; margin: 8px 0; }
+.cf-linked { font-size: 13px; background: var(--blue-tint); color: var(--ink); border-radius: 8px; padding: 8px 10px; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cf-private { font-size: 12.5px; background: var(--line-soft); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.cf-bank { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+.cf-docs { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cf-doclist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cf-doclist li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 13px; }
+.cf-docstatus { grid-column: 2; grid-row: 1; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; align-self: start; }
+.cf-docstatus.s-valid { background: var(--teal-tint); color: var(--teal); }
+.cf-docstatus.s-expiring-soon, .cf-docstatus.s-pending { background: var(--amber-tint); color: var(--amber); }
+.cf-docstatus.s-expired { background: var(--red-tint); color: var(--red); }
+.cf-docbtns { grid-column: 2; display: flex; gap: 6px; }
+.cf-docadd { border-top: 1px dashed var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.cf-docadd .cf-grid { width: 100%; }
+/* The sticky bottom bar of the Add / Edit dialog. */
+.cf-bar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; width: 100%; }
+.cf-bar-note { flex: 1; font-size: 12px; color: var(--ink-soft); min-width: 160px; }
+.cf-bar .btn { min-height: 40px; }
+@media (max-width: 640px) {
+  .cf-grid { grid-template-columns: minmax(0, 1fr); }
+  .cf-bar .btn { flex: 1 1 100%; justify-content: center; }
+  .cf-doclist li { grid-template-columns: 1fr; }
+  .cf-docstatus, .cf-docbtns { grid-column: 1; grid-row: auto; justify-self: start; }
+}
+/* The Add / Edit client bottom bar stays in sight while the form scrolls. */
+.modal-foot:has(> .cf-bar) { position: sticky; bottom: 0; z-index: 3; background: var(--paper-raised, #fff); }
+@media (max-width: 640px) { .cf-bar-note { display: none; } .cf-bar .btn { flex: 1 1 30%; min-height: 40px; padding: 0 6px; } }

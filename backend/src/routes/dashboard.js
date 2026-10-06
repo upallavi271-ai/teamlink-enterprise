@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
 const {
-  requirementWhere, applicationWhere, clientWhere, candidateWhere, scopeOf, employeeWhere,
+  requirementWhere, applicationWhere, clientWhere, candidateWhere, atsScopeOf: scopeOf, employeeWhere,
 } = require('../utils/scope');
 const dateRange = require('../utils/dateRange');
 const {
@@ -24,6 +24,8 @@ const router = express.Router();
 // atsVocab.applicationDueDate) — refresh its snapshot first so the dashboard,
 // the bell and Candidates & Pipeline show the same Overdue / Due Today.
 const { ensureNextActionContext } = require('../utils/nextAction');
+// B9.9: billed / receivable / pending NET of issued credit & debit notes (utils/creditNotes.js decorateNet).
+const CNU = require('../utils/creditNotes');
 router.use((req, res, next) => { ensureNextActionContext().then(() => next(), () => next()); });
 router.use(requireAuth);
 
@@ -50,6 +52,9 @@ router.get(
     prisma.bankTransaction.findMany({ orderBy: { date: 'desc' } }),
     prisma.officeExpense.findMany(),
   ]);
+  // B9.9: every "billed" figure below is after issued credit / debit notes —
+  // the same reading as the Invoices page (utils/invoiceTax.js withNotes).
+  await CNU.decorateNet(invoices);
 
   // The period the whole page is for. The financial year runs April to March
   // and rolls over on its own; every money column below respects it.
@@ -66,21 +71,21 @@ router.get(
   const live = scoped.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled');
 
   const sum = (list, f) => ROUND(list.reduce((s, x) => s + f(x), 0));
-  const billing = sum(live, (i) => Number(i.amount || 0));
-  const gst = sum(live, (i) => Number(i.gst || 0));
-  const tds = sum(live, (i) => Number(i.tds || 0));
+  const billing = sum(live, (i) => CNU.billedOf(i));
+  const gst = sum(live, (i) => CNU.gstBilledOf(i));
+  const tds = sum(live, (i) => CNU.tdsBilledOf(i));
   const invoiceValue = ROUND(billing + gst);
-  const receivable = sum(live, invoiceTotal);
+  const receivable = sum(live, CNU.receivableOf);
   const received = sum(live, (i) => Number(i.receivedAmount || 0));
-  const pending = ROUND(receivable - received);
+  const pending = sum(live, CNU.pendingOf); // B9.9: after issued notes (refund due stays owed back)
   const expenseNet = sum(scopedExpenses, (e) => Number(e.monthlyAmount || 0) - Number(e.gstAmount || 0) - Number(e.tdsAmount || 0));
   const expensePending = sum(scopedExpenses.filter((e) => e.paidStatus === 'Unpaid'), (e) => Number(e.monthlyAmount || 0) - Number(e.gstAmount || 0) - Number(e.tdsAmount || 0));
   const expensePaid = ROUND(expenseNet - expensePending);
   const gstInput = sum(scopedExpenses, (e) => Number(e.gstAmount || 0));
   const gstReceived = sum(live, (i) => {
-    const total = invoiceTotal(i);
+    const total = CNU.receivableOf(i);
     const share = total > 0 ? Number(i.receivedAmount || 0) / total : 0;
-    return Number(i.gst || 0) * Math.min(1, share);
+    return CNU.gstBilledOf(i) * Math.min(1, share);
   });
   const overdueInvoices = live.filter((i) => invoiceOutstanding(i) > 0.5 && i.dueDate && daysOverdue(i.dueDate) > 0);
 
@@ -102,10 +107,10 @@ router.get(
   const byMonth = monthKeys.map((mk) => {
     const list = live.filter((i) => String(i.invoiceDate || '').slice(0, 7) === mk);
     const exp = scopedExpenses.filter((e) => String(e.expenseDate || '').slice(0, 7) === mk);
-    const b = sum(list, (i) => Number(i.amount || 0));
+    const b = sum(list, (i) => CNU.billedOf(i));
     const sp = sum(exp, (e) => Number(e.monthlyAmount || 0) - Number(e.gstAmount || 0) - Number(e.tdsAmount || 0));
-    const gstM = sum(list, (i) => Number(i.gst || 0));
-    const tdsM = sum(list, (i) => Number(i.tds || 0));
+    const gstM = sum(list, (i) => CNU.gstBilledOf(i));
+    const tdsM = sum(list, (i) => CNU.tdsBilledOf(i));
     // "Received" is grouped by invoice month; "Cash collected" is grouped by
     // the actual payment date — same as the workbook.
     const cash = ROUND(payments.filter((p) => String(p.date || '').slice(0, 7) === mk)
@@ -120,9 +125,9 @@ router.get(
       gst: gstM,
       invoiceValue: ROUND(b + gstM),
       tds: tdsM,
-      receivable: sum(list, invoiceTotal),
+      receivable: sum(list, CNU.receivableOf),
       received: sum(list, (i) => Number(i.receivedAmount || 0)),
-      pending: ROUND(sum(list, invoiceTotal) - sum(list, (i) => Number(i.receivedAmount || 0))),
+      pending: sum(list, CNU.pendingOf),
       netProfit: ROUND(b - tdsM),
       cash,
       spend: sp,
@@ -141,13 +146,13 @@ router.get(
       parts: 0, noProof: 0, lastPayment: null,
     };
     cur.invoices += 1;
-    cur.billing = ROUND(cur.billing + Number(i.amount || 0));
-    cur.gst = ROUND(cur.gst + Number(i.gst || 0));
+    cur.billing = ROUND(cur.billing + CNU.billedOf(i));
+    cur.gst = ROUND(cur.gst + CNU.gstBilledOf(i));
     cur.invoiceValue = ROUND(cur.billing + cur.gst);
-    cur.tds = ROUND(cur.tds + Number(i.tds || 0));
-    cur.receivable = ROUND(cur.receivable + invoiceTotal(i));
+    cur.tds = ROUND(cur.tds + CNU.tdsBilledOf(i));
+    cur.receivable = ROUND(cur.receivable + CNU.receivableOf(i));
     cur.received = ROUND(cur.received + Number(i.receivedAmount || 0));
-    cur.pending = ROUND(cur.receivable - cur.received);
+    cur.pending = ROUND(cur.pending + CNU.pendingOf(i));
     (paysByInvoice.get(i.id) || []).forEach((p) => {
       cur.parts += 1;
       if (!p.reference) cur.noProof += 1;
@@ -174,11 +179,11 @@ router.get(
     };
     const mk = String(i.invoiceDate || '').slice(0, 7);
     const out = invoiceOutstanding(i);
-    cur.billing = ROUND(cur.billing + Number(i.amount || 0));
-    cur.gst = ROUND(cur.gst + Number(i.gst || 0));
+    cur.billing = ROUND(cur.billing + CNU.billedOf(i));
+    cur.gst = ROUND(cur.gst + CNU.gstBilledOf(i));
     cur.invoiceValue = ROUND(cur.billing + cur.gst);
-    cur.tds = ROUND(cur.tds + Number(i.tds || 0));
-    cur.receivable = ROUND(cur.receivable + invoiceTotal(i));
+    cur.tds = ROUND(cur.tds + CNU.tdsBilledOf(i));
+    cur.receivable = ROUND(cur.receivable + CNU.receivableOf(i));
     cur.paid = ROUND(cur.paid + Number(i.receivedAmount || 0));
     cur.parts += (paysByInvoice.get(i.id) || []).length;
     cur.cells[mk] = ROUND((cur.cells[mk] || 0) + out);
@@ -200,11 +205,11 @@ router.get(
         invoiceNumber: i.invoiceNumber,
         invoiceDate: i.invoiceDate,
         age: invoiceAge(i.invoiceDate),
-        billing: ROUND(Number(i.amount || 0)),
-        gst: ROUND(Number(i.gst || 0)),
-        invoiceValue: ROUND(Number(i.amount || 0) + Number(i.gst || 0)),
-        tds: ROUND(Number(i.tds || 0)),
-        receivable: invoiceTotal(i),
+        billing: ROUND(CNU.billedOf(i)),
+        gst: ROUND(CNU.gstBilledOf(i)),
+        invoiceValue: ROUND(CNU.billedOf(i) + CNU.gstBilledOf(i)),
+        tds: ROUND(CNU.tdsBilledOf(i)),
+        receivable: CNU.receivableOf(i),
         received: ROUND(Number(i.receivedAmount || 0)),
         pending: invoiceOutstanding(i),
         status: deriveInvoiceStatus(i),
@@ -230,7 +235,7 @@ router.get(
     invoiceDate: i.invoiceDate,
     dueDate: i.dueDate,
     status: deriveInvoiceStatus(i),
-    total: invoiceTotal(i),
+    total: CNU.receivableOf(i),
     outstanding: invoiceOutstanding(i),
   }));
   const needsAttention = rows
@@ -442,8 +447,11 @@ const actionLabelFor = (stage, atsRole) => (atsRole === 'CLIENT' && CLIENT_ACTIO
 // (atsVocab applicationDueDate; the same rule as applicationIsOverdue).
 // 'none' (2026-09-29): a pending action with NO real due date (imported with
 // its stage already set — utils/nextAction.js) is not "upcoming".
-const DUE_BUCKETS = ['overdue', 'today', 'upcoming', 'none'];
-function dueBucket(due, t) {
+const DUE_BUCKETS = ['overdue', 'today', 'upcoming', 'stale', 'none'];
+// A Stale row (past due, idle 30+ days — utils/nextAction.js) is its own bucket, never Overdue.
+const STALE_BUCKET = (a) => require('../utils/nextAction').nextActionFor(a).dueStatus === 'stale'; // eslint-disable-line global-require
+function dueBucket(due, t, a) {
+  if (a && due && due < t && STALE_BUCKET(a)) return 'stale';
   if (!due) return 'none';
   if (due < t) return 'overdue';
   if (due === t) return 'today';
@@ -603,7 +611,7 @@ async function atsAlerts(user) {
   const due = { overdue: 0, today: 0, upcoming: 0 };
   queueRows.forEach((a) => {
     stageCount[a.stage] = (stageCount[a.stage] || 0) + 1;
-    due[dueBucket(applicationDueDate(a), t)] += 1;
+    due[dueBucket(applicationDueDate(a), t, a)] = (due[dueBucket(applicationDueDate(a), t, a)] || 0) + 1;
   });
   const countIn = (stages) => stages.reduce((n, st) => n + (stageCount[st] || 0), 0);
 
@@ -674,7 +682,91 @@ async function atsAlerts(user) {
       links: Object.fromEntries(DUE_BUCKETS.map((b) => [b, DUE_LINK(b)])),
     },
     mine: { total: mineParts.reduce((n, p) => n + p.count, 0), parts: mineParts },
+    // 🔔 THE BADGE (dashboard review 2026-10-03 §A8): only role-relevant,
+    // IMPORTANT items — never the whole scope's queues (that was 7,030).
+    important: await importantAlerts(user, s, appScope),
   };
+}
+
+// The bell's badge: (1) actions I OWN that are overdue or due today (not
+// Stale — utils/nextAction.js), (2) approvals waiting on me, (3) unread
+// mentions / assignments addressed to me, (4) system alerts for the people
+// allowed to see them (Dashboard / System Alerts). Ordinary notifications
+// stay in the bell's Messages list and never inflate the badge.
+const OVERSIGHT_OWNERS = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER'];
+const MENTION_RE = /assigned to you|mentioned you|@\w|assigned you|you were assigned|handed to you/i;
+async function importantAlerts(user, s, appScope) {
+  const NA = require('../utils/nextAction'); // eslint-disable-line global-require
+  const me = user.id;
+  const t = NA.todayIst();
+  const lines = [];
+  const items = [];
+  if (!externalLogin(user)) {
+    // An oversight role owns only what names them; a working role also owns
+    // the unnamed steps of its role inside its (already narrow) scope.
+    const mineArm = {
+      OR: [
+        { requirement: { is: { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, { tlId: me }, { stlId: me }, { bdeId: me }] } } },
+        { followUps: { some: { completedAt: null, ownerUserId: me } } },
+      ],
+    };
+    const where = { AND: [appScope, { stage: { notIn: CLOSED_STAGES } }, ...(OVERSIGHT_OWNERS.includes(s.atsRole) ? [mineArm] : [])] };
+    const apps = await prisma.application.findMany({
+      where,
+      select: {
+        id: true, candidateId: true, requirementId: true, stage: true, createdAt: true, updatedAt: true, source: true, portalImportedAt: true,
+        hiringType: true, interviewAt: true, joiningDate: true,
+        candidate: { select: { name: true } },
+        requirement: { select: { title: true, recruiterId: true, recruiterIds: true, tlId: true, bdeId: true, internal: true, hiringType: true, client: { select: { name: true, bdeOwner: true } } } },
+      },
+    });
+    const viewer = { id: me, atsRole: s.atsRole };
+    const screening = SCREENING_ATS_ROLES.includes(s.atsRole);
+    apps.forEach((a) => {
+      if (!screening && require('../utils/atsVocab').isPreAtsApplication(a)) return; // eslint-disable-line global-require
+      const na = NA.nextActionFor(a, { today: t });
+      if (!['overdue', 'due_today'].includes(na.dueStatus) || !NA.needsActionBy(a, na, viewer)) return;
+      items.push({
+        id: a.id, candidateId: a.candidateId, candidate: a.candidate ? a.candidate.name : '—', requirementId: a.requirementId,
+        requirement: a.requirement ? a.requirement.title : null, action: na.action, due: na.dueAt, overdue: na.dueStatus === 'overdue',
+      });
+    });
+    items.sort((x, y) => (y.overdue - x.overdue) || String(x.due).localeCompare(String(y.due)));
+    const over = items.filter((x) => x.overdue).length;
+    // "My tasks" — the same number as the dashboard greeting and the login popup.
+    lines.push({ id: 'my-actions', label: 'My tasks (late or due today)', count: items.length, late: over, sub: over ? `${over} late` : (items.length ? 'due today' : null), tone: over ? 'red' : 'amber', to: '/ats/dashboard' });
+  }
+  const { can: canDo } = require('../middleware/auth'); // eslint-disable-line global-require
+  // Old messages stop counting after the Admin's "bell keeps messages" days.
+  const expireDays = require('../utils/atsAlertSettings').alertSettingsNow().bellExpireDays || 14; // eslint-disable-line global-require
+  const [approvals, unread, systemAlerts] = await Promise.all([
+    prisma.approvalStep.count({ where: { approverUserId: me, status: 'Pending' } }),
+    prisma.notification.findMany({ where: { userId: me, read: false, createdAt: { gte: new Date(Date.now() - expireDays * 86400000) } }, select: { id: true, title: true, message: true, recipient: true } }),
+    canDo(user, null, 'dashboard', 'System Alerts', 'view'),
+  ]);
+  lines.push({ id: 'approvals', label: 'Approvals waiting on me', count: approvals, tone: 'amber', to: '/leave' });
+  const mentions = unread.filter((n) => MENTION_RE.test(`${n.title} ${n.message || ''}`));
+  lines.push({ id: 'mentions', label: 'Mentions & assignments', count: mentions.length, tone: 'blue', to: '/admin/notifications', ids: mentions.map((n) => n.id) });
+  // Late work of my team / area (utils/atsEscalation.js) — one grouped line.
+  const escal = unread.filter((n) => /^ats-escalation\|(tl|manager)\|/.test(String(n.recipient || '')));
+  if (escal.length) lines.push({ id: 'escalations', label: 'Late work in my team / area', count: escal.length, tone: 'red', to: '/admin/notifications', ids: escal.map((n) => n.id) });
+  if (systemAlerts) {
+    const since30 = new Date(Date.now() - 30 * 86400000);
+    const [ints, syncFailed, portalFailed] = await Promise.all([
+      prisma.integration.findMany({ select: { recordsFailed: true, state: true, error: true } }),
+      prisma.syncLog.count({ where: { status: 'Failed', createdAt: { gte: since30 } } }),
+      prisma.requirement.count({ where: { portalSyncStatus: 'Failed' } }),
+    ]);
+    const intFailed = ints.filter((i) => i.recordsFailed > 0 || /reconnect|expired/i.test(i.state) || i.error).length;
+    // One alert per failing thing, not one per failed record.
+    const n = intFailed + (syncFailed ? 1 : 0) + (portalFailed ? 1 : 0);
+    lines.push({
+      id: 'system', label: 'System alerts', count: n, tone: 'red', to: '/admin/integrations',
+      sub: n ? [intFailed && `${intFailed} integration${intFailed === 1 ? '' : 's'} failing`, syncFailed && `${syncFailed} sync failures (30 days)`, portalFailed && `${portalFailed} jobs failed to post`].filter(Boolean).join(' · ') : null,
+    });
+  }
+  const total = lines.reduce((x, l) => x + l.count, 0);
+  return { total, badge: total > 99 ? '99+' : String(total), lines, items: items.slice(0, 8), messagesUnread: unread.length - mentions.length - escal.length };
 }
 
 // GET /api/dashboard/ats/alerts — the bell and the AI button. Same guard as
@@ -826,9 +918,9 @@ router.get(
     const t = today();
     const allItems = queues.flatMap((q) => rowsFor(q).map((a) => {
       const due = applicationDueDate(a);
-      return { a, q, due, bucket: dueBucket(due, t) };
+      return { a, q, due, bucket: dueBucket(due, t, a) };
     }));
-    const dueCounts = { overdue: 0, today: 0, upcoming: 0, none: 0 };
+    const dueCounts = { overdue: 0, today: 0, upcoming: 0, stale: 0, none: 0 };
     allItems.forEach((x) => { dueCounts[x.bucket] += 1; });
     const wantDue = DUE_BUCKETS.includes(req.query.due) ? req.query.due : '';
     const wantQueue = queues.some((q) => q.id === req.query.queue) ? req.query.queue : '';
@@ -1451,6 +1543,271 @@ router.get('/ats/role/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     return next(err);
   }
 });
+// ---------------------------------------------------------------------------
+// THE ATS HOME — one view per role (dashboard review 2026-10-03, A–C):
+// utils/atsHome.js. GET /ats/home (?department=&range=&from=&to=),
+// GET /ats/home/list?set= (the rows behind one number), and POST
+// /ats/stale/close (Super Admin / Admin: bulk-close the Stale bucket).
+// ---------------------------------------------------------------------------
+const atsHome = require('../utils/atsHome');
+const HOME_CACHE = new Map();
+// The Admin health dot in the top bar (integration / sync / job-posting errors).
+router.get('/ats/health', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try { return res.json(await atsHome.healthDot(req.user)); } catch (err) { return next(err); }
+});
+router.get('/ats/home', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    const b = await atsHome.buildHome(req.user, req);
+    HOME_CACHE.set(homeKey(req), { at: Date.now(), b });
+    if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
+    return res.json(atsHome.publicHome(b));
+  } catch (err) {
+    if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+});
+// The rows behind one number, with the list's own search / filters (d_*)
+// and, with ?format=xlsx|csv, the same rows as a file.
+const DRILL_PARAM = (k) => k.startsWith('d_') || ['set', 'limit', 'format', 'fresh'].includes(k);
+function homeKey(req) {
+  const q = req.query || {};
+  const keys = Object.keys(q).filter((k) => !DRILL_PARAM(k)).sort();
+  return `${req.user.id}|${req.viewAs ? 'va' : ''}|${JSON.stringify(keys.map((k) => [k, q[k]]))}`;
+}
+router.get('/ats/home/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    // The board the page just drew (same login, same filters) is reused for a
+    // little while, so opening a number's list does not rebuild the dashboard.
+    const key = homeKey(req);
+    const hit = HOME_CACHE.get(key);
+    let b = hit && Date.now() - hit.at < 60000 ? hit.b : null;
+    if (!b) {
+      b = await atsHome.buildHome(req.user, req);
+      HOME_CACHE.set(key, { at: Date.now(), b });
+      if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
+    }
+    const list = await atsHome.homeList(req.user, b, String(req.query.set || ''), req.query);
+    if (!list) return res.status(404).json({ error: 'That list is not on your dashboard any more — close it and click the number again.' });
+    if (req.query.format) {
+      const { formatOf, sendTable } = require('../utils/exportKit'); // eslint-disable-line global-require
+      const { ioAccessFor } = require('../utils/ioAccess'); // eslint-disable-line global-require
+      const format = formatOf(req.query);
+      if (!format || format === 'pdf') return res.status(400).json({ error: 'Pick Excel or CSV.' });
+      const access = await ioAccessFor(req.user, 'dashboard').catch(() => ({}));
+      const mayExport = access.export || await can(req.user, 'ats', 'dashboard', 'KPI Overview', 'export');
+      if (!mayExport) return res.status(403).json({ error: 'Your role cannot export this list.' });
+      const t = atsHome.exportTable(list);
+      // ATS data (like routes/atsIo.js exports): audited, no Super Admin mail.
+      const viaAts = Object.create(req, { baseUrl: { value: '/api/ats/dashboard' } });
+      return sendTable(viaAts, res, {
+        format, name: `dashboard-${list.title}`.slice(0, 60), title: list.title, headers: t.headers, rows: t.rows,
+        sheet: 'List', entity: 'Dashboard', what: `Dashboard list "${list.title}"`, scope: require('../utils/scope').scopeLabel(req.user, 'ats'), // eslint-disable-line global-require
+        period: null,
+      });
+    }
+    const { _all, ...out } = list; // eslint-disable-line no-unused-vars
+    return res.json(out);
+  } catch (err) {
+    if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+});
+
+// DUE DATES & ALERTS — the Admin settings (spec §14, utils/atsAlertSettings.js).
+// Everyone on the ATS may read them (the due dates they work to); only a
+// Super Admin / Admin changes them.
+const alertSettings = require('../utils/atsAlertSettings');
+const mayEditAlerts = (req) => !req.viewAs && ['SUPER_ADMIN', 'ADMIN'].includes(scopeOf(req.user).atsRole);
+// STEP TIMING (one Admin screen for every per-step day, main 2026-10-03):
+// "Finish this step within N days" = utils/atsAlertSettings.js dueDays;
+// "Contact the candidate every N days" = utils/followupVisibility.js rules
+// (Integration 'ats-followup-rules' — each module keeps reading its own).
+async function contactColumn() {
+  const FV = require('../utils/followupVisibility'); // eslint-disable-line global-require
+  const t = await FV.rulesTable();
+  const byStage = new Map(t.rows.map((r) => [r.stage, r]));
+  return {
+    confirmed: t.confirmed, status: t.status, note: t.note, confirmedAt: t.confirmedAt, confirmedBy: t.confirmedBy,
+    rows: Object.fromEntries(alertSettings.STEP_GROUPS.map((g) => {
+      const rs = g.stages.map((s) => byStage.get(s)).filter(Boolean);
+      const modes = [...new Set(rs.map((r) => r.mode))];
+      const days = rs.map((r) => r.days);
+      return [g.id, { mode: modes.length === 1 ? modes[0] : 'mixed', days: Math.min(...days), max: Math.max(...days), mixed: modes.length > 1 || Math.min(...days) !== Math.max(...days), changed: rs.some((r) => r.changed) }];
+    })),
+  };
+}
+router.get('/ats/alert-settings', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    const settings = await alertSettings.loadAlertSettings({ maxAgeMs: 0 });
+    return res.json({
+      settings,
+      steps: alertSettings.STEP_GROUPS.map(({ id, label, days, anchor, hint }) => ({ id, label, defaultDays: days, anchor: anchor || null, hint: hint || null })),
+      contact: await contactColumn(),
+      canEdit: mayEditAlerts(req),
+    });
+  } catch (err) { return next(err); }
+});
+router.put('/ats/alert-settings', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    if (!mayEditAlerts(req)) return res.status(403).json({ error: 'Only a Super Admin or Admin can change the step timing.' });
+    const body = req.body || {};
+    // The contact column first: a bad value there saves nothing at all.
+    const FV = require('../utils/followupVisibility'); // eslint-disable-line global-require
+    const cur = await FV.loadRules();
+    const rules = {};
+    const contact = body.contactDays && typeof body.contactDays === 'object' ? body.contactDays : {};
+    for (const [gid, v] of Object.entries(contact)) {
+      const g = alertSettings.STEP_GROUPS.find((x) => x.id === gid);
+      if (!g) continue;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0 || n > 60) return res.status(400).json({ error: `${g.label}: contact days must be a whole number from 0 to 60.` });
+      g.stages.forEach((st) => {
+        const r = cur.rules[st];
+        if (!r) return;
+        rules[st] = { mode: r.mode === 'none' ? 'after_contact' : r.mode, days: n };
+      });
+    }
+    const out = await alertSettings.saveAlertSettings({
+      dueDays: body.dueDays, staleAfterDays: body.staleAfterDays, bellExpireDays: body.bellExpireDays,
+      escalation: body.escalation ? { enabled: body.escalation.enabled, tlAfterDays: body.escalation.tlAfterDays, managerAfterDays: body.escalation.managerAfterDays } : undefined,
+    });
+    if (out.error) return res.status(400).json({ error: out.error });
+    if (Object.keys(rules).length || body.confirmContact === true) {
+      const fr = await FV.saveRules(req.user, { rules, ...(body.confirmContact === true ? { confirm: true } : {}) });
+      if (fr.error) return res.status(400).json({ error: fr.error });
+    }
+    const { logAudit } = require('../utils/audit'); // eslint-disable-line global-require
+    const brief = (s) => JSON.stringify({ dueDays: s.dueDays, staleAfterDays: s.staleAfterDays, bellExpireDays: s.bellExpireDays, escalation: { enabled: s.escalation.enabled, tlAfterDays: s.escalation.tlAfterDays, managerAfterDays: s.escalation.managerAfterDays } });
+    if (brief(out.before) !== brief(out.settings)) {
+      await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Changed ATS step timing & alerts', entity: 'Settings', entityId: alertSettings.STORE_ID, fromValue: brief(out.before), toValue: brief(out.settings) }).catch(() => null);
+    }
+    return res.json({ settings: out.settings, contact: await contactColumn() });
+  } catch (err) { return next(err); }
+});
+// "Who would be told now?" — the escalation plan, writes nothing.
+router.get('/ats/escalation/preview', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    if (!mayEditAlerts(req)) return res.status(403).json({ error: 'Only a Super Admin or Admin can see this.' });
+    const out = await require('../utils/atsEscalation').runEscalation({ force: true, dryRun: true }); // eslint-disable-line global-require
+    return res.json(out);
+  } catch (err) { return next(err); }
+});
+router.post('/ats/stale/close', ...ATS_BOARD_GUARDS, requirePerm('ats', 'candidates', 'Pipeline Stages', 'edit'), async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const out = await atsHome.closeStale(req.user, {
+      target: String(body.target || ''), reason: body.reason, stages: Array.isArray(body.stages) ? body.stages.map(String) : [], expected: body.expected,
+    });
+    const { status, ...rest } = out;
+    return res.status(status || 200).json(rest);
+  } catch (err) { return next(err); }
+});
+
+// ---------------------------------------------------------------------------
+// THE ACCOUNTS DASHBOARD — financial control centre (Accounts spec S8),
+// utils/accountsControl.js. Money and revenue are for the Accounts desk only:
+// on top of the matrix guard, the login's ACCOUNTS role must be Super Admin,
+// Admin or Accountant (SET.ACCOUNTS) — a view-only Manager, a TL or a
+// recruiter gets a 403 here whatever a saved matrix row says.
+// ---------------------------------------------------------------------------
+const AC = require('../utils/accountsControl');
+const PERMS = require('../utils/permissions');
+const MONEY_GUARDS = [
+  requireProduct('accounts'),
+  requirePerm('accounts', 'accounts', 'Accounts Dashboard', 'view'),
+  (req, res, next) => (PERMS.SET.ACCOUNTS.includes(PERMS.roleForProduct(req.user, 'accounts'))
+    ? next()
+    : res.status(403).json({ error: 'Money figures are open to Accounts, Admin and Super Admin only' })),
+];
+router.get('/accounts/control', ...MONEY_GUARDS, async (req, res, next) => {
+  try { return res.json(await AC.buildControl(req.user, req.query)); } catch (err) { return next(err); }
+});
+// REMIND ACCOUNTANT — in-app only (no SMS / WhatsApp / email provider is
+// connected). keys = the records to remind; none = every missing proof under
+// the same filters. Never a duplicate (utils/accountsControl.js remind()).
+router.post('/accounts/control/remind', ...MONEY_GUARDS, async (req, res, next) => {
+  try {
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys.slice(0, 500) : [];
+    const out = await AC.remind(req.user, keys, req.body?.filters || {});
+    const { logAudit } = require('../utils/audit'); // eslint-disable-line global-require
+    if (out.sent) {
+      await logAudit({
+        userId: req.user.id, actorName: req.user.name || null, action: 'Proof reminder sent (in-app)', entity: 'AccountsDashboard', toValue: `${out.sent} record(s)`,
+      });
+    }
+    return res.json(out);
+  } catch (err) { return next(err); }
+});
+// The wa.me "Open WhatsApp" button: nothing is sent by the server — the
+// person sends it from their own WhatsApp. The click is logged.
+router.post('/accounts/control/whatsapp', ...MONEY_GUARDS, async (req, res, next) => {
+  try {
+    const key = String(req.body?.key || '');
+    if (!/^(invoice|expense):[\w-]+$/.test(key)) return res.status(400).json({ error: 'Pick a record first' });
+    const { logAudit } = require('../utils/audit'); // eslint-disable-line global-require
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name || null, action: AC.WA_ACTION, entity: key.split(':')[0] === 'invoice' ? 'Invoice' : 'OfficeExpense', entityId: key,
+    });
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+// ATTACH PROOF to an invoice receipt: a PDF / image (utils/attachments.js) or
+// a typed bank reference / UTR (reference only — still "document missing").
+// Office bills attach through their own POST /office-expenses/:id/proof.
+const INVOICE_EDIT = requirePerm('accounts', 'accounts', 'Invoices', 'edit');
+router.post('/accounts/control/proof/invoice/:id', ...MONEY_GUARDS, INVOICE_EDIT, async (req, res, next) => {
+  try {
+    const attachments = require('../utils/attachments'); // eslint-disable-line global-require
+    const { logAudit } = require('../utils/audit'); // eslint-disable-line global-require
+    const { invoiceWhere } = require('../utils/scope'); // eslint-disable-line global-require
+    const inv = await prisma.invoice.findFirst({ where: { AND: [invoiceWhere(req.user), { id: req.params.id }] } });
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    const stamp = { proofAt: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), proofBy: req.user.name || req.user.email || null };
+    let data;
+    let what;
+    if (/^multipart\/form-data/i.test(req.headers['content-type'] || '')) {
+      let parsed;
+      try { parsed = await attachments.parseMultipart(req); } catch (e) { return res.status(400).json({ error: attachments.MESSAGE[e.code] || 'Could not read the upload.' }); }
+      let stored;
+      try { stored = attachments.store(parsed.file); } catch (e) { return res.status(400).json({ error: attachments.MESSAGE[e.code] || 'Could not store the upload.' }); }
+      const ref = String(parsed.fields?.reference || '').trim().slice(0, 120);
+      data = {
+        proofFile: stored.billFile, proofName: stored.billName, proofMime: stored.billMime, ...(ref ? { proofRef: ref } : {}), ...stamp,
+      };
+      what = `${stored.billName}${ref ? ` · ref ${ref}` : ''}`;
+    } else {
+      const ref = String(req.body?.reference || '').trim().slice(0, 120);
+      if (!ref) return res.status(400).json({ error: 'Choose a file, or type the bank reference / UTR.' });
+      data = { proofRef: ref, ...stamp };
+      what = `Reference ${ref} (no document)`;
+    }
+    if (data.proofFile && inv.proofFile && inv.proofFile !== data.proofFile) attachments.remove(inv.proofFile);
+    await prisma.invoice.update({ where: { id: inv.id }, data });
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name || null, action: data.proofFile ? AC.ATTACH_ACTION : 'Proof reference added', entity: 'Invoice', entityId: inv.id, toValue: `${inv.invoiceNumber || inv.id} · ${what}`,
+    });
+    // A resolved record's open reminders are done with.
+    if (data.proofFile) {
+      await prisma.notification.updateMany({ where: { recipient: `${AC.REMIND_PREFIX}invoice:${inv.id}`, read: false }, data: { read: true } });
+    }
+    return res.json({ ok: true, attached: !!data.proofFile, by: stamp.proofBy, at: stamp.proofAt });
+  } catch (err) { return next(err); }
+});
+router.get('/accounts/control/proof/invoice/:id/file', ...MONEY_GUARDS, async (req, res, next) => {
+  try {
+    const attachments = require('../utils/attachments'); // eslint-disable-line global-require
+    const { invoiceWhere } = require('../utils/scope'); // eslint-disable-line global-require
+    const inv = await prisma.invoice.findFirst({ where: { AND: [invoiceWhere(req.user), { id: req.params.id }] } });
+    if (!inv || !inv.proofFile) return res.status(404).json({ error: 'No proof file on this invoice' });
+    const full = attachments.resolveStored(inv.proofFile);
+    if (!full) return res.status(404).json({ error: 'The attached file is no longer on the server' });
+    res.setHeader('Content-Type', inv.proofMime || 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="${attachments.safeDisplayName(inv.proofName)}"`);
+    return res.sendFile(full);
+  } catch (err) { return next(err); }
+});
+
 const ACCOUNTS_GUARDS = [requireProduct('accounts'), requirePerm('accounts', 'accounts', 'Accounts Dashboard', 'view')];
 router.get('/accounts/desk', ...ACCOUNTS_GUARDS, async (req, res, next) => {
   try {

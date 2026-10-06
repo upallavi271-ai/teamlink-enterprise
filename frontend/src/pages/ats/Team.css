@@ -115,3 +115,24 @@
 .r360 .cdw-body>.r360-sec{margin-bottom:0;min-width:0}
 .r360 .r360-ellipsis{max-width:100%}
 @media (max-width: 980px){.r360 .cdw-body{grid-template-columns:minmax(0,1fr)}}
+
+/* Shared list layout (spec 2026-10-03 §B) — the footer already says
+   "Showing 1 to 25 of N", so the pager inside it only pages. */
+.pw-page .lph-foot .pager { margin: 0; }
+.pw-page .lph-foot .pager-count { display: none; }
+.pw-page .lph-panel .pw-former-toggle { min-height: 32px; }
+
+/* ATS layout v3 §5 (2026-10-03) — role words and the performance snapshot. */
+.pw-page .pw-role-word{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;background:var(--st-grey-tint,#f1f5f9);color:var(--st-grey-ink,#475569);font-size:11px;font-weight:600;line-height:18px;vertical-align:middle}
+.pw-page .pw-snap{margin-bottom:12px}
+.pw-page .pw-snap-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:8px}
+.pw-page .pw-snap-head h3{margin:0;font-size:14px}
+.pw-page .pw-snap-row{display:grid;grid-template-columns:minmax(160px,1.3fr) repeat(3,minmax(110px,1fr));gap:12px;align-items:center;padding:6px 0;border-top:1px solid var(--line,#e5e7eb)}
+.pw-page .pw-snap-who{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0}
+.pw-page .pw-snap-cell{display:block;color:inherit;text-decoration:none;min-width:0}
+.pw-page a.pw-snap-cell:hover,.pw-page a.pw-snap-cell:focus-visible{outline:2px solid var(--st-blue,#2563eb);outline-offset:2px;border-radius:4px}
+.pw-page .pw-snap-empty{padding:6px 0}
+.pw-page .pw-clients{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:700px){.pw-page .pw-snap-row{grid-template-columns:1fr}}
+.pw-page .pw-snap-lbl{display:flex;justify-content:space-between;gap:6px;font-size:12px;color:#475569;margin-bottom:3px}
+.pw-page .pw-snap-lbl b{color:#1f2a44}

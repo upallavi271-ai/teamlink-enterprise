@@ -228,6 +228,30 @@ async function resolveIdentity(userId, preloaded = null) {
     scopeAliasFor(hrmsRole, 'hrms'), scopeAliasFor(atsRole, 'ats'), scopeAliasFor(accountsRole, 'accounts'),
   ]).catch(() => [hrmsRole, atsRole, accountsRole]);
 
+  // HRMS — AN STL HOLDS ONE OR MORE DEPARTMENTS / TEAMS (spec item 24).
+  // "STL-1: Education Team A + Team B; STL-2: Medical + Manufacturing." When
+  // Edit Scope names TEAMS for an STL, a department in which some of its
+  // teams are picked is cut to those teams; a department picked with none of
+  // its teams is seen whole; a picked team's department counts even when the
+  // department itself was not ticked. utils/scope.js employeeWhere() reads
+  // `hrmsTeamScope`; null = the department rule it always had.
+  let hrmsTeamScope = null;
+  const explicitTeams = csv(user.atsScopeTeams);
+  if (named(hrmsScopeRole) === 'STL' && explicitTeams.length) {
+    const rows = await prisma.team.findMany({ where: { name: { in: explicitTeams } }, select: { name: true, department: { select: { name: true } } } }).catch(() => []);
+    const byDept = new Map();
+    // Only departments ticked on purpose are seen whole; the employee's own
+    // department (the fallback) is not added on top of picked teams.
+    const tickedDepts = csv(user.atsScopeDepartments);
+    (tickedDepts.length || !rows.length ? departments : []).forEach((d) => byDept.set(d, null));
+    rows.forEach((t) => {
+      const d = t.department && t.department.name;
+      if (!d) return;
+      byDept.set(d, [...(byDept.get(d) || []), t.name]);
+    });
+    hrmsTeamScope = [...byDept.entries()].map(([department, list]) => ({ department, teams: list }));
+  }
+
   let atsTeamUserIds = null;
   if (named(atsScopeRole) === 'TL' && teams.length) {
     const members = await prisma.employee.findMany({
@@ -238,6 +262,18 @@ async function resolveIdentity(userId, preloaded = null) {
           ...(employee ? [{ reportingManagerId: employee.id }] : []),
         ],
       },
+      select: { userId: true },
+    }).catch(() => []);
+    atsTeamUserIds = [...new Set([user.id, ...members.map((m) => m.userId)])];
+  }
+  // ASSISTANT MANAGER (per-role spec 2026-10-03): ATS scope = the teams
+  // ASSIGNED on Administration -> Users (atsScopeTeams — explicit only, never
+  // their own team field). Their members' user ids drive utils/scope.js; no
+  // assigned team -> null -> their department(s).
+  const amTeams = csv(user.atsScopeTeams);
+  if (named(atsScopeRole) === 'ASSISTANT_MANAGER' && amTeams.length) {
+    const members = await prisma.employee.findMany({
+      where: { userId: { not: null }, team: { in: amTeams }, ...(departments.length ? { department: { in: departments } } : {}) },
       select: { userId: true },
     }).catch(() => []);
     atsTeamUserIds = [...new Set([user.id, ...members.map((m) => m.userId)])];
@@ -303,6 +339,9 @@ async function resolveIdentity(userId, preloaded = null) {
 
     clientId: user.clientId || null,
     candidateId: user.candidateId || null,
+    // Client login type (spec B1): REVIEWER | VIEWER | BILLING, or null for a
+    // client login created before types existed. utils/clientPortalTypes.js.
+    portalType: user.role === 'CLIENT' || user.atsRole === 'CLIENT' ? (user.portalType || null) : null,
 
     products,
     atsRole,
@@ -314,6 +353,7 @@ async function resolveIdentity(userId, preloaded = null) {
     atsScopeDepartments: departments.join(','),
     atsScopeTeams: teams.join(','),
     atsTeamUserIds,
+    hrmsTeamScope,
     atsPositionScope,
     atsScopeClients: user.atsScopeClients || '',
     atsOwnedClientIds,

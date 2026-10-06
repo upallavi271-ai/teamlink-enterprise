@@ -1,0 +1,48 @@
+/* Fill from a file (2026-10-06) — scoped under .ff* only. */
+.ff-ask{font-size:14px;font-weight:700;color:var(--ink);margin:2px 0 12px}
+.ff-choices{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px}
+.ff-choice{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:18px 18px 16px;min-height:132px;
+  border:2px solid var(--line);border-radius:14px;background:var(--paper,#fff);cursor:pointer;font:inherit;color:var(--ink)}
+.ff-choice:hover,.ff-choice:focus-visible{border-color:var(--navy);box-shadow:0 0 0 3px var(--navy-tint);outline:none}
+.ff-choice-upload{border-color:var(--navy);background:var(--navy-tint)}
+.ff-choice b{font-size:15px}
+.ff-choice small{font-size:12.5px;color:var(--ink-soft);line-height:1.45}
+.ff-choice-icon{font-size:22px;line-height:1;color:var(--navy)}
+.ff-choice-types{margin-top:auto;font-size:11px;color:var(--ink-soft);letter-spacing:.2px}
+.ff-drop{border:2px dashed var(--line);border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;background:var(--paper,#fff);
+  display:flex;flex-direction:column;gap:4px;align-items:center}
+.ff-drop b{font-size:14px}
+.ff-drop small{font-size:12px;color:var(--ink-soft)}
+.ff-drop.over,.ff-drop:focus-visible{border-color:var(--navy);background:var(--navy-tint);outline:none}
+.ff-drop.has{border-style:solid;border-color:#2e9e5b;background:#e8f7ec}
+.ff-drop-file{word-break:break-all}
+.ff-or{text-align:center;font-size:12px;color:var(--ink-soft);margin:10px 0 6px}
+.ff-paste textarea{min-height:96px}
+.ff-note{font-size:12px;color:var(--ink-soft);margin:2px 0 10px}
+.ff-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.ff-read{min-width:170px;justify-content:center}
+/* The marks on the form */
+.ff-found input,.ff-found textarea,.ff-found select,.ff-found input[role=combobox]{background:#e8f7ec;border-color:#9bd3ad}
+.ff-missing input,.ff-missing textarea,.ff-missing select,.ff-missing input[role=combobox]{background:#fff3e0;border-color:#f0c48a}
+.ff-tag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:600;vertical-align:middle;letter-spacing:.1px}
+.ff-tag.ok{background:#d5f0dd;color:#1d6b3a}
+.ff-tag.no{background:#ffe3c2;color:#8a4b00}
+.ff-banner{border:1px solid #9bd3ad;background:#eefaf1;border-radius:10px;padding:10px 13px;margin-bottom:12px;font-size:12.5px;color:var(--ink)}
+.ff-banner-main b{font-size:13px}
+.ff-legend{display:inline-flex;align-items:center;gap:5px;margin-left:12px;color:var(--ink-soft);font-size:12px;white-space:nowrap}
+.ff-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;border:1px solid #9bd3ad;background:#e8f7ec}
+.ff-legend i.no{border-color:#f0c48a;background:#fff3e0}
+.ff-banner-miss{margin-top:5px;color:#8a4b00}
+.ff-banner-warn{margin-top:5px;color:var(--red)}
+.ff-banner-foot{margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+/* Source document card (job page) */
+.ff-src{list-style:none;margin:0;padding:0}
+.ff-src li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px}
+.ff-src li:first-child{border-top:0}
+.ff-src .ff-src-name{font-weight:600;word-break:break-all}
+@media (max-width:640px){
+  .ff-choices{grid-template-columns:1fr}
+  .ff-choice{min-height:0;padding:14px}
+  .ff-legend{margin-left:0;margin-right:10px}
+  .ff-actions .btn{flex:1 1 auto;justify-content:center}
+}

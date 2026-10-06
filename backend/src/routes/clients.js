@@ -2,13 +2,15 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
 const {
-  clientWhere, requirementWhere, applicationWhere, scopeOf, OUT_OF_SCOPE, atsViewRole, teamRequirementWhere,
+  // atsScopeOf: a Manager / Asst Manager is held to their departments in ATS
+  // (per-role spec 2026-10-03), so `global` here is Super Admin / Admin only.
+  clientWhere, requirementWhere, applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE, atsViewRole, teamRequirementWhere,
 } = require('../utils/scope');
 const { logAudit, logFieldChanges } = require('../utils/audit');
 const { redactClientFor, clientLevelFor } = require('../utils/clientRedact');
 const { notifyUsers } = require('../utils/notify');
 const {
-  buildAgreementDocument, nextAgreementId, newEsignToken, consultantParty,
+  buildAgreementDocument, nextAgreementId, newEsignToken, consultantParty, keyTermsOf,
 } = require('../utils/agreement');
 const agreementLifecycle = require('../utils/agreementLifecycle');
 const agreementSigning = require('../utils/agreementSigning');
@@ -20,7 +22,19 @@ const {
 } = require('../utils/atsVocab');
 const { invoiceWhere } = require('../utils/scope');
 const { invoiceOutstanding, invoiceTotal } = require('../utils/accounts');
+// B9.9: "invoiced" net of issued credit / debit notes (utils/creditNotes.js decorateNet).
+const CNU = require('../utils/creditNotes');
+// B9.2: the client's own SLA ("Feedback within N days", "Send first profiles within N days").
+const CS = require('../utils/clientSla');
 const { findClientDuplicates, describeMatches, displayCode } = require('../utils/clientDuplicates');
+// Client Pause / Archive / Delete (spec 2026-10-03 §A) — utils/clientLifecycle.js.
+const clientLifecycle = require('../utils/clientLifecycle');
+// ATS layout v3 — the job status chain shown to people (display only).
+const reqDisplay = require('../utils/requirementDisplayStatus');
+// Spec section 6 — the agreement template defaults (Admin settings).
+const agreementSettingsStore = require('../utils/agreementSettings');
+// Add client in 9 sections (2026-10-05): new fields, rules, documents.
+const clientProfile = require('../utils/clientProfile');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -101,8 +115,12 @@ function shapeClient(client, permissions, { list = false, user = null } = {}) {
     // Client ID (spec §8): the stored clientCode, else a display code derived
     // from the record id — deterministic, never stored.
     displayCode: displayCode(client),
+    // Active | Paused | Archived (| legacy Inactive) — utils/clientLifecycle.js.
+    lifecycle: clientLifecycle.lifecycleOf(client.status),
   };
   CLIENT_SECRETS.forEach((k) => { delete out[k]; });
+  clientProfile.shapeProfile(out);
+  out.missingRequired = clientProfile.missingRequired(out).map((m) => m.label);
   if (list) {
     out.hasAgreementDocument = !!client.agreementDocument;
     CLIENT_HEAVY.forEach((k) => { delete out[k]; });
@@ -124,7 +142,15 @@ async function shapeFor(req, client, opts = {}) {
 //   admin · mgmt · bde · tl · accounts (· client — a client login on its own
 //   company; · anyone else is refused at the door by Client List view)
 // ---------------------------------------------------------------------------
-const roleOf = (user) => atsViewRole(user);
+// PER-ROLE SPEC (2026-10-03): an Assistant Manager ('am') reads clients VIEW
+// only — name, owner, open jobs, agreement status, no revenue — and an STL
+// ('stl') names / basics, so both get their own answer here; a Manager stays
+// 'mgmt' (their departments, full read, notes).
+const roleOf = (user) => {
+  const v = atsViewRole(user);
+  if (v === 'mgmt' && scopeOf(user).atsRole === 'ASSISTANT_MANAGER') return 'am';
+  return v;
+};
 // Invoices on a client (§6): amounts for Admin / Management / Accounts, the
 // STATUS only for a BDE (Paid / Pending / Overdue — no amounts), none for a TL.
 function invoiceModeOf(role) {
@@ -140,7 +166,11 @@ const PIPELINE_TABS = ['candidates', 'interviews', 'selected', 'replacements'];
 function tabsFor(role) {
   switch (role) {
     case 'admin': case 'mgmt': case 'bde': return ALL_TABS;
-    case 'tl': return ALL_TABS.filter((t) => !['agreement', 'invoices', 'payments'].includes(t));
+    // TL: the client's NAME where needed (2026-10-03) — no Contacts tab.
+    case 'tl': return ALL_TABS.filter((t) => !['agreement', 'invoices', 'payments', 'contacts'].includes(t));
+    // Spec 6 (2026-10-03): an Assistant Manager VIEWS the agreement too.
+    case 'am': return ['overview', 'requirements', 'agreement'];
+    case 'stl': return ['overview', 'requirements'];
     case 'accounts': return ALL_TABS.filter((t) => !PIPELINE_TABS.includes(t));
     case 'client': return ALL_TABS.filter((t) => !['contacts', 'replacements', 'payments'].includes(t));
     default: return [];
@@ -153,35 +183,44 @@ const DEFAULT_VIEW = {
 // §4 — the list columns per role: `columns` is what the Columns chooser may
 // offer, `defaults` what a first visit shows. `name` is always drawn.
 const LIST_COLUMNS = {
+  // Spec 6 (2026-10-03): client · owner BDE · department · open jobs ·
+  // people sent · selected · joined · agreement step · status.
+  // ATS layout v3 (2026-10-03): Client · Department · BDE · Open jobs ·
+  // Joined · Agreement (Signed / Unsigned) by default; the rest one tick away.
   bde: {
-    defaults: ['industry', 'contact', 'bde', 'activeReqs', 'submitted', 'selected', 'lastActivity', 'status', 'health'],
-    extra: ['code', 'location', 'candidates', 'interviews', 'joined', 'agreement', 'fee', 'terms', 'guarantee', 'invoiceStatus', 'next'],
+    defaults: ['department', 'bde', 'activeReqs', 'joined', 'agreement'],
+    extra: ['submitted', 'selected', 'status', 'code', 'industry', 'contact', 'location', 'candidates', 'interviews', 'lastActivity', 'health', 'fee', 'terms', 'guarantee', 'invoiceStatus', 'next'],
   },
   tl: {
-    defaults: ['activeReqs', 'submitted', 'interviews', 'selected', 'status'],
-    extra: ['code', 'industry', 'location', 'bde', 'candidates', 'joined', 'lastActivity', 'health', 'next'],
+    defaults: ['department', 'bde', 'activeReqs', 'joined', 'status'],
+    extra: ['submitted', 'interviews', 'selected', 'code', 'industry', 'location', 'candidates', 'lastActivity', 'health', 'next'],
   },
   accounts: {
     defaults: ['fee', 'terms', 'joined', 'invoiced', 'received', 'outstanding', 'overdueDays'],
     extra: ['code', 'industry', 'location', 'bde', 'status', 'agreement', 'lastActivity', 'health'],
   },
   admin: {
-    defaults: ['industry', 'bde', 'activeReqs', 'submitted', 'selected', 'joined', 'revenue', 'agreement', 'health', 'status'],
-    extra: ['code', 'legal', 'location', 'tax', 'contact', 'terms', 'fee', 'candidates', 'interviews', 'pending',
+    defaults: ['department', 'bde', 'activeReqs', 'joined', 'agreement'],
+    extra: ['submitted', 'selected', 'status', 'code', 'industry', 'revenue', 'health', 'legal', 'location', 'tax', 'contact', 'terms', 'fee', 'candidates', 'interviews', 'pending',
       'invoiced', 'received', 'outstanding', 'overdueDays', 'guarantee', 'lastActivity', 'owner', 'next'],
   },
 };
 LIST_COLUMNS.mgmt = LIST_COLUMNS.admin;
+LIST_COLUMNS.am = { defaults: ['bde', 'department', 'activeReqs', 'agreement', 'status'], extra: ['code', 'industry', 'location'] };
+LIST_COLUMNS.stl = LIST_COLUMNS.tl;
 LIST_COLUMNS.client = { defaults: ['activeReqs', 'agreement', 'status'], extra: [] };
 // §4 — the filters per role.
 const LIST_FILTERS = {
-  bde: ['industry', 'status', 'owner'],
+  // Spec 6 — a BDE gets the same filters, within their own clients.
+  bde: ['industry', 'status', 'owner', 'department', 'location', 'agreement', 'expiring', 'hasOpen'],
   tl: ['industry', 'status'],
   accounts: ['outstanding', 'overdue'],
   admin: ['owner', 'expiring', 'unassigned', 'industry', 'status', 'department', 'location', 'agreement', 'hasOpen'],
   client: [],
 };
 LIST_FILTERS.mgmt = LIST_FILTERS.admin;
+LIST_FILTERS.am = ['industry', 'status', 'owner', 'department', 'location', 'agreement', 'hasOpen'];
+LIST_FILTERS.stl = LIST_FILTERS.tl;
 
 // §8.1 — CLIENT HEALTH, from the last activity on the client in the
 // caller's scope (stage events on its candidates, audit rows on the client
@@ -212,7 +251,7 @@ function workFor(role, row) {
   if (!row) return row;
   const out = { ...row };
   if (role === 'accounts') PIPELINE_WORK_FIELDS.forEach((k) => { delete out[k]; });
-  if (role === 'tl') COMMERCIAL_WORK_FIELDS.forEach((k) => { delete out[k]; });
+  if (['tl', 'stl', 'am'].includes(role)) COMMERCIAL_WORK_FIELDS.forEach((k) => { delete out[k]; });
   if (invoiceModeOf(role) === 'none') { delete out.invoiceSummary; delete out.revenue; }
   return out;
 }
@@ -423,6 +462,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
   const todayIso = new Date().toISOString().slice(0, 10);
   const todayMs = new Date(`${todayIso}T00:00:00Z`).getTime();
   const r2 = (n) => Math.round(n * 100) / 100;
+  await CNU.decorateNet(invoices || []); // B9.9: invoiced = after issued notes
   (invoices || []).forEach((i) => {
     if (i.status === 'Cancelled') return;
     if (!invBy.has(i.clientId)) {
@@ -433,7 +473,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
     const x = invBy.get(i.clientId);
     const owed = Math.max(0, invoiceOutstanding(i));
     x.count += 1;
-    x.invoiced = r2(x.invoiced + invoiceTotal(i));
+    x.invoiced = r2(x.invoiced + CNU.receivableOf(i)); // B9.9: net of issued notes
     x.received = r2(x.received + Number(i.receivedAmount || 0));
     x.outstanding = r2(x.outstanding + owed);
     if (owed > 0.5) x.pending += 1; else x.paid += 1;
@@ -608,15 +648,22 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
 router.get('/', async (req, res) => {
   // Scoped by utils/scope.js: a client sees their own company, a BDE and a
   // recruiter their assigned clients, a TL / Manager the directory.
-  const where = clientWhere(req.user);
-  const [clients, permissions] = await Promise.all([
+  // ARCHIVED clients are hidden from every default list (and every picker
+  // that reads this one); ?archived=1 (the Clients screen's Status = Archived
+  // filter) includes them.
+  const withArchived = ['1', 'true', 'yes'].includes(String(req.query.archived || '').toLowerCase())
+    || String(req.query.status || '').toLowerCase() === 'archived';
+  const scopeW = clientWhere(req.user);
+  const where = withArchived ? scopeW : { AND: [scopeW, { OR: [{ status: null }, { status: { not: 'Archived' } }] }] };
+  const [clients, permissions, lifecycleBase] = await Promise.all([
     prisma.client.findMany({ where, orderBy: { name: 'asc' } }),
     clientPermissions(req.user),
+    clientLifecycle.baseRights(req.user),
   ]);
   // §12 — what is owed on each client, beside who they are; §9 — the
   // business relationship numbers.
   const { rows: work, canSeeInvoices } = await clientWorkload(req.user, clients, {
-    allClients: Object.keys(where).length === 0,
+    allClients: withArchived && Object.keys(scopeW).length === 0,
   });
   res.set('X-Can-See-Invoices', canSeeInvoices ? '1' : '0');
   // Each row cut to the caller's field level (§5 / §6), THEN its
@@ -624,6 +671,8 @@ router.get('/', async (req, res) => {
   res.json(clients.map((c) => ({
     ...shapeClient(c, permissions, { list: true, user: req.user }),
     ...(work.get(c.id) || {}),
+    // The row's ⋯ menu: Pause / Reactivate / Request pause / Archive / Delete.
+    lifecycleActions: clientLifecycle.rightsFor(req.user, c, lifecycleBase),
   })));
 });
 
@@ -652,7 +701,9 @@ router.get('/meta', async (req, res) => {
   ]);
   const global = !!scopeOf(user).global;
   const level = clientLevelFor(user);
+  const noteCreate = await can(user, 'ats', 'clients', 'Client Notes', 'create');
   const cols = LIST_COLUMNS[role] || { defaults: [], extra: [] };
+  const lifecycleBase = await clientLifecycle.baseRights(user);
 
   // §8.3 — "N clients' agreements expire in 30 days" (Admin, BDE), counted
   // in the caller's own client scope.
@@ -664,7 +715,19 @@ router.get('/meta', async (req, res) => {
       where: { AND: [clientWhere(user), { agreementEnd: { gte: today, lte: in30 } }] },
       select: { id: true },
     });
-    expiring = { days: 30, count: rows.length, ids: rows.map((r) => r.id) };
+    // Spec 6 — renewal alert: also an ACTIVE agreement whose 12-month term
+    // renews within 30 days (no end date on file — derived from its start).
+    const renewing = await prisma.client.findMany({
+      where: { AND: [clientWhere(user), { agreementStatus: { in: ['ACTIVE', 'SIGNED', 'CONFIRMED'] } }, { OR: [{ agreementEnd: null }, { agreementEnd: '' }] }, { agreementStart: { not: null } }] },
+      select: { id: true, agreementStart: true, agreementEnd: true },
+    });
+    const todayD = new Date(`${today}T00:00:00Z`);
+    const ids = new Set(rows.map((r) => r.id));
+    renewing.forEach((c) => {
+      const e = agreementLifecycle.endOf(c, todayD);
+      if (e && e.end >= today && e.end <= in30) ids.add(c.id);
+    });
+    expiring = { days: 30, count: ids.size, ids: [...ids] };
   }
 
   res.json({
@@ -684,10 +747,18 @@ router.get('/meta', async (req, res) => {
       // Merge Duplicates — routes/clientMerge.js: Super Admin / Admin only.
       merge: role === 'admin',
       edit,
-      delete: del,
+      // Permanent delete — Super Admin only, empty clients only (spec §A).
+      delete: lifecycleBase.delete,
+      legacyDelete: del,
       // Owner BDE reassignment is global-only (PUT refuses anyone else).
       reassign: edit && global,
-      deactivate: edit && global,
+      // Deactivate is replaced by Pause / Reactivate (with a reason).
+      deactivate: false,
+      pause: lifecycleBase.pauseEdit,
+      requestPause: lifecycleBase.pauseRequest,
+      archive: lifecycleBase.archive,
+      // The Pause requests panel (approvers decide, a BDE sees their own).
+      pauseRequests: lifecycleBase.pauseEdit || lifecycleBase.pauseRequest,
       agreements: lifecycleView,
       commercial: commercialView,
       newRequirement: createReq,
@@ -696,7 +767,8 @@ router.get('/meta', async (req, res) => {
       call: level === 'full' && role !== 'client',
       // §5 Notes / Activity: Admin ✅ · BDE ✅ · Accounts ✅ (own); Management
       // and TL read only.
-      note: ['admin', 'bde', 'accounts'].includes(role),
+      // Client Notes / create (2026-10-03): Admin, Manager, BDE, Accounts.
+      note: noteCreate,
     },
     // BDE creating a client: Owner BDE is always themselves (§9, enforced on POST).
     ownerLocked: role === 'bde' ? (user.name || null) : null,
@@ -714,10 +786,20 @@ router.get('/owner-options', async (req, res) => {
       // Never offer a test login as an owner (SQLite LIKE is case-insensitive).
       NOT: [{ name: { contains: 'zztest' } }, { email: { contains: 'example.test' } }],
     },
-    select: { id: true, name: true },
+    select: { id: true, name: true, atsDepartment: true, atsScopeDepartments: true },
     orderBy: { name: 'asc' },
   });
-  res.json(users.filter((u) => u.name));
+  // 2026-10-05 — cascade: the chosen department's BDEs first, with how many
+  // clients each already owns.
+  const dept = String(req.query.department || '').trim().toLowerCase();
+  const counts = await prisma.client.groupBy({ by: ['bdeOwner'], where: { bdeOwner: { in: users.map((u) => u.name).filter(Boolean) } }, _count: { _all: true } }).catch(() => []);
+  const countOf = new Map(counts.map((c) => [c.bdeOwner, c._count._all]));
+  const out = users.filter((u) => u.name).map((u) => {
+    const depts = [u.atsDepartment, ...String(u.atsScopeDepartments || '').split(',')].map((d) => String(d || '').trim()).filter(Boolean);
+    return { id: u.id, name: u.name, department: depts[0] || null, inDepartment: !!dept && depts.some((d) => d.toLowerCase() === dept), clients: countOf.get(u.name) || 0 };
+  });
+  out.sort((a, b) => (Number(b.inDepartment) - Number(a.inDepartment)) || a.name.localeCompare(b.name));
+  res.json(out);
 });
 
 // ---------------------------------------------------------------------------
@@ -749,19 +831,121 @@ router.post('/check-duplicate', async (req, res) => {
 // renders the same template the real document is built from, so the two can
 // never drift. It is also the workflow's own Preview step.
 router.get('/agreement-preview', async (req, res) => {
+  // The template carries the standard fee and terms — not for a TL (spec 6).
+  if (!(await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'view'))) {
+    return res.status(403).json({ error: 'Agreements are seen by the BDE, Accounts, Managers and Admin only.' });
+  }
   const fee = Number(req.query.feePercent);
   const consultant = await consultantParty();
-  res.json({
+  const defaults = await agreementSettingsStore.agreementSettings();
+  return res.json({
     document: buildAgreementDocument({
       name: (req.query.name || '').trim() || '(company name)',
       location: req.query.location || null,
-      agreementFeePercent: Number.isFinite(fee) && fee > 0 ? fee : 8.33,
+      agreementFeePercent: Number.isFinite(fee) && fee > 0 ? fee : defaults.feePercent,
       gst: req.query.gst || null,
       tdsPercent: req.query.tdsPercent != null ? Number(req.query.tdsPercent) : undefined,
-      paymentTerms: req.query.paymentTerms || undefined,
-      guaranteePeriod: req.query.guaranteePeriod || undefined,
+      paymentTerms: req.query.paymentTerms || agreementSettingsStore.paymentTermsText(defaults.paymentDays),
+      guaranteePeriod: req.query.guaranteePeriod || agreementSettingsStore.guaranteeText(defaults.guaranteeDays),
     }, consultant),
   });
+});
+
+// THE LIVE PREVIEW BESIDE "ADD CLIENT" (2026-10-05). The body is the form as
+// it stands; the answer is the document POST /clients would save right now —
+// same draftClientData(), same buildAgreementDocument() — plus the key terms
+// and a hash the save sends back, so the server can confirm the saved draft
+// is the text the user saw. Nothing is stored.
+router.post('/agreement-preview', async (req, res) => {
+  if (!(await can(req.user, 'ats', 'clients', 'Add Client', 'create'))
+    || !(await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'view'))) {
+    return res.status(403).json({ error: 'Only a login that adds clients can preview a new agreement.' });
+  }
+  // The preview never needs (or encrypts) a bank account.
+  if (req.body) { delete req.body.bankAccountNo; }
+  // EDIT (clientId): the stored client with the form's changes on top — a
+  // login without Commercial Terms edit cannot change those terms, so the
+  // stored ones show (never the defaults).
+  let data;
+  if (req.body && req.body.clientId) {
+    const stored = await prisma.client.findFirst({ where: { AND: [{ id: String(req.body.clientId) }, clientWhere(req.user)] } });
+    if (!stored) return res.status(404).json({ error: 'Client not found' });
+    const overlay = { ...pickClient(req.body), ...clientProfile.pickProfile(req.body).data };
+    if (!(await can(req.user, 'ats', 'clients', 'Commercial Terms', 'edit'))) {
+      [...AGREEMENT_AUDIT_FIELDS, ...clientProfile.NEW_COMMERCIAL_FIELDS].forEach((k) => { delete overlay[k]; });
+    }
+    if (overlay.billingSameAsAddress) overlay.billingAddress = null;
+    data = { ...stored, ...overlay };
+  } else {
+    data = previewRow(await draftClientData(req));
+  }
+  const consultant = await consultantParty();
+  const document = buildAgreementDocument(data, consultant);
+  return res.json({ document, keyTerms: keyTermsOf(data, consultant), hash: docHash(document) });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC 6 — AGREEMENT SETTINGS: the template and the default fee %, guarantee
+// period and payment days every new client's draft starts with, plus the
+// renewal alert (in-app always; e-mail only when switched on — OFF by
+// default). Read: anyone who may see agreements (the Add Client form shows
+// the defaults). Change: Super Admin / Admin only (Agreement Lifecycle edit).
+// ---------------------------------------------------------------------------
+router.get('/agreement-settings', async (req, res) => {
+  const [view, edit] = await Promise.all([
+    can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'view'),
+    can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'edit'),
+  ]);
+  if (!view) return res.status(403).json({ error: 'Agreements are seen by the BDE, Accounts, Managers and Admin only.' });
+  const s = await agreementSettingsStore.agreementSettings({ fresh: true });
+  // eslint-disable-next-line global-require
+  const { TEMPLATES } = require('../utils/vendorAgreement');
+  return res.json({ ...s, canEdit: edit, placeholder: s.templateNote === agreementSettingsStore.PLACEHOLDER, templates: TEMPLATES });
+});
+
+router.put('/agreement-settings', async (req, res) => {
+  if (!(await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'edit'))) {
+    return res.status(403).json({ error: 'Only a Super Admin or Admin can change the agreement settings.' });
+  }
+  const out = await agreementSettingsStore.saveAgreementSettings(req.body || {}, req.user);
+  if (out.error) return res.status(400).json({ error: out.error });
+  const changed = Object.keys(out.settings).filter((k) => !['updatedAt', 'updatedByName'].includes(k)
+    && JSON.stringify(out.settings[k]) !== JSON.stringify(out.before[k]));
+  if (changed.length) {
+    await logAudit({
+      userId: req.user.id, action: 'Agreement settings changed', entity: 'AppSetting', entityId: agreementSettingsStore.KEY,
+      fromValue: JSON.stringify(Object.fromEntries(changed.map((k) => [k, out.before[k]]))).slice(0, 1000),
+      toValue: JSON.stringify(Object.fromEntries(changed.map((k) => [k, out.settings[k]]))).slice(0, 1000),
+    });
+  }
+  return res.json({ ...out.settings, canEdit: true, placeholder: out.settings.templateNote === agreementSettingsStore.PLACEHOLDER, changed });
+});
+
+// Pause / Reactivate / pause requests / Archive / permanent Delete — mounted
+// HERE, before GET /:id, so /pause-requests is not read as a client id.
+require('./clientLifecycleRoutes')(router, { shapeFor, executionFiles, dropExecutionFiles });
+// Client documents (Add client section 8, 2026-10-05).
+require('./clientDocumentRoutes')(router);
+
+// ---------------------------------------------------------------------------
+// B9.2 PER-CLIENT SLA — "Feedback within N days" / "Send first profiles
+// within N days" (utils/clientSla.js). Read by anyone who may open the
+// client; changed by whoever may edit its Commercial Terms. Blank = the
+// Step-timing default. Used by the Late calculation (utils/nextAction.js)
+// and the SLA & Aging report's "Client promises" table.
+// ---------------------------------------------------------------------------
+router.get('/:id/sla', async (req, res) => {
+  res.json(await CS.slaOf(req.client.id));
+});
+router.put('/:id/sla', requirePerm('ats', 'clients', 'Commercial Terms', 'edit'), async (req, res) => {
+  const r = await CS.save(req.client.id, req.body || {}, req.user);
+  if (r.error) return res.status(400).json({ error: r.error });
+  const words = (o) => `feedback ${o.feedbackDays ?? 'default'} d · first profiles ${o.firstProfilesDays ?? 'default'} d`;
+  await logAudit({
+    userId: req.user.id, action: 'Client SLA changed', entity: 'Client', entityId: req.client.id,
+    fromValue: words(r.before || {}), toValue: words(r.sla), reason: req.body.reason || null,
+  });
+  return res.json(r.sla);
 });
 
 router.get('/:id', async (req, res) => {
@@ -770,10 +954,15 @@ router.get('/:id', async (req, res) => {
   // Accounts: billing contact, no other contact details).
   const out = shapeClient(req.client, permissions, { user: req.user });
   out.tabs = tabsFor(roleOf(req.user));
+  out.lifecycleActions = await clientLifecycle.lifecycleRights(req.user, req.client);
+  // B9.2: the client's SLA (own numbers or the Step-timing defaults).
+  out.sla = await CS.slaOf(req.client.id);
+  // TeamLink's signer (Agreement settings) for the agreement's signature block.
+  if (out.agreementDocument) { const us = await consultantParty(); out.teamlinkSigner = { name: us.signatoryName, title: us.signatoryTitle }; }
   // The signing link survives a reload for whoever may send / resend it.
   if (permissions.lifecycle && req.client.esignToken
     && ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(normalizeAgreementStatus(req.client.agreementStatus))) {
-    out.signingPath = `/agreement/${req.client.esignToken}`;
+    out.signingPath = agreementSigning.pathFor(req.client);
   }
   res.json(out);
 });
@@ -935,6 +1124,7 @@ router.get('/:id/overview', async (req, res) => {
   let invoiceRows;
   let paymentRows;
   if (invoices) {
+    await CNU.decorateNet(invoices); // B9.9: total / billed after issued notes
     if (forClient) {
       // A client never sees the money side of an invoice beyond what it owes.
       invoiceRows = invoices.map((i) => ({
@@ -957,7 +1147,9 @@ router.get('/:id/overview', async (req, res) => {
     } else {
       invoiceRows = invoices.map(({ payments, ...i }) => ({
         ...i,
-        total: invoiceTotal(i),
+        total: CNU.receivableOf(i), // B9.9: net of issued notes (stored figure when none)
+        billed: CNU.billedOf(i),
+        asBilledTotal: invoiceTotal(i),
         outstanding: Math.max(0, invoiceOutstanding(i)),
       }));
       paymentRows = [];
@@ -1012,12 +1204,47 @@ router.get('/:id/overview', async (req, res) => {
     forClient ? null : clientWorkload(req.user, [req.client]),
   ]);
   const reqLabel = new Map(requirements.map((r) => [r.id, r.reqCode || r.title]));
+  // ATS layout v3 — Client page "Requirements" (filled, assigned recruiters,
+  // the status chain) and "Performance" (rejection reasons). Job-level facts
+  // (people on it / joined) are counted over the WHOLE job, the same rule the
+  // Jobs list uses (utils/requirementDisplayStatus.js). Rejection reasons are
+  // internal reasoning — never sent to a client login.
+  const [jobApps, jobJoined, rejectEvents] = await Promise.all([
+    !forClient && reqIds.length ? prisma.application.groupBy({ by: ['requirementId'], where: { requirementId: { in: reqIds } }, _count: { _all: true } }) : [],
+    !forClient && reqIds.length ? prisma.application.groupBy({ by: ['requirementId'], where: { requirementId: { in: reqIds }, stage: { in: JOINED_STAGES } }, _count: { _all: true } }) : [],
+    !forClient && pipelineVisible && reqIds.length
+      ? prisma.applicationStageEvent.findMany({
+        where: { toStage: 'REJECTED', application: { AND: [{ requirementId: { in: reqIds } }, { stage: 'REJECTED' }, applicationWhere(req.user)] } },
+        select: { applicationId: true, reasonCategory: true, reasonDetail: true, comment: true, actorSide: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      })
+      : [],
+  ]);
+  const appsOfJob = new Map(jobApps.map((g) => [g.requirementId, g._count._all]));
+  const joinedOfJob = new Map(jobJoined.map((g) => [g.requirementId, g._count._all]));
+  const coIds = [...new Set(requirements.flatMap((r) => String(r.recruiterIds || '').split(',').map((s) => s.trim()).filter(Boolean)))];
+  const coNames = (!forClient && coIds.length)
+    ? new Map((await prisma.user.findMany({ where: { id: { in: coIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]))
+    : new Map();
+  // The latest rejection record per application (reason + which side).
+  const seenRej = new Set();
+  const rejectionTally = { reasons: new Map(), sides: new Map() };
+  rejectEvents.forEach((e) => {
+    if (seenRej.has(e.applicationId)) return;
+    seenRej.add(e.applicationId);
+    const detail = e.reasonDetail && e.reasonDetail !== 'Rejected' ? e.reasonDetail : null;
+    const reason = String(e.reasonCategory || detail || e.comment || 'Reason not recorded').trim().slice(0, 60);
+    const side = e.actorSide || 'Not recorded';
+    rejectionTally.reasons.set(reason, (rejectionTally.reasons.get(reason) || 0) + 1);
+    rejectionTally.sides.set(side, (rejectionTally.sides.get(side) || 0) + 1);
+  });
+  const tally = (m) => [...m.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
   // Review #3 §5 — Assigned TL on the Client 360 comes from its requirements.
   const tlIds = [...new Set(requirements.map((r) => r.tlId).filter(Boolean))];
   const tlNames = (!forClient && tlIds.length)
     ? new Map((await prisma.user.findMany({ where: { id: { in: tlIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]))
     : new Map();
-  const valuesHidden = (a) => role === 'tl' && a.entity === 'Client' && a.action !== 'Client note';
+  const valuesHidden = (a) => ['tl', 'stl', 'am'].includes(role) && a.entity === 'Client' && a.action !== 'Client note';
 
   const out = {
     tabs,
@@ -1069,8 +1296,19 @@ router.get('/:id/overview', async (req, res) => {
         bdeName: r.bde ? r.bde.name : null,
         tlName: forClient ? null : ((r.tlId && tlNames.get(r.tlId)) || r.tl || null),
         live: requirementIsLive(r.status),
+        ...(forClient ? {} : {
+          filled: joinedOfJob.get(r.id) || 0,
+          // Recruiter + co-recruiters, names only.
+          recruiters: [r.recruiter ? r.recruiter.name : null,
+            ...String(r.recruiterIds || '').split(',').map((s) => coNames.get(s.trim())).filter(Boolean)]
+            .filter((n, i, a) => n && a.indexOf(n) === i),
+          displayStatus: reqDisplay.displayStatusOf(r, appsOfJob.get(r.id) || 0, joinedOfJob.get(r.id) || 0),
+        }),
       };
     });
+  }
+  if (!forClient && pipelineVisible) {
+    out.rejections = { total: seenRej.size, reasons: tally(rejectionTally.reasons), sides: tally(rejectionTally.sides) };
   }
   if (show('candidates')) out.candidates = shaped;
   if (show('interviews')) out.interviews = shaped.filter((a) => a.interviewAt || a.interviewStatus || a.interviewCode);
@@ -1091,8 +1329,8 @@ router.get('/:id/overview', async (req, res) => {
 // Last Activity / Health like any other activity. Admin, BDE (own clients —
 // the scope check above) and Accounts (§5 Notes: ✅ / ✅ / ✅ own).
 router.post('/:id/notes', async (req, res) => {
-  if (!['admin', 'bde', 'accounts'].includes(roleOf(req.user))) {
-    return res.status(403).json({ error: 'Notes on a client are added by Admin, the BDE or Accounts.' });
+  if (!(await can(req.user, 'ats', 'clients', 'Client Notes', 'create'))) {
+    return res.status(403).json({ error: 'Notes on a client are added by Admin, a Manager, the BDE or Accounts.' });
   }
   const text = String((req.body && req.body.note) || '').trim();
   if (!text) return res.status(400).json({ error: 'Write the note first.' });
@@ -1152,8 +1390,19 @@ async function nextClientCode() {
   return `CLI${Date.now()}`;
 }
 
-router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (req, res) => {
-  const data = pickClient(req.body);
+// THE NEW CLIENT'S DATA — exactly what POST /clients will store, built in ONE
+// place so the Add-client live preview (POST /clients/agreement-preview) and
+// the saved draft come from the same values and the same template.
+async function draftClientData(req) {
+  const data = pickClient(req.body || {});
+  // Sections 1–9 (2026-10-05): the new columns this database has.
+  const profile = clientProfile.pickProfile(req.body || {});
+  Object.assign(data, profile.data);
+  req.pendingProfileFields = profile.pending;
+  if (data.billingSameAsAddress) data.billingAddress = null;
+  ['gst', 'pan', 'tan'].forEach((k) => { if (typeof data[k] === 'string') data[k] = data[k].trim().toUpperCase() || null; });
+  // Client ID: automatic when blank; only Super Admin / Admin may type one.
+  if (!scopeOf(req.user).global) delete data.clientCode;
   // §9 — a BDE adding a client is its Owner BDE; they cannot name another
   // (Owner BDE assignment is global-only — Admin). Client.bdeOwner holds the
   // owner's full name, which is also what puts it in the BDE's own scope.
@@ -1161,11 +1410,63 @@ router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (r
     if (roleOf(req.user) === 'bde') data.bdeOwner = req.user.name || null;
     else delete data.bdeOwner;
   }
+  // e2e gap 11: a client added by a BDE without an owner department gets the
+  // BDE's own department, so that department's TL can raise its jobs (the
+  // TL's client picker is by owner department, utils/scope.js).
+  if (!String(data.ownerDepartment || '').trim() && roleOf(req.user) === 'bde') {
+    const sc = scopeOf(req.user);
+    const dept = (sc && Array.isArray(sc.departments) && sc.departments[0]) || req.user.atsDepartment || null;
+    if (dept) data.ownerDepartment = dept;
+  }
+  // SPEC 6 — THE AGREEMENT DRAFT STARTS FROM THE ADMIN DEFAULTS. Only a login
+  // that may edit commercial terms (Super Admin / Admin) may set this
+  // client's own fee / guarantee / payment terms here; for anyone else (a
+  // BDE) the sent values are ignored. Whatever is not set comes from
+  // Agreement settings (utils/agreementSettings.js).
+  const agreementDefaults = await agreementSettingsStore.agreementSettings({ fresh: true });
+  if (!(await can(req.user, 'ats', 'clients', 'Commercial Terms', 'edit'))) {
+    AGREEMENT_AUDIT_FIELDS.forEach((k) => { delete data[k]; });
+    clientProfile.NEW_COMMERCIAL_FIELDS.forEach((k) => { delete data[k]; });
+  }
+  // A % fee keeps no amount; a fixed fee keeps its amount.
+  if (data.feeType === 'PERCENT_CTC') data.feeAmount = null;
+  const draftTerms = agreementSettingsStore.draftTermsFrom(agreementDefaults);
+  Object.entries(draftTerms).forEach(([k, v]) => {
+    if (data[k] === undefined || data[k] === null || data[k] === '' || (typeof data[k] === 'number' && !Number.isFinite(data[k]))) data[k] = v;
+  });
+  return data;
+}
+// The Prisma column defaults the template reads, so a preview built before
+// the row exists prints what the created row will print.
+const previewRow = (data) => ({ country: 'India', gstPercent: 18, ...data });
+const docHash = (text) => require('crypto').createHash('sha256').update(String(text || '')).digest('hex'); // eslint-disable-line global-require
+
+router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (req, res) => {
+  let data;
+  try { data = await draftClientData(req); } catch (err) {
+    if (err.code === 'NO_SECRET_KEY') return res.status(500).json({ error: 'The bank account cannot be saved until the server has its secret key set. Remove it and save again.' });
+    throw err;
+  }
   // Prototype saveNewClient(): the full save requires company name, location
   // and the three primary-contact fields. Saving as a draft skips the checks.
-  const asDraft = Boolean(req.body.asDraft);
-  if (!data.name) return res.status(400).json({ error: 'Enter the company name.' });
-  if (!asDraft) {
+  // 2026-10-05 — mode 'draft' (Save Draft: the company name only, no
+  // agreement) or 'create' (Save & Create Agreement: the 10 required fields
+  // + the draft agreement exactly as previewed). No mode = the older form.
+  const mode = ['draft', 'create'].includes(req.body.mode) ? req.body.mode : null;
+  const asDraft = Boolean(req.body.asDraft) || mode === 'draft';
+  if (!String(data.name || '').trim()) return res.status(400).json({ error: 'Write the company name.', errors: [{ field: 'name', error: 'Write the company name.' }] });
+  const formatErrs = clientProfile.formatErrors(req.body || {});
+  if (formatErrs.length) return res.status(400).json({ error: formatErrs[0].error, errors: formatErrs });
+  if (mode === 'create') {
+    const missing = clientProfile.missingRequired(data);
+    if (missing.length) {
+      return res.status(400).json({
+        error: `Fill these first: ${missing.map((m) => m.label).join(', ')}.`,
+        errors: missing.map((m) => ({ field: m.field, error: `${m.label} is needed.` })),
+      });
+    }
+  }
+  if (!asDraft && !mode) {
     if (!data.state) return res.status(400).json({ error: 'Select the client location (State/District/City).' });
     if (!data.contactName || !data.contactEmail || !data.contactPhone) {
       return res.status(400).json({ error: 'Enter the primary contact name, phone and email.' });
@@ -1200,16 +1501,37 @@ router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (r
       reason: note || 'Create Anyway confirmed without a note',
     });
   }
-  // "Save & Create Agreement" generates the document straight away from the
-  // commercial terms; it still starts life as a Draft.
-  const withDoc = req.body.createAgreement
+  // SPEC 6 — the agreement DRAFT is created automatically from the ready
+  // template with the terms above (createAgreement: false only when the form
+  // uploads the client's own agreement right after). It starts as a Draft.
+  const withDoc = req.body.createAgreement !== false && mode !== 'draft'
     ? await prisma.client.update({
       where: { id: client.id },
-      data: { agreementDocument: buildAgreementDocument(client, await consultantParty()), agreementSource: 'Generated' },
+      data: {
+        agreementDocument: buildAgreementDocument(client, await consultantParty()),
+        agreementSource: 'Generated',
+        agreementId: client.agreementId || (await nextAgreementId()),
+      },
     })
     : client;
   await logAudit({ userId: req.user.id, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Draft' });
-  res.status(201).json((await shapeFor(req, withDoc)));
+  // Same text as the live preview the user was looking at? (previewHash is
+  // the sha256 the preview returned; absent = no preview was shown.)
+  const matchesPreview = withDoc.agreementDocument && req.body.previewHash
+    ? docHash(withDoc.agreementDocument) === String(req.body.previewHash) : null;
+  if (withDoc.agreementDocument) {
+    await logAudit({
+      userId: req.user.id, action: 'Agreement draft created from template', entity: 'Client', entityId: client.id,
+      toValue: 'DRAFT',
+      reason: `${withDoc.agreementTemplate || 'Standard template'} · fee ${withDoc.agreementFeePercent}% · guarantee ${withDoc.guaranteePeriod} · ${withDoc.paymentDue || withDoc.paymentTerms}${matchesPreview === true ? ' · same as the preview shown' : (matchesPreview === false ? ' · DIFFERENT from the preview shown' : '')}`.slice(0, 1000),
+    });
+  }
+  res.status(201).json({
+    ...(await shapeFor(req, withDoc)),
+    agreementMatchesPreview: matchesPreview,
+    missing: clientProfile.missingRequired(withDoc).map((m) => m.label),
+    pendingFields: req.pendingProfileFields || [],
+  });
 });
 
 // The Client Master fields an edit is reported by, in the Activity trail.
@@ -1219,6 +1541,19 @@ const FIELD_LABELS = {
   paymentTerms: 'Payment Terms', guaranteePeriod: 'Guarantee Period', agreementFeePercent: 'Fee %', accountManager: 'Account Manager',
   bdeOwner: 'BDE', ownerDepartment: 'Owner Department', status: 'Status', agreementStart: 'Agreement Start', agreementEnd: 'Agreement End',
 };
+Object.assign(FIELD_LABELS, {
+  companyType: 'Company Type', companyEmail: 'Company Email', landline: 'Company Phone', website: 'Website', pincode: 'Pincode',
+  street: 'Address', area: 'Area', country: 'Country', contactDesignation: 'Contact Designation', contactAltPhone: 'Alternate Phone',
+  contactWhatsApp: 'WhatsApp', commPrimary: 'Preferred Communication', secondaryBde: 'Secondary BDE', clientSource: 'Source',
+  feeType: 'Fee Type', feeAmount: 'Fee Amount', gstApplicable: 'GST Applicable', tdsApplicable: 'TDS Applicable',
+  replacementTerms: 'Replacement Terms', specialTerms: 'Special Terms', billingAddress: 'Billing Address',
+  billingSameAsAddress: 'Billing = Company Address', billingEmail: 'Billing Email', invoiceEmail: 'Invoice Email', tan: 'TAN',
+  billingContactName: 'Accounts Contact', billingContactPhone: 'Accounts Phone', billingContactEmail: 'Accounts Email',
+  paymentMethod: 'Payment Method', paymentBankName: 'Bank Name', paymentUpi: 'UPI', paymentReferenceNote: 'Payment Reference',
+  bankAccountHolder: 'Account Holder', bankAccountNoEnc: 'Bank Account', bankAccountLast4: 'Bank Account (last 4)', bankIfsc: 'IFSC',
+  internalNotes: 'Client Notes', specialInstructions: 'Special Instructions', recruitmentInstructions: 'Recruitment Instructions',
+  internalRemarks: 'Internal Remarks',
+});
 Object.assign(FIELD_LABELS, {
   invoiceTrigger: 'Invoice Trigger', agreementTemplate: 'Agreement Template', agreementRequired: 'Agreement Required',
   agreementStatus: 'Agreement Status', paymentDue: 'Payment Due', tdsPercent: 'TDS %', gstPercent: 'GST %',
@@ -1235,10 +1570,25 @@ const IDENTITY_FIELDS = ['name', 'legalName', 'gst', 'pan', 'contactPhone', 'con
 router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async (req, res) => {
   const data = pickClient(req.body);
   const before = req.client;
+  // Sections 1–9 (2026-10-05).
+  const formatErrs = clientProfile.formatErrors(req.body || {});
+  if (formatErrs.length) return res.status(400).json({ error: formatErrs[0].error, errors: formatErrs });
+  let profile;
+  try { profile = clientProfile.pickProfile(req.body || {}); } catch (err) {
+    return res.status(500).json({ error: err.code === 'NO_SECRET_KEY' ? 'The bank account cannot be saved until the server has its secret key set.' : 'Could not save the bank account.' });
+  }
+  Object.assign(data, profile.data);
+  if (data.billingSameAsAddress) data.billingAddress = null;
+  if (data.feeType === 'PERCENT_CTC') data.feeAmount = null;
+  ['gst', 'pan', 'tan'].forEach((k) => { if (typeof data[k] === 'string') data[k] = data[k].trim().toUpperCase() || null; });
   const same = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
   const changed = Object.keys(data).filter((k) => !same(data[k], before[k]));
   if (data.name !== undefined && !String(data.name).trim()) {
     return res.status(400).json({ error: 'The client name cannot be blank.' });
+  }
+  // STATUS moves only through Pause / Reactivate / Archive (reason + audit).
+  if (changed.includes('status')) {
+    return res.status(400).json({ error: 'Client status changes through Pause / Reactivate / Archive (each needs a reason) — not the edit form.', field: 'status' });
   }
   // §7 / contract — re-assigning the OWNER BDE is Admin only. A BDE editing
   // their own client may change everything else, never who owns it.
@@ -1247,7 +1597,7 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
   }
   // Commercial terms (fee %, guarantee, payment terms …) need Commercial
   // Terms edit — the same can() the edit form is drawn from.
-  const commercialChanged = changed.filter((k) => AGREEMENT_AUDIT_FIELDS.includes(k) || ['gst', 'pan', 'tan', 'tdsPercent', 'gstPercent', 'businessType', 'commercialNotes'].includes(k));
+  const commercialChanged = changed.filter((k) => AGREEMENT_AUDIT_FIELDS.includes(k) || clientProfile.NEW_COMMERCIAL_FIELDS.includes(k) || ['gst', 'pan', 'tan', 'tdsPercent', 'gstPercent', 'businessType', 'commercialNotes'].includes(k));
   if (commercialChanged.length && !(await can(req.user, 'ats', 'clients', 'Commercial Terms', 'edit'))) {
     return res.status(403).json({ error: 'Changing the commercial terms needs Commercial Terms edit permission.' });
   }
@@ -1285,7 +1635,7 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
 
   const client = await prisma.client.update({ where: { id: req.params.id }, data });
   const summary = changed
-    .map((k) => `${FIELD_LABELS[k] || k}: ${String(before[k] ?? '').trim() || '—'} → ${String(data[k] ?? '').trim() || '—'}`)
+    .map((k) => (k === 'bankAccountNoEnc' ? 'Bank account changed' : `${FIELD_LABELS[k] || k}: ${String(before[k] ?? '').trim() || '—'} → ${String(data[k] ?? '').trim() || '—'}`))
     .join('; ');
   await logAudit({
     userId: req.user.id,
@@ -1323,50 +1673,11 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
       reason: String(req.body.duplicateNote || '').trim().slice(0, 500) || 'Save Anyway confirmed without a note',
     });
   }
-  res.json((await shapeFor(req, client)));
+  res.json({ ...(await shapeFor(req, client)), pendingFields: profile.pending });
 });
 
-// ---------------------------------------------------------------------------
-// §6 — CLIENT DELETE: Admin only (Client Detail delete), and BLOCKED while the
-// client has an active requirement. Nothing is ever cascaded: a client that
-// still carries ANY requirement, invoice or portal login is refused (409) —
-// close / move that work first, or Deactivate the client instead.
-// ---------------------------------------------------------------------------
-router.delete('/:id', requirePerm('ats', 'clients', 'Client Detail', 'delete'), async (req, res) => {
-  const id = req.client.id;
-  const [reqs, invoices, users] = await Promise.all([
-    prisma.requirement.findMany({ where: { clientId: id }, select: { status: true } }),
-    prisma.invoice.count({ where: { clientId: id } }),
-    prisma.user.count({ where: { clientId: id } }),
-  ]);
-  const active = reqs.filter((r) => String(r.status || '').toUpperCase() !== 'CLOSED');
-  if (active.length) {
-    return res.status(409).json({
-      error: `${req.client.name} has ${active.length} active requirement(s) — it cannot be deleted. Close them first, or Deactivate the client.`,
-      code: 'CLIENT_HAS_ACTIVE_REQUIREMENTS',
-      activeRequirements: active.length,
-    });
-  }
-  if (reqs.length || invoices || users) {
-    const parts = [
-      reqs.length ? `${reqs.length} requirement(s)` : null,
-      invoices ? `${invoices} invoice(s)` : null,
-      users ? `${users} portal login(s)` : null,
-    ].filter(Boolean).join(', ');
-    return res.status(409).json({
-      error: `${req.client.name} still has ${parts} on record — deleting it would lose that history. Deactivate the client instead.`,
-      code: 'CLIENT_HAS_HISTORY',
-    });
-  }
-  const files = executionFiles(req.client);
-  await prisma.client.delete({ where: { id } });
-  dropExecutionFiles(files);
-  await logAudit({
-    userId: req.user.id, actorName: req.user.name || null, action: 'Client deleted', entity: 'Client', entityId: id,
-    fromValue: req.client.name, toValue: 'Deleted',
-  });
-  return res.json({ ok: true, id });
-});
+// §6 / spec 2026-10-03 §A — CLIENT DELETE now lives in routes/clientLifecycleRoutes.js
+// (Super Admin only, empty clients only, typed-name confirmation, audit snapshot).
 
 // ---- Service agreement lifecycle -------------------------------------------
 //
@@ -1495,7 +1806,8 @@ router.post('/:id/agreement/send', requirePerm('ats', 'clients', 'Agreement Life
       agreementSentAt: new Date(),
       agreementViewedAt: null,
       agreementId: client.agreementId || (await nextAgreementId()),
-      esignToken: newEsignToken(),
+      // A new link: token stored hashed, valid for the Admin's link days.
+      ...agreementSigning.newLinkData(client.id, { days: (await agreementSettingsStore.agreementSettings()).linkDays }).data,
       ...clearClientSide(),
     },
   });
@@ -1520,7 +1832,7 @@ router.post('/:id/agreement/send', requirePerm('ats', 'clients', 'Agreement Life
   const delivery = await sendLinkEverywhere(req, updated);
   res.json({
     ...(await shapeFor(req, updated)),
-    signingPath: `/agreement/${updated.esignToken}`,
+    signingPath: agreementSigning.pathFor(updated),
     delivery,
     linkExpiresAt: agreementSigning.linkExpiresAt(updated),
     email: legacyEmailShape(delivery),
@@ -1540,7 +1852,7 @@ function clearClientSide() {
 
 async function sendLinkEverywhere(req, client) {
   const delivery = await agreementLifecycle.dispatchSigningLink({
-    client, url: agreementLifecycle.signingUrl(req, client.esignToken), days: agreementSigning.LINK_DAYS,
+    client, url: agreementLifecycle.signingUrl(req, agreementSigning.tokenFor(client)), days: agreementSigning.linkMeta(client).days,
   });
   await logAudit({
     userId: req.user.id, action: agreementSigning.ACTION.sent, entity: 'Client', entityId: client.id,
@@ -1601,7 +1913,7 @@ router.post('/:id/agreement/confirm', requirePerm('ats', 'clients', 'Agreement L
   if (isClient(req.user)) {
     return res.status(409).json({
       error: 'Sign on the secure agreement page — it confirms your signature with a code sent to your registered mobile.',
-      signingPath: client.esignToken && agreementSigning.linkState(client).ok ? `/agreement/${client.esignToken}` : null,
+      signingPath: agreementSigning.linkState(client).ok ? agreementSigning.pathFor(client) : null,
     });
   }
   if (!String(signedCopyName || client.agreementSignedCopyName || '').trim()) {
@@ -1675,7 +1987,7 @@ router.post('/:id/agreement/resend', requirePerm('ats', 'clients', 'Agreement Li
   const staleClientFiles = [req.client.agreementClientSignFile, req.client.agreementClientStampFile].filter(Boolean);
   const updated = await prisma.client.update({
     where: { id: req.client.id },
-    data: { agreementSentAt: new Date(), esignToken: newEsignToken(), ...clearClientSide() },
+    data: { ...agreementSigning.newLinkData(req.client.id, { days: (await agreementSettingsStore.agreementSettings()).linkDays }).data, ...clearClientSide() },
   });
   dropExecutionFiles(staleClientFiles);
   await logAudit({
@@ -1685,7 +1997,7 @@ router.post('/:id/agreement/resend', requirePerm('ats', 'clients', 'Agreement Li
   const delivery = await sendLinkEverywhere(req, updated);
   res.json({
     ...(await shapeFor(req, updated)),
-    signingPath: `/agreement/${updated.esignToken}`,
+    signingPath: agreementSigning.pathFor(updated),
     delivery,
     linkExpiresAt: agreementSigning.linkExpiresAt(updated),
     email: legacyEmailShape(delivery),
@@ -1700,6 +2012,16 @@ router.post('/:id/agreement/activate', requirePerm('ats', 'clients', 'Agreement 
   if (statusOf(client) !== 'SIGNED') {
     return res.status(400).json({ error: 'Only a Signed agreement can be activated' });
   }
+  // 2026-10-05 (user): an agreement signed on the link becomes Active only with
+  // BOTH sides' signature AND company stamp. (A paper copy marked as signed —
+  // no code — keeps the manual Activate.)
+  if (client.agreementVerifiedAt) {
+    const m = agreementLifecycle.missingSeals(client);
+    if (m.teamlink.length || m.client.length) {
+      const say = (who, list) => (list.length ? `${who}: ${list.filter((x) => x !== 'code').join(' & ') || 'code'}` : null);
+      return res.status(409).json({ error: `Not yet: waiting for ${[say('TeamLink', m.teamlink), say('the client', m.client)].filter(Boolean).join(' · ')}.`, missing: m });
+    }
+  }
   const updated = await prisma.client.update({
     where: { id: client.id },
     data: { agreementStatus: 'ACTIVE', agreementActivatedAt: new Date() },
@@ -1709,12 +2031,14 @@ router.post('/:id/agreement/activate', requirePerm('ats', 'clients', 'Agreement 
     entityId: client.id, fromValue: 'SIGNED', toValue: 'ACTIVE',
   });
 
-  // Every requirement parked at the agreement gate can now be opened. They are
-  // not force-opened: the gate simply stops refusing.
+  // The jobs parked at Agreement Check go live now, with an audit row, and
+  // each job's TL (or the Managers / Admins) is told (e2e gap 7). Drafts stay.
+  // eslint-disable-next-line global-require
+  const opened = await require('../utils/openParkedJobs').openParkedJobs(client.id, { actorUserId: req.user.id, actorName: req.user.name });
   const waiting = await prisma.requirement.count({
     where: { clientId: client.id, status: { in: ['DRAFT', 'AGREEMENT_CHECK'] } },
   });
-  res.json({ ...(await shapeFor(req, updated)), requirementsWaiting: waiting });
+  res.json({ ...(await shapeFor(req, updated)), requirementsWaiting: waiting, jobsOpened: opened.opened });
 });
 
 // Expire an agreement past its end date. Client requirements stop going live.

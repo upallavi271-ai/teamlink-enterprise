@@ -41,7 +41,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const {
-  applicationWhere, requirementWhere, clientWhere, scopeOf,
+  applicationWhere, requirementWhere, clientWhere, atsScopeOf: scopeOf,
 } = require('./scope');
 
 const ROLES = ['RECRUITER', 'TL', 'BDE'];

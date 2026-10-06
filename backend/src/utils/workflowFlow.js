@@ -20,7 +20,7 @@ const {
   DUPLICATE_CHECK_ACTION, RESUME_SCORE_ACTION, PRE_ATS_SOURCES, HR_SOURCING_SOURCE,
   REQUIREMENT_LIVE_STATUSES, stageLabelFor, nextActionForStage, guaranteeEndOf,
 } = require('./atsVocab');
-const { applicationWhere, requirementWhere, scopeOf } = require('./scope');
+const { applicationWhere, requirementWhere, atsScopeOf: scopeOf } = require('./scope');
 const { hiringTypeOf, INTERNAL_HIRE } = require('./joining');
 
 // "1 Month" / "30 Days" / "3 Months" / "1 Year" / "No replacement" -> days.

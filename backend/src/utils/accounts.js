@@ -14,7 +14,7 @@ function invoiceTotal(invoice) {
 
 // What is still to be collected after any receipts already recorded.
 function invoiceOutstanding(invoice) {
-  return ROUND(invoiceTotal(invoice) - Number(invoice.receivedAmount || 0));
+  return ROUND(invoiceTotal(invoice) - Number(invoice.receivedAmount || 0) - Number(invoice.creditedAmount || 0) + Number(invoice.debitedAmount || 0)); // B2: credit / debit notes (0 on an invoice without one)
 }
 
 const SETTLED_TOLERANCE = 0.5; // rupees — below this an invoice counts as closed

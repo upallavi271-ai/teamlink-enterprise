@@ -1,0 +1,17 @@
+/* Administration → Company Setup → Vendor logins (P3). Scoped .vl-* */
+.vl-acts{min-width:170px}
+.vl-acts>.btn{margin:2px 4px 2px 0 !important}
+
+.vl-secret code{font-family:var(--font-mono);font-size:13.5px;background:#fff;padding:1px 6px;border-radius:6px;border:1px solid var(--line)}
+.vl-form select{width:100%}
+.vl-pick{border:1px solid var(--line);border-radius:10px;max-height:260px;overflow:auto;padding:4px 8px;margin-top:6px}
+.vl-pick input[type=search]{width:100%}
+.vl-pick-h{font-size:12px;font-weight:700;color:var(--ink-soft);padding:8px 2px 4px;border-top:1px solid var(--line-soft)}
+.vl-pick-h:first-of-type{border-top:0}
+.vl-pick-row{display:flex !important;gap:8px;align-items:flex-start;padding:4px 2px;font-weight:400 !important;margin:0 !important;font-size:13px !important;cursor:pointer}
+.vl-pick-row input,.vl-switch input{width:auto !important;margin-top:3px}
+.vl-switch{display:flex !important;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:10px;margin:6px 0 !important;font-weight:400 !important;cursor:pointer}
+.vl-val{max-width:220px;overflow-wrap:anywhere;font-size:12.5px}
+@media (max-width:760px){ .vl-acts{white-space:normal} .vl-acts .btn{margin:2px 0 !important} }
+.vl-red{color:var(--red)}
+.vl-settings .card h3{display:flex;align-items:center;gap:8px;font-size:14.5px;margin:0}

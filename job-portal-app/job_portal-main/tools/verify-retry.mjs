@@ -26,6 +26,13 @@ import { existsSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { EVENT_FOR_STAGE } from '../api/src/routes/notifications.js';
 
+/* The recruiter this deployment actually has. The demo login these
+   checks signed in as went with the demo data, and every failure it
+   caused read as a broken feature. */
+import { login as tlLogin } from './lib/logins.mjs';
+const RECRUITER_LOGIN = tlLogin('recruiter');
+
+
 // The outbound-payload section below needs the real provider configuration.
 const envFile = resolve(process.cwd(), process.env.ENV_FILE || '.env');
 if (existsSync(envFile) && typeof process.loadEnvFile === 'function') {
@@ -175,12 +182,27 @@ if (smtpActive) {
       vars: { temporary_password: 'Sw4n-Fl4x-9912' },
     });
     const { template_params: p, accessToken, user_id } = req.body;
-    // The private key authenticates the call; it must never be a variable
-    // a template could print into the body of an email.
-    must(!JSON.stringify(p).includes(accessToken || ' never'),
-      'the private key is in the template variables');
-    must(!JSON.stringify(p).includes(user_id || ' never'),
-      'the public key is in the template variables');
+
+    /*
+     * The keys authenticate the CALL. Neither may ever be a variable a
+     * template could print into the body of an email.
+     *
+     * An unconfigured credential is stated rather than compared against a
+     * sentinel. The sentinel that used to be here was written as an
+     * escape, collapsed into a real NUL byte by the shell that wrote this
+     * file, and committed invisible - after which grep read the file as
+     * binary and stopped searching it.
+     */
+    const notLeaked = (secret, which) => {
+      if (!secret) {
+        console.log(`--    ${which} is not configured here, so there was none to leak`);
+        return;
+      }
+      must(!JSON.stringify(p).includes(secret),
+        `${which} is in the template variables`);
+    };
+    notLeaked(accessToken, 'the private key');
+    notLeaked(user_id, 'the public key');
   });
 }
 
@@ -264,7 +286,7 @@ console.log('\nthe address it actually went to');
 await check("a send records the candidate's own address, not a fixed one", async () => {
   const recX = await open();
   await recX.api('post', '/auth/login',
-    { email: 'recruiter@teamlink.com', password: PASSWORD, role: 'recruiter' });
+    { email: RECRUITER_LOGIN.email, password: RECRUITER_LOGIN.password, role: 'recruiter' });
 
   const list = (await recX.api('get', '/applications?limit=25')).applications || [];
   const app = list.find((a) => a.stage && a.stage !== 'rejected');
@@ -337,7 +359,7 @@ await check('the queue is bounded, so one outage cannot flood a provider', async
 await check('only an admin can run the sweep', async () => {
   const rec2 = await open();
   await rec2.api('post', '/auth/login',
-    { email: 'recruiter@teamlink.com', password: PASSWORD, role: 'recruiter' });
+    { email: RECRUITER_LOGIN.email, password: RECRUITER_LOGIN.password, role: 'recruiter' });
   let code = null;
   try { await rec2.api('post', '/notifications/retry', {}); }
   catch (e) { code = e.code; }
@@ -352,7 +374,7 @@ console.log('\nsending one candidate their update');
 
 const rec = await open();
 await rec.api('post', '/auth/login',
-  { email: 'recruiter@teamlink.com', password: PASSWORD, role: 'recruiter' });
+  { email: RECRUITER_LOGIN.email, password: RECRUITER_LOGIN.password, role: 'recruiter' });
 
 const { applications = [] } = await rec.api('get', '/applications?limit=25');
 const target = applications.find((a) => a.stage && a.stage !== 'rejected');

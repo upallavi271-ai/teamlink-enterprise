@@ -1,163 +1,224 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
-import Combo from './Combo.jsx';
-import { INTERVIEW_TYPES } from '../atsVocab';
+import './interviews/Interviews.css';
+// B4 (2026-10-06): a PANEL of interviewers, and "Create meeting link".
+import PanelPicker from './interviews/PanelPicker.jsx';
+import MeetingLinkButton from './interviews/MeetingLinkButton.jsx';
 
 // ---------------------------------------------------------------------------
-// SCHEDULE INTERVIEW (§8).
+// BOOK AN INTERVIEW — "like booking a cab" (change list §11, 2026-10-03).
 //
-// The button used to be a LINK TO THE CANDIDATES PAGE. Somebody presses
-// "Schedule Interview", lands on a list of candidates and has to work out what
-// to do next — which is the opposite of what the button said it would do.
+//   Who → When (date, time) → How (Online / In person + link or address)
+//   → Interviewer → [Book interview]
 //
-// This asks the questions in order and does the thing:
+// One main button. The server (POST /ats/interviews/:id/book) does the
+// pipeline move to Interview Scheduled (permission, history, follow-up) and
+// tells the candidate, the recruiter / TL / client manager and the client.
+// `preset` = { id, candidate: { name }, job, client, round? } books that person
+// straight away (the "Book" button on a shortlisted row, "Next round").
 //
-//   Candidate -> Requirement -> Type -> Date & Time -> Mode -> Interviewer
-//
-// The candidate list is the SHORTLISTED ONES FIRST, because those are the
-// people an interview is actually scheduled for; everyone else in scope is
-// still offered underneath, since a re-schedule or an early round is real.
-// Scheduling moves the application to Interview Scheduled through the normal
-// stage endpoint, so the permission check, the pipeline history and the
-// automatic "confirm the candidate is attending" follow-up all happen exactly
-// as they do anywhere else.
+// LAYOUT v3 (2026-10-03): Who (candidate + job) → ROUND → When → Online /
+// Offline + link or address → Interviewer. After saving, a "Tell them" step:
+// email goes only when the Admin email switch is on (the server says which);
+// WhatsApp is a "Send on WhatsApp" wa.me link with the message ready — it
+// opens WhatsApp on this device and is logged as a follow-up. Never sent by
+// the app. onBooked() fires on save (reload the list); onScheduled(msg) on Done.
 // ---------------------------------------------------------------------------
+const initials = (n) => String(n || '?').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
+const todayIst = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 
-const MODES = ['In Person', 'Video Call', 'Telephonic'];
+function Who({ row, onChange }) {
+  return (
+    <div className="ivx-who">
+      <span className="ivx-av" aria-hidden="true">{initials(row.candidate.name)}</span>
+      <span className="ivx-who-t">
+        <b>{row.candidate.name}</b>
+        <div>{row.job ? `Job: ${row.job}` : ''}{row.client ? ` · ${row.client}` : ''}</div>
+      </span>
+      {onChange && <button type="button" className="btn btn-sm btn-ghost" onClick={onChange}>Change</button>}
+    </div>
+  );
+}
 
-export default function ScheduleInterview({ onClose, onScheduled }) {
-  const [candidates, setCandidates] = useState([]);
-  const [candidateId, setCandidateId] = useState('');
-  const [applicationId, setApplicationId] = useState('');
-  const [form, setForm] = useState({
-    interviewType: INTERVIEW_TYPES[0] || 'Client Interview',
-    date: '', time: '', interviewMode: MODES[0], interviewer: '', interviewMeetingLink: '',
-  });
+const roundOf = (row) => Math.max(1, Number(row && (row.round || row.suggestedRound)) || 1);
+
+export default function ScheduleInterview({
+  onClose, onScheduled, onBooked = null, preset = null,
+}) {
+  const [chosen, setChosen] = useState(preset);
+  const [round, setRound] = useState(() => (preset ? roundOf(preset) : 1));
+  const [done, setDone] = useState(null); // the server's reply after booking
+  const [logged, setLogged] = useState({});
+  const pick = (row) => { setChosen(row); setRound(row ? roundOf({ round: row.suggestedRound }) : 1); };
+  const [q, setQ] = useState('');
+  const [list, setList] = useState(null);
+  const [form, setForm] = useState({ date: '', time: '', mode: 'Online', meetingLink: '', location: '', interviewer: '' });
+  const [panel, setPanel] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    api.get('/candidates')
-      .then((r) => setCandidates(Array.isArray(r.data) ? r.data : (r.data.rows || [])))
-      .catch(() => setCandidates([]));
-  }, []);
-
-  // Shortlisted first — those are the people this button exists for.
-  const READY = ['CLIENT_SHORTLISTED', 'CLIENT_REVIEW', 'SHARED_WITH_CLIENT'];
-  const ready = candidates.filter((c) => READY.includes(c.currentStage));
-  const others = candidates.filter((c) => !READY.includes(c.currentStage) && c.latestApplicationId);
-
-  const chosen = candidates.find((c) => c.id === candidateId);
+  const [listErr, setListErr] = useState('');
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
-  function pickCandidate(id) {
-    setCandidateId(id);
-    const c = candidates.find((x) => x.id === id);
-    setApplicationId(c ? (c.latestApplicationId || '') : '');
-  }
+  // Shortlisted people first; typing finds anyone else in your area.
+  useEffect(() => {
+    if (chosen) return undefined;
+    const t = setTimeout(() => {
+      api.get('/ats/interviews/bookable', { params: q.trim() ? { q: q.trim() } : {} })
+        .then((r) => { setListErr(''); setList(r.data.rows || []); })
+        .catch(() => { setListErr('Could not load people. Please try again.'); setList([]); });
+    }, q ? 250 : 0);
+    return () => clearTimeout(t);
+  }, [q, chosen]);
+
+  const ready = chosen && form.date && form.time && panel.length > 0;
 
   async function submit() {
     setError(''); setBusy(true);
     try {
-      // The NORMAL stage endpoint, so permissions, pipeline history and the
-      // automatic follow-up all behave exactly as they do elsewhere.
-      await api.patch(`/applications/${applicationId}/stage`, {
-        stage: 'INTERVIEW_SCHEDULED',
-        interviewAt: form.date ? `${form.date}T${form.time || '10:00'}:00` : undefined,
-        interviewer: form.interviewer || undefined,
-        interviewMode: form.interviewMode || undefined,
-        interviewMeetingLink: form.interviewMeetingLink || undefined,
+      const r = await api.post(`/ats/interviews/${chosen.id}/book`, {
+        round,
+        date: form.date,
+        time: form.time,
+        mode: form.mode,
+        meetingLink: form.mode === 'Online' ? form.meetingLink.trim() : '',
+        location: form.mode === 'In Person' ? form.location.trim() : '',
+        panel: panel.map((p) => (p.userId ? { userId: p.userId } : { name: p.name, email: p.email || null })),
       });
-      // Review #2 §16 — the chosen type (Recruiter / TL / Client Interview) is
-      // recorded on the interview; the stage endpoint only stamps a default.
-      if (form.interviewType) {
-        await api.patch(`/ats/interviews/${applicationId}/type`, { interviewType: form.interviewType }).catch(() => {});
-      }
-      onScheduled();
+      setDone(r.data);
+      if (onBooked) onBooked(r.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'That interview could not be scheduled.');
+      setError(err.response?.data?.error || 'Could not book the interview. Please try again.');
     } finally { setBusy(false); }
+  }
+
+  // "Send on WhatsApp" pressed: the link opens WhatsApp on this device; the
+  // server only logs it as a follow-up (it sends nothing).
+  async function logWa(to) {
+    try {
+      const r = await api.post(`/ats/interviews/${chosen.id}/whatsapp-log`, { to });
+      setLogged((m) => ({ ...m, [to]: r.data.message || 'Logged as a follow-up.' }));
+    } catch (err) {
+      setLogged((m) => ({ ...m, [to]: err.response?.data?.error || 'Opened. Could not log it — add a follow-up by hand.' }));
+    }
+  }
+
+  if (done) {
+    const finish = () => onScheduled(done.message || 'Interview booked.');
+    return (
+      <Modal title="Booked — now tell them" onClose={finish} footer={<button type="button" className="btn btn-primary" onClick={finish}>Done</button>}>
+        <div className="ivv3-done">
+          <div className="ivv3-ok" role="status">{`Saved. ${chosen.candidate.name} · Round ${done.round || round}`}</div>
+          <div className="ivv3-mailoff">{done.message}</div>
+          {form.mode === 'Online' && !form.meetingLink.trim() && <MeetingLinkButton applicationId={chosen.id} />}
+          {(done.whatsapp || []).map((w) => (
+            <div key={w.to} className="ivv3-wa">
+              <span className="ivv3-wa-who">
+                <b>{w.label}: {w.name}</b>
+                <span>{w.phone ? `WhatsApp +${w.phone}` : 'No phone number saved — WhatsApp will ask you to pick the contact.'}</span>
+              </span>
+              <a className="btn btn-sm btn-primary" href={w.url} target="_blank" rel="noreferrer" onClick={() => logWa(w.to)}>Send on WhatsApp</a>
+              {logged[w.to] && <span className="ivv3-logged">{logged[w.to]}</span>}
+              <pre>{w.text}</pre>
+            </div>
+          ))}
+          <div className="ivx-hint">WhatsApp opens on your phone or computer with the message ready. You press send there — the app never sends it.</div>
+        </div>
+      </Modal>
+    );
   }
 
   return (
     <Modal
-      title="Schedule Interview"
+      title="Book an interview"
       onClose={onClose}
-      footer={<>
-        <button className="btn" onClick={onClose}>Cancel</button>
-        <button
-          className="btn btn-primary"
-          disabled={busy || !applicationId || !form.date}
-          onClick={submit}
-        >
-          {busy ? 'Scheduling…' : 'Confirm'}
+      footer={(
+        <button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={submit}>
+          {busy ? 'Booking…' : 'Book interview'}
         </button>
-      </>}
-    >
-      <div className="field">
-        <label>Candidate</label>
-        <Combo value={candidateId} onChange={(e) => pickCandidate(e.target.value)}>
-          <option value="">Choose a candidate…</option>
-          {ready.length > 0 && (
-            <optgroup label="Shortlisted — ready to interview">
-              {ready.map((c) => <option key={c.id} value={c.id}>{c.name} — {c.requirementTitle || 'no requirement'}</option>)}
-            </optgroup>
-          )}
-          {others.length > 0 && (
-            <optgroup label="Others in your scope">
-              {others.map((c) => <option key={c.id} value={c.id}>{c.name} — {c.requirementTitle || 'no requirement'}</option>)}
-            </optgroup>
-          )}
-        </Combo>
-      </div>
-
-      {/* The requirement is not a second question — it is the application the
-          candidate was chosen for. Shown so the person can see which one. */}
-      {chosen && (
-        <div className="notice">
-          Requirement: <b>{chosen.requirementTitle || '—'}</b>
-          {chosen.clientName ? <> · Client: <b>{chosen.clientName}</b></> : null}
-          {chosen.currentStage ? <> · Currently: {chosen.stageGroupLabel || chosen.currentStage}</> : null}
-        </div>
       )}
+    >
+      <div className="ivx-book">
+        <div className="ivx-sec">
+          <b>Who *</b>
+          {chosen ? (
+            <Who row={chosen} onChange={preset ? null : () => pick(null)} />
+          ) : (
+            <>
+              <input
+                type="search"
+                autoFocus
+                placeholder="Search name, phone or job…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                style={{ width: '100%' }}
+              />
+              <div className="ivx-pick">
+                {list === null && <div className="ivx-hint">Loading…</div>}
+                {listErr && <div className="error-text">{listErr}</div>}
+                {list && list.length === 0 && !listErr && (
+                  <div className="ivx-hint">{q ? 'Nobody found. Try another name or job.' : 'Nobody is shortlisted right now. Search to find a person.'}</div>
+                )}
+                {(list || []).map((r) => (
+                  <button key={r.id} type="button" onClick={() => pick(r)}>
+                    <span className="ivx-av" style={{ width: 28, height: 28, fontSize: 11 }} aria-hidden="true">{initials(r.candidate.name)}</span>
+                    <span className="ivx-who-t">
+                      <b>{r.candidate.name}</b>
+                      <div>{[r.job, r.client, r.round ? `Round ${r.round} done` : null].filter(Boolean).join(' · ')}</div>
+                    </span>
+                    {r.shortlisted ? <span className="ivx-pill green">Shortlisted</span> : r.nextRound ? <span className="ivx-pill blue">Next round</span> : null}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
-      <div className="grid-2">
-        <div className="field">
-          <label>Interview type</label>
-          <Combo value={form.interviewType} onChange={(e) => set({ interviewType: e.target.value })}>
-            {INTERVIEW_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </Combo>
+        <div className="ivx-sec">
+          <b>Round *</b>
+          <div className="ivv3-rounds" role="radiogroup" aria-label="Interview round">
+            {[...new Set([1, 2, 3, 4, round])].sort((a, b) => a - b).map((n) => (
+              <button key={n} type="button" role="radio" aria-checked={round === n} className={round === n ? 'is-on' : ''} onClick={() => setRound(n)}>{n}</button>
+            ))}
+            <button type="button" aria-label="One more round" onClick={() => setRound(Math.min(20, round + 1))}>+</button>
+          </div>
         </div>
-        <div className="field">
-          <label>Mode</label>
-          <Combo value={form.interviewMode} onChange={(e) => set({ interviewMode: e.target.value })}>
-            {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-          </Combo>
-        </div>
-        <div className="field">
-          <label>Date *</label>
-          <input type="date" value={form.date} onChange={(e) => set({ date: e.target.value })} />
-        </div>
-        <div className="field">
-          <label>Time</label>
-          <input type="time" value={form.time} onChange={(e) => set({ time: e.target.value })} />
-        </div>
-        <div className="field">
-          <label>Interviewer</label>
-          <input value={form.interviewer} onChange={(e) => set({ interviewer: e.target.value })} />
-        </div>
-        <div className="field">
-          <label>Meeting link / location</label>
-          <input value={form.interviewMeetingLink} onChange={(e) => set({ interviewMeetingLink: e.target.value })} />
-        </div>
-      </div>
 
-      <div className="small-muted">
-        Confirming moves the candidate to <b>Interview Scheduled</b> and raises the follow-up to confirm they
-        are attending.
+        <div className="ivx-sec">
+          <b>When *</b>
+          <div className="ivx-two">
+            <input type="date" aria-label="Date" min={todayIst()} value={form.date} onChange={(e) => set({ date: e.target.value })} />
+            <input type="time" aria-label="Time" value={form.time} onChange={(e) => set({ time: e.target.value })} />
+          </div>
+        </div>
+
+        <div className="ivx-sec">
+          <b>How *</b>
+          <div className="ivx-modes" role="radiogroup" aria-label="Online or in person">
+            {[['Online', '💻 Online'], ['In Person', '🏢 Offline — in person']].map(([v, label]) => (
+              <button key={v} type="button" role="radio" aria-checked={form.mode === v} className={`ivx-mode${form.mode === v ? ' is-on' : ''}`} onClick={() => set({ mode: v })}>{label}</button>
+            ))}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            {form.mode === 'Online' ? (
+              <input type="url" aria-label="Meeting link" placeholder="Meeting link, e.g. https://meet.google.com/abc-defg-hij" value={form.meetingLink} onChange={(e) => set({ meetingLink: e.target.value })} />
+            ) : (
+              <input aria-label="Address" placeholder="Address, e.g. Apollo Hospital, 2nd floor HR" value={form.location} onChange={(e) => set({ location: e.target.value })} />
+            )}
+          </div>
+        </div>
+
+        <div className="ivx-sec">
+          <b>Interviewers (panel) *</b>
+          <PanelPicker value={panel} onChange={setPanel} />
+          <div className="ivx-hint">One or more people. Each gives their own feedback; the final decision is still one.</div>
+        </div>
+
+        {/* The button is greyed until these are filled — say why. */}
+        {!ready && !busy && <div className="ivx-hint">Pick a person, date, time and at least one interviewer first.</div>}
+        <div className="ivx-hint">After saving: the panel, the team and the client manager (BDE) get an app notice (and a bell reminder the day before and 1 hour before), and you can send the message to the candidate and the BDE on WhatsApp. Emails go only when the Admin email switch is on. For an online interview you can paste a link, or press "Create meeting link" after booking.</div>
+        {error && <div className="error-text" style={{ marginTop: 8 }}>{error}</div>}
       </div>
-      {error && <div className="error-text">{error}</div>}
     </Modal>
   );
 }

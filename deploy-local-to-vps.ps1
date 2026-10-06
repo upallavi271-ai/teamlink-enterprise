@@ -276,6 +276,21 @@ if ($LASTEXITCODE -ne 0) {
     throw "VPS backup failed. Deployment stopped."
 }
 
+# RESUME FILES (resume_): the stored resumes live OUTSIDE the code folder, in
+# <UPLOAD_DIR>/resumes (UPLOAD_DIR from the VPS .env, default
+# ~/.teamlink-uploads). The CandidateResume rows in dev.db point at them, so
+# they are backed up WITH the database, into the same backup folder.
+$ResumeBackupCmd = @'
+UPL=$(sed -n 's/^UPLOAD_DIR=//p' __VPSROOT__/backend/.env | tail -1 | tr -d '\042\047\r'); UPL=${UPL:-$HOME/.teamlink-uploads}; if [ -d $UPL/resumes ]; then tar -czf __BACKUP__/resumes.tar.gz -C $UPL resumes && echo RESUME FILES BACKED UP: $(find $UPL/resumes -type f | wc -l) files from $UPL/resumes; else echo NO RESUME FOLDER ON THE VPS YET - nothing to back up; fi
+'@
+$ResumeBackupCmd = $ResumeBackupCmd.Trim().Replace('__VPSROOT__', $VpsRoot).Replace('__BACKUP__', $RemoteBackup)
+
+ssh $VpsHost $ResumeBackupCmd
+
+if ($LASTEXITCODE -ne 0) {
+    throw "VPS resume-file backup failed. Deployment stopped."
+}
+
 Write-Host "VPS backup successful" -ForegroundColor Green
 Write-Host "Backup: $RemoteBackup" -ForegroundColor Yellow
 
@@ -331,6 +346,30 @@ if ($KeepVpsDatabase) {
 } else {
 
     Write-Host "Local database is now on VPS" -ForegroundColor Green
+
+    # RESUME FILES (resume_): the local database's CandidateResume rows point
+    # at files in the LOCAL <UPLOAD_DIR>/resumes, so those files go with it.
+    # Merged into the VPS folder with --skip-old-files: an existing VPS file is
+    # never overwritten (stored names are random, so nothing collides anyway).
+    $LocalUploads = if ($env:UPLOAD_DIR) { $env:UPLOAD_DIR } else { Join-Path $env:USERPROFILE ".teamlink-uploads" }
+    $LocalResumes = Join-Path $LocalUploads "resumes"
+    if (Test-Path $LocalResumes) {
+        $ResumeArchive = "$env:TEMP\teamlink-resumes.tar.gz"
+        Remove-Item $ResumeArchive -Force -ErrorAction SilentlyContinue
+        tar -czf $ResumeArchive -C $LocalUploads resumes
+        if ($LASTEXITCODE -ne 0) { throw "Could not pack the local resume files." }
+        scp $ResumeArchive "$VpsHost`:/root/teamlink-resumes.tar.gz"
+        if ($LASTEXITCODE -ne 0) { throw "Could not upload the resume files." }
+        $ResumeRestoreCmd = @'
+UPL=$(sed -n 's/^UPLOAD_DIR=//p' __VPSROOT__/backend/.env | tail -1 | tr -d '\042\047\r'); UPL=${UPL:-$HOME/.teamlink-uploads}; mkdir -p $UPL && tar -xzf /root/teamlink-resumes.tar.gz -C $UPL --skip-old-files && chmod 700 $UPL/resumes && rm -f /root/teamlink-resumes.tar.gz && echo RESUME FILES ON VPS: $(find $UPL/resumes -type f | wc -l)
+'@
+        ssh $VpsHost $ResumeRestoreCmd.Trim().Replace('__VPSROOT__', $VpsRoot)
+        if ($LASTEXITCODE -ne 0) { throw "Could not unpack the resume files on the VPS." }
+        Remove-Item $ResumeArchive -Force -ErrorAction SilentlyContinue
+        Write-Host "Local resume files copied to the VPS" -ForegroundColor Green
+    } else {
+        Write-Host "No local resume folder - nothing to copy" -ForegroundColor Yellow
+    }
 }
 
 Write-Host "VPS .env preserved" -ForegroundColor Green

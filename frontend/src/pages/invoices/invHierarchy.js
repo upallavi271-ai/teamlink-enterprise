@@ -146,11 +146,17 @@ export function matchesHierarchy(r, f) {
   if (f.rec !== ALL && r.recruiterKey !== f.rec && r.tlKey !== f.rec) return false;
   return true;
 }
+// The Invoice page (S7) holds Client and Recruiter name as lists (f.clients,
+// f.recs — '__none' = Unassigned); a single f.client still works.
+const clientsOf = (f) => (Array.isArray(f.clients) ? f.clients : (f.client && f.client !== ALL ? [f.client] : []));
 export function matchesJoining(r, f) {
-  if (f.client !== ALL && r.client !== f.client) return false;
+  const cl = clientsOf(f);
+  if (cl.length && !cl.includes(r.client)) return false;
+  if (Array.isArray(f.recs) && f.recs.length && !f.recs.includes(r.recruiterKey || '__none')) return false;
   return matchesHierarchy(r, f);
 }
-export const hierarchyActive = (f) => f.client !== ALL || f.dept !== ALL || f.section !== ALL || f.rec !== ALL;
+export const hierarchyActive = (f) => clientsOf(f).length > 0 || (Array.isArray(f.recs) && f.recs.length > 0)
+  || f.dept !== ALL || f.section !== ALL || f.rec !== ALL;
 
 // The "joinings have no invoice number yet" card under the filters. With no
 // Client / Department / Section / Employee filter it is the server's own.

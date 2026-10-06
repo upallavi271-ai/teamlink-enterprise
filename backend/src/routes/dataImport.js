@@ -1118,6 +1118,13 @@ const HANDLERS = {
 
     const key = ix.norm(data.reqCode);
     const id = ix.requirement.get(key);
+    // A PAUSED / ARCHIVED client takes no NEW requirement (spec 2026-10-03
+    // §A) — checked in the preview too, so the dry run reports the row.
+    if ((!id || isDry(id)) && !isDry(clientId)) {
+      // eslint-disable-next-line global-require
+      const refusal = await require('../utils/clientLifecycle').newWorkRefusalFor(clientId, 'a new requirement');
+      if (refusal) throw new Error(refusal.error);
+    }
     if (dry) {
       if (!id) ix.requirement.set(key, `dry:${key}`);
       return id && !isDry(id) ? 'updated' : 'created';

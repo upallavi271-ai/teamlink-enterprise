@@ -13,8 +13,25 @@ export default function Departments() {
   const [newTeam, setNewTeam] = useState({});
   const [error, setError] = useState('');
 
+  const [notice, setNotice] = useState('');
+
+  // ?all=1 — this screen also lists the switched-off ones (spec item 18), so
+  // they can be switched back on. Every other picker gets active ones only.
   function load() {
-    api.get('/admin/departments').then((res) => setDepts(res.data));
+    api.get('/admin/departments', { params: { all: 1 } }).then((res) => setDepts(res.data));
+  }
+
+  async function toggle(kind, row) {
+    setError(''); setNotice('');
+    const on = row.active === false;
+    try {
+      await api.put(`/admin/${kind === 'team' ? 'teams' : 'departments'}/${row.id}/active`, { active: on });
+      invalidateMasters(); // every dropdown re-reads now
+      setNotice(on ? `${row.name} is switched on — it shows in the lists again.` : `${row.name} is switched off — it no longer shows in any list. People already in it keep it on their record.`);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'That change could not be saved.');
+    }
   }
 
   // THE FILTER STANDARD: Search (department or team) · Teams, and a Sort.
@@ -47,10 +64,16 @@ export default function Departments() {
   }
 
   async function removeDepartment(id, name) {
-    if (!confirm(`Remove department "${name}" and all its teams? Employees already assigned to it keep the department name on their record.`)) return;
-    await api.delete(`/admin/departments/${id}`);
-    invalidateMasters();
-    load();
+    if (!confirm(`Remove department "${name}" and all its teams?`)) return;
+    setError(''); setNotice('');
+    try {
+      await api.delete(`/admin/departments/${id}`);
+      invalidateMasters();
+      setNotice(`${name} removed.`);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not remove the department.');
+    }
   }
 
   async function addTeam(e, deptId) {
@@ -70,9 +93,15 @@ export default function Departments() {
 
   async function removeTeam(id, name) {
     if (!confirm(`Remove team "${name}"?`)) return;
-    await api.delete(`/admin/teams/${id}`);
-    invalidateMasters();
-    load();
+    setError(''); setNotice('');
+    try {
+      await api.delete(`/admin/teams/${id}`);
+      invalidateMasters();
+      setNotice(`${name} removed.`);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not remove the team.');
+    }
   }
 
   return (
@@ -80,6 +109,7 @@ export default function Departments() {
       <div className="page-head"><div><h1>Departments & Teams</h1><div className="page-sub">Populates the Department/Team dropdowns used across Employee Management</div></div></div>
 
       {error && <div className="error-text">{error}</div>}
+      {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
 
       {isSuperAdmin && (
         <form className="card section" onSubmit={addDepartment}>
@@ -96,17 +126,30 @@ export default function Departments() {
       {lf.rows.map((d) => (
         <div className="card section" key={d.id}>
           <div className="page-head" style={{ marginBottom: 8 }}>
-            <h3 style={{ fontSize: 14 }}>{d.name}</h3>
-            {isSuperAdmin && <button className="btn btn-sm" onClick={() => removeDepartment(d.id, d.name)}>Remove Department</button>}
+            <h3 style={{ fontSize: 14, opacity: d.active === false ? 0.55 : 1 }}>
+              {d.name}
+              {d.active === false && <> <span className="status pending">Off — hidden from lists</span></>}
+            </h3>
+            {isSuperAdmin && (
+              <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {d.active !== undefined && (
+                  <button className="btn btn-sm" onClick={() => toggle('department', d)}>{d.active === false ? 'Switch on' : 'Switch off'}</button>
+                )}
+                <button className="btn btn-sm btn-danger" onClick={() => removeDepartment(d.id, d.name)}>Remove</button>
+              </span>
+            )}
           </div>
 
           <div className="small-muted" style={{ marginBottom: 6 }}>Teams</div>
           {d.teams.length > 0 ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
               {d.teams.map((t) => (
-                <span key={t.id} className="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {t.name}
-                  {isSuperAdmin && <button className="btn btn-sm" style={{ padding: '0 6px' }} onClick={() => removeTeam(t.id, t.name)}>×</button>}
+                <span key={t.id} className={`status${t.active === false ? ' pending' : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {t.name}{t.active === false ? ' (off)' : ''}
+                  {isSuperAdmin && t.active !== undefined && (
+                    <button className="btn btn-sm" style={{ padding: '0 6px' }} onClick={() => toggle('team', t)}>{t.active === false ? 'Switch on' : 'Switch off'}</button>
+                  )}
+                  {isSuperAdmin && <button className="btn btn-sm" style={{ padding: '0 6px' }} title={`Remove ${t.name}`} onClick={() => removeTeam(t.id, t.name)}>×</button>}
                 </span>
               ))}
             </div>

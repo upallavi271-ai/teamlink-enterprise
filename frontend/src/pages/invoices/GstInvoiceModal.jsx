@@ -171,6 +171,8 @@ export default function GstInvoiceModal({ invoiceId, onClose }) {
             <tr className="t-strong"><td>Invoice total</td><td>{money2(d.totals.invoiceValue)}</td></tr>
             {d.totals.tds > 0 && <tr><td>Less: TDS @ {d.tdsPct}% u/s 194J</td><td>− {money2(d.totals.tds)}</td></tr>}
             {d.totals.paid > 0 && <tr><td>Less: received</td><td>− {money2(d.totals.paid)}</td></tr>}
+            {d.totals.credited > 0 && <tr><td>Less: credit notes</td><td>− {money2(d.totals.credited)}</td></tr>}
+            {d.totals.debited > 0 && <tr><td>Add: debit notes</td><td>{money2(d.totals.debited)}</td></tr>}
             <tr className="t-due"><td>Balance due</td><td>{money2(d.totals.balance)}</td></tr>
           </tbody>
         </table>

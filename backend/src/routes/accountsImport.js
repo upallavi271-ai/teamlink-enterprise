@@ -583,6 +583,8 @@ router.post('/commit', async (req, res) => {
     });
     return res.status(201).json({
       kind: 'bank', imported: out.imported, duplicates: out.duplicates, skippedLines: p.skipped.length, autoPosted: out.autoPosted, openingSetTo: out.openingSetTo, batch: out.batch,
+      // Accounts S5 — the auto-match + proof summary.
+      loansLinked: out.loansLinked, billsFiled: out.billsFiled, chargesFiled: out.chargesFiled, autoMatched: out.autoMatched, needsReview: out.needsReview,
     });
   }
 

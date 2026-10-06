@@ -10,8 +10,14 @@ import Combo from '../../components/Combo.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import DateRangePicker, { useDateRange, rangeParams } from '../../components/DateRangePicker.jsx';
 import ChartFromSpec from '../../components/charts/ChartFromSpec.jsx';
+// Recruiter joinings (2026-10-05): Super Admin's month-end popup + a recruiter's own figure.
+import RecruiterJoiningsPopup from '../../components/recruiterJoinings/RecruiterJoiningsPopup.jsx';
+import MyJoiningsCard from '../../components/recruiterJoinings/MyJoiningsCard.jsx';
+import { isSuperAdmin } from '../../permissions';
 
 const NO_FILTERS = { department: '', location: '', status: '', manager: '' };
+// "Medical (16)" — the filter rule: every option says how many people it holds.
+const withCount = (label, n) => (n == null ? label : `${label} (${n})`);
 
 // The HR/manager view: every tile, panel and the CSV export are computed by
 // /api/hrms/dashboard against the same filtered employee set.
@@ -57,19 +63,19 @@ function HrDashboard() {
         <DateRangePicker value={range} onChange={setRange} period={data.period} />
         <Combo value={filters.department} title="Department" onChange={(e) => set('department', e.target.value)}>
           <option value="">All departments</option>
-          {o.departments.map((d) => <option key={d}>{d}</option>)}
+          {o.departments.map((d) => <option key={d} value={d}>{withCount(d, o.counts?.department?.[d])}</option>)}
         </Combo>
         <Combo value={filters.location} title="Location" onChange={(e) => set('location', e.target.value)}>
           <option value="">All locations</option>
-          {o.locations.map((l) => <option key={l}>{l}</option>)}
+          {o.locations.map((l) => <option key={l} value={l}>{withCount(l, o.counts?.location?.[l])}</option>)}
         </Combo>
         <Combo value={filters.status} title="Employee status" onChange={(e) => set('status', e.target.value)}>
           <option value="">All employee statuses</option>
-          {o.statuses.map((s) => <option key={s}>{s}</option>)}
+          {o.statuses.map((s) => <option key={s} value={s}>{withCount(s, o.counts?.status?.[s])}</option>)}
         </Combo>
         <Combo value={filters.manager} title="Reporting manager" onChange={(e) => set('manager', e.target.value)}>
-          <option value="">All reporting managers</option>
-          {o.managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          <option value="">{o.managers.length ? 'All reporting managers' : 'No reporting managers set'}</option>
+          {o.managers.map((m) => <option key={m.id} value={m.id}>{withCount(m.name, m.count)}</option>)}
         </Combo>
         {anyFilter && <button className="btn btn-sm" onClick={() => { setFilters(NO_FILTERS); setRange({ range: 'today', from: '', to: '' }); }}>Clear All</button>}
         <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={exportCsv}>Export</button>
@@ -115,7 +121,7 @@ function HrDashboard() {
         { value: data.attendanceOverview.absent, label: 'Absent', to: '/attendance' },
         { value: data.attendanceOverview.onLeave, label: 'On Leave', to: '/leave' },
         ...(data.attendanceOverview.offDay ? [{ value: data.attendanceOverview.offDay, label: 'Week-off / Holiday', to: '/attendance' }] : []),
-        ...(data.attendanceOverview.noRecord ? [{ value: data.attendanceOverview.noRecord, label: 'No record (nothing marked)', to: '/attendance' }] : []),
+        ...(data.attendanceOverview.noRecord ? [{ value: data.attendanceOverview.noRecord, label: 'No device data', to: '/attendance' }] : []),
         ...(data.attendanceOverview.notYet ? [{ value: data.attendanceOverview.notYet, label: 'Not checked in yet', to: '/attendance' }] : []),
         ...(data.attendanceOverview.upcoming ? [{ value: data.attendanceOverview.upcoming, label: 'Upcoming day', to: '/attendance' }] : []),
         { value: data.attendanceOverview.late, label: 'Of whom late', to: '/attendance' },
@@ -124,7 +130,7 @@ function HrDashboard() {
         // Regularization" under Pending Tasks & Approvals — shown there once.
       ]} />
       <div className="small-muted" style={{ fontSize: 12, margin: '-2px 0 12px' }}>
-        Present + Half Day + Absent + On Leave{data.attendanceOverview.offDay ? ' + Week-off / Holiday' : ''}{data.attendanceOverview.noRecord ? ' + No record' : ''}
+        Present + Half Day + Absent + On Leave{data.attendanceOverview.offDay ? ' + Week-off / Holiday' : ''}{data.attendanceOverview.noRecord ? ' + No device data' : ''}
         {data.attendanceOverview.notYet ? ' + Not checked in yet' : ''}{data.attendanceOverview.upcoming ? ' + Upcoming' : ''} = headcount {data.attendanceOverview.headcount}.
         {' '}Total Employees above counts every employee record, including people who have left.
       </div>
@@ -294,6 +300,9 @@ export default function HrmsDashboard() {
           them a profile was waiting to be filled in. The banner says so, and
           routes them to the form; once HR approves it says that instead. */}
       {!isHR && <ProfileStatusBanner variant="landing" />}
+
+      {isSuperAdmin(user) && <RecruiterJoiningsPopup />}
+      <MyJoiningsCard />
 
       {isHR ? <HrDashboard /> : <MyDashboard />}
 

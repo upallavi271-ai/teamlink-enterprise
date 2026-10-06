@@ -1,0 +1,27 @@
+/* ATS layout v3 — the step popups (components/candidate/StepPopups.jsx). */
+.stp-checks { display: grid; gap: 6px; }
+.stp-check {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+  border: 1px solid var(--line, #e3e8ef); border-radius: 10px; cursor: pointer; background: var(--card, #fff);
+}
+.stp-check input { width: 18px; height: 18px; margin-top: 1px; flex: none; }
+.stp-check.is-on { border-color: var(--st-green, #15803d); background: var(--st-green-tint, #ecfdf3); }
+.stp-check b { font-weight: 600; }
+.stp-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stp-choices.is-3 { grid-template-columns: 1fr 1fr 1fr; }
+.stp-choice {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 12px;
+  border: 2px solid var(--line, #e3e8ef); border-radius: 12px; background: var(--card, #fff); cursor: pointer; font: inherit; color: inherit;
+}
+.stp-choice b { font-size: 15px; }
+.stp-choice span { font-size: 12.5px; color: var(--ink-soft, #5b6472); line-height: 1.35; }
+.stp-choice.is-green.is-on { border-color: var(--st-green, #15803d); background: var(--st-green-tint, #ecfdf3); }
+.stp-choice.is-red.is-on { border-color: var(--st-red, #b42318); background: var(--st-red-tint, #fef3f2); }
+.stp-choice.is-yellow.is-on { border-color: var(--st-yellow, #b88600); background: var(--st-yellow-tint, #fffaeb); }
+.stp-choice.is-red b { color: var(--st-red-ink, var(--st-red, #b42318)); }
+.stp-choice.is-green b { color: var(--st-green-ink, var(--st-green, #15803d)); }
+.stp-hold { margin-top: 10px; }
+.stp-label { font-weight: 600; margin: 4px 0 6px; }
+@media (max-width: 560px) {
+  .stp-choices, .stp-choices.is-3 { grid-template-columns: 1fr; }
+}

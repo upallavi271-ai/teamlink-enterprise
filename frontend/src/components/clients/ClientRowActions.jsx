@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
-import Combo from '../Combo.jsx';
 import './clientsrole.css';
 
 // ---------------------------------------------------------------------------
@@ -10,11 +9,13 @@ import './clientsrole.css';
 // quick actions (+ Requirement · Call · Add Note) that work without opening
 // the client:
 //
-//   BDE         + New Requirement              (+ Call · Note)
-//   TL          View Requirements              (+ Requirement)
-//   Accounts    View Outstanding / Generate Invoice   (+ Note)
-//   Admin       Edit  ⋯ Reassign Owner · Deactivate · Delete  (+ Req · Call · Note)
+//   BDE         + New job                      (+ Call · Note)
+//   TL          Jobs                           (+ Job)
+//   Accounts    Unpaid / Make invoice          (+ Note)
+//   Admin       Edit (incl. client manager)    (+ Job · Call · Note)
 //   Management  View  (view only)              (+ Call)
+//   Pause / Reactivate / Ask to pause / Archive / Restore / Delete: the
+//   Client 360 header (the server's lifecycleActions decide).
 //
 // `meta.actions` (GET /clients/meta) decides every button — the same can() /
 // role rules the API enforces. Call is a tel: link and is drawn only for a
@@ -36,7 +37,7 @@ export function NoteModal({ client, onClose, onSaved }) {
       await api.post(`/clients/${client.id}/notes`, { note: text.trim() });
       onSaved?.();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not save the note');
+      setError(err.response?.data?.error || 'Could not save the note. Try again.');
     } finally {
       setSaving(false);
     }
@@ -57,87 +58,35 @@ export function NoteModal({ client, onClose, onSaved }) {
         <span>Note</span>
         <textarea rows="4" autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Call summary, follow-up, anything the next person should know…" />
       </label>
-      <div className="small-muted" style={{ fontSize: 11.5 }}>Saved to this client&apos;s Activity with your name and the time.</div>
+      <div className="small-muted" style={{ fontSize: 11.5 }}>Saved in Notes with your name and time.</div>
       {error && <div className="error-text">{error}</div>}
     </Modal>
   );
 }
 
-export function ReassignModal({ client, onClose, onSaved }) {
-  const [options, setOptions] = useState(null);
-  const [owner, setOwner] = useState(client.bdeOwner || '');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    api.get('/clients/owner-options').then((r) => setOptions(r.data)).catch(() => setOptions([]));
-  }, []);
-  async function save() {
-    setSaving(true);
-    setError('');
-    try {
-      await api.put(`/clients/${client.id}`, { bdeOwner: owner.trim() });
-      onSaved?.();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not reassign the owner');
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <Modal
-      title={`Reassign Owner BDE — ${client.name}`}
-      onClose={onClose}
-      footer={(
-        <>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={saving || owner.trim() === String(client.bdeOwner || '').trim()} onClick={save}>
-            {saving ? 'Saving…' : 'Reassign'}
-          </button>
-        </>
-      )}
-    >
-      <label className="field">
-        <span>Owner BDE</span>
-        <Combo creatable value={owner} onChange={(e) => setOwner(e.target.value)}>
-          <option value="">— Unassigned —</option>
-          {(options || []).map((u) => <option key={u.id} value={u.name}>{u.name}</option>)}
-        </Combo>
-      </label>
-      <div className="small-muted" style={{ fontSize: 11.5 }}>
-        {`Currently: ${client.bdeOwner || 'Unassigned'}. The new owner sees this client under My Clients. The change is recorded in the client's Activity.`}
-      </div>
-      {error && <div className="error-text">{error}</div>}
-    </Modal>
-  );
-}
-
-export default function ClientRowActions({ c, meta, onChanged, onEdit, onNote, onReassign }) {
+// Simplicity checklist #11 — no "⋯" menu. Change client manager is in Edit
+// (the Client manager (BDE) field); Pause / Reactivate / Ask to pause /
+// Archive / Restore / Delete are buttons in the Client 360 header (the row
+// opens Client 360).
+export default function ClientRowActions({ c, meta, onEdit, onNote }) {
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
   if (!meta) return null;
   const a = meta.actions || {};
   const role = meta.role;
   const stop = (e) => e.stopPropagation();
 
   let main = null;
-  if (role === 'bde' && a.newRequirement) {
-    main = <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(reqNew(c))}>+ New Requirement</button>;
+  if (role === 'bde' && a.newRequirement && !(c.lifecycle === 'Paused' || c.lifecycle === 'Archived')) {
+    main = <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(reqNew(c))}>+ New job</button>;
   } else if (role === 'tl') {
-    main = <button type="button" className="btn btn-sm" onClick={() => navigate(reqList(c))}>View Requirements</button>;
+    main = <button type="button" className="btn btn-sm" onClick={() => navigate(reqList(c))}>Jobs</button>;
   } else if (role === 'accounts') {
     main = (
       <>
-        <button type="button" className="btn btn-sm" onClick={() => navigate(`/clients/${c.id}?tab=invoices`)}>View Outstanding</button>
+        <button type="button" className="btn btn-sm" onClick={() => navigate(`/clients/${c.id}?tab=invoices`)}>Unpaid</button>
         {a.generateInvoice && (
-          <button type="button" className="btn btn-sm btn-primary" title="Raise an invoice for this client's joining" onClick={() => navigate(`/invoices?client=${encodeURIComponent(c.name)}&join=new`)}>
-            Generate Invoice
+          <button type="button" className="btn btn-sm btn-primary" title="Make an invoice for a joining of this client" onClick={() => navigate(`/invoices?client=${encodeURIComponent(c.name)}&join=new`)}>
+            Make invoice
           </button>
         )}
       </>
@@ -148,54 +97,20 @@ export default function ClientRowActions({ c, meta, onChanged, onEdit, onNote, o
     main = <button type="button" className="btn btn-sm" onClick={() => navigate(`/clients/${c.id}`)}>View</button>;
   }
 
-  async function setStatus(next) {
-    setOpen(false);
-    if (!window.confirm(`${next === 'Inactive' ? 'Deactivate' : 'Activate'} ${c.name}?`)) return;
-    try {
-      await api.put(`/clients/${c.id}`, { status: next });
-      onChanged?.();
-    } catch (err) {
-      window.alert(err.response?.data?.error || 'Could not change the status');
-    }
-  }
-  async function remove() {
-    setOpen(false);
-    if (!window.confirm(`Delete ${c.name}? This cannot be undone. A client with requirements, invoices or portal logins is never deleted — deactivate it instead.`)) return;
-    try {
-      await api.delete(`/clients/${c.id}`);
-      onChanged?.();
-    } catch (err) {
-      window.alert(err.response?.data?.error || 'Could not delete this client');
-    }
-  }
+  const paused = c.lifecycle === 'Paused' || c.lifecycle === 'Archived';
 
-  const showQuickReq = a.newRequirement && role !== 'bde' && role !== 'mgmt';
-  const menu = role === 'admin' && (a.reassign || a.deactivate || a.delete);
+  const showQuickReq = a.newRequirement && role !== 'bde' && role !== 'mgmt' && !paused;
   return (
     <div className="clrole-actions" onClick={stop}>
       {main}
       {showQuickReq && (
-        <button type="button" className="clrole-quick" title="+ New requirement for this client" onClick={() => navigate(reqNew(c))}>+ Req</button>
+        <button type="button" className="clrole-quick" title="New job for this client" onClick={() => navigate(reqNew(c))}>+ Job</button>
       )}
       {a.call && c.contactPhone && (
         <a className="clrole-quick" href={`tel:${String(c.contactPhone).replace(/[^\d+]/g, '')}`} title={`Call ${c.contactName || 'the client'} — ${c.contactPhone}`}>Call</a>
       )}
       {a.note && (
         <button type="button" className="clrole-quick" title="Add a note to this client" onClick={() => onNote?.(c)}>Note</button>
-      )}
-      {menu && (
-        <div className="clrole-more" ref={ref}>
-          <button type="button" className="clrole-quick" aria-haspopup="menu" aria-expanded={open} title="More actions" onClick={() => setOpen((o) => !o)}>⋯</button>
-          {open && (
-            <div className="clrole-menu" role="menu">
-              {a.reassign && <button type="button" role="menuitem" onClick={() => { setOpen(false); onReassign?.(c); }}>Reassign Owner</button>}
-              {a.deactivate && (c.status === 'Inactive'
-                ? <button type="button" role="menuitem" onClick={() => setStatus('Active')}>Activate</button>
-                : <button type="button" role="menuitem" onClick={() => setStatus('Inactive')}>Deactivate</button>)}
-              {a.delete && <button type="button" role="menuitem" className="danger" onClick={remove}>Delete client</button>}
-            </div>
-          )}
-        </div>
       )}
     </div>
   );

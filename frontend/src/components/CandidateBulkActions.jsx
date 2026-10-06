@@ -7,6 +7,8 @@ import {
   stageLabel, INTERVIEW_MODES, HOLD_REASON_CATEGORIES, REJECTED_BY_OPTIONS,
   REJECTION_REASONS_BY_SIDE, REJECTION_REASON_CATEGORIES,
 } from '../atsVocab';
+// Rejections (spec 2026-10-03 §A1): the one reject form, shared with Candidate 360.
+import { RejectFields, rejectReady, rejectPayload } from './rejections/rejectionUi.jsx';
 
 // ---------------------------------------------------------------------------
 // BULK ACTIONS on the selected candidates (spec §25):
@@ -26,18 +28,24 @@ import {
 const BATCH = 50;
 const TITLES = {
   assign: 'Assign recruiter',
-  stage: 'Change stage',
+  stage: 'Move step',
   interview: 'Schedule interview',
   hold: 'Put on hold',
   reject: 'Reject',
+  addToJob: 'Add to job',
 };
+// Hold → "review again on" (default one week; the server makes it a task).
+const inDaysYmd = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
 
 export default function CandidateBulkActions({ kind, items, user, onClose, onDone }) {
   const [people, setPeople] = useState([]);
   const [form, setForm] = useState({
     recruiterId: '', stage: '', interviewAt: '', interviewMode: INTERVIEW_MODES[0], interviewer: '',
     interviewMeetingLink: '', rejectedBy: '', reasonCategory: '', reasonDetail: '', comment: '',
+    rejectKind: 'not_suitable', clientSaid: '',
+    reviewOn: inDaysYmd(7), requirementId: '',
   });
+  const [jobs, setJobs] = useState([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -50,8 +58,18 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       .then((r) => setPeople((r.data || []).filter((p) => ['RECRUITER', 'TL', 'STL'].includes(p.atsRole))))
       .catch(() => setPeople([]));
   }, [kind]);
+  useEffect(() => {
+    if (kind !== 'addToJob') return;
+    api.get('/requirements')
+      .then((r) => setJobs((r.data || []).filter((x) => x.status !== 'CLOSED')))
+      .catch(() => setJobs([]));
+  }, [kind]);
 
-  const movable = workflowStages(user).filter((s) => !['HOLD', 'REJECTED'].includes(s));
+  // Offer / Offer accepted / Joined / Hired come from the Offers and Joining
+  // flows, not a bulk move (e2e gap 2) — Super Admin / Admin only (correction).
+  const adminLike = !!user && (['SUPER_ADMIN', 'ADMIN'].includes(user.role) || ['SUPER_ADMIN', 'ADMIN'].includes(user.atsRole));
+  const movable = workflowStages(user).filter((s) => !['HOLD', 'REJECTED'].includes(s)
+    && (adminLike || !['OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(s)));
 
   function body() {
     if (kind === 'assign') return { action: 'assign', recruiterId: form.recruiterId, comment: form.comment };
@@ -68,25 +86,44 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       };
     }
     if (kind === 'hold') {
-      return { action: 'stage', stage: 'HOLD', reasonCategory: form.reasonCategory, reasonDetail: form.reasonDetail, comment: form.comment };
+      return {
+        action: 'stage', stage: 'HOLD', reasonCategory: form.reasonCategory, reasonDetail: form.reasonDetail, comment: form.comment, reviewOn: form.reviewOn,
+      };
     }
-    return {
-      action: 'stage', stage: 'REJECTED', rejectedBy: form.rejectedBy,
-      reasonCategory: form.reasonCategory, reasonDetail: form.reasonDetail, comment: form.comment,
-    };
+    return { action: 'stage', ...rejectPayload(form) };
   }
 
   const ready = (kind === 'assign' && form.recruiterId)
     || (kind === 'stage' && form.stage)
     || (kind === 'interview' && form.interviewAt)
-    || (kind === 'hold' && form.reasonCategory)
-    || (kind === 'reject' && form.rejectedBy && form.reasonCategory);
+    || (kind === 'hold' && form.reasonCategory && form.reviewOn)
+    || (kind === 'addToJob' && form.requirementId)
+    || (kind === 'reject' && rejectReady(form));
 
   async function run() {
     setError('');
     setBusy(true);
     setProgress(0);
     const all = [];
+    if (kind === 'addToJob') {
+      // One application per PERSON (a person picked twice is added once).
+      const people = [...new Map(items.map((x) => [x.id, x])).values()];
+      for (let i = 0; i < people.length; i += 1) {
+        const x = people[i];
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await api.post('/applications', { candidateId: x.id, requirementId: form.requirementId });
+          all.push({ candidateId: x.id, candidateName: x.name, ok: true });
+        } catch (err) {
+          all.push({ candidateId: x.id, candidateName: x.name, ok: false, error: err.response?.data?.error || 'Could not be added' });
+        }
+        setProgress(i + 1);
+      }
+      setBusy(false);
+      setResult(all);
+      if (all.some((x) => x.ok) && onDone) onDone();
+      return;
+    }
     try {
       for (let i = 0; i < items.length; i += BATCH) {
         const chunk = items.slice(i, i + BATCH);
@@ -189,8 +226,8 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
             </Combo>
           </label>
           <div className="small-muted" style={{ marginBottom: 8 }}>
-            Only the stages your role owns are listed. The workflow moves one phase at a time, so a candidate who is
-            not at the step before this one is skipped and listed with the reason.
+            Only the steps your role owns are listed. People move one step at a time, so anyone who is not at the
+            step before this one is skipped, and you are told why.
           </div>
         </>
       )}
@@ -219,25 +256,10 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       )}
 
       {kind === 'reject' && (
-        <div className="field">
-          <span>Rejected by *</span>
-          <div className="contact-methods">
-            {REJECTED_BY_OPTIONS.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                title={o.hint}
-                className={`contact-method${form.rejectedBy === o.value ? ' is-on' : ''}`}
-                onClick={() => set({ rejectedBy: o.value, reasonCategory: '' })}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <RejectFields value={form} onChange={(v) => setForm(v)} allowDnu={items.length === 1} />
       )}
 
-      {(kind === 'hold' || kind === 'reject') && (
+      {kind === 'hold' && (
         <>
           <label className="field">
             <span>Reason *</span>
@@ -257,13 +279,32 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
             <span>Detailed reason</span>
             <textarea rows="2" value={form.reasonDetail} onChange={(e) => set({ reasonDetail: e.target.value })} />
           </label>
+          {kind === 'hold' && (
+            <label className="field">
+              <span>Review again on *</span>
+              <input type="date" min={inDaysYmd(0)} max={inDaysYmd(365)} value={form.reviewOn} onChange={(e) => set({ reviewOn: e.target.value })} />
+              <span className="small-muted">On this day it comes back to you as a task.</span>
+            </label>
+          )}
         </>
       )}
 
+      {kind === 'addToJob' && (
+        <label className="field">
+          <span>Job *</span>
+          <Combo value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })}>
+            <option value="">Choose a job…</option>
+            {jobs.map((r) => <option key={r.id} value={r.id}>{`${r.title} — ${r.internal ? 'TeamLink (internal)' : (r.client && r.client.name) || ''}`}</option>)}
+          </Combo>
+        </label>
+      )}
+
+      {kind !== 'addToJob' && kind !== 'reject' && (
       <label className="field">
         <span>Comment</span>
         <input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Optional — kept on each candidate's history" />
       </label>
+      )}
       {kind === 'reject' && (
         <div className="small-muted">Rejected candidates stay in the Candidate Master — nothing is deleted.</div>
       )}

@@ -1,0 +1,36 @@
+/* Spec 6 — agreement step badge / stepper and the simplified Agreement tab.
+   Scoped under .agrstep* / .agr6-* only. */
+.agrstep-row { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0 0 12px; }
+.agrstep { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper-raised, #fff); font-size: 13px; color: var(--ink-soft); }
+.agrstep-dot { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: var(--line-soft); color: var(--ink-soft); }
+.agrstep-done { color: var(--teal); }
+.agrstep-done .agrstep-dot { background: var(--teal-tint); color: var(--teal); }
+.agrstep-now { font-weight: 700; color: var(--ink); }
+.agrstep-now.agrstep-tone-green { border-color: var(--teal); background: var(--teal-tint); }
+.agrstep-now.agrstep-tone-green .agrstep-dot { background: var(--teal); color: #fff; }
+.agrstep-now.agrstep-tone-blue { border-color: var(--blue); background: var(--blue-tint); }
+.agrstep-now.agrstep-tone-blue .agrstep-dot { background: var(--blue); color: #fff; }
+.agrstep-now.agrstep-tone-amber { border-color: var(--amber); background: var(--amber-tint); }
+.agrstep-now.agrstep-tone-amber .agrstep-dot { background: var(--amber); color: #fff; }
+.agrstep-now.agrstep-tone-red { border-color: var(--red); background: var(--red-tint); }
+.agrstep-now.agrstep-tone-red .agrstep-dot { background: var(--red); color: #fff; }
+
+.agr6-card { padding: 16px; }
+.agr6-lead { font-size: 15px; font-weight: 600; margin: 4px 0 4px; color: var(--ink); }
+.agr6-sub { font-size: 13px; color: var(--ink-soft); margin-bottom: 12px; }
+.agr6-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.agr6-actions .btn-primary { min-height: 40px; padding: 0 18px; font-size: 14px; }
+.agr6-terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 4px; }
+.agr6-term { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--paper-raised, #fff); }
+.agr6-term .k { font-size: 12px; color: var(--ink-soft); }
+.agr6-term .v { font-size: 16px; font-weight: 700; color: var(--ink); margin-top: 2px; }
+.agr6-doc { white-space: pre-line; font-size: 12px; line-height: 1.6; max-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper); color: var(--ink-soft); }
+.agr6-more { margin-top: 10px; }
+.agr6-more > summary { cursor: pointer; font-size: 13px; color: var(--ink-soft); padding: 4px 0; }
+.agr6-placeholder { border: 1px dashed var(--amber); background: var(--amber-tint); color: var(--amber); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin: 8px 0; }
+.agr6-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.agr6-section { margin-top: 14px; }
+@media (max-width: 640px) {
+  .agrstep { padding: 4px 8px; font-size: 12px; }
+  .agr6-actions .btn { flex: 1 1 100%; justify-content: center; }
+}

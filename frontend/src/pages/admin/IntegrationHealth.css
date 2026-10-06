@@ -1,0 +1,23 @@
+/* Administration → Integrations → Health — scoped under .ihealth. */
+.ihealth { display: grid; gap: 12px; font-size: 13px; }
+.ihealth-top { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.ihealth-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.ihealth-card {
+  background: #fff; border: 1px solid var(--line, #e2e8f0); border-left: 4px solid var(--line, #e2e8f0);
+  border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; align-content: start;
+}
+.ihealth-card.is-green { border-left-color: var(--green, #16a34a); }
+.ihealth-card.is-orange { border-left-color: var(--amber, #f59e0b); }
+.ihealth-card.is-red { border-left-color: var(--red, #dc2626); }
+.ihealth-card.is-blue { border-left-color: var(--blue, #2563eb); }
+.ihealth-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.ihealth-head h3 { margin: 0; font-size: 14px; }
+.ihealth-msg { margin: 0; }
+.ihealth-sub { display: grid; gap: 4px; }
+.ihealth-count { font-weight: 600; }
+.ihealth-groups, .ihealth-items { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.ihealth-fix { background: var(--line-soft, #f8fafc); border-radius: 8px; padding: 8px 10px; }
+.ihealth-fix ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.ihealth-fix p { margin: 4px 0 0; }
+.ihealth-ok { color: var(--green, #15803d); font-weight: 600; }
+.ihealth-card .btn { justify-self: start; }

@@ -5,6 +5,8 @@ const { logAudit } = require('../utils/audit');
 const {
   ROUND, dashRange, inRange, monthLabel, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus,
 } = require('../utils/accounts');
+// B9.9: income / client billing / GST charged NET of issued credit & debit notes (utils/creditNotes.js decorateNet).
+const CNU = require('../utils/creditNotes');
 
 const XLSX = require('xlsx');
 const attachments = require('../utils/attachments');
@@ -12,10 +14,6 @@ const { roleForProduct, SET, can } = require('../utils/permissions');
 const {
   checkGstin, isPan, isTan, isIfsc, isUpi, clean: cleanId, stateName: gstStateName,
 } = require('../utils/gstin');
-const {
-  secretsConfigured, encryptSecret, decryptSecret, isEncrypted, NO_KEY_MESSAGE,
-} = require('../utils/secrets');
-const { parseValues } = require('../utils/integrationStore');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -331,6 +329,7 @@ async function officeScope(query) {
     prisma.invoicePayment.findMany({ include: { invoice: { include: { client: true } } } }),
     vendorMapOf(),
   ]);
+  await CNU.decorateNet(invoices); // B9.9: billed figures after issued notes
   // A hand loan or the owner's own money is not a cost — it stays out of
   // profit and out of GST, exactly as the accounting application has it.
   // A REJECTED bill is out of the books as well (see APPROVAL above); it is
@@ -354,11 +353,11 @@ async function officeScope(query) {
 
 // GST both ways — what clients paid us against what we paid vendors.
 function gstBothWays(invoicesInPeriod, expensesInPeriod) {
-  const out = ROUND(invoicesInPeriod.reduce((s, i) => s + Number(i.gst || 0), 0));
+  const out = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.gstBilledOf(i), 0));
   const outRec = ROUND(invoicesInPeriod.reduce((s, i) => {
-    const total = invoiceTotal(i);
+    const total = CNU.receivableOf(i);
     const share = total > 0 ? Math.min(1, Number(i.receivedAmount || 0) / total) : 0;
-    return s + Number(i.gst || 0) * share;
+    return s + CNU.gstBilledOf(i) * share;
   }, 0));
   const inp = ROUND(expensesInPeriod.reduce((s, r) => s + r.gst, 0));
   return { out, outRec, inp, net: ROUND(out - inp), pendingGst: ROUND(out - outRec) };
@@ -550,6 +549,7 @@ router.get('/summary', async (req, res) => {
     prisma.officeExpense.findMany(),
     prisma.invoice.findMany({ where: { status: { not: 'Cancelled' } } }),
   ]);
+  await CNU.decorateNet(invoices); // B9.9: income after issued notes
   const rows = expenses.map((e) => decorate(e)).filter((r) => r.entryKind !== 'hand' && r.approvalStatus !== 'REJECTED');
   const month = req.query.month || null;
   const inScope = month ? rows.filter((r) => r.month === month) : rows;
@@ -571,8 +571,8 @@ router.get('/summary', async (req, res) => {
 
   // Income is taken net of GST: GST charged is collected for the government,
   // not earned, and TDS is deducted but still counts as income billed.
-  const incomeNet = ROUND(invoicesInScope.reduce((s, i) => s + Number(i.amount || 0), 0));
-  const gstCharged = ROUND(invoicesInScope.reduce((s, i) => s + Number(i.gst || 0), 0));
+  const incomeNet = ROUND(invoicesInScope.reduce((s, i) => s + CNU.billedOf(i), 0));
+  const gstCharged = ROUND(invoicesInScope.reduce((s, i) => s + CNU.gstBilledOf(i), 0));
   const gstPaid = ROUND(inScope.reduce((s, r) => s + r.gst, 0));
   const spendNet = ROUND(inScope.reduce((s, r) => s + r.costExGst, 0));
 
@@ -616,7 +616,7 @@ router.get('/bills', async (req, res) => {
   // GST payable and profit compare the WHOLE period — a category filter must
   // not make it look as though we paid more GST than we charged.
   const gb = gstBothWays(invoicesInPeriod, inPeriod);
-  const income = ROUND(invoicesInPeriod.reduce((s, i) => s + Number(i.amount || 0), 0));
+  const income = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.billedOf(i), 0));
   const cashIn = ROUND(invoicesInPeriod.reduce((s, i) => s + Number(i.receivedAmount || 0), 0));
 
   // The category and vendor pickers follow each other: pick a category and only
@@ -636,8 +636,8 @@ router.get('/bills', async (req, res) => {
   const incOf = new Map(); const gstOutOf = new Map();
   invoicesInPeriod.forEach((i) => {
     const k = String(i.invoiceDate || '').slice(0, 7) || '—';
-    incOf.set(k, ROUND((incOf.get(k) || 0) + Number(i.amount || 0)));
-    gstOutOf.set(k, ROUND((gstOutOf.get(k) || 0) + Number(i.gst || 0)));
+    incOf.set(k, ROUND((incOf.get(k) || 0) + CNU.billedOf(i)));
+    gstOutOf.set(k, ROUND((gstOutOf.get(k) || 0) + CNU.gstBilledOf(i)));
   });
   const keyOf = (r) => (mode === 'month' ? (r.month || '—')
     : mode === 'vendor' ? vendorKeyOf(r)
@@ -859,8 +859,8 @@ function withMonthMetrics(view, invoicesInPeriod) {
   invoicesInPeriod.forEach((i) => {
     const k = String(i.invoiceDate || '').slice(0, 7);
     if (!k) return;
-    inc.set(k, ROUND((inc.get(k) || 0) + Number(i.amount || 0)));
-    gstOut.set(k, ROUND((gstOut.get(k) || 0) + Number(i.gst || 0)));
+    inc.set(k, ROUND((inc.get(k) || 0) + CNU.billedOf(i)));
+    gstOut.set(k, ROUND((gstOut.get(k) || 0) + CNU.gstBilledOf(i)));
   });
   const tot = {
     income: 0, paidOut: 0, pl: 0, gstOut: 0, gstIn: 0, gstPayable: 0,
@@ -881,22 +881,6 @@ function withMonthMetrics(view, invoicesInPeriod) {
     Object.keys(tot).forEach((k) => { tot[k] = ROUND(tot[k] + g.month[k]); });
   });
   return { ...view, monthTotals: tot };
-}
-
-const portalPeriodKey = (range) => ({
-  periodStart: range.all ? '' : range.from,
-  periodEnd: range.all ? '' : range.to,
-});
-
-async function portalBalancesFor(range) {
-  const { periodStart, periodEnd } = portalPeriodKey(range);
-  const rows = await prisma.portalBalance.findMany({ where: { periodStart, periodEnd } });
-  const out = { gst: null, traces: null, updatedAt: null };
-  rows.forEach((b) => {
-    if (b.portalKey in out) out[b.portalKey] = ROUND(b.enteredAmount);
-    if (!out.updatedAt || b.updatedAt > out.updatedAt) out.updatedAt = b.updatedAt;
-  });
-  return out;
 }
 
 async function registerData(query) {
@@ -937,7 +921,7 @@ async function registerData(query) {
   // GST both ways. GST received comes off the invoicing module's own rows
   // (routes/invoices.js, model Invoice) — the invoices raised in the period,
   // cancelled ones left out; GST paid is this filter's bills.
-  const gstReceived = ROUND(invoicesInPeriod.reduce((s, i) => s + Number(i.gst || 0), 0));
+  const gstReceived = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.gstBilledOf(i), 0));
   const periodGstPaid = ROUND(booked.reduce((s, r) => s + r.gst, 0));
 
   // The pickers follow each other: choose categories and only their vendors
@@ -989,7 +973,6 @@ async function registerData(query) {
       },
       ourGstin: gstin || null,
       ourGstinValid: !!(gc && gc.ok),
-      portalBalances: await portalBalancesFor(range),
       options: {
         categories: countBy(inPeriod, (r) => r.category),
         vendors: countBy(inPeriod, vendorLabel),
@@ -1060,7 +1043,7 @@ router.get('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Office 
   v.groups.forEach((g) => {
     g.rows.forEach((r) => {
       aoa.push([r.billName, '', r.expenseDate || '', vendorLabel(r), r.category || '', r.billNumber || '',
-        r.effGstin || '', r.paymentMode || '', APPROVAL_LABEL[r.approvalStatus] || r.statusLabel, ...money(r), r.paidValue, r.pendingValue,
+        r.effGstin || '', r.paymentMode || '', LEDGER_STATUS_SHORT[r.approvalStatus] || r.statusLabel, ...money(r), r.paidValue, r.pendingValue,
         r.missing.join(', '), proofText(r), '', '', '']);
       kinds.push('row');
     });
@@ -1112,35 +1095,108 @@ router.get('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Office 
 // TDS, where a bill has it, is not part of this Total; the drawer shows it and
 // what was actually paid after it (the older register's "Total" = after GST −
 // TDS is unchanged in the register view).
-// Status: every approval status is listed as it is. For the totals,
-//   Paid    = PAID + REIMBURSED  (money out)
-//   Pending = PENDING + APPROVED (not paid yet)
-// REJECTED is out of the books, as everywhere on this module: listed only when
-// the Status filter asks for it. Hand loans are not expenses and never listed.
+// Status (Accounts spec S1.3c, 2026-10-05): the list offers Paid and Pending
+// only. Reimbursed / Approved / Rejected are no longer offered, counted or
+// badged; a stored row that still carries one of them (none on 2026-10-05) is
+// shown as "Other (old status)" so nothing disappears — nothing is rewritten.
+// For the totals (S1.2) every money column is summed as it is shown:
+//   Before GST · GST · After GST (= before + GST) · TDS we cut ·
+//   Total (= after GST − TDS, what the vendor is paid) · Paid · Pending,
+//   Paid    = Total of PAID (+ an old REIMBURSED row)   — money out
+//   Pending = Total of PENDING (+ an old APPROVED row)  — not paid yet
+// so Paid + Pending = Total. REJECTED stays out of the books (listed only
+// under "Other (old status)"). Hand loans are not expenses and never listed.
 // ===========================================================================
-const LEDGER_STATUS = [['PAID', 'Paid'], ['PENDING', 'Pending'], ['REIMBURSED', 'Reimbursed'], ['APPROVED', 'Approved'], ['REJECTED', 'Rejected']];
-const LEDGER_STATUS_SHORT = Object.fromEntries(LEDGER_STATUS);
+const LEDGER_STATUS = [['PAID', 'Paid'], ['PENDING', 'Pending']];
+const OLD_STATUSES = ['APPROVED', 'REIMBURSED', 'REJECTED'];
+const OTHER_STATUS_LABEL = 'Other (old status)';
+const LEDGER_STATUS_SHORT = {
+  ...Object.fromEntries(LEDGER_STATUS), APPROVED: OTHER_STATUS_LABEL, REIMBURSED: OTHER_STATUS_LABEL, REJECTED: OTHER_STATUS_LABEL, OTHER: OTHER_STATUS_LABEL,
+};
 const PAID_LIKE = ['PAID', 'REIMBURSED'];
 const PENDING_LIKE = ['PENDING', 'APPROVED'];
+// GST on the bill (S1.3b). "Vendor GSTIN missing" = the bill carries GST and
+// no valid vendor GSTIN is on file (the GST that cannot be claimed yet);
+// "available" = a valid vendor GSTIN is on file. Yes / No are the old names.
+const GST_FILTERS = {
+  with: { label: 'With GST', test: (r) => r.gst > 0.5 },
+  without: { label: 'Without GST', test: (r) => !(r.gst > 0.5) },
+  missing: { label: 'Vendor GSTIN missing', test: (r) => !!r.atRisk },
+  onfile: { label: 'Vendor GSTIN available', test: (r) => !!r.gstinOnFile },
+};
+const GST_ALIAS = { Yes: 'with', No: 'without' };
+const gstKeyOf = (v) => { const k = GST_ALIAS[v] || String(v || ''); return GST_FILTERS[k] ? k : null; };
 const codeNo = (r) => { const x = CODE_RE.exec(r.expenseCode || ''); return x ? Number(x[1]) : 0; };
 const LEDGER_SORTS = {
   date: (r) => String(r.expenseDate || ''),
   code: codeNo,
   amount: (r) => r.base,
-  total: (r) => r.afterGst,
+  gst: (r) => r.gst,
+  after: (r) => r.afterGst,
+  tds: (r) => r.tds,
+  total: (r) => r.net,
+  paid: (r) => (PAID_LIKE.includes(r.approvalStatus) ? r.net : 0),
+  pending: (r) => (PENDING_LIKE.includes(r.approvalStatus) ? r.net : 0),
 };
 
 function ledgerTotals(list) {
   const s = (l, f) => ROUND(l.reduce((a, r) => a + f(r), 0));
   return {
     count: list.length,
+    before: s(list, (r) => r.base),
     amount: s(list, (r) => r.base),
     gst: s(list, (r) => r.gst),
-    total: s(list, (r) => r.afterGst),
+    after: s(list, (r) => r.afterGst),
     tds: s(list, (r) => r.tds),
-    paid: s(list.filter((r) => PAID_LIKE.includes(r.approvalStatus)), (r) => r.afterGst),
-    pending: s(list.filter((r) => PENDING_LIKE.includes(r.approvalStatus)), (r) => r.afterGst),
+    total: s(list, (r) => r.net),
+    paid: s(list.filter((r) => PAID_LIKE.includes(r.approvalStatus)), (r) => r.net),
+    pending: s(list.filter((r) => PENDING_LIKE.includes(r.approvalStatus)), (r) => r.net),
+    paidCount: list.filter((r) => PAID_LIKE.includes(r.approvalStatus)).length,
+    pendingCount: list.filter((r) => PENDING_LIKE.includes(r.approvalStatus)).length,
+    withGstCount: list.filter((r) => r.gst > 0.5).length,
+    tdsCount: list.filter((r) => r.tds > 0.5).length,
   };
+}
+
+// The list filters as one set of tests, so a facet can be counted against all
+// the OTHER filters (the cascading-filter rule) and /overview can apply the
+// very same set to its bills.
+function ledgerFilter(q) {
+  const from = ISO_DAY.test(String(q.from || '')) ? q.from : null;
+  const to = ISO_DAY.test(String(q.to || '')) ? q.to : null;
+  const cats = listParam(q.category);
+  const vens = listParam(q.vendor);
+  const modes = listParam(q.mode);
+  const status = String(q.status || '').trim().toUpperCase();
+  const gstKey = gstKeyOf(q.gst);
+  const term = String(q.q || '').trim().toLowerCase();
+  const tests = {
+    date: from || to ? (r) => !!r.expenseDate && (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to) : null,
+    category: cats.length ? (r) => cats.includes(r.category) : null,
+    vendor: vens.length ? (r) => vens.includes(vendorLabel(r)) : null,
+    mode: modes.length ? (r) => modes.includes(r.paymentMode || '') : null,
+    status: status === 'OTHER' ? (r) => OLD_STATUSES.includes(r.approvalStatus)
+      : (status === 'PAID' || status === 'PENDING' ? (r) => r.approvalStatus === status : null),
+    gst: gstKey ? GST_FILTERS[gstKey].test : null,
+    tds: q.tds === 'Yes' || q.tds === 'No' ? (r) => (q.tds === 'Yes') === (r.tds > 0.5) : null,
+    // Source (vendor portal v2 §11): a bill booked from a vendor's submission carries the tag 'Vendor Portal'.
+    source: q.source === 'Vendor Portal' || q.source === 'Manual' ? (r) => (String(r.reportingTags || '').includes('Vendor Portal')) === (q.source === 'Vendor Portal') : null,
+    // Search (spec 17): Expense ID, bill no, description, vendor and category.
+    q: term ? (r) => [r.expenseCode, r.billNumber, r.description, vendorLabel(r), r.category]
+      .map((x) => String(x || '')).join(' ').toLowerCase().includes(term) : null,
+  };
+  const run = (rows, skip) => rows.filter((r) => Object.entries(tests).every(([k, t]) => !t || k === skip || t(r)));
+  return {
+    tests, run, status, gstKey, active: Object.values(tests).some(Boolean),
+  };
+}
+// Facet options with counts from the rows that match every other filter;
+// options with no rows are left out (the one picked always stays).
+function facetOf(rows, keyFn, picked) {
+  const m = new Map();
+  rows.forEach((r) => { const k = keyFn(r); if (k) m.set(k, (m.get(k) || 0) + 1); });
+  listParam(picked).forEach((p) => { if (!m.has(p)) m.set(p, 0); });
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([value, n]) => ({ value, n }));
 }
 
 async function ledgerData(q) {
@@ -1151,31 +1207,11 @@ async function ledgerData(q) {
     prisma.expenseCategory.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
   ]);
   const decorated = expenses.map((e) => decorate(e, vendorMap)).filter((r) => r.entryKind !== 'hand');
-  const status = String(q.status || '').trim().toUpperCase();
+  const lf = ledgerFilter(q);
   const books = decorated.filter((r) => r.approvalStatus !== 'REJECTED');
-  const pool = status === 'REJECTED' ? decorated.filter((r) => r.approvalStatus === 'REJECTED') : books;
-
-  let rows = pool;
-  const from = ISO_DAY.test(String(q.from || '')) ? q.from : null;
-  const to = ISO_DAY.test(String(q.to || '')) ? q.to : null;
-  if (from) rows = rows.filter((r) => r.expenseDate && r.expenseDate >= from);
-  if (to) rows = rows.filter((r) => r.expenseDate && r.expenseDate <= to);
-  const cats = listParam(q.category);
-  if (cats.length) rows = rows.filter((r) => cats.includes(r.category));
-  const vens = listParam(q.vendor);
-  if (vens.length) rows = rows.filter((r) => vens.includes(vendorLabel(r)));
-  const modes = listParam(q.mode);
-  if (modes.length) rows = rows.filter((r) => modes.includes(r.paymentMode || ''));
-  if (LEDGER_STATUS_SHORT[status] && status !== 'REJECTED') rows = rows.filter((r) => r.approvalStatus === status);
-  // v2 §3: GST Applicable / TDS Applicable (Yes = the bill carries it).
-  if (q.gst === 'Yes' || q.gst === 'No') rows = rows.filter((r) => (q.gst === 'Yes') === (r.gst > 0.5));
-  if (q.tds === 'Yes' || q.tds === 'No') rows = rows.filter((r) => (q.tds === 'Yes') === (r.tds > 0.5));
-  // Search (spec 17): Expense ID, description, vendor and category.
-  const term = String(q.q || '').trim().toLowerCase();
-  if (term) {
-    rows = rows.filter((r) => [r.expenseCode, r.description, r.vendor, r.category]
-      .map((x) => String(x || '')).join(' ').toLowerCase().includes(term));
-  }
+  // "Other (old status)" may list an old REJECTED row; every other view is the books.
+  const pool = lf.status === 'OTHER' ? decorated : books;
+  let rows = lf.run(pool);
 
   const sort = LEDGER_SORTS[q.sort] ? q.sort : 'date';
   const dir = q.dir === 'asc' ? 'asc' : 'desc';
@@ -1188,9 +1224,28 @@ async function ledgerData(q) {
     return (c * mul) || ((codeNo(a) - codeNo(b)) * mul);
   });
 
-  const filtered = !!(from || to || cats.length || vens.length || modes.length || term || LEDGER_STATUS_SHORT[status]
-    || q.gst === 'Yes' || q.gst === 'No' || q.tds === 'Yes' || q.tds === 'No');
+  const filtered = lf.active;
   const usedCats = [...new Set(decorated.map((r) => r.category).filter(Boolean))];
+  // Cascading facets (agent-rules FILTER RULE): each one counted on the rows
+  // that match all the other filters. Status / GST count against the books
+  // (an old REJECTED row shows only under "Other (old status)").
+  const statusCounts = new Map();
+  lf.run(decorated, 'status').forEach((r) => {
+    const k = OLD_STATUSES.includes(r.approvalStatus) ? 'OTHER' : r.approvalStatus;
+    statusCounts.set(k, (statusCounts.get(k) || 0) + 1);
+  });
+  const gstBase = lf.run(books, 'gst');
+  const facets = {
+    category: facetOf(lf.run(books, 'category'), (r) => r.category, q.category),
+    vendor: facetOf(lf.run(books, 'vendor'), (r) => vendorLabel(r), q.vendor),
+    mode: facetOf(lf.run(books, 'mode'), (r) => r.paymentMode, q.mode),
+    status: [
+      ...LEDGER_STATUS.map(([value, label]) => ({ value, label, n: statusCounts.get(value) || 0 })),
+      ...((statusCounts.get('OTHER') || lf.status === 'OTHER') ? [{ value: 'OTHER', label: OTHER_STATUS_LABEL, n: statusCounts.get('OTHER') || 0 }] : []),
+    ],
+    gst: Object.entries(GST_FILTERS).map(([value, g]) => ({ value, label: g.label, n: gstBase.filter(g.test).length })),
+    source: [['Manual', 'Entered by staff'], ['Vendor Portal', 'Vendor Portal']].map(([value, label]) => ({ value, label, n: lf.run(books, 'source').filter((r) => (String(r.reportingTags || '').includes('Vendor Portal')) === (value === 'Vendor Portal')).length })),
+  };
   const vendorCounts = new Map();
   books.forEach((r) => { const v = vendorLabel(r); if (v) vendorCounts.set(v, (vendorCounts.get(v) || 0) + 1); });
   const usedModes = [...new Set(decorated.map((r) => r.paymentMode).filter(Boolean))];
@@ -1206,8 +1261,9 @@ async function ledgerData(q) {
       vendors: [...vendorCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, n]) => ({ name, n })),
       modes: [...LEDGER_MODES, ...usedModes.filter((m) => !LEDGER_MODES.includes(m))],
       newModes: LEDGER_MODES,
-      statuses: LEDGER_STATUS.map(([value, label]) => ({ value, label })),
+      statuses: facets.status.map(({ value, label }) => ({ value, label })),
       gstRates: GST_RATES,
+      facets,
     },
   };
 }
@@ -1239,10 +1295,18 @@ function ledgerRow(r, names) {
     amount: r.base,
     gstRate: r.gstRate,
     gst: r.gst,
-    total: r.afterGst,
+    // S1.2: Before GST (amount) · GST · After GST · TDS · Total (after GST −
+    // TDS) · Paid · Pending — Paid + Pending = Total.
+    after: r.afterGst,
+    total: r.net,
+    paid: PAID_LIKE.includes(r.approvalStatus) ? r.net : 0,
+    pending: PENDING_LIKE.includes(r.approvalStatus) ? r.net : 0,
     tds: r.tds,
     tdsRate: r.tdsRate,
     netAfterTds: r.net,
+    vendorGstin: r.effGstin || null,
+    gstinOnFile: !!r.gstinOnFile,
+    oldStatus: OLD_STATUSES.includes(r.approvalStatus),
     status: r.approvalStatus,
     statusText: LEDGER_STATUS_SHORT[r.approvalStatus] || r.approvalStatus,
     // When the money went out: marked paid, or reimbursed. Bills paid before
@@ -1295,10 +1359,10 @@ router.get('/ledger', async (req, res) => {
       edit: await can(req.user, 'accounts', 'accounts', 'Office & Expenses', 'edit'),
     },
     definitions: {
-      total: 'Total Amount = Amount + GST Amount',
-      paid: 'Total Paid = Paid + Reimbursed',
-      pending: 'Total Pending = Pending + Approved (approved, not paid yet)',
-      rejected: 'Rejected expenses are out of the books — pick Status: Rejected to list them',
+      after: 'After GST = Before GST + GST',
+      total: 'Total = After GST − TDS we cut (what the vendor is paid)',
+      paid: 'Paid = the Total of the bills already paid',
+      pending: 'Pending = the Total of the bills not paid yet',
     },
   });
 });
@@ -1313,19 +1377,27 @@ router.get('/ledger/export.xlsx', requirePerm('accounts', 'accounts', 'Office & 
     const t = new Date(new Date(v).getTime() + 330 * 60000).toISOString();
     return `${t.slice(0, 10)} ${t.slice(11, 16)}`;
   };
-  const head = ['Date', 'Expense ID', 'Category', 'Description', 'Vendor', 'Payment Mode', 'Amount', 'GST %', 'GST Amount',
-    'Total Amount', 'Status', 'Bill/Invoice Number', 'Added By', 'Created Date'];
+  // S1.2 / S1.8: the same money columns as the table, and a TOTAL row.
+  const head = ['Date', 'Expense ID', 'Category', 'Description', 'Vendor', 'Vendor GSTIN', 'Payment Mode', 'Before GST', 'GST %', 'GST Amount',
+    'After GST', 'TDS', 'Total', 'Paid', 'Pending', 'Status', 'Bill/Invoice Number', 'Added By', 'Created Date'];
+  const MONEY_COLS = [7, 9, 10, 11, 12, 13, 14];
+  // Indian grouping (1,00,000.00) — Excel has no lakh separator of its own.
+  const INR_FMT = '[>=10000000]##\\,##\\,##\\,##0.00;[>=100000]##\\,##\\,##0.00;##,##0.00';
   const aoa = [head, ...d.rows.map((r) => [
-    r.expenseDate || '', r.expenseCode || '', r.category || '', r.description || '', vendorLabel(r), r.paymentMode || '',
-    r.base, r.gstRate, r.gst, r.afterGst, LEDGER_STATUS_SHORT[r.approvalStatus] || r.approvalStatus, r.billNumber || '',
+    r.expenseDate || '', r.expenseCode || '', r.category || '', r.description || '', vendorLabel(r), r.effGstin || '', r.paymentMode || '',
+    r.base, r.gstRate, r.gst, r.afterGst, r.tds, r.net,
+    PAID_LIKE.includes(r.approvalStatus) ? r.net : 0, PENDING_LIKE.includes(r.approvalStatus) ? r.net : 0,
+    LEDGER_STATUS_SHORT[r.approvalStatus] || r.approvalStatus, r.billNumber || '',
     r.createdById ? (names.get(r.createdById) || '') : '', ist(r.createdAt),
   ])];
+  const tt = d.totals;
+  aoa.push(['TOTAL', `${tt.count} expense(s)`, '', '', '', '', '', tt.before, '', tt.gst, tt.after, tt.tds, tt.total, tt.paid, tt.pending, '', '', '', '']);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   for (let i = 1; i < aoa.length; i += 1) {
-    [6, 8, 9].forEach((c) => { const ref = XLSX.utils.encode_cell({ r: i, c }); if (ws[ref]) ws[ref].z = '#,##0.00'; });
+    MONEY_COLS.forEach((c) => { const ref = XLSX.utils.encode_cell({ r: i, c }); if (ws[ref]) ws[ref].z = INR_FMT; });
   }
-  ws['!cols'] = [11, 11, 22, 40, 26, 14, 13, 7, 12, 13, 11, 18, 20, 17].map((wch) => ({ wch }));
-  ws['!autofilter'] = { ref: `A1:N${Math.max(1, aoa.length)}` };
+  ws['!cols'] = [11, 11, 22, 40, 26, 17, 14, 13, 7, 12, 13, 11, 13, 13, 13, 18, 18, 20, 17].map((wch) => ({ wch }));
+  ws['!autofilter'] = { ref: `A1:S${Math.max(1, aoa.length - 1)}` };
 
   const said = [];
   if (req.query.from || req.query.to) said.push(['Date range', `${req.query.from || '…'} to ${req.query.to || '…'}`]);
@@ -1334,7 +1406,7 @@ router.get('/ledger/export.xlsx', requirePerm('accounts', 'accounts', 'Office & 
   if (listParam(req.query.mode).length) said.push(['Payment mode', listParam(req.query.mode).join(', ')]);
   if (LEDGER_STATUS_SHORT[String(req.query.status || '').toUpperCase()]) said.push(['Status', LEDGER_STATUS_SHORT[String(req.query.status).toUpperCase()]]);
   if (String(req.query.q || '').trim()) said.push(['Search', String(req.query.q).trim()]);
-  if (req.query.gst === 'Yes' || req.query.gst === 'No') said.push(['GST applicable', req.query.gst]);
+  if (gstKeyOf(req.query.gst)) said.push(['GST on the bill', GST_FILTERS[gstKeyOf(req.query.gst)].label]);
   if (req.query.tds === 'Yes' || req.query.tds === 'No') said.push(['TDS applicable', req.query.tds]);
   const t = d.totals;
   const sum = XLSX.utils.aoa_to_sheet([
@@ -1343,12 +1415,13 @@ router.get('/ledger/export.xlsx', requirePerm('accounts', 'accounts', 'Office & 
     ...said,
     [],
     ['Expenses', t.count],
-    ['Total Expenses (Amount + GST)', t.total],
-    ['Total GST', t.gst],
-    ['Total Paid (Paid + Reimbursed)', t.paid],
-    ['Total Pending (Pending + Approved)', t.pending],
-    [],
-    ['Rejected expenses are out of the books and are included only when the Status filter is Rejected.'],
+    ['Before GST', t.before],
+    ['GST paid', t.gst],
+    ['After GST (Before GST + GST)', t.after],
+    ['TDS we cut', t.tds],
+    ['Total (After GST − TDS)', t.total],
+    ['Paid', t.paid],
+    ['Pending', t.pending],
   ]);
   sum['!cols'] = [{ wch: 36 }, { wch: 40 }];
   const wb = XLSX.utils.book_new();
@@ -1392,16 +1465,16 @@ function officeFacts({
   const gstin = cleanId(company.gstin);
   const gc = gstin ? checkGstin(gstin) : null;
 
-  const taxable = ROUND(invoicesInPeriod.reduce((s, i) => s + Number(i.amount || 0), 0));
-  const charged = ROUND(invoicesInPeriod.reduce((s, i) => s + Number(i.gst || 0), 0));
+  const taxable = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.billedOf(i), 0));
+  const charged = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.gstBilledOf(i), 0));
   const cli = new Map();
   invoicesInPeriod.forEach((i) => {
     const k = i.client?.name || '—';
     const c = cli.get(k) || {
       name: k, n: 0, taxable: 0, gst: 0, value: 0,
     };
-    c.n += 1; c.taxable = ROUND(c.taxable + Number(i.amount || 0));
-    c.gst = ROUND(c.gst + Number(i.gst || 0));
+    c.n += 1; c.taxable = ROUND(c.taxable + CNU.billedOf(i));
+    c.gst = ROUND(c.gst + CNU.gstBilledOf(i));
     c.value = ROUND(c.taxable + c.gst);
     cli.set(k, c);
   });
@@ -1480,35 +1553,6 @@ function officeFacts({
           gst: r.gst,
           gstin: r.effGstin,
         })),
-      // Purchase-level reconciliation: every bill with GST in the period.
-      purchases: withGst
-        .slice()
-        .sort((a, b) => String(b.expenseDate || '').localeCompare(String(a.expenseDate || '')))
-        .map((r) => ({
-          id: r.id,
-          expenseCode: r.expenseCode || null,
-          date: r.expenseDate,
-          vendor: vendorLabel(r) || null,
-          category: r.category,
-          billNo: r.billNumber || null,
-          base: r.base,
-          rate: r.gstRate,
-          gst: r.gst,
-          gstin: r.effGstin,
-          claimable: !!r.gstinOnFile,
-        })),
-      // Invoice-level: every invoice raised in the period, with its GST.
-      invoices: invoicesInPeriod
-        .slice()
-        .sort((a, b) => String(b.invoiceDate || '').localeCompare(String(a.invoiceDate || '')))
-        .map((i) => ({
-          id: i.id,
-          invoiceNumber: i.invoiceNumber || null,
-          client: i.client?.name || '—',
-          date: i.invoiceDate || null,
-          taxable: ROUND(Number(i.amount || 0)),
-          gst: ROUND(Number(i.gst || 0)),
-        })),
     },
     // Due dates that come off the records: open invoices and bills not paid.
     // The Dashboard's Reminders card reads them through GET /due-dates.
@@ -1534,32 +1578,23 @@ function officeFacts({
   };
 }
 
-// ---------------------------------------------------------------------------
-// GST reconciliation — outward (what we billed clients, read from the
-// invoicing module) against inward (what we bought), and the position.
-// Uses the period only: a category filter must not change what is owed.
-// Same numbers as before; they now come from officeFacts() above.
-// ---------------------------------------------------------------------------
-router.get('/reconciliation', async (req, res) => {
-  const scope = await officeScope(req.query);
-  const company = (await prisma.company.findFirst()) || {};
-  const { recon } = officeFacts(scope, company);
-  const { range } = scope;
-  // eslint-disable-next-line no-unused-vars
-  const { purchases, invoices, ...legacy } = recon;
-  res.json({
-    period: {
-      sel: req.query.period || 'all', label: range.label, from: range.from, to: range.to, all: !!range.all,
-    },
-    ...legacy,
-  });
-});
+// (GET /reconciliation and the invoice- / purchase-level reconciliation lists
+// were removed by Accounts spec S1.5, 2026-10-05; the GST position below is
+// built from the same officeFacts() figures.)
 
-// The one-page payload: Financial Overview, GST reconciliation (with its
-// invoice- and purchase-level detail) and the record-based due dates — all
-// from officeFacts().
+// The one-page payload: the KPI chips, the GST position and the record-based
+// due dates — all from officeFacts().
+//
+// Accounts spec S1.3 (2026-10-05): the page's list filters (search, category,
+// vendor, payment mode, status, GST on the bill — the dates come from the
+// period) apply to the bills here as well, through the SAME ledgerFilter()
+// the table uses, so the KPI chips, the table's TOTAL row and the GST
+// position always agree. `kpi` is ledgerTotals() of those bills — exactly
+// the table's totals. The invoice (outward) side follows the period only.
 router.get('/overview', async (req, res) => {
   const scope = await officeScope(req.query);
+  const lf = ledgerFilter({ ...req.query, from: undefined, to: undefined });
+  if (lf.active) scope.inPeriod = lf.run(scope.inPeriod);
   const company = (await prisma.company.findFirst()) || {};
   const facts = officeFacts(scope, company);
   const { range } = scope;
@@ -1567,7 +1602,9 @@ router.get('/overview', async (req, res) => {
     period: {
       sel: req.query.period || 'all', label: range.label, from: range.from, to: range.to, all: !!range.all,
     },
+    filtered: lf.active,
     ...facts,
+    kpi: ledgerTotals(scope.inPeriod),
     statutory: CAL_DUE,
   });
 });
@@ -1694,9 +1731,19 @@ router.put('/business-profile', async (req, res) => {
   res.json(shapeProfile(updated));
 });
 
-// ---------------------------------------------------------------------------
-// Government portals — a link launcher and nothing else. No login is stored,
-// nothing is fetched; the address each one opens can be edited and is kept.
+// GST / TDS PORTALS — REMOVED (Accounts spec S1.4, 2026-10-05): the Government
+// portals launcher, the typed portal balances and the GST / TRACES portal
+// logins (routes /portals, /portal-links/:key, /portal-balances, /tax-portals…)
+// are gone with their UI. The rows they stored are NOT deleted — PortalLink,
+// PortalBalance and the Integration rows 'gst-portal' / 'tds-portal' (the
+// encrypted login) stay in the database until the user decides.
+//
+// BROUGHT BACK (Office spec P1.2 / P2.2, 2026-10-05) — only the two parts the
+// user asked for again, the way they worked before S1.4: the launcher (3 small
+// cards, one Open button each; the page / address choice behind an Admin-only
+// Edit) and the two balances typed in by hand ("In the GST portal", "In
+// TRACES" cards). The portal LOGINS (/tax-portals…) stay removed. Same tables,
+// same rules, nothing fetched from any portal.
 // ---------------------------------------------------------------------------
 const PORTALS = [
   {
@@ -1704,7 +1751,6 @@ const PORTALS = [
     name: 'GST portal',
     sub: 'GSTR-1 and GSTR-3B are filed here',
     idLabel: 'GSTIN',
-    ledgerPath: 'Services → Ledgers → Electronic Cash Ledger',
     pages: [
       { key: 'searchtp', label: 'Search taxpayer — no login needed', url: 'https://services.gst.gov.in/services/searchtp' },
       { key: 'returns', label: 'Returns dashboard', url: 'https://return.gst.gov.in/returns/auth/dashboard' },
@@ -1725,14 +1771,24 @@ const PORTALS = [
     pages: [{ key: 'login', label: 'e-filing login', url: 'https://eportal.incometax.gov.in/iec/foservices/#/login' }],
   },
 ];
-const parseJson = (s) => { try { return s ? JSON.parse(s) : {}; } catch { return {}; } };
-
+const parsePortalJson = (s) => { try { return s ? JSON.parse(s) : {}; } catch { return {}; } };
+const portalPeriodKey = (range) => ({ periodStart: range.all ? '' : range.from, periodEnd: range.all ? '' : range.to });
+async function portalBalancesFor(range) {
+  const { periodStart, periodEnd } = portalPeriodKey(range);
+  const rows = await prisma.portalBalance.findMany({ where: { periodStart, periodEnd } });
+  const out = { gst: null, traces: null, updatedAt: null };
+  rows.forEach((b) => {
+    if (b.portalKey in out) out[b.portalKey] = ROUND(b.enteredAmount);
+    if (!out.updatedAt || b.updatedAt > out.updatedAt) out.updatedAt = b.updatedAt;
+  });
+  return out;
+}
 function shapePortals(links, co) {
   const prof = shapeProfile(co || {});
   const byKey = new Map(links.map((l) => [l.portalKey, l]));
   return PORTALS.map((p) => {
     const row = byKey.get(p.key);
-    const edits = parseJson(row?.pageUrls);
+    const edits = parsePortalJson(row?.pageUrls);
     const selectedPage = p.pages.some((pg) => pg.key === row?.selectedPage) ? row.selectedPage : p.pages[0].key;
     const pages = p.pages.map((pg) => ({
       key: pg.key, label: pg.label, defaultUrl: pg.url, url: edits[pg.key] || pg.url, edited: !!edits[pg.key],
@@ -1744,7 +1800,6 @@ function shapePortals(links, co) {
       sub: p.sub,
       idLabel: p.idLabel,
       idValue: idValue || null,
-      ledgerPath: p.ledgerPath || null,
       pages,
       selectedPage,
       url: pages.find((pg) => pg.key === selectedPage).url,
@@ -1753,6 +1808,8 @@ function shapePortals(links, co) {
     };
   });
 }
+// Which page a portal button opens / its address: Admin and Super Admin only.
+const isOfficeAdmin = (user) => ['ADMIN', 'SUPER_ADMIN'].includes(roleForProduct(user, 'accounts'));
 
 router.get('/portals', async (req, res) => {
   const range = officeRange(req.query.period);
@@ -1760,6 +1817,7 @@ router.get('/portals', async (req, res) => {
   res.json({
     portals: shapePortals(links, co),
     balances: await portalBalancesFor(range),
+    canEditLinks: isOfficeAdmin(req.user),
     period: {
       sel: req.query.period || 'all', label: range.label, from: range.from, to: range.to, all: !!range.all,
     },
@@ -1767,13 +1825,14 @@ router.get('/portals', async (req, res) => {
 });
 
 router.put('/portal-links/:key', async (req, res) => {
+  if (!isOfficeAdmin(req.user)) return res.status(403).json({ error: 'Only Admin can change where a portal button goes.' });
   const p = PORTALS.find((x) => x.key === req.params.key);
   if (!p) return res.status(404).json({ error: 'No such portal' });
   const page = req.body.selectedPage || p.pages[0].key;
   const pg = p.pages.find((x) => x.key === page);
   if (!pg) return res.status(400).json({ error: `${p.name} has no page "${page}"` });
   const existing = await prisma.portalLink.findUnique({ where: { portalKey: p.key } });
-  const edits = parseJson(existing?.pageUrls);
+  const edits = parsePortalJson(existing?.pageUrls);
   let touchedUrl = false;
   if (req.body.reset) {
     delete edits[page];
@@ -1795,17 +1854,15 @@ router.put('/portal-links/:key', async (req, res) => {
     ...(touchedUrl ? { lastEditedAt: new Date(), lastEditedBy: req.user.name || req.user.email || null } : {}),
   };
   await prisma.portalLink.upsert({ where: { portalKey: p.key }, create: { portalKey: p.key, ...data }, update: data });
-  if (touchedUrl) {
-    await logAudit({
-      userId: req.user.id, action: 'Portal address changed', entity: 'PortalLink', entityId: p.key, toValue: `${page}: ${data.url}`,
-    });
-  }
+  await logAudit({
+    userId: req.user.id, action: 'Portal address changed', entity: 'PortalLink', entityId: p.key, toValue: `${page}: ${data.url}`,
+  });
   const [links, co] = await Promise.all([prisma.portalLink.findMany(), prisma.company.findFirst()]);
-  res.json(shapePortals(links, co).find((x) => x.key === p.key));
+  return res.json(shapePortals(links, co).find((x) => x.key === p.key));
 });
 
 // The two balances read off the portals by hand, for the period on screen.
-// A blank value removes the entry, and the chip says "not entered" again.
+// A blank value removes the entry, and the card says "not entered" again.
 router.put('/portal-balances', async (req, res) => {
   const range = officeRange(req.body.period);
   const { periodStart, periodEnd } = portalPeriodKey(range);
@@ -1813,20 +1870,21 @@ router.put('/portal-balances', async (req, res) => {
   if (!keys.length) return res.status(400).json({ error: 'Nothing to save — send gst and/or traces' });
   for (const k of keys) {
     const raw = req.body[k];
-    if (raw === null || raw === '') continue;
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return res.status(400).json({ error: `${k === 'gst' ? 'GST portal' : 'TRACES'} balance must be a number` });
+    if (raw !== null && raw !== '' && !Number.isFinite(Number(raw))) {
+      return res.status(400).json({ error: `${k === 'gst' ? 'GST portal' : 'TRACES'} balance must be a number` });
+    }
   }
   for (const k of keys) {
     const raw = req.body[k];
-    const where = { portalKey_periodStart_periodEnd: { portalKey: k, periodStart, periodEnd } };
     if (raw === null || raw === '') {
+      // eslint-disable-next-line no-await-in-loop
       await prisma.portalBalance.deleteMany({ where: { portalKey: k, periodStart, periodEnd } });
     } else {
       const enteredAmount = ROUND(Number(raw));
       const enteredBy = req.user.name || req.user.email || null;
+      // eslint-disable-next-line no-await-in-loop
       await prisma.portalBalance.upsert({
-        where,
+        where: { portalKey_periodStart_periodEnd: { portalKey: k, periodStart, periodEnd } },
         create: {
           portalKey: k, periodStart, periodEnd, enteredAmount, enteredBy,
         },
@@ -1837,219 +1895,7 @@ router.put('/portal-balances', async (req, res) => {
   await logAudit({
     userId: req.user.id, action: 'Portal balance entered', entity: 'PortalBalance', toValue: `${keys.join(', ')} · ${range.label}`,
   });
-  res.json(await portalBalancesFor(range));
-});
-
-// ---------------------------------------------------------------------------
-// GST & TDS PORTALS (Accounts spec 1) — the login the desk uses on the GST
-// portal and on TRACES, kept on the server and nowhere else.
-//
-//   * GSTIN and TAN are NOT stored here: they are the Company row's gstin / tan,
-//     the same fields Business & Tax Details edits — one source of truth. A
-//     blank box leaves them as they are (clearing is done there).
-//   * User ID and password live in the existing Integration table, one row
-//     each ('gst-portal', 'tds-portal'), which Administration → Integrations
-//     never lists (it lists its own catalogue only). The password is
-//     AES-256-GCM ciphertext (utils/secrets.js); with no INTEGRATION_SECRET_KEY
-//     a password is refused, never stored in plain text.
-//   * No read returns the password. GET gives hasPassword and a fixed mask.
-//     Only POST …/reveal returns it — to an Accounts login holding edit on
-//     Office & Expenses — and that view is written to the audit log WITHOUT
-//     the value. Nothing here logs, audits or echoes a password, and every
-//     response carries Cache-Control: no-store.
-//   * Who: the router's guards (Accounts desk role + Office & Expenses view)
-//     plus `edit` on every route here, reads included — a view-only login
-//     never sees the portal logins at all.
-//   * Nothing is ever sent to a portal: "Open portal" is a plain link; the
-//     credentials are not auto-submitted anywhere.
-// ---------------------------------------------------------------------------
-const TAX_PORTALS = {
-  gst: {
-    row: 'gst-portal', name: 'GST portal', idField: 'gstin', idLabel: 'GSTIN', url: 'https://www.gst.gov.in/',
-  },
-  tds: {
-    row: 'tds-portal', name: 'TDS portal (TRACES)', idField: 'tan', idLabel: 'TAN', url: 'https://www.tdscpc.gov.in/',
-  },
-};
-const TP_USER = 'User ID';
-const TP_PASS = 'Password';
-const TP_BY = 'Updated by';
-const TP_MASK = '••••••••';
-const noStore = (res) => res.set('Cache-Control', 'no-store, private');
-
-function taxPortalOf(req, res) {
-  const p = TAX_PORTALS[req.params.which];
-  if (!p) { res.status(404).json({ error: 'No such portal — gst or tds' }); return null; }
-  return p;
-}
-
-// What a read may carry — never the password, only whether one is stored.
-function shapeTaxPortal(p, row, co) {
-  const v = parseValues(row);
-  const stored = v[TP_PASS] || '';
-  const hasPassword = !!stored;
-  const readable = hasPassword ? decryptSecret(stored) !== null : true;
-  return {
-    idLabel: p.idLabel,
-    idValue: cleanId(co?.[p.idField]) || null,
-    userId: v[TP_USER] || '',
-    hasPassword,
-    passwordHint: hasPassword ? (readable ? TP_MASK : `${TP_MASK} (stored, but this key cannot read it)`) : '',
-    encrypted: hasPassword ? isEncrypted(stored) : null,
-    portalUrl: p.url,
-    updatedAt: row?.values ? row.updatedAt : null,
-    updatedBy: v[TP_BY] || null,
-  };
-}
-
-async function taxPortalsPayload() {
-  const [gstRow, tdsRow, co] = await Promise.all([
-    prisma.integration.findUnique({ where: { id: TAX_PORTALS.gst.row } }),
-    prisma.integration.findUnique({ where: { id: TAX_PORTALS.tds.row } }),
-    prisma.company.findFirst(),
-  ]);
-  return {
-    keyConfigured: secretsConfigured(),
-    noKeyMessage: secretsConfigured() ? null : NO_KEY_MESSAGE,
-    gst: shapeTaxPortal(TAX_PORTALS.gst, gstRow, co),
-    tds: shapeTaxPortal(TAX_PORTALS.tds, tdsRow, co),
-  };
-}
-
-router.get('/tax-portals', requireOfficeWrite, async (req, res) => {
-  noStore(res);
-  try {
-    res.json(await taxPortalsPayload());
-  } catch {
-    res.status(500).json({ error: 'The portal details could not be read.' });
-  }
-});
-
-// Save one portal's GSTIN / TAN, User ID and (optionally) password.
-//   gstin | tan   blank = leave the business profile as it is
-//   userId        saved as typed (trimmed); blank clears it
-//   password      blank = KEEP the stored one; clearPassword: true removes it
-router.put('/tax-portals/:which', async (req, res) => {
-  noStore(res);
-  const p = taxPortalOf(req, res);
-  if (!p) return undefined;
-  const b = req.body || {};
-  const bad = (error) => res.status(400).json({ error });
-
-  // --- validate everything before anything is written --------------------
-  const co = (await prisma.company.findFirst()) || null;
-  let newId;
-  const rawId = b[p.idField] !== undefined ? b[p.idField] : b.idValue;
-  const id = cleanId(rawId);
-  if (id) {
-    if (p.idField === 'gstin') {
-      const c = checkGstin(id);
-      if (!c.ok) return bad(`GSTIN: ${c.error}`);
-      const pan = cleanId(co?.pan);
-      if (pan && id.slice(2, 12) !== pan) {
-        return bad(`The PAN inside this GSTIN (${id.slice(2, 12)}) is not the business PAN (${pan}) — change the PAN in Business & Tax Details first`);
-      }
-    } else if (!isTan(id)) {
-      return bad('TAN must be 4 letters, 5 digits and a letter — e.g. HYDT12345A');
-    }
-    if (id !== (cleanId(co?.[p.idField]) || null)) newId = id;
-  }
-  const userId = b.userId === undefined ? undefined : String(b.userId || '').trim();
-  if (userId !== undefined && userId.length > 120) return bad('The User ID is too long (120 characters at most)');
-  const password = typeof b.password === 'string' ? b.password : '';
-  const clearPassword = b.clearPassword === true;
-  if (password && password.length > 200) return bad('The password is too long (200 characters at most)');
-  if (password && !password.trim()) return bad('The password cannot be only spaces');
-
-  let cipher = null;
-  if (password && !clearPassword) {
-    if (!secretsConfigured()) return bad(NO_KEY_MESSAGE);
-    try {
-      cipher = encryptSecret(password);
-    } catch (e) {
-      // Never echo the value — only the configuration problem.
-      return bad(e && e.code === 'NO_SECRET_KEY' ? NO_KEY_MESSAGE : 'The password could not be encrypted.');
-    }
-  }
-
-  try {
-    const actor = req.user.name || req.user.email || null;
-    // --- the business profile (one source of truth for GSTIN / TAN) --------
-    if (newId) {
-      let company = co;
-      if (!company) company = await prisma.company.create({ data: { name: 'TeamLink Consultants' } });
-      await prisma.company.update({ where: { id: company.id }, data: { [p.idField]: newId } });
-      await logAudit({
-        userId: req.user.id,
-        action: 'Business details updated',
-        entity: 'Company',
-        entityId: company.id,
-        field: p.idField,
-        fieldLabel: p.idLabel,
-        fromValue: company[p.idField] ? String(company[p.idField]) : '—',
-        toValue: newId,
-        actorName: actor,
-      });
-    }
-
-    // --- the portal login ----------------------------------------------------
-    const row = await prisma.integration.findUnique({ where: { id: p.row } });
-    const cur = parseValues(row);
-    const next = { ...cur };
-    const changed = [];
-    if (userId !== undefined && userId !== (cur[TP_USER] || '')) { next[TP_USER] = userId; changed.push('User ID'); }
-    if (clearPassword && cur[TP_PASS]) { next[TP_PASS] = ''; changed.push('Password removed'); }
-    if (cipher) { next[TP_PASS] = cipher; changed.push('Password changed'); }
-    if (changed.length) {
-      next[TP_BY] = actor;
-      const values = JSON.stringify(next);
-      await prisma.integration.upsert({
-        where: { id: p.row },
-        create: { id: p.row, values },
-        update: { values },
-      });
-      // Which fields changed — never a password, never its ciphertext.
-      await logAudit({
-        userId: req.user.id,
-        action: `${p.name} login updated`,
-        entity: 'TaxPortal',
-        entityId: req.params.which,
-        toValue: changed.join(', '),
-        actorName: actor,
-      });
-    }
-    return res.json(await taxPortalsPayload());
-  } catch {
-    return res.status(500).json({ error: 'The portal details could not be saved.' });
-  }
-});
-
-// The one call that returns a password — explicitly asked for (Show), to an
-// Accounts login with edit (the router's write guard covers POST), recorded
-// in the audit log without the value. The browser keeps it in memory only.
-router.post('/tax-portals/:which/reveal', async (req, res) => {
-  noStore(res);
-  const p = taxPortalOf(req, res);
-  if (!p) return undefined;
-  try {
-    const row = await prisma.integration.findUnique({ where: { id: p.row } });
-    const stored = parseValues(row)[TP_PASS] || '';
-    if (!stored) return res.status(404).json({ error: `No ${p.name} password is saved.` });
-    const plain = decryptSecret(stored);
-    if (plain === null) {
-      return res.status(409).json({ error: `The saved ${p.name} password cannot be read with the current INTEGRATION_SECRET_KEY — save it again.` });
-    }
-    await logAudit({
-      userId: req.user.id,
-      action: `${p.name} password viewed`,
-      entity: 'TaxPortal',
-      entityId: req.params.which,
-      actorName: req.user.name || req.user.email || null,
-    });
-    return res.json({ password: plain });
-  } catch {
-    return res.status(500).json({ error: 'The password could not be shown.' });
-  }
+  return res.json(await portalBalancesFor(range));
 });
 
 // The vendor master — the GSTIN a vendor has on every bill.
@@ -2415,7 +2261,7 @@ router.post('/', async (req, res) => {
   // audited as the approval it is.
   const approver = await isApprover(req.user);
   const wanted = apprList(req.body.approvalStatus ?? req.body.initialStatus)[0] || 'PENDING';
-  if (wanted === 'REJECTED') return res.status(400).json({ error: 'A new expense cannot start out rejected' });
+  if (OLD_STATUSES.includes(wanted)) return res.status(400).json({ error: 'A new expense is Pending or Paid — Approved, Rejected and Reimbursed are no longer used.' });
   if (wanted !== 'PENDING' && !approver) return res.status(403).json({ error: `${APPROVER_ONLY}. A new expense starts Pending approval.` });
   // The form asks for the bill amount BEFORE GST, the way the accounting
   // application does; the stored column has always been the gross.
@@ -2623,7 +2469,12 @@ const STATUS_ACTIONS = {
   APPROVE: 'APPROVED', APPROVED: 'APPROVED', REJECT: 'REJECTED', REJECTED: 'REJECTED', MARK_PAID: 'PAID', PAID: 'PAID', PAY: 'PAID',
   MARK_REIMBURSED: 'REIMBURSED', REIMBURSE: 'REIMBURSED', REIMBURSED: 'REIMBURSED',
 };
-const NEXT = { PENDING: ['APPROVED', 'REJECTED'], APPROVED: ['PAID', 'REIMBURSED'], PAID: ['REIMBURSED'] };
+// Accounts spec S1.3c (2026-10-05): Approved, Rejected and Reimbursed are no
+// longer used. A bill goes Pending -> Paid (marking it paid is the approval,
+// recorded as such); an old Approved row can still be marked paid. Nothing
+// stored is rewritten.
+const NEXT = { PENDING: ['PAID'], APPROVED: ['PAID'] };
+const RETIRED_MOVE = 'Approved, Rejected and Reimbursed are no longer used — mark the expense Paid when the money goes out, or delete it if it should not be in the books.';
 router.patch('/:id/status', async (req, res) => {
   if (!(await isApprover(req.user))) return res.status(403).json({ error: APPROVER_ONLY });
   const existing = await prisma.officeExpense.findUnique({ where: { id: req.params.id } });
@@ -2632,6 +2483,7 @@ router.patch('/:id/status', async (req, res) => {
   const to = STATUS_ACTIONS[raw];
   if (!to) return res.status(400).json({ error: 'action must be approve, reject, mark_paid or mark_reimbursed' });
   const from = approvalOf(existing);
+  if (OLD_STATUSES.includes(to)) return res.status(400).json({ error: RETIRED_MOVE, status: from });
   if (!(NEXT[from] || []).includes(to)) {
     return res.status(409).json({
       error: `An expense that is ${APPROVAL_LABEL[from]} cannot be moved to ${APPROVAL_LABEL[to]}`,
@@ -2647,6 +2499,8 @@ router.patch('/:id/status', async (req, res) => {
   if (to === 'REJECTED') Object.assign(data, { rejectedById: req.user.id, rejectedAt: now, rejectionReason: reason.slice(0, 500) });
   if (to === 'PAID') {
     Object.assign(data, { paidById: req.user.id, paidAt: now, paidStatus: 'Paid' });
+    // Straight from Pending: marking it paid is the approval as well.
+    if (from === 'PENDING') Object.assign(data, { approvedById: req.user.id, approvedAt: now, approvedBy: actor });
     if (req.body.paymentMode !== undefined && EXP_MODES.includes(req.body.paymentMode)) data.paymentMode = req.body.paymentMode;
   }
   // Reimbursed is money out as well — the payment status follows.
@@ -2706,10 +2560,10 @@ async function expenseDetail(id, user) {
       onServer: !!e.proofFile,
     } : null,
     can: {
-      approve: approver && st === 'PENDING',
-      reject: approver && st === 'PENDING',
-      markPaid: approver && st === 'APPROVED',
-      markReimbursed: approver && (st === 'APPROVED' || st === 'PAID'),
+      approve: false,
+      reject: false,
+      markPaid: approver && (st === 'PENDING' || st === 'APPROVED'),
+      markReimbursed: false,
       edit: st === 'PENDING',
       override: st !== 'PENDING' && isAdminLike(user),
       // The same rule DELETE /:id enforces.
@@ -2894,6 +2748,9 @@ router.delete('/:id', async (req, res) => {
   }
   await prisma.officeExpense.delete({ where: { id: existing.id } });
   if (existing.proofFile) attachments.remove(existing.proofFile);
+  // Accounts S5: the bank line this bill was proof-linked to goes back to
+  // uncategorised (the line itself is never deleted).
+  if (existing.bankTxnId) await require('./bank').releaseLineForBill(existing).catch(() => null);
   await logAudit({
     // Spec 21: "Expense Deleted", with the Expense ID and the record as it was.
     userId: req.user.id,
@@ -2915,4 +2772,11 @@ router.get('/:id', async (req, res) => {
   return res.json(d);
 });
 
+// The Accounts Dashboard (utils/accountsControl.js) reads the SAME office
+// numbers as this page — no second expense / GST formula.
+Object.assign(router, {
+  officeScope, officeFacts, ledgerData, PAID_LIKE, PENDING_LIKE, vendorLabel,
+  // Vendor portal (routes/vendorBills.js): an APPROVED vendor bill is booked through the same numbering / category / approver rules.
+  createWithCode, isApprover, resolveCategory, decorate, APPROVAL_LABEL,
+});
 module.exports = router;

@@ -1,0 +1,25 @@
+/* Join meeting button (components/MeetingLink.jsx) — scoped under .mtg-join. */
+.mtg-join{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.mtg-join .mtg-btn{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:7px 16px;border-radius:8px;
+  background:var(--blue, #1B58C0);color:#fff;font-weight:600;font-size:13.5px;text-decoration:none;border:0}
+.mtg-join .mtg-btn:hover{filter:brightness(.92);color:#fff}
+.mtg-join .mtg-btn:focus-visible{outline:3px solid var(--brand-ring, rgba(31,56,100,.3));outline-offset:2px}
+.mtg-join .mtg-when{font-size:12.5px;color:var(--ink-soft, #53637A)}
+.mtg-join.mtg-small .mtg-btn{min-height:30px;padding:5px 12px;font-size:12.5px}
+@media (max-width:640px){
+  .mtg-join .mtg-btn{min-height:42px;padding:9px 18px}
+}
+
+/* The announcement opened on its own (from the notice board or a notification). */
+.mtg-detail{border:1px solid var(--brand-tint-2, #CFDAEC);background:var(--brand-tint, #E7EDF7);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.mtg-detail .mtg-d-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.mtg-detail h3{margin:0 0 4px;font-size:16px;color:var(--ink, #16202B)}
+.mtg-detail .mtg-d-meta{font-size:12px;color:var(--ink-soft, #53637A)}
+.mtg-detail .mtg-d-body{margin-top:8px;font-size:13.5px;color:var(--ink, #16202B);white-space:pre-wrap;word-break:break-word}
+.mtg-detail .mtg-join{margin-top:10px}
+.mtg-open-title{background:none;border:0;padding:0;font:inherit;font-weight:700;color:inherit;cursor:pointer;text-align:left}
+.mtg-open-title:hover{color:var(--navy, #1F3864);text-decoration:underline}
+
+/* Meeting fields in the New Announcement form. */
+.mtg-fields .mtg-hint{font-size:11.5px;color:var(--ink-soft, #53637A);margin-top:4px}
+.mtg-fields .mtg-err{font-size:12px;color:var(--red, #B02318);margin-top:4px}

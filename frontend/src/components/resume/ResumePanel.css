@@ -1,0 +1,112 @@
+/* Candidate 360 → Resume tab (components/resume/ResumePanel.jsx). Scoped under .rsm-* */
+.rsm{display:flex;flex-direction:column;gap:12px;margin-bottom:14px;width:100%;min-width:0;max-width:100%}
+.rsm>*{min-width:0;max-width:100%}
+.rsm-card{border:1px solid var(--line,#e3e8f0);border-radius:8px;background:var(--paper-raised,#fff);padding:12px 14px}
+.rsm-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rsm-head h3{font-size:14px;margin:0}
+.rsm-head .rsm-spacer{flex:1}
+.rsm-modes{display:inline-flex;border:1px solid var(--line,#e3e8f0);border-radius:7px;overflow:hidden}
+.rsm-modes button{border:0;background:transparent;padding:5px 12px;font-size:12px;cursor:pointer;color:var(--ink-soft,#5b6478)}
+.rsm-modes button.on{background:var(--brand-tint,#e6efeb);color:var(--brand-ink,#2A4139);font-weight:600}
+.rsm-modes button:disabled{opacity:.45;cursor:default}
+.rsm-drop{border:1.5px dashed var(--brand-tint-2,#c9dcd4);border-radius:8px;padding:14px;text-align:center;font-size:12.5px;color:var(--ink-soft,#5b6478);cursor:pointer;background:#fbfcfd}
+.rsm-drop.over{background:var(--brand-tint,#e6efeb);border-color:var(--brand,#4A6F64)}
+.rsm-drop b{color:var(--brand-ink,#2A4139)}
+.rsm-details{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px}
+.rsm-k{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft,#5b6478);margin-bottom:2px}
+.rsm-v{font-size:13px;overflow-wrap:anywhere}
+.rsm-skills{grid-column:1/-1}
+.rsm-viewer{border:1px solid var(--line,#e3e8f0);border-radius:8px;overflow:hidden;background:#f4f6f8;min-height:200px}
+.rsm-viewer iframe{display:block;width:100%;height:760px;border:0;background:#fff}
+.rsm-text{white-space:pre-wrap;font-family:inherit;font-size:12.5px;line-height:1.5;padding:14px 16px;margin:0;background:#fff;max-height:760px;overflow:auto}
+.rsm-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-bottom:1px solid var(--line,#e3e8f0);background:#fff}
+.rsm-bar select{font-size:12.5px;padding:4px 6px;max-width:100%}
+.rsm-bar .rsm-tag{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft,#5b6478)}
+.rsm-side{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.rsm-editor{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px 14px}
+.rsm-editor label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink-soft,#5b6478)}
+.rsm-editor textarea,.rsm-editor input{font:inherit;font-size:12.5px;color:var(--ink,#1b2437);border:1px solid var(--line,#e3e8f0);border-radius:6px;padding:7px 9px;resize:vertical}
+.rsm-editor .rsm-wide{grid-column:1/-1}
+.rsm-foot{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.rsm-hist{width:100%;font-size:12.5px}
+.rsm-empty{padding:28px;text-align:center;color:var(--ink-soft,#5b6478);font-size:12.5px;background:#fff}
+@media (max-width:900px){.rsm-details{grid-template-columns:repeat(2,minmax(0,1fr))}.rsm-side,.rsm-editor{grid-template-columns:1fr}.rsm-viewer iframe{height:520px}}
+
+/* 3-number match tables (components/resume/MatchSplit.jsx) */
+.msp-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:12.5px}
+.msp-tools label{display:inline-flex;gap:6px;align-items:center}
+.msp-tools input[type=number]{width:64px;padding:3px 6px;font-size:12.5px}
+.msp-tools select{font-size:12.5px;padding:3px 6px}
+.msp-pct{font-weight:600;font-variant-numeric:tabular-nums}
+.msp-pct.hi{color:var(--teal,#1f7a5c)}
+.msp-pct.mid{color:var(--amber,#9a6400)}
+.msp-pct.lo{color:var(--red,#b42318)}
+.msp-src{font-size:10.5px;color:var(--ink-soft,#5b6478);display:block}
+
+/* Simple top card (user 2026-10-03: "asalu clear ga ledhu") */
+.rsm-title{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 240px}
+.rsm-title .small-muted{overflow-wrap:anywhere}
+.rsm-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.rsm-over{outline:2px dashed var(--brand,#4A6F64);outline-offset:-4px}
+.rsm-ok{background:var(--teal-tint,#e7f5ef);color:var(--teal,#1f7a5c);border-color:transparent}
+.rsm-warn{margin:10px 0 0;display:flex;flex-direction:column;gap:3px}
+.rsm-viewer,.rsm-bar{min-width:0;max-width:100%}
+.rsm-file{overflow-wrap:anywhere;min-width:0}
+.rsm-viewer iframe{max-width:100%}
+
+/* Wrong-file warning + hidden files (resume_, 2026-10-03) */
+.rsm-grow{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.rsm-ok{align-items:center;flex-wrap:wrap}
+.rsm-warn{gap:6px}
+.rsm-who{display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,.6);border-radius:6px;padding:6px 9px;color:var(--ink,#1b2437);overflow-wrap:anywhere}
+.rsm-who .rsm-k{display:block;color:inherit;opacity:.75}
+.rsm-warn-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+.rsm-hidden{background:#fafbfc}
+.rsm-hrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px dashed var(--line,#e3e8f0);font-size:12.5px}
+.rsm-hrow:last-child{border-bottom:0}
+
+/* Fit tables (MatchSplit.jsx, fit_ 2026-10-03) */
+.msp{min-width:0;max-width:100%}
+.msp-chip{margin-left:6px}
+.msp-reason{display:block;font-size:12px;color:var(--red,#b42318);margin-top:2px;overflow-wrap:anywhere}
+.msp-reason.ok{color:var(--teal,#1f7a5c)}
+.msp-flag{display:block;font-size:11.5px;color:var(--red,#b42318);margin-top:2px}
+.msp-flag.warn{color:var(--amber,#9a6400)}
+.msp-info{flex-basis:100%}
+.msp-min{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12.5px;background:#f6f8fb;border:1px solid var(--line,#e3e8f0);border-radius:7px;padding:7px 10px;margin:4px 0 8px}
+.msp-min-edit{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+.msp-min-edit input{width:64px;padding:3px 6px;font-size:12.5px}
+.msp-saved{color:var(--teal,#1f7a5c);font-weight:600}
+.msp-err{color:var(--red,#b42318)}
+.msp-table td.msp-main{min-width:180px}
+@media (max-width:640px){
+  .msp-wrap{overflow:visible}
+  .msp-table thead{display:none}
+  .msp-table,.msp-table tbody,.msp-table tr,.msp-table td{display:block;width:100%}
+  .msp-table tr{border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fff}
+  .msp-table td{border:0;padding:3px 0}
+  .msp-table td[data-k]:not([data-k=""])::before{content:attr(data-k);display:inline-block;min-width:96px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft,#5b6478)}
+  .msp-table td.msp-main{min-width:0}
+}
+
+/* Admin → Fit settings (FitSettings.jsx) */
+.fit-settings .fit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 24px}
+.fit-settings .fit-row{display:flex;align-items:center;gap:10px;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line,#e3e8f0)}
+.fit-settings .fit-name{flex:1;min-width:0}
+.fit-settings .fit-row input{width:70px;padding:4px 6px;font-size:13px}
+.fit-settings .fit-share{width:40px;text-align:right}
+.fit-settings .fit-min{margin-top:12px;border-bottom:0;max-width:520px}
+@media (max-width:640px){.fit-settings .fit-grid{grid-template-columns:1fr}}
+.msp-sort{border:0;background:none;padding:0;font:inherit;font-weight:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer;white-space:nowrap}
+.msp-sort:hover,.msp-sort.on{color:var(--brand,#0a6fc2)}
+.msp-all{margin-top:8px}
+.rsm-files{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin-top:10px}
+.rsm-file-card{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:8px 10px;background:#fbfcfe;min-width:0}
+.rsm-file-card.on{border-color:var(--brand,#0a6fc2);background:#f3f8fe}
+.rsm-file-card .small-muted{overflow-wrap:anywhere}
+.rsm-files-note{grid-column:1/-1}
+@media (max-width:560px){.rsm-files{grid-template-columns:1fr}}
+@media (max-width:560px){.rsm-hist th:nth-child(2),.rsm-hist td:nth-child(2){display:none}.rsm-actions{justify-content:flex-start}.rsm-viewer iframe{height:440px}.rsm-card{padding:10px}}
+@media (max-width:560px){.rsm-hist th,.rsm-hist td{white-space:normal;overflow-wrap:anywhere;padding-left:6px;padding-right:6px}.rsm-hist .status{white-space:normal}}
+.msp-table td.msp-main{overflow-wrap:anywhere}
+.msp-chip{display:inline-block;white-space:nowrap}

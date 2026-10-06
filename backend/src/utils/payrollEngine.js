@@ -85,9 +85,16 @@ function payrollWorkingDays(month, policy) {
 // ---- Attendance input -------------------------------------------------------
 //
 // DEFAULT, from the attendance module's day statuses (past days only; a day
-// still to come is assumed worked):
-//   daysPresent = Present + Late + Missing Check-Out + half of Half Day
-//   daysLop     = Absent + half of Half Day
+// still to come is assumed worked). Each day carries the fractions of the
+// HRMS 7-case table (utils/attendanceDays.js dayStatus): present / leave /
+// absent (unpaid) / pending, so e.g. "worked 9:00-1:30 + full-day leave
+// approved" is 0.5 present + 0.5 leave = a full paid day.
+//   daysPresent = the present fractions (Present, Late, Early Logout,
+//                 Missing Check-Out = 1; a worked half = 0.5)
+//   daysLop     = the absent fractions (Absent, the unworked half of a Half
+//                 Day, an unpaid leave type)
+//               + the pending fractions (leave still waiting: unpaid until
+//                 it is approved, then it becomes leave on the next run)
 //               + Missing Check-In (when "unmarked working days are unpaid")
 //               + approved leave beyond the paid-leave days per month
 //               + working days before the joining date
@@ -106,9 +113,9 @@ async function attendanceDefaults(employees, month, policy) {
       && (policy.weekendsPaid || !offs.has(new Date(`${d.date}T00:00:00Z`).getUTCDay()))).length;
     const unmarkedUnpaid = policy.unmarkedDaysUnpaid !== false;
     const excessLate = Math.max(0, s.lateArrivals - Number(policy.freeLateArrivalsPerMonth || 0));
-    const unpaidLeave = Math.max(0, s.onLeave - Number(policy.paidLeaveDaysPerMonth || 0));
-    const lop = s.absent + 0.5 * s.halfDay + (unmarkedUnpaid ? s.missingCheckIn : 0) + unpaidLeave + notJoined + 0.5 * excessLate;
-    const present = s.present + s.late + s.missingCheckOut + 0.5 * s.halfDay + (unmarkedUnpaid ? 0 : s.missingCheckIn);
+    const unpaidLeave = Math.max(0, s.leaveDays - Number(policy.paidLeaveDaysPerMonth || 0));
+    const lop = s.absentDays + s.pendingDays + (unmarkedUnpaid ? s.missingCheckIn : 0) + unpaidLeave + notJoined + 0.5 * excessLate;
+    const present = s.presentDays + (unmarkedUnpaid ? 0 : s.missingCheckIn);
     out.set(e.id, {
       workingDays,
       daysPresent: present,
@@ -118,6 +125,9 @@ async function attendanceDefaults(employees, month, policy) {
         present: s.present, late: s.late, halfDay: s.halfDay, absent: s.absent, onLeave: s.onLeave,
         missingCheckIn: s.missingCheckIn, missingCheckOut: s.missingCheckOut, lateArrivals: s.lateArrivals,
         excessLate, unpaidLeave, notJoined,
+        presentDays: s.presentDays, leaveDays: s.leaveDays, absentDays: s.absentDays, pendingDays: s.pendingDays,
+        earlyLogouts: s.earlyLogouts, halfDayHalfLeave: s.halfDayHalfLeave, underReview: s.halfDayUnderReview + s.leaveUnderReview,
+        sandwichDays: s.sandwichDays, unpaidLeaveTypeDays: s.unpaidLeaveDays,
       },
     });
   });
@@ -146,7 +156,7 @@ async function attendanceInputs(employees, month, policy) {
 }
 
 // ---- The arithmetic ----------------------------------------------------------
-function computeEntry({ version, att, policy }) {
+function computeEntry({ version, att, policy, incentive = 0 }) {
   const workingDays = Number(att.workingDays) || 0;
   const daysLop = Math.max(0, Math.min(workingDays, Number(att.daysLop) || 0));
   const ratio = workingDays > 0 ? (workingDays - daysLop) / workingDays : 1;
@@ -155,8 +165,16 @@ function computeEntry({ version, att, policy }) {
   const hra = stipend ? 0 : Number(version.hra) || 0;
   const bonus = stipend ? 0 : Number(version.bonus) || 0;
   const specialAllowance = stipend ? 0 : Number(version.specialAllowance) || 0;
-  const grossPay = stipend ? Math.round(Number(version.stipend) || 0) : basic + hra + bonus + specialAllowance;
-  const lopDeduction = workingDays > 0 ? Math.round((grossPay * daysLop) / workingDays) : 0;
+  // Conveyance (payroll import, 2026-10-06): a fixed earning of the imported
+  // registers' packages, part of the full-month gross like the others.
+  const conveyance = stipend ? 0 : Number(version.conveyance) || 0;
+  const baseGross = stipend ? Math.round(Number(version.stipend) || 0) : basic + hra + bonus + specialAllowance + conveyance;
+  const lopDeduction = workingDays > 0 ? Math.round((baseGross * daysLop) / workingDays) : 0;
+  // Recruiter-joinings incentive (utils/recruiterJoinings.js): a separate
+  // earning added AFTER loss of pay (it is earned, not a day rate), so ESI,
+  // PT and a policy-% TDS see it like any other earning. 0 = as before.
+  const incentiveAmt = Math.max(0, Math.round(Number(incentive) || 0));
+  const grossPay = baseGross + incentiveAmt;
   const earnedGross = grossPay - lopDeduction;
 
   const pfEmployee = stipend ? 0 : Math.round((Number(version.employeePf) || 0) * ratio);
@@ -164,7 +182,7 @@ function computeEntry({ version, att, policy }) {
   const gratuity = stipend ? 0 : Math.round((Number(version.gratuity) || 0) * ratio);
   // ESI eligibility is decided on the version's full-month gross; the
   // contribution is on what was actually earned.
-  const eligible = esiFor(grossPay, policy, version.esiApplicable).applicable;
+  const eligible = esiFor(baseGross, policy, version.esiApplicable).applicable;
   const esi = eligible && earnedGross > 0 ? esiFor(earnedGross, policy, true) : { employee: 0, employer: 0 };
   const professionalTax = stipend ? 0 : Math.min(Number(version.professionalTax) || 0, professionalTaxFor(earnedGross));
 
@@ -181,7 +199,7 @@ function computeEntry({ version, att, policy }) {
   return {
     payMode: stipend ? 'Stipend' : 'Package',
     workingDays, daysPresent: Number(att.daysPresent) || 0, daysLop,
-    basic, hra, bonus, specialAllowance, grossPay, lopDeduction, earnedGross,
+    basic, hra, bonus, specialAllowance, conveyance, incentive: incentiveAmt, grossPay, lopDeduction, earnedGross,
     pfEmployee, esiEmployee: esi.employee, professionalTax, tds, otherDeductions, totalDeductions, netPay,
     pfEmployer, esiEmployer: esi.employer, gratuity,
   };
@@ -228,6 +246,12 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
   if (monthRun && monthRun._count.entries === 0 && ['Processing', 'Paid'].includes(monthRun.status)) {
     throw new PayrollError(409, `${monthLabel(month)} was already processed as a month run (${monthRun.status}) before per-employee payroll existed; it cannot be calculated again.`);
   }
+  // S3: a month posted to Accounts (one journal for the whole month) takes no
+  // new drafts — re-open it first, which reverses the journal.
+  if (!dryRun) {
+    const posted = await prisma.employeePayrollRun.count({ where: { month, status: { in: ['SYNCED_TO_ACCOUNTS', 'PAID'] } } });
+    if (posted) throw new PayrollError(409, `${monthLabel(month)} is already posted to Accounts. Re-open the month first to change it.`);
+  }
   const policy = await getPolicy();
   // Super Admin is a system account, never on a payroll run (utils/systemAccounts.js).
   const where = { AND: [employeeWhere, { employmentStatus: { in: PAYABLE_STATUSES } }, NOT_SYSTEM_EMPLOYEE] };
@@ -235,10 +259,11 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
   if (Array.isArray(employeeIds)) where.AND.push({ id: { in: employeeIds } });
   const employees = await prisma.employee.findMany({ where, orderBy: { name: 'asc' } });
   const ids = employees.map((e) => e.id);
-  const [versions, { workingDays, map: inputs }, existing] = await Promise.all([
+  const [versions, { workingDays, map: inputs }, existing, incentives] = await Promise.all([
     versionsFor(ids, month),
     attendanceInputs(employees, month, policy),
     prisma.employeePayrollRun.findMany({ where: { month, employeeId: { in: ids } } }),
+    incentivesFor(ids, month),
   ]);
   const existingOf = new Map(existing.map((e) => [e.employeeId, e]));
   const { year, monthNum } = monthParts(month);
@@ -250,7 +275,7 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     const v = versions.get(emp.id);
     const base = { employeeId: emp.id, employeeCode: emp.employeeCode, name: emp.name, department: emp.department };
     if (!v) { skipped.push({ ...base, reason: `No salary structure effective in ${monthLabel(month)}` }); return; }
-    const c = computeEntry({ version: v, att: inputs.get(emp.id), policy });
+    const c = computeEntry({ version: v, att: inputs.get(emp.id), policy, incentive: incentives.get(emp.id) || 0 });
     if (!(c.grossPay > 0)) { skipped.push({ ...base, reason: v.payMode === 'Stipend' ? 'Stipend is 0' : 'No CTC set' }); return; }
     const prior = existingOf.get(emp.id);
     if (prior && prior.status !== 'DRAFT') { locked.push({ ...base, id: prior.id, status: prior.status }); return; }
@@ -277,7 +302,7 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     const data = {
       payrollRunId: run ? run.id : null, year, monthNum, salaryVersionId: r.salaryVersionId, payMode: r.payMode,
       workingDays: r.workingDays, daysPresent: r.daysPresent, daysLop: r.daysLop, attendanceSource: r.attendanceSource,
-      basic: r.basic, hra: r.hra, bonus: r.bonus, specialAllowance: r.specialAllowance,
+      basic: r.basic, hra: r.hra, bonus: r.bonus, specialAllowance: r.specialAllowance, conveyance: r.conveyance || 0, incentive: r.incentive,
       grossPay: r.grossPay, lopDeduction: r.lopDeduction, earnedGross: r.earnedGross,
       pfEmployee: r.pfEmployee, esiEmployee: r.esiEmployee, professionalTax: r.professionalTax, tds: r.tds,
       otherDeductions: r.otherDeductions, totalDeductions: r.totalDeductions, netPay: r.netPay,
@@ -295,6 +320,12 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
       created += 1; r.id = row.id;
     }
   }
+  // The incentives now carried by a payroll record point at it.
+  for (const r of rows) {
+    if (!r.id || !r.incentive) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.recruiterJoiningDecision.updateMany({ where: { employeeId: r.employeeId, payMonth: month, decision: 'INCENTIVE' }, data: { payrollEntryId: r.id } }).catch(() => {});
+  }
   if (rows.length || locked.length) await refreshMonthRun(month, actor ? actor.name : null);
   if (actor && (created || updated)) {
     await logAudit({
@@ -305,10 +336,26 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
   return { ...result, created, updated, run: await prisma.payrollRun.findUnique({ where: { month } }) };
 }
 
+// Recruiter-joinings incentives paid in `month` (utils/recruiterJoinings.js,
+// Super Admin's decisions): Map(employeeId -> rupees).
+async function incentivesFor(employeeIds, month) {
+  const out = new Map();
+  if (!employeeIds.length) return out;
+  const rows = await prisma.recruiterJoiningDecision.findMany({
+    where: { employeeId: { in: employeeIds }, payMonth: month, decision: 'INCENTIVE' },
+    select: { employeeId: true, amount: true },
+  }).catch(() => []);
+  rows.forEach((d) => out.set(d.employeeId, (out.get(d.employeeId) || 0) + Math.max(0, Math.round(Number(d.amount) || 0))));
+  return out;
+}
+
 // ---- Payslip, generated from the run (the existing payslip layout reads it) --
 async function writePayslip(entry) {
   const fields = {
-    basic: entry.basic, hra: entry.hra, allowances: entry.bonus + entry.specialAllowance,
+    basic: entry.basic, hra: entry.hra, allowances: entry.bonus + entry.specialAllowance + (entry.conveyance || 0) + (entry.arrears || 0),
+    incentive: entry.incentive || 0, // its own line on the payslip (in gross)
+    // Payroll import (2026-10-06): Conveyance / Arrears lines and the sheet breakup.
+    conveyance: entry.conveyance || 0, arrears: entry.arrears || 0, importedBreakup: entry.importedBreakup || null,
     // Payslip.deductions keeps its old meaning: the statutory/structure
     // deductions (PF + PT, now + ESI + TDS + other), LOP separately.
     deductions: entry.pfEmployee + entry.professionalTax + entry.esiEmployee + entry.tds + entry.otherDeductions,
@@ -342,6 +389,11 @@ async function transition(entryId, action, actor, { reason = null, data = {} } =
     const v = await versionFor(entry.employeeId, entry.month);
     if (!v || v.id !== entry.salaryVersionId || (entry.calculatedAt && v.updatedAt > entry.calculatedAt)) {
       throw new PayrollError(409, `${entry.employee.name}'s salary structure changed after this draft was calculated — recalculate ${monthLabel(entry.month)} first.`);
+    }
+    // The same for a recruiter-joinings incentive given / changed / undone since.
+    const inc = (await incentivesFor([entry.employeeId], entry.month)).get(entry.employeeId) || 0;
+    if (inc !== Math.round(Number(entry.incentive) || 0)) {
+      throw new PayrollError(409, `${entry.employee.name}'s incentive changed after this draft was calculated — recalculate ${monthLabel(entry.month)} first.`);
     }
   }
   const stamp = new Date();
@@ -386,5 +438,5 @@ module.exports = {
   STATUSES, STATUS_LABEL, FINAL_STATUSES, PAYABLE_STATUSES, TRANSITIONS, PayrollError,
   getPolicy, isMonth, monthParts, payrollWorkingDays,
   attendanceDefaults, attendanceInputs, computeEntry, calculateMonth, refreshMonthRun,
-  writePayslip, transition, historyOf,
+  writePayslip, transition, historyOf, incentivesFor,
 };

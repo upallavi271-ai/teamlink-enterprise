@@ -10,6 +10,7 @@ import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import { ApprovalChainModal } from '../../components/ApprovalChain.jsx';
 import AudiencePicker from '../../components/AudiencePicker.jsx';
+import CourseFilesPicker, { uploadMaterial } from './CourseFiles.jsx';
 
 // The Enrolled Employees panel's status is the enrolment's own, worded as the
 // row words it.
@@ -199,27 +200,92 @@ export function CourseFormModal({ course, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  // NEW COURSE ONLY: documents and videos picked on the form. The course is
+  // created first, then each file is uploaded against its new id, one at a
+  // time, each with its own progress and result. A file that fails says why
+  // and the course keeps every file that worked.
+  const [items, setItems] = useState([]);
+  const [created, setCreated] = useState(null);
+  const [phase, setPhase] = useState('form'); // form | uploading | done
+  const patchItem = (key, patch) => setItems((list) => list.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+
+  async function uploadAll(newCourse) {
+    setPhase('uploading');
+    for (const it of items) {
+      if (it.status !== 'waiting') continue;
+      patchItem(it.key, { status: 'uploading', pct: 0 });
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await uploadMaterial(newCourse.id, it, (pct) => patchItem(it.key, { pct }));
+        patchItem(it.key, { status: 'done', pct: 100 });
+      } catch (err) {
+        patchItem(it.key, { status: 'failed', error: err.message });
+      }
+    }
+    setPhase('done');
+  }
 
   async function save() {
     setError(''); setBusy(true);
     try {
-      const res = course
-        ? await api.put(`/lms/courses/${course.id}`, form)
-        : await api.post('/lms/courses', form);
-      onSaved(res.data);
+      if (course) {
+        const res = await api.put(`/lms/courses/${course.id}`, form);
+        onSaved(res.data);
+        return;
+      }
+      const res = await api.post('/lms/courses', form);
+      if (!items.some((it) => it.status === 'waiting')) { onSaved(res.data); return; }
+      setCreated(res.data);
+      await uploadAll(res.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Could not save the course.');
     } finally { setBusy(false); }
   }
 
+  // Once the course exists, closing the form still opens it — it was saved.
+  const close = () => {
+    if (phase === 'uploading') return;
+    if (created) onSaved(created); else onClose();
+  };
+  const added = items.filter((it) => it.status === 'done').length;
+
+  let footer;
+  if (phase === 'uploading') {
+    footer = <button className="btn btn-primary" disabled>Uploading files…</button>;
+  } else if (phase === 'done') {
+    footer = <button className="btn btn-primary" onClick={() => onSaved(created)}>Open course</button>;
+  } else {
+    footer = <>
+      <button className="btn" onClick={onClose}>Cancel</button>
+      <button className="btn btn-primary" disabled={busy || !form.title.trim()} onClick={save}>
+        {busy ? 'Saving…' : (course ? 'Save course' : 'Create course')}
+      </button>
+    </>;
+  }
+
+  if (phase !== 'form') {
+    return (
+      <Modal title={`New Course — ${created?.title || form.title}`} onClose={close} footer={footer}>
+        <div className="notice cfiles-summary">
+          <span>
+            <b>Saved.</b> The course is created.{' '}
+            {phase === 'uploading'
+              ? 'Now adding your files — keep this window open.'
+              : added === items.length
+                ? `All ${added} file${added === 1 ? '' : 's'} added.`
+                : `${added} of ${items.length} files added. The ones marked "Not added" say why — you can add them again on the course screen.`}
+          </span>
+        </div>
+        <CourseFilesPicker items={items} buttons={false} hint={false} />
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       title={course ? 'Edit Course' : 'New Course'}
-      onClose={onClose}
-      footer={<>
-        <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy || !form.title.trim()} onClick={save}>{busy ? 'Saving…' : 'Save course'}</button>
-      </>}
+      onClose={close}
+      footer={footer}
     >
       <label className="field"><span>Title</span>
         <input value={form.title} autoFocus onChange={(e) => set('title', e.target.value)} />
@@ -239,6 +305,17 @@ export function CourseFormModal({ course, onClose, onSaved }) {
           Mandatory course
         </label>
       </div>
+      {!course && (
+        <div className="field">
+          <span>Course files (you can add more later)</span>
+          <CourseFilesPicker
+            items={items}
+            onPick={(more) => setItems((list) => [...list, ...more])}
+            onRemove={(key) => setItems((list) => list.filter((it) => it.key !== key))}
+            disabled={busy}
+          />
+        </div>
+      )}
       <div className="field">
         <span>Completion rules — the course completes itself when all ticked steps are done</span>
         {/* Wrapped so the rows are not `.field > label`, which styles.css
@@ -526,13 +603,12 @@ export default function CourseManage({ courseId, onBack }) {
   const [error, setError] = useState('');
   const [view, setView] = useState('course');   // 'course' | 'assessment'
   const [title, setTitle] = useState('');
-  const [file, setFile] = useState(null);
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
   const [enrollId, setEnrollId] = useState('');
-  const [kind, setKind] = useState('');           // '' = infer from the file
   const [required, setRequired] = useState(true);
-  const [uploadPct, setUploadPct] = useState(null);
+  const [uploads, setUploads] = useState([]);     // files picked on this screen
+  const [note, setNote] = useState('');
   const [modal, setModal] = useState(null);       // 'edit' | 'assign' | { preview } | { cert }
   const [ef, setEf] = useState(EMPTY_ENROL_FILTERS);
   // Enrolled Employees: the people filters + Assigned on, newest first, paged.
@@ -550,32 +626,41 @@ export default function CourseManage({ courseId, onBack }) {
   }, [courseId]);
   useEffect(load, [load]);
 
-  async function addMaterial(e) {
-    e.preventDefault();
-    setError(''); setBusy(true);
-    try {
-      if (file) {
-        // STREAMED — the request body is the file itself, so a long video is
-        // written to disk as it arrives rather than held in memory. The
-        // server's utils/lmsMedia.js checks type, size and magic bytes.
-        setUploadPct(0);
-        await api.post(`/lms/courses/${courseId}/materials`, file, {
-          headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
-          params: { title: title || file.name, kind: kind || undefined, required },
-          onUploadProgress: (p) => { if (p.total) setUploadPct(Math.round((p.loaded / p.total) * 100)); },
-        });
-      } else if (link.trim()) {
-        await api.post(`/lms/courses/${courseId}/materials`, { title: title || link.trim(), url: link.trim(), kind: kind === 'Document' ? 'Document' : 'Link', required });
-      } else {
-        setError('Choose a file or paste a link.');
-        return;
+  // FILES — "Add document" / "Add video" upload straight away, one at a time,
+  // each with its own progress and result (CourseFiles.jsx). STREAMED: the
+  // server's utils/lmsMedia.js checks type, size and magic bytes.
+  const patchUpload = (key, patch) => setUploads((list) => list.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  async function pickFiles(more) {
+    setUploads((list) => [...list.filter((it) => it.status !== 'done'), ...more]);
+    setBusy(true);
+    for (const it of more) {
+      if (it.status !== 'waiting') continue;
+      patchUpload(it.key, { status: 'uploading', pct: 0 });
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await uploadMaterial(courseId, { ...it, required }, (pct) => patchUpload(it.key, { pct }));
+        patchUpload(it.key, { status: 'done', pct: 100 });
+      } catch (err) {
+        patchUpload(it.key, { status: 'failed', error: err.message });
       }
-      setTitle(''); setFile(null); setLink(''); setKind(''); setRequired(true);
-      e.target.reset();
+    }
+    setBusy(false);
+    load();
+  }
+
+  async function addLink(e) {
+    e.preventDefault();
+    setError(''); setNote('');
+    if (!/^https?:\/\//i.test(link.trim())) { setError('Paste a full link that starts with http:// or https://'); return; }
+    setBusy(true);
+    try {
+      await api.post(`/lms/courses/${courseId}/materials`, { title: title.trim() || link.trim(), url: link.trim(), kind: 'Link', required });
+      setTitle(''); setLink('');
+      setNote('Saved. The link is added.');
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add that material.');
-    } finally { setBusy(false); setUploadPct(null); }
+      setError(err.response?.data?.error || 'Could not add that link.');
+    } finally { setBusy(false); }
   }
 
   async function updateMaterial(m, patch) {
@@ -588,8 +673,8 @@ export default function CourseManage({ courseId, onBack }) {
   async function removeMaterial(m) {
     // eslint-disable-next-line no-alert
     if (!confirm(`Remove "${m.title}"?`)) return;
-    setError('');
-    try { await api.delete(`/lms/materials/${m.id}`); load(); } catch (err) {
+    setError(''); setNote('');
+    try { await api.delete(`/lms/materials/${m.id}`); setNote(`Removed "${m.title}".`); load(); } catch (err) {
       setError(err.response?.data?.error || 'Could not remove that material.');
     }
   }
@@ -706,44 +791,34 @@ export default function CourseManage({ courseId, onBack }) {
               </div>
             ))}
 
-          <form className="material-add" onSubmit={addMaterial}>
+          <div style={{ marginTop: 10 }}>
+            <CourseFilesPicker
+              items={uploads}
+              onPick={pickFiles}
+              onRemove={(key) => setUploads((list) => list.filter((it) => it.key !== key))}
+              disabled={busy}
+            />
+          </div>
+          <form className="material-add" onSubmit={addLink}>
             <input
-              placeholder="Material title"
+              placeholder="Link title (optional)"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
             <input
-              type="file"
-              accept="video/mp4,video/webm,video/ogg,application/pdf,image/png,image/jpeg,image/webp"
-              onChange={(e) => { setFile(e.target.files[0] || null); setLink(''); }}
-            />
-            <button className="btn btn-primary btn-sm" type="submit" disabled={busy}>
-              {busy ? (uploadPct != null ? `Uploading ${uploadPct}%` : 'Adding…') : 'Add'}
-            </button>
-          </form>
-          <div className="material-link">
-            <input
-              placeholder="…or paste a link instead"
+              placeholder="…or paste a link (https://…)"
               value={link}
-              onChange={(e) => { setLink(e.target.value); setFile(null); }}
+              onChange={(e) => setLink(e.target.value)}
             />
-          </div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, marginTop: 6 }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              Kind
-              <select value={kind} style={{ width: 'auto', minHeight: 28, padding: '2px 6px' }} onChange={(e) => setKind(e.target.value)}>
-                <option value="">Automatic (from the file)</option>
-                <option value="Video">Video</option>
-                <option value="Document">Document</option>
-              </select>
-            </label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-              <input type="checkbox" style={{ width: 'auto' }} checked={required} onChange={(e) => setRequired(e.target.checked)} />
-              Required for completion
-            </label>
-          </div>
+            <button className="btn btn-sm" type="submit" disabled={busy || !link.trim()}>Add link</button>
+          </form>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 12, marginTop: 6 }}>
+            <input type="checkbox" style={{ width: 'auto' }} checked={required} onChange={(e) => setRequired(e.target.checked)} />
+            New files and links are required for completion
+          </label>
+          {note && <div className="small-muted" style={{ marginTop: 6, color: '#15803d' }}>{note}</div>}
           <div className="small-muted" style={{ marginTop: 6 }}>
-            MP4 / WebM video up to 300 MB, PDF or images. Learners can only view materials in the app — they are streamed, never offered as downloads.
+            PDFs, pictures, text and videos open inside the app only (view-only). Word, PowerPoint and Excel files open on the learner&apos;s own device — save them as PDF to keep them view-only.
           </div>
         </PanelPad>
 

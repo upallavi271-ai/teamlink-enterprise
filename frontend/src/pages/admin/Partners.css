@@ -1,0 +1,33 @@
+/* Administration → Company Setup → Partners (B7). Scoped .pa-* */
+.pa-acts{min-width:200px}
+.pa-acts>.btn{margin:2px 4px 2px 0 !important}
+.pa-secret code{font-family:var(--font-mono);font-size:13.5px;background:#fff;padding:1px 6px;border-radius:6px;border:1px solid var(--line)}
+.pa-form label{display:block;margin:10px 0 4px;font-size:12.5px;font-weight:600}
+.pa-form input,.pa-form select,.pa-form textarea{width:100%}
+.pa-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pa-three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.pa-choice{display:flex;flex-wrap:wrap;gap:6px}
+.pa-chip{border:1px solid var(--line);background:var(--paper-raised);border-radius:999px;padding:6px 12px;font-size:12.5px;cursor:pointer}
+.pa-chip.on{background:var(--brand-tint,#E7EDF7);border-color:var(--brand,#1F3864);color:var(--brand,#1F3864);font-weight:600}
+.pa-switch{display:flex !important;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:10px;margin:6px 0 !important;font-weight:400 !important;cursor:pointer}
+.pa-switch input{width:auto !important;margin-top:3px}
+.pa-tag{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.pa-green{background:var(--green-tint);color:var(--green)}
+.pa-grey{background:var(--line-soft);color:var(--ink-soft)}
+.pa-red{background:var(--red-tint);color:var(--red)}
+.pa-yellow{background:var(--amber-tint);color:var(--amber)}
+.pa-blue{background:var(--blue-tint);color:var(--blue)}
+.pa-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px}
+.pa-card{background:var(--paper-raised);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.pa-card b{display:block;font-size:20px}
+.pa-card span{font-size:12px;color:var(--ink-soft)}
+.pa-calc{font-size:12.5px;color:var(--ink-soft);margin-top:6px;padding:8px 10px;background:var(--paper);border-radius:8px;border:1px dashed var(--line)}
+.pa-dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;margin:8px 0 0;font-size:13px}
+.pa-dl dt{color:var(--ink-soft)}
+.pa-dl dd{margin:0}
+.pa-settings .card h3{display:flex;align-items:center;gap:8px;font-size:14.5px;margin:0}
+@media (max-width:760px){
+  .pa-two,.pa-three{grid-template-columns:1fr}
+  .pa-acts{white-space:normal}
+  .pa-acts .btn{margin:2px 0 !important}
+}

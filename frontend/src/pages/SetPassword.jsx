@@ -23,7 +23,11 @@ export default function SetPassword() {
 
   useEffect(() => {
     api.get(`/public/set-password/${token}`)
-      .then((res) => setState({ loading: false, ...res.data }))
+      .then((res) => {
+        // A candidate's portal invite must confirm the email with a code first.
+        if (res.data && res.data.portalInvite) { navigate(`/portal-invite/${token}`, { replace: true }); return; }
+        setState({ loading: false, ...res.data });
+      })
       .catch((err) => setState({ loading: false, invalid: err.response?.data?.error || 'This link is not valid.' }));
   }, [token]);
 

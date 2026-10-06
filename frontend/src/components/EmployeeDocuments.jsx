@@ -71,6 +71,7 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
   const [forbidden, setForbidden] = useState(false);
   const [pending, setPending] = useState([]);
   const [busy, setBusy] = useState('');
+  const [newType, setNewType] = useState(''); // spec item 25 — the Document type dropdown
   // The employee the files go to. Set by uploadAll(id) in draft mode, so a
   // Retry after Add Employee still knows where to send the file.
   const [target, setTarget] = useState(employeeId);
@@ -233,9 +234,12 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
 
   if (forbidden && !pending.length) return null;
 
-  // Every type on the company list, plus any legacy type a document on file
-  // still carries, so nothing on file is ever hidden.
-  const rows = [...docTypes, ...[...new Set(docs.map((d) => d.docType))].filter((t) => !docTypes.includes(t))];
+  // Spec item 25 — ONE "Document type" dropdown + "Add file" instead of a row
+  // per type. The list below shows only the types that have something (a
+  // file on record, a file waiting, or a required type), in company order,
+  // plus any legacy type a document on file still carries.
+  const used = new Set([...docs.map((d) => d.docType), ...pending.map((p) => p.docType), ...required]);
+  const rows = [...docTypes.filter((t) => used.has(t)), ...[...used].filter((t) => !docTypes.includes(t))];
   const waiting = pending.filter((p) => p.status !== 'done');
 
   const statusOf = (p) => {
@@ -267,6 +271,33 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
       )}
       {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 8 }}>{notice}</div>}
+
+      {canUpload && docTypes.length > 0 && (
+        <div className="edocs-add">
+          <label className="edocs-add-type">
+            <span>Document type</span>
+            <select value={newType} onChange={(e) => setNewType(e.target.value)}>
+              <option value="">Choose a type…</option>
+              {docTypes.map((t) => <option key={t} value={t}>{t === OTHER ? 'Other' : t}</option>)}
+            </select>
+          </label>
+          <label className={`btn btn-primary edocs-pick${newType ? '' : ' is-off'}`} aria-disabled={!newType}>
+            + Add file
+            <input
+              type="file"
+              multiple
+              disabled={!newType}
+              accept={newType === PHOTO ? IMAGE_ACCEPT : ACCEPT}
+              onChange={(e) => { pick(newType, e.target.files); e.target.value = ''; }}
+            />
+          </label>
+          {!newType && <span className="small-muted">Choose the type first.</span>}
+          {newType === 'Aadhaar' && (
+            <span className="small-muted">Upload a <b>masked</b> Aadhaar (only the last 4 digits showing). We never keep the full number.</span>
+          )}
+          {newType === OTHER && <span className="small-muted">Give the file a name after you add it.</span>}
+        </div>
+      )}
 
       {!draft && data === null && !meta && !forbidden ? <div className="small-muted">Loading…</div> : (
         <div className="edocs-list">
@@ -346,7 +377,7 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
                 </div>
                 {canUpload && (
                   <label className="btn btn-sm edocs-pick">
-                    + Add file
+                    + Another
                     <input
                       type="file"
                       multiple
@@ -358,7 +389,11 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
               </div>
             );
           })}
-          {!canUpload && docs.length === 0 && <div className="small-muted edocs-none">No documents uploaded yet.</div>}
+          {docs.length === 0 && !pending.length && (
+            <div className="small-muted edocs-none">
+              {canUpload ? 'No documents yet. Choose a document type above and add the file.' : 'No documents uploaded yet.'}
+            </div>
+          )}
         </div>
       )}
     </div>

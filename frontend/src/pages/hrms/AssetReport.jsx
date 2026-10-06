@@ -74,9 +74,14 @@ export default function AssetReport() {
   const [error, setError] = useState('');
   const [sort, setSort] = useState('new');
 
+  // The choices, re-read when the applied filters change so the Department
+  // counts follow every OTHER filter (cascade). Every active department is
+  // listed, a 0 included (user, 2026-10-05).
+  const optsKey = JSON.stringify({ ...paramsOf(applied), department: '' });
   useEffect(() => {
-    api.get('/asset-inventory/options').then((r) => setOpts(r.data)).catch(() => setOpts(null));
-  }, []);
+    api.get('/asset-inventory/options', { params: { ...paramsOf(applied), department: undefined } })
+      .then((r) => setOpts(r.data)).catch(() => setOpts(null));
+  }, [optsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Typing must not fire a request per keystroke: apply 300 ms after the last change.
   useEffect(() => {
@@ -118,7 +123,8 @@ export default function AssetReport() {
     const s = SORTS.find(([k]) => k === sort);
     return s && s[2] ? [...rows].sort(s[2]) : rows;
   }, [rows, sort]);
-  const page = usePaged(sorted);
+  // The whole register on one page (250 a page; 124 assets today).
+  const page = usePaged(sorted, 250);
   const lfLike = { activeCount, clear };
 
   return (
@@ -132,7 +138,12 @@ export default function AssetReport() {
             <>
               <input type="search" value={f.q} onChange={set('q')} placeholder={seesOthers ? 'Search asset ID, name, type, location or employee…' : 'Search asset ID, name, type or location…'} aria-label="Search" style={{ minWidth: 240 }} />
               {seesOthers && (
-                <Combo value={f.department} title="Department" onChange={set('department')}><option value="">All departments</option>{list(opts?.departments)}</Combo>
+                <Combo value={f.department} title="Department" onChange={set('department')}>
+                  <option value="">All departments</option>
+                  {opts?.departmentCounts
+                    ? opts.departmentCounts.map((d) => <option key={d.name} value={d.name}>{`${d.name} (${d.count})`}</option>)
+                    : list(opts?.departments)}
+                </Combo>
               )}
               <Combo value={f.category} title="Category" onChange={set('category')}><option value="">All categories</option>{list(opts?.categories)}</Combo>
               <Combo value={f.status} title="Status" onChange={set('status')}><option value="">All statuses</option>{list(opts?.statuses || ['Available', 'Assigned', 'In Repair', 'Retired'])}</Combo>
@@ -207,7 +218,7 @@ export default function AssetReport() {
                   <td><span className={`status ${a.status === 'Available' ? 'active' : a.status === 'Retired' ? 'rejected' : 'pending'}`}>{a.status}</span></td>
                   <td className="cell-muted">{a.allocation}</td>
                   <td>{a.assignedTo ? <>{a.assignedTo.name}<div className="small-muted">{a.assignedTo.employeeCode}</div></> : <span className="cell-muted">—</span>}</td>
-                  <td className="cell-muted">{a.assignedTo?.department || '—'}</td>
+                  <td className="cell-muted">{a.department || '—'}</td>
                   <td className="cell-muted">{a.location || '—'}</td>
                   <td className="cell-muted">{fmt(a.assignedAt)}</td>
                   <td className="cell-muted">{a.assignedByName || '—'}</td>

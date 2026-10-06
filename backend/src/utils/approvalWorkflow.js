@@ -140,9 +140,13 @@ function scopeDepartmentsOf(candidate) {
   return candidate.department ? [candidate.department] : [];
 }
 
+// People who have left, or whose record is switched off, never approve —
+// "Relieved" alone let an Exited TL be picked as a fresh request's approver.
+const NOT_WORKING = ['Relieved', 'Exited', 'Exit Process', 'Inactive', 'Suspended'];
+
 async function candidateApprovers() {
   const rows = await prisma.employee.findMany({
-    where: { employmentStatus: { not: 'Relieved' }, NOT: { userId: null } },
+    where: { employmentStatus: { notIn: NOT_WORKING }, NOT: { userId: null } },
     include: {
       user: {
         select: {
@@ -170,7 +174,132 @@ function pick(list, predicates) {
 // chain; a test applicant may still be routed to test approvers.
 const isTempAccount = (...vals) => vals.some((v) => /zztest|example\.test/i.test(String(v || '')));
 
-async function resolveChain(employee) {
+// ---------------------------------------------------------------------------
+// THE LADDER FOLLOWS ORGANIZATION STRUCTURE (spec item 19).
+//
+// Administration -> Organization Structure (OrgRole rows) decides WHICH
+// levels a NEW request climbs:
+//   * a level whose role is in the structure is on the ladder;
+//   * a level whose role was REMOVED from the structure is not;
+//   * a level whose role is PAUSED stays on the trail as "Skipped — paused",
+//     and is never an active approver;
+//   * a role ADDED to the structure (CEO, Branch Head …) becomes a level of
+//     its own. It is placed just below the nearest built-in level above it in
+//     the structure, starts as "see only" (Leave -> Approval Workflow Levels
+//     can make it "must approve"), and its holders are the people whose role
+//     (Role Catalog role of the same name) or designation is that role. A
+//     role placed BELOW "Employee (Self-Service)" is not an approver.
+// The ORDER of the built-in levels stays the user's binding order
+// (Employee -> TL -> STL -> HR -> AM -> Manager -> Super Admin); the
+// structure adds, removes and pauses levels, it does not reshuffle them.
+// Live requests keep the steps they were raised with; only the NEXT step is
+// re-checked when it is reached (activateNext below).
+// ---------------------------------------------------------------------------
+const DYNAMIC_LABELS = new Map(); // level code -> { label, short } for added roles
+
+function systemLevelOfOrgName(name) {
+  const n = String(name || '').toLowerCase();
+  if (/super\s*admin/.test(n)) return 'SUPER_ADMIN';
+  if (/assistant\s*manager|\basst\.?\s*manager\b/.test(n)) return 'ASSISTANT_MANAGER';
+  if (/senior\s*team\s*lead|\bstl\b/.test(n)) return 'STL';
+  if (/team\s*lead|\btl\b/.test(n)) return 'TL';
+  if (/\bhr\b|human\s*resource/.test(n)) return 'HR';
+  if (/manager/.test(n)) return 'MANAGER';
+  if (/employee|self[\s-]*service/.test(n)) return 'EMPLOYEE';
+  return null;
+}
+
+const plainName = (s) => String(s || '').replace(/\(.*?\)/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+function labelFor(level) {
+  if (LEVEL_BY_ID[level]) return LEVEL_BY_ID[level];
+  if (DYNAMIC_LABELS.has(level)) return DYNAMIC_LABELS.get(level);
+  if (LEGACY_LEVEL_LABELS[level]) return { label: LEGACY_LEVEL_LABELS[level], short: LEGACY_LEVEL_LABELS[level] };
+  const derived = String(level || '').replace(/^(CUSTOM_|ORG_)/, '').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  return { label: derived || level, short: derived || level };
+}
+
+// A level code this engine owns (built-in or added from the structure). A
+// legacy code (ADMIN on very old chains) is none of these and is left alone.
+const isLadderCode = (level) => !!LEVEL_BY_ID[level] || /^(CUSTOM_|ORG_)/.test(String(level || '')) || DYNAMIC_LABELS.has(level);
+
+// The ladder for a NEW request, read from the database every time (two small
+// reads), so a role added / paused / removed a second ago already counts.
+//   levels: [{ level, label, short, seq, system, paused, pausedWhy, applicant,
+//              codes, designation, orgRoleId }]
+async function ladder() {
+  const [org, roles] = await Promise.all([
+    prisma.orgRole.findMany({ orderBy: { position: 'asc' } }).catch(() => []),
+    prisma.role.findMany({ select: { code: true, name: true, status: true } }).catch(() => []),
+  ]);
+  const sysPresent = new Map(); // level -> { paused }
+  const custom = [];
+  let employeeIdx = -1;
+  const rows = org.map((r, idx) => ({ r, idx, sys: systemLevelOfOrgName(r.name) }));
+  rows.forEach(({ r, idx, sys }) => {
+    if (sys === 'EMPLOYEE' && employeeIdx < 0) employeeIdx = idx;
+    if (sys) {
+      const prev = sysPresent.get(sys);
+      // Paused only when EVERY row naming the level is paused.
+      sysPresent.set(sys, { paused: prev ? prev.paused && r.paused : !!r.paused, orgRoleId: r.id });
+    }
+  });
+  rows.forEach(({ r, idx, sys }) => {
+    if (sys) return;
+    if (employeeIdx >= 0 && idx > employeeIdx) return; // below Employee — not an approver
+    const role = roles.find((x) => plainName(x.name) === plainName(r.name) || x.code === String(r.name).trim().toUpperCase());
+    const code = role && !LEVEL_BY_ID[role.code]
+      ? role.code
+      : `ORG_${plainName(r.name).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase() || r.id}`;
+    // Insert just below the nearest built-in level ABOVE it in the structure.
+    let anchor = null;
+    for (let j = idx - 1; j >= 0; j -= 1) {
+      if (rows[j].sys && rows[j].sys !== 'EMPLOYEE') { anchor = rows[j].sys; break; }
+    }
+    custom.push({
+      level: code,
+      label: r.name,
+      short: r.name.replace(/\(.*?\)/g, '').trim() || r.name,
+      system: false,
+      paused: !!r.paused || (role ? role.status === 'Inactive' : false),
+      pausedWhy: r.paused ? 'paused in Organization Structure' : (role && role.status === 'Inactive' ? 'switched off in Role Catalog' : null),
+      codes: role ? [role.code] : [],
+      designation: plainName(r.name),
+      orgRoleId: r.id,
+      anchor,
+      idx,
+    });
+  });
+  const hasOrg = org.length > 0;
+  const levels = LEVELS
+    .filter((l) => l.applicant || !hasOrg || l.level === 'SUPER_ADMIN' || sysPresent.has(l.level))
+    .map((l) => {
+      const p = sysPresent.get(l.level);
+      // Super Admin is the final approver and cannot be paused.
+      const paused = !l.applicant && l.level !== 'SUPER_ADMIN' && !!(p && p.paused);
+      return { ...l, system: true, paused, pausedWhy: paused ? 'paused in Organization Structure' : null, orgRoleId: p ? p.orgRoleId : null };
+    });
+  // Place the added roles: nearest-above anchor -> just before it; none
+  // above (it sits at the very top) -> after Super Admin.
+  custom.sort((a, b) => b.idx - a.idx).forEach((c) => {
+    const at = c.anchor ? levels.findIndex((l) => l.level === c.anchor) : -1;
+    if (at > 0) levels.splice(at, 0, c);
+    else levels.push(c);
+  });
+  levels.forEach((l, i) => { l.seq = i + 1; });
+  custom.forEach((c) => DYNAMIC_LABELS.set(c.level, { label: c.label, short: c.short }));
+  return { levels, byLevel: Object.fromEntries(levels.map((l) => [l.level, l])) };
+}
+
+// Does this candidate hold an added (structure-only) level?
+function holdsCustom(level, e) {
+  const u = e.user || {};
+  if (level.codes && level.codes.length && (level.codes.includes(u.hrmsRole) || level.codes.includes(u.role))) return true;
+  return !!level.designation && plainName(e.designation) === level.designation;
+}
+
+async function resolveChain(employee, lad) {
+  const theLadder = lad || await ladder();
   const tempApplicant = isTempAccount(employee.name, employee.employeeCode, employee.email);
   const all = (await candidateApprovers())
     .filter((e) => tempApplicant || !isTempAccount(e.name, e.employeeCode, e.user && e.user.name, e.user && e.user.email));
@@ -226,10 +355,23 @@ async function resolveChain(employee) {
     if (u) superAdmin = { id: null, name: u.name, department: null, user: u };
   }
 
-  return {
+  const out = {
     TL: tl, STL: stl, HR: hr, ASSISTANT_MANAGER: asstManager, MANAGER: manager,
     SUPER_ADMIN: superAdmin,
   };
+  // Added roles: the holder in this employee's department, else one whose
+  // scope covers it, else any holder.
+  theLadder.levels.filter((l) => !l.system).forEach((l) => {
+    out[l.level] = pick(others.filter((e) => holdsCustom(l, e)), [(e) => e.department === dept, (e) => covers(e), () => true]);
+  });
+  // A level that is paused, switched off or removed has NO approver — so
+  // every reader of this (the resignation "Submitting To" list too) leaves
+  // it out.
+  Object.keys(out).forEach((level) => {
+    const l = theLadder.byLevel[level];
+    if (!l || l.paused) out[level] = null;
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,12 +379,15 @@ async function resolveChain(employee) {
 // time it is read, the way leave balances are, so adopting a workflow needs no
 // backfill migration.
 // ---------------------------------------------------------------------------
-async function levelConfig(workflowId) {
+async function levelConfig(workflowId, extraLevels = []) {
   const wf = WORKFLOWS[workflowId];
   if (!wf) throw new Error(`Unknown approval workflow "${workflowId}"`);
   let rows = await prisma.approvalLevelConfig.findMany({ where: { workflow: workflowId } });
   const have = new Set(rows.map((r) => r.level));
-  const missing = APPROVAL_LEVELS
+  // Added roles (spec item 19) get a row too — "see only" until someone
+  // makes them "must approve".
+  const extra = extraLevels.filter((l) => !l.applicant && !LEVEL_BY_ID[l.level]);
+  const missing = [...APPROVAL_LEVELS, ...extra]
     .filter((l) => !have.has(l.level))
     .map((l) => ({
       workflow: workflowId,
@@ -260,11 +405,17 @@ async function levelConfig(workflowId) {
 }
 
 async function levelConfigList(workflowId) {
-  const cfg = await levelConfig(workflowId);
-  return APPROVAL_LEVELS.map((l) => ({
+  // The levels on the CURRENT ladder (Organization Structure), so a role
+  // added there appears here, and a removed one disappears.
+  const lad = await ladder();
+  const cfg = await levelConfig(workflowId, lad.levels);
+  return lad.levels.filter((l) => !l.applicant).map((l) => ({
     level: l.level,
     label: l.label,
     seq: l.seq,
+    system: !!l.system,
+    paused: !!l.paused,
+    pausedWhy: l.pausedWhy || null,
     mode: cfg[l.level] ? cfg[l.level].mode : MODE_VISIBILITY,
     slaHours: cfg[l.level] ? cfg[l.level].slaHours : null,
     active: cfg[l.level] ? cfg[l.level].active : true,
@@ -272,7 +423,9 @@ async function levelConfigList(workflowId) {
 }
 
 async function setLevelConfig(workflowId, level, patch) {
-  if (!LEVEL_BY_ID[level] || LEVEL_BY_ID[level].applicant) {
+  const onLadder = !LEVEL_BY_ID[level] ? (await ladder()).byLevel[level] : null;
+  if (onLadder) await levelConfig(workflowId, [onLadder]);
+  if ((!LEVEL_BY_ID[level] && !onLadder) || (LEVEL_BY_ID[level] && LEVEL_BY_ID[level].applicant)) {
     const err = new Error('Unknown approval level');
     err.status = 400;
     throw err;
@@ -299,8 +452,9 @@ async function setLevelConfig(workflowId, level, patch) {
 const hoursFrom = (at, hours) => (hours == null ? null : new Date(new Date(at).getTime() + Number(hours) * 3600000));
 
 async function start({ workflow, recordId, employee, applicantUserId, applicantName }) {
-  const cfg = await levelConfig(workflow);
-  const chain = await resolveChain(employee);
+  const lad = await ladder();
+  const cfg = await levelConfig(workflow, lad.levels);
+  const chain = await resolveChain(employee, lad);
   const now = new Date();
   const used = new Set();
 
@@ -335,10 +489,23 @@ async function start({ workflow, recordId, employee, applicantUserId, applicantN
   const applicantUser = applicantUserId
     ? await prisma.user.findUnique({ where: { id: applicantUserId } })
     : (employee.userId ? await prisma.user.findUnique({ where: { id: employee.userId } }) : null);
-  const applicantLevel = applicantUser ? LEVEL_BY_ID[hrmsRoleOf(applicantUser)] : null;
+  // The applicant's rung ON THIS LADDER: their built-in level, or an added
+  // role they hold; a built-in level that was removed from the structure
+  // counts as the highest rung still on the ladder below it.
+  const applicantRole = applicantUser ? hrmsRoleOf(applicantUser) : null;
+  let applicantLevel = applicantRole ? lad.byLevel[applicantRole] || null : null;
+  if (!applicantLevel && applicantRole && LEVEL_BY_ID[applicantRole] && !LEVEL_BY_ID[applicantRole].applicant) {
+    const own = LEVEL_BY_ID[applicantRole].seq;
+    const below = lad.levels.filter((l) => l.system && !l.applicant && LEVEL_BY_ID[l.level].seq <= own);
+    applicantLevel = below.length ? { ...below[below.length - 1], label: LEVEL_BY_ID[applicantRole].label } : null;
+  }
+  if (!applicantLevel && applicantUser) {
+    const emp = { ...employee, user: applicantUser };
+    applicantLevel = lad.levels.filter((l) => !l.system && holdsCustom(l, emp)).pop() || null;
+  }
   const startAboveSeq = applicantLevel && !applicantLevel.applicant ? applicantLevel.seq : 1;
 
-  APPROVAL_LEVELS.forEach((l) => {
+  lad.levels.filter((l) => !l.applicant).forEach((l) => {
     const c = cfg[l.level] || {};
     const mode = c.mode || MODE_VISIBILITY;
     const person = chain[l.level];
@@ -361,6 +528,12 @@ async function start({ workflow, recordId, employee, applicantUserId, applicantN
     }
     if (c.active === false) {
       data.push({ ...base, status: ST.SKIPPED, note: `${l.label} is switched off for this workflow` });
+      return;
+    }
+    // Paused in Organization Structure (or switched off in Role Catalog):
+    // never an active approver, and the trail says why.
+    if (l.paused) {
+      data.push({ ...base, approverUserId: null, approverName: null, approverDepartment: null, status: ST.SKIPPED, note: `Skipped — ${l.label} is ${l.pausedWhy || 'paused'}` });
       return;
     }
     // MANAGER AND ASSISTANT MANAGER ARE VIEW-ONLY (permissions.js can()): they
@@ -393,15 +566,120 @@ function loadSteps(workflow, recordId) {
 
 // Turn the first WAITING required step into the current owner. Returns the
 // activated step, or null when the chain has no required step left (= done).
+//
+// THE NEXT STEP IS RE-CHECKED AGAINST THE ORGANIZATION AS IT IS NOW (spec
+// item 19). The approver written when the request was raised is kept while
+// they still hold that level and are still working here — so chains already
+// laid down keep their people. Otherwise:
+//   * the level was paused / removed in Organization Structure -> Skipped;
+//   * the approver left, was switched off, or no longer holds the level ->
+//     the CURRENT holder for this employee takes the step, or, if nobody
+//     holds it now, the step is Skipped with the reason.
+// A test (ZZTEST / example.test) login never takes a real person's step.
+async function approverStillValid(step, lad, tempApplicant) {
+  if (!step.approverUserId) return false;
+  const user = await prisma.user.findUnique({
+    where: { id: step.approverUserId },
+    select: { id: true, name: true, email: true, role: true, hrmsRole: true, status: true, employee: { select: { employmentStatus: true, designation: true } } },
+  }).catch(() => null);
+  if (!user || (user.status || 'Active') !== 'Active') return false;
+  if (!tempApplicant && isTempAccount(user.name, user.email)) return false;
+  if (user.employee && NOT_WORKING.includes(user.employee.employmentStatus)) return false;
+  const l = lad.byLevel[step.level];
+  if (!l) return true; // a legacy rung (e.g. ADMIN): leave it to its owner
+  if (step.level === 'SUPER_ADMIN') return user.role === 'SUPER_ADMIN' || named(user.hrmsRole) === 'SUPER_ADMIN';
+  if (l.system) return hrmsRoleOf(user) === step.level;
+  return holdsCustom(l, { user, designation: user.employee ? user.employee.designation : null });
+}
+
 async function activateNext(workflow, recordId) {
-  const steps = await loadSteps(workflow, recordId);
-  const next = steps.find((s) => s.status === ST.WAITING && s.mode === MODE_REQUIRED);
-  if (!next) return null;
-  const now = new Date();
-  return prisma.approvalStep.update({
-    where: { id: next.id },
-    data: { status: ST.PENDING, activatedAt: now, dueAt: hoursFrom(now, next.slaHours) },
-  });
+  let lad = null;
+  let applicant;
+  for (;;) {
+    const steps = await loadSteps(workflow, recordId);
+    const next = steps.find((s) => s.status === ST.WAITING && s.mode === MODE_REQUIRED);
+    if (!next) return null;
+    const now = new Date();
+    const activate = (extra = {}) => prisma.approvalStep.update({
+      where: { id: next.id },
+      data: { status: ST.PENDING, activatedAt: now, dueAt: hoursFrom(now, next.slaHours), ...extra },
+    });
+    const skip = (note) => prisma.approvalStep.update({ where: { id: next.id }, data: { status: ST.SKIPPED, note } });
+    try {
+      if (!lad) lad = await ladder();
+      const applied = steps.find((s) => s.status === ST.APPLIED);
+      const tempApplicant = applied ? isTempAccount(applied.approverName, applied.actedByName) : false;
+      const label = labelFor(next.level).label;
+      const l = lad.byLevel[next.level];
+      if (!l && isLadderCode(next.level)) {
+        await skip(`Skipped — ${label} is no longer in the Organization Structure`);
+        continue; // eslint-disable-line no-continue
+      }
+      if (l && l.paused) {
+        await skip(`Skipped — ${label} is ${l.pausedWhy || 'paused'}`);
+        continue; // eslint-disable-line no-continue
+      }
+      if (await approverStillValid(next, lad, tempApplicant)) return activate();
+      // Find who holds this level for the applicant now.
+      if (applicant === undefined) {
+        applicant = applied && applied.approverUserId
+          ? await prisma.employee.findUnique({ where: { userId: applied.approverUserId } }).catch(() => null)
+          : null;
+      }
+      const taken = new Set(steps
+        .filter((s) => s.id !== next.id && [ST.APPLIED, ST.APPROVED, ST.PENDING].includes(s.status))
+        .map((s) => s.approverUserId).filter(Boolean));
+      const person = l && applicant ? (await resolveChain(applicant, lad))[next.level] : null;
+      if (person && person.user && !taken.has(person.user.id)) {
+        return activate({
+          approverUserId: person.user.id,
+          approverName: person.name,
+          approverDepartment: person.department || null,
+          note: next.approverName && next.approverName !== person.name
+            ? `${person.name} now holds ${label} (${next.approverName} no longer does)`
+            : next.note,
+        });
+      }
+      if (!next.approverUserId && !l) return activate();
+      await skip(`Skipped — nobody active holds ${label} now${next.approverName ? ` (${next.approverName} no longer does)` : ''}`);
+    } catch (err) {
+      // A check that fails must never strand a request: fall back to the
+      // step exactly as it was laid down.
+      console.error('[approvalWorkflow] next-step check failed', err.message);
+      return activate();
+    }
+  }
+}
+
+// PAUSING / REMOVING A ROLE TAKES IT OFF REQUESTS WAITING ON IT NOW.
+// A Pending step at a level that is paused or no longer on the ladder moves
+// on to the next required step — but ONLY when there is one to move to, so
+// no request is ever completed behind its router's back (leave balances,
+// notice periods … are applied by the router on a real final approval).
+// Returns { moved, kept } counts.
+async function reroutePausedSteps() {
+  const lad = await ladder();
+  const blocked = lad.levels.filter((l) => l.paused).map((l) => l.level);
+  const pending = await prisma.approvalStep.findMany({ where: { status: ST.PENDING } });
+  const stale = pending.filter((s) => blocked.includes(s.level) || (isLadderCode(s.level) && !lad.byLevel[s.level]));
+  let moved = 0; let kept = 0;
+  for (const s of stale) {
+    const later = await prisma.approvalStep.count({
+      where: { workflow: s.workflow, recordId: s.recordId, status: ST.WAITING, mode: MODE_REQUIRED, seq: { gt: s.seq } },
+    });
+    if (!later) { kept += 1; continue; } // eslint-disable-line no-continue
+    const label = labelFor(s.level).label;
+    const why = lad.byLevel[s.level] ? (lad.byLevel[s.level].pausedWhy || 'paused') : 'no longer in the Organization Structure';
+    await prisma.approvalStep.update({ where: { id: s.id }, data: { status: ST.SKIPPED, note: `Skipped — ${label} is ${why}` } });
+    const activated = await activateNext(s.workflow, s.recordId);
+    if (activated) moved += 1;
+    else {
+      // Nobody left to take it: put the step back rather than complete the request silently.
+      await prisma.approvalStep.update({ where: { id: s.id }, data: { status: ST.PENDING, note: s.note } });
+      kept += 1;
+    }
+  }
+  return { moved, kept };
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +707,7 @@ function ageOf(step, now = Date.now()) {
 }
 
 function viewStep(step, now) {
-  const l = LEVEL_BY_ID[step.level] || { label: step.level };
+  const l = labelFor(step.level);
   const age = step.status === ST.PENDING ? ageOf(step, now) : { pendingSince: null, pendingForHours: null, dueAt: step.dueAt ? new Date(step.dueAt).toISOString() : null, overdue: false };
   return {
     id: step.id,
@@ -471,8 +749,8 @@ function trackOf(steps) {
     : (state === 'Approved' ? approved[approved.length - 1] || null : null);
   const directStep = steps.find((s) => s.direct) || null;
   const gating = steps.filter((s) => s.mode === MODE_REQUIRED && s.status !== ST.SKIPPED);
-  const labelOf = (s) => (LEVEL_BY_ID[s.level] || {}).label || LEGACY_LEVEL_LABELS[s.level] || s.level;
-  const shortOf = (s) => (LEVEL_BY_ID[s.level] || {}).short || labelOf(s);
+  const labelOf = (s) => labelFor(s.level).label;
+  const shortOf = (s) => labelFor(s.level).short || labelOf(s);
   return {
     submittedBy: applied ? (applied.actedByName || applied.approverName) : null,
     submittedAt: applied ? isoOf(applied.actedAt || applied.createdAt) : null,
@@ -516,7 +794,7 @@ async function view(workflowId, recordId, user, { canAct = false } = {}) {
     .filter((s) => [ST.APPLIED, ST.APPROVED, ST.REJECTED].includes(s.status))
     .map((s) => ({
       level: s.level,
-      label: (LEVEL_BY_ID[s.level] || {}).label || s.level,
+      label: labelFor(s.level).label,
       name: s.actedByName || s.approverName,
       decision: s.status,
       actedAt: s.actedAt ? new Date(s.actedAt).toISOString() : null,
@@ -527,10 +805,10 @@ async function view(workflowId, recordId, user, { canAct = false } = {}) {
     label: (WORKFLOWS[workflowId] || {}).label || workflowId,
     state: stateOf(steps),
     currentLevel: current ? current.level : null,
-    currentLabel: current ? (LEVEL_BY_ID[current.level] || {}).label : null,
-    currentOwner: current ? { userId: current.approverUserId, name: current.approverName, level: current.level, label: (LEVEL_BY_ID[current.level] || {}).label } : null,
+    currentLabel: current ? labelFor(current.level).label : null,
+    currentOwner: current ? { userId: current.approverUserId, name: current.approverName, level: current.level, label: labelFor(current.level).label } : null,
     currentStatus: current ? 'Pending Approval' : (stateOf(steps) === 'Rejected' ? 'Rejected' : 'Fully approved'),
-    nextApprover: next ? { userId: next.approverUserId, name: next.approverName, level: next.level, label: (LEVEL_BY_ID[next.level] || {}).label } : null,
+    nextApprover: next ? { userId: next.approverUserId, name: next.approverName, level: next.level, label: labelFor(next.level).label } : null,
     previousApprovers: previous,
     ...age,
     // "Computed on read" is a fact the screen states out loud, so nobody
@@ -555,10 +833,10 @@ function summarize(steps, now = Date.now()) {
   return {
     state: stateOf(steps),
     currentLevel: current ? current.level : null,
-    currentLabel: current ? (LEVEL_BY_ID[current.level] || {}).label : null,
+    currentLabel: current ? labelFor(current.level).label : null,
     currentOwnerName: current ? current.approverName : null,
     currentOwnerUserId: current ? current.approverUserId : null,
-    nextLabel: next ? (LEVEL_BY_ID[next.level] || {}).label : null,
+    nextLabel: next ? labelFor(next.level).label : null,
     nextName: next ? next.approverName : null,
     approvedCount: steps.filter((s) => s.status === ST.APPROVED).length,
     requiredCount: steps.filter((s) => s.mode === MODE_REQUIRED).length,
@@ -758,7 +1036,7 @@ async function act(workflowId, recordId, user, { decision, note }) {
     // The out-of-turn refusal. A login further UP the chain gets told where
     // the request actually sits rather than a flat "denied".
     const onChain = steps.some((s) => s.approverUserId === user.id);
-    const label = (LEVEL_BY_ID[current.level] || {}).label || current.level;
+    const label = labelFor(current.level).label;
     return {
       error: {
         status: 403,
@@ -896,6 +1174,9 @@ module.exports = {
   MODES,
   STEP_STATUS: ST,
   WORKFLOWS,
+  ladder,
+  labelFor,
+  reroutePausedSteps,
   resolveChain,
   levelConfig,
   levelConfigList,

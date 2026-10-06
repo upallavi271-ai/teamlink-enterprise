@@ -101,6 +101,8 @@ function transportKey(cfg) {
 }
 
 function buildTransport(cfg) {
+  // TEST SANDBOX: a fake transport that never opens a socket (utils/sandbox.js).
+  if (require('./sandbox').isSandbox()) return require('./sandbox').fakeMailTransport();
   const key = transportKey(cfg);
   if (cached && cached.key === key) return cached.transport;
   if (cached && cached.transport) { try { cached.transport.close(); } catch { /* ignore */ } }

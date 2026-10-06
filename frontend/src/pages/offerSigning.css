@@ -1,0 +1,19 @@
+/* B3 — the candidate's offer page (pages/OfferSigning.jsx). Scoped under .ofs-page. */
+.ofs-page { max-width: 760px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+.ofs-page .ofs-head h1 { font-size: 22px; margin: 4px 0 2px; color: #1f2a44; }
+.ofs-page .ofs-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 14px 0; }
+.ofs-page .ofs-facts > div { background: #f4f7fd; border: 1px solid #dbe4f3; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.ofs-page .ofs-facts span { font-size: 12px; color: #5b6474; }
+.ofs-page .ofs-facts b { font-size: 15px; color: #1f2a44; }
+.ofs-page .ofs-facts .ofs-due { background: #fff6e8; border-color: #f3d39b; }
+.ofs-page .ofs-letter { white-space: pre-wrap; word-wrap: break-word; font-family: Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.55; background: #fff; border: 1px solid #dbe4f3; border-radius: 10px; padding: 16px; margin: 0 0 14px; max-width: 100%; box-sizing: border-box; overflow-x: hidden; }
+.ofs-page .ofs-two { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.ofs-page .ofs-two .btn { flex: 1 1 140px; }
+.ofs-page .ofs-main { min-height: 44px; font-size: 15px; }
+.ofs-page .ofs-info { border-left: 4px solid #e08a00; }
+.ofs-page .field textarea, .ofs-page .field input { width: 100%; box-sizing: border-box; }
+@media (max-width: 480px) {
+  .ofs-page { padding: 12px; }
+  .ofs-page .ofs-head h1 { font-size: 19px; }
+  .ofs-page .ofs-letter { font-size: 14px; padding: 12px; }
+}

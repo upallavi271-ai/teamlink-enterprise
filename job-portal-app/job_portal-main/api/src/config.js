@@ -156,6 +156,102 @@ export const config = {
   loginRateLimitMax: int(process.env.LOGIN_RATE_LIMIT_MAX, 10),
 
   trustProxy: bool(process.env.TRUST_PROXY, false),
+
+  /* ---- external jobs -------------------------------------------- *
+   *
+   * A layer of vacancies that belong to somebody else, kept entirely
+   * separate from TeamLink's own jobs and applications.
+   *
+   * DEFAULT OFF. With `enabled` false the router is never mounted, so
+   * the API surface is identical to what it was before the feature
+   * existed, and the browser layer asks the server once and then does
+   * nothing at all. That is the isolation mechanism: not a flag checked
+   * in fifty places, but a feature that is absent unless switched on.
+   *
+   * autoApplyThreshold is the match percentage below which TeamLink will
+   * not put a candidate forward automatically, even to a source that
+   * permits it. It is a floor, not a target.
+   * ---------------------------------------------------------------- */
+  externalJobs: {
+    enabled: bool(process.env.EXTERNAL_JOBS_ENABLED, false),
+    autoApplyThreshold: int(process.env.EXTERNAL_AUTO_APPLY_THRESHOLD, 80),
+    /* A second, independent switch. Collecting and matching is harmless;
+       SUBMITTING something in a candidate's name is not, so it is off
+       even when the feature is on. */
+    autoApplyEnabled: bool(process.env.EXTERNAL_AUTO_APPLY_ENABLED, false),
+    /* How many external jobs one sync may take from one source. A feed
+       that suddenly returns 400,000 rows is a fault, not a windfall. */
+    syncJobLimit: int(process.env.EXTERNAL_SYNC_JOB_LIMIT, 500),
+
+    /*
+     * The most external jobs any one candidate is ever shown.
+     *
+     * Named here, once, because the cap has to hold in three places that
+     * would otherwise drift: the query that selects the top matches, the
+     * total the page reports, and the pagination that walks through it.
+     * A number repeated in three files is a number that will disagree
+     * with itself.
+     */
+    maxPerCandidate: int(process.env.EXTERNAL_JOBS_MAX_PER_CANDIDATE, 100),
+
+    /* A match below this is not shown at all. Configurable because a
+       thin market wants a lower bar than a crowded one. */
+    /* 30, not 60. At 60 a real pool of a few hundred global postings
+       showed a candidate nothing at all, which reads as broken rather
+       than as selective. The bar is a setting so a crowded market can
+       raise it. */
+    minMatch: int(process.env.EXTERNAL_JOBS_MIN_MATCH, 30),
+
+    /* A posting nobody has seen for this long is not live any more. */
+    activeDays: int(process.env.EXTERNAL_JOBS_ACTIVE_DAYS, 14),
+
+    /* How often the scheduled sync runs, in hours. */
+    syncEveryHours: int(process.env.EXTERNAL_SYNC_EVERY_HOURS, 6),
+
+    /*
+     * ONLY JOBS IN INDIA REACH THE POOL.
+     *
+     * Every source here is global. A candidate in Nellore opening this
+     * page and finding forty American roles learns it is not for them
+     * and stops opening it. Applied at ingestion so a posting that
+     * cannot be shown never takes up a row, a dedupe slot or a match.
+     *
+     * Set EXTERNAL_JOBS_COUNTRY to an empty string to collect
+     * everywhere; anything else keeps the India rule in
+     * api/src/external/india.js.
+     */
+    countryFilter: (process.env.EXTERNAL_JOBS_COUNTRY ?? 'India').trim() !== ''
+      ? (process.env.EXTERNAL_JOBS_COUNTRY ?? 'India').trim()
+      : null,
+
+    /* ---- 0108: compliance, health and freshness ------------------- *
+     * Every default below reproduces the behaviour before 0108, so an
+     * existing deployment changes nothing until somebody sets one.     */
+    /* Days a posting may go unseen by a SUCCESSFUL sync before it is
+       closed (never deleted). Per source: job_sources.close_grace_days. */
+    closeGraceDays: int(process.env.EXTERNAL_JOBS_CLOSE_GRACE_DAYS,
+      int(process.env.EXTERNAL_JOBS_ACTIVE_DAYS, 14)),
+    /* Postings first published longer ago than this are left out of the
+       portal listing. Empty = no limit (the default). */
+    maxAgeDays: process.env.EXTERNAL_JOBS_MAX_AGE_DAYS
+      ? int(process.env.EXTERNAL_JOBS_MAX_AGE_DAYS, null) : null,
+    /* Consecutive failed syncs after which a source is "unhealthy" and
+       administrators are alerted. */
+    unhealthyAfter: int(process.env.EXTERNAL_SOURCE_UNHEALTHY_AFTER, 3),
+    /* Exponential backoff for a failing source: base * 2^(n-1) hours,
+       capped. The base defaults to the sweep interval, so one failure
+       changes nothing and repeated failures slow the retries down. */
+    backoffBaseHours: int(process.env.EXTERNAL_SYNC_BACKOFF_BASE_HOURS,
+      int(process.env.EXTERNAL_SYNC_EVERY_HOURS, 6)),
+    backoffMaxHours: int(process.env.EXTERNAL_SYNC_BACKOFF_MAX_HOURS, 48),
+    /* One sync of one source may not run longer than this. */
+    syncTimeoutMs: int(process.env.EXTERNAL_SYNC_TIMEOUT_MS, 5 * 60 * 1000),
+    /* How many sources may sync at the same time across manual and
+       scheduled runs. */
+    maxConcurrentSyncs: int(process.env.EXTERNAL_SYNC_MAX_CONCURRENT, 2),
+    /* The portal listing / details cache. 0 switches it off. */
+    portalCacheSeconds: int(process.env.EXTERNAL_PORTAL_CACHE_SECONDS, 60),
+  },
 };
 
 /** Placeholders from .env.example must never survive into production. */

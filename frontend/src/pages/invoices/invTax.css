@@ -1,0 +1,43 @@
+/* P4 — GST & TDS on invoices: compact table cells, the summary badge, the
+   invoice summary block and the edit form. Scoped to the Invoices pages. */
+.inv-grid .inv-tax { white-space: nowrap; }
+.inv-grid .inv-taxsub { font-size: 11px; line-height: 1.25; white-space: nowrap; }
+.inv-taxwarn { display: inline-block; margin-top: 3px; font-size: 10.5px; font-weight: 600; color: var(--amber); background: var(--amber-tint); border-radius: 6px; padding: 1px 6px; cursor: help; white-space: nowrap; }
+
+.inv-badges .inv-badge-wide { grid-column: 1 / -1; }
+.inv-badge .inv-tdssplit { font-style: normal; font-size: 11.5px; color: var(--ink-soft); line-height: 1.35; }
+
+/* The invoice summary (InvoiceDetail) — one calculation, line by line. */
+.invx-sum { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+.invx-sum td { padding: 7px 4px; border-bottom: 1px solid var(--line-soft, #eef1f6); vertical-align: top; overflow-wrap: anywhere; }
+.invx-sum td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; width: 9.5em; overflow-wrap: normal; }
+.invx-sum td .small-muted { white-space: normal; }
+.invx-sum td.op { width: 18px; color: var(--ink-soft); text-align: center; }
+.invx-sum tr.sub td { font-size: 12.5px; color: var(--ink-soft); padding-top: 2px; padding-bottom: 5px; }
+.invx-sum tr.sub td:first-child + td { padding-left: 16px; }
+.invx-sum tr.tot td { font-weight: 700; border-top: 1.5px solid var(--line, #dde3ec); }
+.invx-sum tr.net td { font-weight: 700; color: var(--navy, #1f3864); background: var(--brand-tint, #E7EDF7); }
+.invx-sum tr.bal td { font-weight: 700; }
+.invx-sum tr.bal.due td.n { color: var(--red); }
+.invx-sum tr.bal.ok td.n { color: var(--teal); }
+.invx-line { margin-top: 10px; font-size: 13px; padding: 8px 10px; border-radius: 9px; background: var(--paper-raised, #f8fafc); border: 1px dashed var(--line, #dde3ec); overflow-wrap: anywhere; }
+.invx-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; font-size: 13.5px; margin-top: 10px; }
+.invx-kv > span:nth-child(odd) { color: var(--ink-soft); }
+.invx-kv > span:nth-child(even) { text-align: right; }
+.invx-warn { margin-top: 10px; }
+
+/* The edit / create GST & TDS form. */
+.invx-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; }
+.invx-form .field { margin: 0; }
+.invx-form .invx-span3 { grid-column: 1 / -1; }
+.invx-form h4 { margin: 6px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); grid-column: 1 / -1; }
+.invx-seg { display: inline-flex; border: 1px solid var(--line, #d5dce8); border-radius: 9px; overflow: hidden; }
+.invx-seg button { border: 0; background: #fff; padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
+.invx-seg button + button { border-left: 1px solid var(--line, #d5dce8); }
+.invx-seg button[aria-pressed="true"] { background: var(--navy, #1f3864); color: #fff; }
+.invx-help { font-size: 11.5px; color: var(--ink-soft); margin-top: 3px; line-height: 1.35; }
+
+@media (max-width: 720px) {
+  .invx-form { grid-template-columns: 1fr; }
+  .invx-sum { font-size: 13px; }
+}

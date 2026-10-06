@@ -33,12 +33,12 @@ const STAGE_GROUPS = [
     label: 'AI Interview',
     stages: ['AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'],
   },
-  { id: 'recruiter_review', label: 'Recruiter Review', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
-  { id: 'tl_review', label: 'TL Review', stages: ['TL_REVIEW'] },
-  { id: 'bde_review', label: 'BDE Review', stages: ['WITH_BDE', 'BDE_APPROVED'] },
+  { id: 'recruiter_review', label: 'Check by recruiter', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  { id: 'tl_review', label: 'Check by team lead', stages: ['TL_REVIEW'] },
+  { id: 'bde_review', label: 'Check by client manager', stages: ['WITH_BDE', 'BDE_APPROVED'] },
   {
     id: 'client_review',
-    label: 'Client Submission / Decision', // the actual workflow (2026-09-29)
+    label: 'With client', // the actual workflow (2026-09-29): sent to client / client decides
     stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'],
   },
   {
@@ -52,7 +52,7 @@ const STAGE_GROUPS = [
   },
   { id: 'selected', label: 'Selected', stages: ['SELECTED'] },
   { id: 'offer', label: 'Offer', stages: ['OFFER'] },
-  { id: 'joining', label: 'Offer Accepted', stages: ['OFFER_ACCEPTED'] }, // the actual workflow: Offer → Offer Accepted → Joining
+  { id: 'joining', label: 'Offer accepted', stages: ['OFFER_ACCEPTED'] }, // the actual workflow: Offer → Offer Accepted → Joining
   { id: 'joined', label: 'Joined', stages: ['JOINED', 'HIRED'] },
 ];
 

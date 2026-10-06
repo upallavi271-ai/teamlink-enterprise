@@ -19,6 +19,7 @@ import {
 // the holiday calendar with the full Add Holiday form.
 import LeaveBalancesTab from './leave/LeaveBalancesTab.jsx';
 import HolidayCalendar from './leave/HolidaysTab.jsx';
+import LeaveKpiCards from './leave/LeaveKpiCards.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -102,7 +103,8 @@ function ApprovalLevelsPanel({ canConfigure }) {
     <Panel>
       <PanelHead title="⑤ Approval Workflow Levels" />
       <div style={{ padding: '8px 18px 4px' }} className="cell-muted">
-        Employee → TL → STL → HR → Assistant Manager → Manager → Super Admin. Each level is either a
+        {['Employee', ...levels.filter((l) => l.active && !l.paused).map((l) => l.label)].join(' → ')}. The levels come from
+        Administration → Organization Structure. Each level is either a
         <b> required approver</b> (the request stops and waits) or <b>visibility only</b> (they see it, it never waits on them).
         A level with nobody in the employee&apos;s department is skipped, and says so on the request.
       </div>
@@ -112,6 +114,7 @@ function ApprovalLevelsPanel({ canConfigure }) {
           <span>
             {l.label}
             {!l.active && <> <span className="status pending">Off</span></>}
+            {l.paused && <> <span className="status pending">Paused — skipped</span></>}
             <br />
             <span className="cell-muted" style={{ fontSize: 11.5 }}>
               {l.mode === 'required' ? 'Required approver' : 'Visibility only — never gates'}
@@ -331,6 +334,16 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
   }
   useEffect(load, [isHR, reloadKey]);
 
+  const [policyMsg, setPolicyMsg] = useState('');
+  async function saveSandwich(on) {
+    setPolicyMsg('');
+    try {
+      const res = await api.put('/leave/sandwich-policy', { sandwichLeave: on });
+      setCaps((c) => ({ ...c, sandwichLeave: res.data.sandwichLeave }));
+      setPolicyMsg(`Saved. Holidays between leave days are ${res.data.sandwichLeave ? 'now counted as leave' : 'no longer counted as leave'}.`);
+    } catch (e) { setPolicyMsg(e.response?.data?.error || 'Could not save. Try again.'); }
+  }
+
   async function saveCaps(patch) {
     const res = await api.put('/leave/concurrency-policy', patch);
     // The PUT echoes the whole HrConfig row, where escalationOrder is still the
@@ -516,6 +529,22 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                   {canEditPolicy && <button className="btn btn-sm" onClick={() => { const v = prompt('New value for Flat headcount cap', caps.concurrentLeaveCapFlat); if (v !== null) saveCaps({ concurrentLeaveCapFlat: Number(v) || 0 }); }}>Edit</button>}
                 </span>
               </AssignRow>
+              {/* HRMS item 6 — the sandwich rule. */}
+              <AssignRow>
+                <span>
+                  <b>Holiday between two leave days</b><br />
+                  <span className="cell-muted" style={{ fontSize: 11.5 }}>
+                    {caps.sandwichLeave
+                      ? 'Counted as leave. Example: leave on Friday and Monday — Saturday and Sunday are leave too.'
+                      : 'Not counted. A holiday or weekly off stays a day off, even between two leave days.'}
+                  </span>
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className={`status ${caps.sandwichLeave ? 'active' : 'hold'}`}>{caps.sandwichLeave ? 'On' : 'Off'}</span>
+                  {canConfigure && <button className="btn btn-sm" onClick={() => saveSandwich(!caps.sandwichLeave)}>{caps.sandwichLeave ? 'Turn off' : 'Turn on'}</button>}
+                </span>
+              </AssignRow>
+              {policyMsg && <div className="small-muted" style={{ padding: '4px 18px 8px' }}>{policyMsg}</div>}
             </>
           )}
         </Panel>
@@ -621,6 +650,8 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
       {error && <div className="error-text">{error}</div>}
       <Panel>
         <PanelHead title="Leave requests" />
+        {/* HRMS item 23: the list scrolls inside its card (header stays put). */}
+        <div className="lvk-scroll">
         <LeaveRequestsTable
           requests={scoped}
           onOpen={setOpenId}
@@ -631,6 +662,7 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
             </>
           )}
         />
+        </div>
       </Panel>
       {openId && <ApprovalWorkflowModal requestId={openId} onClose={() => setOpenId(null)} onActed={onReload} />}
     </div>
@@ -691,6 +723,8 @@ function ReportsTab({ reloadKey, canExport }) {
 
   return (
     <div>
+      {/* HRMS item 23: a quick summary of the requests the filters below pick. */}
+      {reqState === 'ok' && <LeaveKpiCards requests={scoped} />}
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title="Leave Requests Report">
           <ExportMenu url="/insights/leave/export" params={{ ...leaveExportParams(filters), role }} note="The requests matching these filters" />

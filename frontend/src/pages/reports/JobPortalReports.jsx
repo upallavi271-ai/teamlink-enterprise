@@ -6,7 +6,8 @@ import FilterChips from '../../components/FilterChips.jsx';
 
 const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
 
-export default function JobPortalReports() {
+// embedded: shown as the "Job portal" tab of Reports (no page title of its own).
+export default function JobPortalReports({ embedded = false } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   // Date range: candidates registered (synced in) between these dates — asked of the API.
@@ -31,12 +32,14 @@ export default function JobPortalReports() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Job Portal Reports</h1>
-          <div className="page-sub">From the connected Job Portal (via integration)</div>
+      {!embedded && (
+        <div className="page-head">
+          <div>
+            <h1>Job Portal Reports</h1>
+            <div className="page-sub">From the connected Job Portal (via integration)</div>
+          </div>
         </div>
-      </div>
+      )}
 
       {error && <div className="notice red"><span>{error}</span></div>}
       <MoreFilters

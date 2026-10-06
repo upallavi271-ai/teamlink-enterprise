@@ -94,3 +94,7 @@
   .atsd .atsd-tiles,.atsd .atsd-tiles-4,.atsd .atsd-tiles-6,.atsd .atsd-tiles-7{grid-template-columns:1fr}
   .atsd .atsd-tile{border-right:0}
 }
+
+/* Filters panel (spec 2026-10-03 §B): the date range takes a full row of the panel. */
+.atsd .atsd-panel-date{grid-column:1/-1}
+.atsd .lph-panel-grid .drp .combo{width:auto;min-width:150px}

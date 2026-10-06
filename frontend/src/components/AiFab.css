@@ -19,3 +19,7 @@ body:has([aria-modal="true"]) .ai-fab,
 body:has(.oe-drw) .ai-fab,
 body:has(.reqdrw) .ai-fab,
 body.tl-modal-open .ai-fab{display:none !important}
+/* Emoji-only round button (user, 2026-10-03: "remove the text, keep only the emoji") */
+.ai-fab.ai-fab-pill{width:52px;height:52px;padding:0;border-radius:50%;justify-content:center}
+.ai-fab-pill .ai-fab-mark.ai-fab-emoji{font-size:26px;line-height:1;letter-spacing:0}
+@media (max-width:560px){.ai-fab.ai-fab-pill{width:46px;height:46px;padding:0}.ai-fab-pill .ai-fab-mark.ai-fab-emoji{font-size:22px}}

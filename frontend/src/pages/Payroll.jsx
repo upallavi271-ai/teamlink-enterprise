@@ -901,7 +901,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
         {runs.length === 0 ? <EmptyMini>No payroll has been processed yet.</EmptyMini> : runsLf.rows.length === 0 ? <ListEmpty lf={runsLf} noun="runs" /> : (
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>Month</th><th>Employees</th><th>Total Gross</th><th>Total Net</th><th>Status</th><th>Processed On</th></tr></thead>
+              <thead><tr><th>Month</th><th>Employees</th><th>Total Gross</th><th>Total Net</th><th>Status</th><th>Accounts</th><th>Processed On</th></tr></thead>
               <tbody>
                 {runsPage.slice.map((r) => (
                   <tr key={r.id}>
@@ -922,6 +922,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
                         </>
                       )}
                     </td>
+                    <td>{r.accountsPosted == null ? <span className="cell-muted">—</span> : r.accountsPosted ? <span className="lb-badge green">Posted to Accounts</span> : <span className="lb-badge grey">Not posted</span>}</td>
                     <td className="cell-muted">{r.processedAt ? new Date(r.processedAt).toISOString().slice(0, 10) : '—'}</td>
                   </tr>
                 ))}

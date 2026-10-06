@@ -647,6 +647,21 @@ export function DrillPanel({ listUrl, params, setId, onClose }) {
             <tbody>{rows.map((r) => <tr key={r.id}><td><Link className="rdb-name" to={`/requirements/${r.id}`} onClick={onClose}>{r.title}</Link></td><td>{r.client}</td><td><StatusChip status={r.status} /></td><td className="num">{r.openings}</td></tr>)}</tbody>
           </table>
         )}
+        {data && rows.length > 0 && data.kind === 'inv' && (
+          <table className="rdb-tbl"><thead><tr><th>Invoice</th><th>Client</th><th>Invoice date</th><th>Due</th><th>Status</th><th className="num">Before GST</th><th className="num">Outstanding</th></tr></thead>
+            <tbody>{rows.map((r) => <tr key={r.id}><td><Link className="rdb-name" to={r.to} onClick={onClose}>{r.invoiceNumber || 'Invoice'}</Link></td><td>{r.client}</td><td>{shortDate(r.invoiceDate)}</td><td>{shortDate(r.dueDate)}{r.daysOverdue > 0 && <div className="rdb-sub">{r.daysOverdue} days overdue</div>}</td><td><StatusChip status={r.status} /></td><td className="num">{rupees(r.amount)}</td><td className="num">{rupees(r.outstanding)}</td></tr>)}</tbody>
+          </table>
+        )}
+        {data && rows.length > 0 && data.kind === 'emp' && (
+          <table className="rdb-tbl"><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Today</th></tr></thead>
+            <tbody>{rows.map((r) => <tr key={r.id}><td><Link className="rdb-name" to={r.to} onClick={onClose}>{r.name}</Link></td><td>{r.department || '—'}</td><td>{r.designation || '—'}</td><td>{r.status ? <StatusChip status={r.status} /> : '—'}</td></tr>)}</tbody>
+          </table>
+        )}
+        {data && rows.length > 0 && data.kind === 'client' && (
+          <table className="rdb-tbl"><thead><tr><th>Client</th><th>Agreement</th><th>BDE owner</th><th className="num">Open jobs</th></tr></thead>
+            <tbody>{rows.map((r) => <tr key={r.id}><td>{r.to ? <Link className="rdb-name" to={r.to} onClick={onClose}>{r.name}</Link> : r.name}</td><td><StatusChip tone="amber">{r.agreement || 'Not signed'}</StatusChip></td><td>{r.owner || '—'}</td><td className="num">{fmt(r.openJobs)}</td></tr>)}</tbody>
+          </table>
+        )}
         {data && rows.length > 0 && data.kind === 'user' && (
           <table className="rdb-tbl"><thead><tr><th>User</th><th>Role</th><th>Last sign-in</th></tr></thead>
             <tbody>{rows.map((r) => <tr key={r.id}><td>{r.name}</td><td>{r.role}</td><td>{dateTime(r.at)}</td></tr>)}</tbody>

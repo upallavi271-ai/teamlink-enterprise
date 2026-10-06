@@ -28,6 +28,8 @@
  * "Location:" and nothing else reads as broken software.
  */
 
+import { walkinFacts } from '../portal/walkin-jobs.js';
+
 const SIGN_OFF = 'Regards,\nTeamLink Consultants\nRecruitment Team';
 const HELP = 'If you have any questions, please contact our recruitment team.';
 
@@ -126,6 +128,46 @@ export const MESSAGES = {
     cta: (c) => ({ label: 'View Application Status', url: c.portalUrl }),
   },
 
+  /*
+   * EVERY OTHER STAGE THE CANDIDATE IS TOLD ABOUT.
+   *
+   * There was no generic template, so a stage without one of its own sent
+   * NOTHING - dispatchEvent composed no message and returned "no
+   * template". Four stages had wording and the rest were silent, which is
+   * why a candidate moved to Client Review or given a client interview
+   * heard nothing at all while the portal said their application had
+   * moved.
+   *
+   * `stageLabel` is the CANDIDATE'S wording for the stage, passed by the
+   * route from stages.candidate_label - so this message says "Recruiter
+   * Review" where the desk says "Client Review", and the word "client"
+   * cannot reach a candidate through it.
+   */
+  STAGE_CHANGED: {
+    subject: (c) => `Application Update – ${c.jobTitle}`,
+    body: (c) => `There is an update on your application for the ${c.jobTitle} `
+      + `position.\n\nYour application is now at: ${c.stageLabel || 'the next stage'}.`,
+    facts: jobFacts,
+    instruction: () => 'No action is needed from you right now. We will be in touch '
+      + 'as soon as there is more news.',
+    cta: (c) => ({ label: 'View Application Status', url: c.portalUrl }),
+  },
+
+  /*
+   * The client's interview. The candidate is never told whose it is -
+   * "Client Interview" is the desk's name for the stage, and theirs is
+   * simply "Interview".
+   */
+  STAGE_CLIENT_INTERVIEW: {
+    subject: (c) => `Interview – ${c.jobTitle}`,
+    body: (c) => `Good news. Your profile has been taken forward for an interview for `
+      + `the ${c.jobTitle} position.`,
+    facts: jobFacts,
+    instruction: () => 'Our recruitment team will confirm the date, time and format '
+      + 'with you shortly.\n\nPlease keep your phone and email available.',
+    cta: (c) => ({ label: 'View Application Status', url: c.portalUrl }),
+  },
+
   STAGE_SELECTED: {
     subject: (c) => `Selection Update – ${c.jobTitle} | TeamLink Consultants`,
     body: (c) => 'We are pleased to inform you that you have been selected for the '
@@ -204,7 +246,10 @@ export const MESSAGES = {
   },
 
   CANDIDATE_INVITED: {
-    subject: () => 'Welcome to TeamLink Candidate Portal',
+    /* Says what is inside it. "Welcome to TeamLink Candidate Portal"
+       reads like marketing and gets skimmed past; somebody waiting to be
+       let in is looking for the word "login". */
+    subject: () => 'Your TeamLink login details',
     body: () => 'Your TeamLink Candidate Portal account has been successfully created.\n\n'
       + 'You can use the portal to manage your profile, upload and update your resume, '
       + 'apply for jobs, track applications, view interview schedules, attend online '
@@ -230,11 +275,24 @@ export const MESSAGES = {
   },
 
   APPLICATION_SUBMITTED: {
-    subject: (c) => `Application Submitted – ${c.jobTitle}`,
-    body: (c) => `Your application for the ${c.jobTitle} position has been successfully `
-      + 'submitted using your registered TeamLink resume.',
-    facts: (c) => [...jobFacts(c), ['Applied On', c.applicationDate]],
-    instruction: () => 'You can track your application status from your candidate portal.',
+    subject: (c) => (c.walkin ? `Walk-in Registration Confirmed – ${c.jobTitle}` : `Application Submitted – ${c.jobTitle}`),
+    body: (c) => (c.walkin
+      ? `Your application for the ${c.jobTitle} walk-in interview has been received. `
+        + 'Please come to the venue on the date and time below.'
+      : `Your application for the ${c.jobTitle} position has been successfully `
+        + 'submitted using your registered TeamLink resume.'),
+    /* 0106: the Application ID always, and a walk-in's date, time, venue,
+       address, map, documents and contact - from the job's own record.
+       A walk-in names the role and the place, not the company. */
+    facts: (c) => [
+      ...(c.walkin ? jobFacts({ ...c, company: '' }) : jobFacts(c)),
+      ['Application ID', c.reference],
+      ['Applied On', c.applicationDate],
+      ...walkinFacts(c.walkin),
+    ],
+    instruction: (c) => (c.walkin
+      ? 'Carry this Application ID with you. You can track your application from your candidate portal.'
+      : 'You can track your application status from your candidate portal.'),
     cta: (c) => ({ label: 'Track Application', url: c.portalUrl }),
   },
 };

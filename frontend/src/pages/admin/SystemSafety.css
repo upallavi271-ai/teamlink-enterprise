@@ -1,0 +1,35 @@
+/* Administration -> System (pages/admin/SystemSafety.jsx). Scoped under .sys-page. */
+.sys-page { display: flex; flex-direction: column; gap: 14px; max-width: 920px; }
+.sys-page h2 { font-size: 20px; }
+.sys-page .sys-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.sys-page .sys-main { font-size: 15px; padding: 10px 20px; }
+.sys-page .sys-banner { margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-weight: 600; font-size: 15px; border: 1px solid transparent; }
+.sys-page .sys-banner.sys-green { background: var(--green-tint); color: var(--green); border-color: var(--green); }
+.sys-page .sys-banner.sys-blue { background: var(--blue-tint); color: var(--blue); border-color: var(--blue); }
+.sys-page .sys-banner.sys-orange { background: var(--amber-tint); color: var(--amber); border-color: var(--amber); }
+.sys-page .sys-banner.sys-red { background: var(--red-tint); color: var(--red); border-color: var(--red); }
+.sys-page .sys-note { margin-top: 10px; font-size: 13px; color: var(--ink); background: var(--navy-tint); border-radius: 8px; padding: 8px 12px; }
+.sys-page .sys-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 14px; }
+.sys-page .sys-facts > div { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.sys-page .sys-facts span { font-size: 12px; color: var(--ink-soft); }
+.sys-page .sys-facts b { font-size: 14px; }
+.sys-page .sys-facts small, .sys-page .sys-row small { color: var(--ink-soft); font-weight: 400; font-size: 12px; }
+.sys-page .sys-counts { margin-top: 10px; font-size: 13px; color: var(--ink-soft); }
+.sys-page .sys-problems { margin: 10px 0 0; color: var(--red); font-size: 13px; }
+.sys-page .sys-actions { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+.sys-page .sys-chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sys-page .sys-chip.sys-green { background: var(--green-tint); color: var(--green); }
+.sys-page .sys-chip.sys-red { background: var(--red-tint); color: var(--red); }
+.sys-page .sys-chip.sys-orange { background: var(--amber-tint); color: var(--amber); }
+.sys-page .sys-list { margin-top: 10px; display: flex; flex-direction: column; }
+.sys-page .sys-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+.sys-page .sys-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sys-page .sys-empty { margin-top: 10px; color: var(--ink-soft); }
+.sys-page code { font-size: 12px; word-break: break-all; }
+.sys-page .sys-howto { margin-top: 14px; font-size: 14px; }
+.sys-page .sys-howto summary { cursor: pointer; font-weight: 600; color: var(--navy); }
+.sys-page .sys-howto ol { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.sys-page .sys-howto pre { white-space: pre-wrap; word-break: break-all; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 12px; margin: 6px 0; }
+@media (max-width: 600px) {
+  .sys-page .sys-main { width: 100%; justify-content: center; }
+}

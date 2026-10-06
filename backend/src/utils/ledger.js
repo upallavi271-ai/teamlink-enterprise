@@ -21,14 +21,59 @@ const prisma = require('../db');
 // re-creates any system account that has gone missing.
 const CHART = [
   { code: '1100', name: 'Bank', type: 'ASSET', aliases: null, description: 'Company bank account(s) — salary disbursements are credited here' },
-  { code: '2100', name: 'Payable to Employee', type: 'LIABILITY', aliases: 'Bank/Payable to Employee', description: 'Net salary owed to employees until the bank payment is made' },
+  { code: '2100', name: 'Salary Payable', type: 'LIABILITY', aliases: 'Payable to Employee,Bank/Payable to Employee', description: 'Net salary owed to employees until the bank payment is made' },
   { code: '2210', name: 'PF Payable', type: 'LIABILITY', aliases: null, description: 'Employee + employer provident fund due to EPFO' },
   { code: '2220', name: 'ESI Payable', type: 'LIABILITY', aliases: null, description: 'Employee + employer ESI due to ESIC' },
   { code: '2230', name: 'TDS Payable', type: 'LIABILITY', aliases: null, description: 'Tax deducted at source from salaries (Sec 192)' },
   { code: '2240', name: 'PT Payable', type: 'LIABILITY', aliases: null, description: 'Professional tax due to the state' },
   { code: '2250', name: 'Other Deductions Payable', type: 'LIABILITY', aliases: null, description: 'Other salary deductions / recoveries held for settlement' },
-  { code: '5100', name: 'Salary Expense', type: 'EXPENSE', aliases: null, description: 'Earned gross salary plus employer PF / ESI' },
+  { code: '5100', name: 'Salary Expense', type: 'EXPENSE', aliases: null, description: 'Earned gross salary (Basic + HRA + allowances + bonus, after loss of pay)' },
+  // S3 (2026-10-05): the employer's PF / ESI are their own expense ledgers.
+  { code: '5110', name: 'Employer PF Expense', type: 'EXPENSE', aliases: null, description: "The company's own provident fund contribution" },
+  { code: '5120', name: 'Employer ESI Expense', type: 'EXPENSE', aliases: null, description: "The company's own ESI contribution" },
 ];
+
+// The ledger GROUP an account sits in (S3.3 / S2.4), from its type and code
+// range — no column needed: 10xx/11xx Cash & Bank, 14xx Current Assets
+// (Input GST), 15xx Fixed Assets, 16xx Accumulated Depreciation (a contra
+// asset: credit balance), other assets Current Assets; liabilities Current
+// Liabilities; expenses Expenses; income Income; equity Capital.
+function groupOf(a) {
+  const code = String((a && a.code) || '');
+  const type = String((a && a.type) || '').toUpperCase();
+  if (type === 'ASSET') {
+    if (/^1[01]/.test(code)) return 'Cash & Bank';
+    if (/^15/.test(code)) return 'Fixed Assets';
+    if (/^16/.test(code)) return 'Accumulated Depreciation';
+    return 'Current Assets';
+  }
+  if (type === 'LIABILITY') return 'Current Liabilities';
+  if (type === 'EXPENSE') return 'Expenses';
+  if (type === 'INCOME') return 'Income';
+  if (type === 'EQUITY') return 'Capital';
+  return 'Other';
+}
+
+// Debit-natured accounts (assets, expenses) carry a Dr balance; the rest Cr.
+// Accumulated depreciation is an ASSET-type contra account, so it is shown
+// as a negative (credit) asset balance — the Balance Sheet nets it.
+const debitNatured = (a) => ['ASSET', 'EXPENSE'].includes(String((a && a.type) || '').toUpperCase());
+
+// Create an account if it is missing (by code). Used for the per-category
+// fixed-asset ledgers and the per-bank ledgers, which are made on demand.
+async function ensureAccount({ code, name, type, aliases = null, description = null }) {
+  const byCode = await prisma.ledgerAccount.findUnique({ where: { code } });
+  if (byCode) return byCode;
+  try {
+    return await prisma.ledgerAccount.create({ data: { code, name, type, aliases, description, isSystem: true } });
+  } catch (err) {
+    if (err && err.code === 'P2002') {
+      const again = await prisma.ledgerAccount.findFirst({ where: { OR: [{ code }, { name }] } });
+      if (again) return again;
+    }
+    throw err;
+  }
+}
 
 class LedgerError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -40,6 +85,12 @@ async function ensureChart() {
     const exists = await prisma.ledgerAccount.findUnique({ where: { code: a.code } });
     // eslint-disable-next-line no-await-in-loop
     if (!exists) await prisma.ledgerAccount.create({ data: { ...a, isSystem: true } }).catch(() => {});
+    // S3: 2100 is "Salary Payable" now; the old name stays as an alias.
+    // eslint-disable-next-line no-await-in-loop
+    else if (exists.isSystem && ((a.code === '2100' && exists.name === 'Payable to Employee') || (a.code === '5100' && /employer PF/.test(exists.description || '')))) {
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.ledgerAccount.update({ where: { id: exists.id }, data: { name: a.name, aliases: a.aliases, description: a.description } }).catch(() => {});
+    }
   }
 }
 
@@ -111,6 +162,9 @@ async function postJournal(payload, { idempotencyKey: headerKey = null, actor = 
         debit: side === 'debit' ? paise(amount) / 100 : 0,
         credit: side === 'credit' ? paise(amount) / 100 : 0,
         memo: l.memo ? String(l.memo).slice(0, 300) : null,
+        // A line may name its own record (e.g. one asset in a depreciation run).
+        lineRefType: l.reference_type ? String(l.reference_type).slice(0, 60) : null,
+        lineRefId: l.reference_id ? String(l.reference_id).slice(0, 100) : null,
       });
     });
   };
@@ -145,7 +199,11 @@ async function postJournal(payload, { idempotencyKey: headerKey = null, actor = 
         payload: JSON.stringify(body).slice(0, 20000),
         createdBy: actor && actor.id ? actor.id : null,
         createdByName: actor ? actor.name : null,
-        lines: { create: lines.map((l, i) => ({ ...l, lineNo: i + 1, referenceType, referenceId })) },
+        lines: {
+          create: lines.map(({ lineRefType, lineRefId, ...l }, i) => ({
+            ...l, lineNo: i + 1, referenceType: lineRefType || referenceType, referenceId: lineRefId || referenceId,
+          })),
+        },
       },
       include: { lines: true },
     });
@@ -160,6 +218,68 @@ async function postJournal(payload, { idempotencyKey: headerKey = null, actor = 
   }
 }
 
+// A REVERSAL: never edit or delete a booked entry — book its mirror image
+// (every Dr becomes a Cr and back) under the key "<original key>:reversal",
+// so one entry can be reversed once only. Dated like the original by default
+// (so the original's month nets to zero), referenceType REVERSAL /
+// referenceId = the original entry's id.
+const reversalKey = (key) => `${key}:reversal`;
+
+async function reverseJournal(entryId, { actor = null, narration = null, date = null } = {}) {
+  const orig = await prisma.journalEntry.findUnique({ where: { id: entryId }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
+  if (!orig) throw new LedgerError(404, 'Journal entry not found');
+  if (orig.referenceType === 'REVERSAL') throw new LedgerError(409, 'A reversal cannot itself be reversed');
+  const key = reversalKey(orig.idempotencyKey);
+  const existing = await prisma.journalEntry.findUnique({ where: { idempotencyKey: key }, include: { lines: true } });
+  if (existing) return { status: 200, replay: true, entry: existing };
+  const [y, m] = orig.month.split('-').map(Number);
+  return postJournal({
+    month: m, year: y,
+    date: date || orig.date,
+    narration: narration || `Reversal of ${orig.narration || orig.idempotencyKey}`,
+    source: orig.source,
+    reference_type: 'REVERSAL',
+    reference_id: orig.id,
+    idempotency_key: key,
+    employee_id: orig.employeeId, employee_name: orig.employeeName,
+    reverses: orig.id,
+    // Mirror the lines (each keeps its own record reference).
+    debit: orig.lines.filter((l) => l.credit > 0).map((l) => ({ account: l.accountCode, amount: l.credit, memo: l.memo, reference_type: l.referenceType, reference_id: l.referenceId })),
+    credit: orig.lines.filter((l) => l.debit > 0).map((l) => ({ account: l.accountCode, amount: l.debit, memo: l.memo, reference_type: l.referenceType, reference_id: l.referenceId })),
+  }, { actor });
+}
+
+// Is this entry reversed? (its ":reversal" twin exists)
+async function reversalOf(entry) {
+  if (!entry) return null;
+  return prisma.journalEntry.findUnique({ where: { idempotencyKey: reversalKey(entry.idempotencyKey) } });
+}
+
+// The month of a date string (YYYY-MM-DD -> YYYY-MM).
+const monthOfDate = (d) => String(d || '').slice(0, 7);
+
+// The last day of a YYYY-MM month (YYYY-MM-DD).
+function monthEnd(month) {
+  const [y, m] = String(month).split('-').map(Number);
+  const d = new Date(Date.UTC(y, m, 0));
+  return d.toISOString().slice(0, 10);
+}
+
+// BOOKS CLOSED UP TO (S2.3 "a closed period → a warning"): an Accounts
+// setting, YYYY-MM or null. A change that would touch a closed month is
+// refused with a warning unless the caller confirms it.
+const CLOSED_KEY = 'accounts.booksClosedUpTo';
+async function closedUpTo() {
+  const row = await prisma.appSetting.findUnique({ where: { key: CLOSED_KEY } }).catch(() => null);
+  if (!row) return null;
+  try { const v = JSON.parse(row.value); return /^\d{4}-\d{2}$/.test(String(v || '')) ? v : null; } catch { return null; }
+}
+async function isClosedMonth(month) {
+  const c = await closedUpTo();
+  return !!(c && String(month) <= c);
+}
+
 module.exports = {
-  CHART, LedgerError, ensureChart, accountIndex, serviceToken, isServiceToken, postJournal, paise,
+  CHART, LedgerError, ensureChart, ensureAccount, accountIndex, serviceToken, isServiceToken, postJournal, paise,
+  groupOf, debitNatured, reverseJournal, reversalOf, reversalKey, monthOfDate, monthEnd, closedUpTo, isClosedMonth, CLOSED_KEY,
 };

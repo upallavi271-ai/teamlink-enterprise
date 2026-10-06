@@ -8,6 +8,8 @@ const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus,
   suggestInvoiceFor, txnState, toIsoDate, isOpenInvoice, normName,
 } = require('../utils/accounts');
+// P4 — the invoice's GST / TDS breakdown for the matching panel.
+const TAX = require('../utils/invoiceTax');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -301,7 +303,7 @@ function personName(txn, ctx) {
 
 // What the app thinks a line is, before anyone has said anything.
 function catzGuess(txn, ctx) {
-  const rule = ruleHit(txn, ctx.rules);
+  const rule = ruleHit(txn, ctx.rules.filter((r) => r.kind !== 'client'));
   if (rule) {
     return {
       kind: rule.kind || 'expense',
@@ -469,7 +471,7 @@ function readCreditLine(txn, ctx) {
   //     else, the invoice itself (by number, or by the candidate billed).
   const named = txn.clientName
     ? ctx.clients.find((c) => c.name === txn.clientName)
-    : readClient(txn.description, ctx.clients, ctx.df);
+    : (readClient(txn.description, ctx.clients, ctx.df) || ruleClient(txn, ctx));
   const byInvoice = readInvoiceNamed(txn, ctx, named);
   if (byInvoice) return byInvoice;
   const open = ctx.invoices.filter(isOpenInvoice);
@@ -616,6 +618,7 @@ async function matchContext() {
     df: clientDf(clients),
     vendors: [...new Set(expenses.map((e) => String(e.vendor || '').trim()).filter((v) => v.length > 3))],
     companyNames: [company?.name].filter(Boolean),
+    company: company || {},
   };
 }
 
@@ -820,11 +823,13 @@ router.post('/accounts/:id/fix-opening', async (req, res) => {
 router.get('/', async (req, res) => {
   const accounts = await ensureAccounts();
   const firstId = accounts[0].id;
-  const [transactions, ctx] = await Promise.all([
+  const [transactions, ctx, loans] = await Promise.all([
     prisma.bankTransaction.findMany({ orderBy: { date: 'desc' } }),
     matchContext(),
+    prisma.handLoan.findMany({ include: { links: true } }),
   ]);
   const invoiceById = new Map(ctx.invoices.map((i) => [i.id, i]));
+  const loanLinked = new Set(loans.flatMap((l) => l.links.map((x) => x.bankTxnId)));
 
   const accountId = req.query.bankAccountId && req.query.bankAccountId !== 'All'
     ? req.query.bankAccountId : null;
@@ -855,6 +860,13 @@ router.get('/', async (req, res) => {
     const row = decorate(t, invoiceById, needsMatch ? suggestInvoiceFor(t, ctx.invoices) : null, read);
     row.runningBalance = runAt.get(t.id) ?? null;
     row.breakHere = breaks.get(t.id) || null;
+    // S5: what the app would do with a line nobody has filed yet.
+    if (lineOpen(t, loanLinked)) {
+      const plan = linePlan(t, ctx, loans);
+      row.plan = plan ? {
+        key: planKey(plan), confidence: plan.confidence, module: plan.module, label: plan.label, why: plan.why, rule: plan.rule,
+      } : null;
+    }
     return row;
   }));
 });
@@ -1153,15 +1165,35 @@ async function importStatement(req, {
   // left alone, and every posting can be undone.
   let autoPosted = 0;
   let loansLinked = 0;
+  let billsFiled = 0;
+  let chargesFiled = 0;
   if (created.length && autoPost) {
     const result = await postAllNamed(account.id, firstId, req, { clearOnly: true });
     autoPosted = result.posted;
     // Hand loans: a line that clearly names a loan is linked as its proof.
     loansLinked = (await autoLinkLoans(req)).linked;
+    // S5: office bills and the bank's own charges, filed with the line as proof.
+    const debits = await autoFileDebits(account.id, firstId, req);
+    billsFiled = debits.filed - debits.charges;
+    chargesFiled = debits.charges;
+  }
+
+  // "N lines imported · X matched and proof attached · Y need your review".
+  let autoMatched = 0;
+  let needsReview = 0;
+  if (created.length) {
+    const ids = created.map((t) => t.id);
+    const [fresh, links] = await Promise.all([
+      prisma.bankTransaction.findMany({ where: { id: { in: ids } } }),
+      prisma.handLoanLink.findMany({ where: { bankTxnId: { in: ids } }, select: { bankTxnId: true } }),
+    ]);
+    const linkedSet = new Set(links.map((l) => l.bankTxnId));
+    autoMatched = fresh.filter((t) => !lineOpen(t, linkedSet) && !t.excluded && txnState(t) !== 'Ignored').length;
+    needsReview = fresh.filter((t) => lineOpen(t, linkedSet)).length;
   }
 
   return {
-    batch, account: account.name || account.id, imported: created.length, duplicates: skipped.length, skipped, openingSetTo, autoPosted, loansLinked, transactions: created,
+    batch, account: account.name || account.id, imported: created.length, duplicates: skipped.length, skipped, openingSetTo, autoPosted, loansLinked, billsFiled, chargesFiled, autoMatched, needsReview, transactions: created,
   };
 }
 
@@ -1255,7 +1287,10 @@ async function postAllNamed(accountId, firstId, req, { clearOnly = false } = {})
     if (read.kind === 'already') {
       if (read.clear && read.paymentId) {
         const linked = await linkPayment(txn, read.paymentId, req);
-        if (!linked.error) posted += 1;
+        if (!linked.error) {
+          posted += 1;
+          if (clearOnly) await logAutoMatch(req, txn, { module: 'invoice', confidence: 'high', rule: null }, `receipt on ${read.invoiceNumber || read.invoiceId || '—'}`, 'auto');
+        }
       }
       continue;
     }
@@ -1281,6 +1316,11 @@ async function postAllNamed(accountId, firstId, req, { clearOnly = false } = {})
     });
     posted += 1;
     value = ROUND(value + ROUND(txn.amount - out.plan.unallocated));
+    if (clearOnly) {
+      const viaRule = !txn.clientName && !readClient(txn.description, ctx.clients, ctx.df)
+        ? ruleHit(txn, ctx.rules.filter((x) => x.kind === 'client')) : null;
+      await logAutoMatch(req, txn, { module: 'invoice', confidence: 'high', rule: viaRule ? viaRule.match : null }, out.plan.parts.map((x) => x.invoiceNumber).join(', '), 'auto');
+    }
   }
   if (posted) {
     await logAudit({ userId: req.user.id, action: 'Credits posted automatically on import', entity: 'BankTransaction', entityId: accountId, toValue: `${posted} credit(s) · ${fmtMoney(value)}` });
@@ -1404,6 +1444,22 @@ router.post('/:id/unmatch', async (req, res) => {
   const state = txnState(txn);
   if (state === 'Unmatched') return res.status(400).json({ error: 'This transaction is not matched to anything' });
   if (state === 'Ignored') return res.status(400).json({ error: 'This transaction is ignored — restore it first' });
+  // B9.9a (from B2): once a REFUND has been paid out against this invoice's
+  // credit note, the receipt it reverses cannot be unmatched — the money has
+  // already gone back to the client. Reverse the refund on the credit note first.
+  if (txn.matchedInvoiceId) {
+    // eslint-disable-next-line global-require
+    const CNU = require('../utils/creditNotes');
+    const notes = CNU.ready() ? (await CNU.notesByInvoice([txn.matchedInvoiceId], { issuedOnly: true })).get(txn.matchedInvoiceId) || [] : [];
+    const refunded = notes.filter((n) => n.kind !== 'debit' && n.refundPaidOn && Number(n.refundDue || 0) > 0.005);
+    if (refunded.length) {
+      return res.status(409).json({
+        error: `Can't unmatch: a refund of ₹${refunded.reduce((s, n) => s + Number(n.refundDue || 0), 0).toLocaleString('en-IN')} was already paid to the client against credit note ${refunded.map((n) => n.number).filter(Boolean).join(', ') || 'on this invoice'} (on ${refunded[0].refundPaidOn}). Reverse that refund on the credit note first.`,
+        code: 'REFUND_PAID',
+        creditNotes: refunded.map((n) => ({ id: n.id, number: n.number, refundDue: n.refundDue, refundPaidOn: n.refundPaidOn })),
+      });
+    }
+  }
 
   let reversed = 0;
   if (state === 'Reconciled') {
@@ -1639,16 +1695,41 @@ router.get('/:id/candidates', async (req, res) => {
       + ((clientName && i.client?.name === clientName) ? 0 : 1) * 1e12 + Math.abs(invoiceOutstanding(i) - amount);
     const close = (i) => pointed.has(i.id) || (clientName && i.client?.name === clientName)
       || Math.abs(invoiceOutstanding(i) - amount) <= Math.max(BANK_TOL * 5, amount * 0.25);
-    const shape = (i) => ({
-      id: i.id, invoiceNumber: i.invoiceNumber || i.id.slice(-6), client: i.client?.name || '—',
-      invoiceDate: i.invoiceDate, total: invoiceTotal(i), outstanding: invoiceOutstanding(i),
-      diff: ROUND(invoiceOutstanding(i) - amount), pointed: pointed.has(i.id),
-    });
+    const shape = (i) => {
+      // P4: the bank amount is compared with the NET RECEIVABLE still to come
+      // (amount after GST − TDS − already received) — the same figure the
+      // matching rules above use — with the full calculation and, when it
+      // differs, why.
+      const tv = TAX.taxView(i, { company: ctx.company });
+      return {
+        id: i.id, invoiceNumber: i.invoiceNumber || i.id.slice(-6), client: i.client?.name || '—',
+        invoiceDate: i.invoiceDate, total: invoiceTotal(i), outstanding: invoiceOutstanding(i),
+        diff: ROUND(invoiceOutstanding(i) - amount), pointed: pointed.has(i.id),
+        fy: TAX.fyOf(i.invoiceDate),
+        dueDate: i.dueDate || null,
+        candidate: i.candidate?.name || null,
+        kind: i.candidateId ? 'Placement fee' : 'Service invoice',
+        breakdown: {
+          base: tv.base, gstPercent: tv.gstPercent, gstTypeLabel: tv.gstTypeLabel, cgst: tv.cgst, sgst: tv.sgst, igst: tv.igst,
+          gst: tv.gst, gross: tv.gross, tdsPercent: tv.tdsPercent, tdsBase: tv.tdsBase, tds: tv.tds, net: tv.net,
+          received: tv.received, balance: tv.balance,
+        },
+        compare: TAX.bankCompare(tv, amount),
+      };
+    };
     const payment = read.kind === 'already' && read.paymentId ? ctx.payments.find((p) => p.id === read.paymentId) : null;
+    // P4 — a line that names only the CLIENT (no invoice number, no single
+    // exact amount) while that client has several open invoices: the panel
+    // asks "Select invoice" and shows the chosen one's breakdown to confirm.
+    // The automatic rules are unchanged — this is only what the panel offers.
+    const pickClientId = !read.clear && ['named', 'client'].includes(read.kind) ? read.clientId : null;
+    const pickList = pickClientId ? open.filter((i) => i.clientId === pickClientId)
+      .sort((a, b) => String(a.invoiceDate || '').localeCompare(String(b.invoiceDate || ''))) : [];
     return res.json({
       ...base,
       kind: 'Credit',
       client: clientName,
+      selectInvoice: pickList.length >= 2 ? { client: read.client, clientId: pickClientId, invoices: pickList.map(shape) } : null,
       best: best.map(shape),
       maybe: rest.filter(close).sort((a, b) => score(a) - score(b)).slice(0, 40).map(shape),
       payment: payment ? {
@@ -1719,6 +1800,7 @@ router.post('/:id/settle-invoices', async (req, res) => {
       excess: out.plan.unallocated > 0.5 ? out.plan.unallocated : null,
     },
   });
+  if (clients.length === 1) await learnRule(txn, { kind: 'client', category: clients[0] });
   await logAudit({
     userId: req.user.id, action: 'Invoice(s) settled from the bank statement', entity: 'BankTransaction', entityId: txn.id,
     fromValue: state, toValue: `${fmtMoney(ROUND(txn.amount - out.plan.unallocated))} · ${out.plan.parts.map((p) => p.invoiceNumber).join(', ')}`,
@@ -1791,6 +1873,7 @@ router.post('/:id/match-bills', async (req, res) => {
       excess: left > 0.5 ? left : null,
     },
   });
+  await learnRule(txn, { kind: 'expense', category: first.category, vendor: first.vendor || null });
   await logAudit({
     userId: req.user.id, action: 'Office bill(s) settled from the bank statement', entity: 'BankTransaction', entityId: txn.id,
     toValue: `${links.length} bill(s) · ${fmtMoney(ROUND(txn.amount - left))}${left > 0.5 ? ` · ${fmtMoney(left)} unposted` : ''}`,
@@ -1945,6 +2028,11 @@ router.post('/:id/categorise', async (req, res) => {
     let rule = null;
     if (body.remember) {
       rule = await rememberRule(body.match, {
+        category: account, kind: 'expense', vendor: bill.vendor, gstRate: body.gst === 'Yes' ? Number(body.gstRate) : null,
+      });
+    } else {
+      // S5 learning: a line filed by hand teaches the app its payee.
+      rule = await learnRule(txn, {
         category: account, kind: 'expense', vendor: bill.vendor, gstRate: body.gst === 'Yes' ? Number(body.gstRate) : null,
       });
     }
@@ -2210,6 +2298,7 @@ async function autoLinkLoans(req) {
       try {
         await linkLoanLine(loan, t, req, { auto: true });
         linked += 1;
+        await logAutoMatch(req, t, { module: 'loan', confidence: 'high', rule: null }, `${loan.name} (${t.type === 'Credit' ? 'taken' : 'cleared — paid back'})`, 'auto');
       } catch (err) {
         if (err.code !== 'P2002') throw err; // already linked by a parallel run
       }
@@ -2221,16 +2310,504 @@ async function autoLinkLoans(req) {
   return { linked };
 }
 
+// ---------------------------------------------------------------------------
+// AUTO-MATCH + AUTO-PROOF (Accounts spec S5). Right after every statement
+// import the app reads each line that is still unfiled and makes a PLAN for
+// it — what it is, where its proof goes, and how sure the app is:
+//
+//   high    → done on its own: the receipt / hand-loan movement / office bill
+//             is written (or the existing one linked) with THIS line as its
+//             proof, and the step is logged.
+//   medium  → nothing is filed; the line waits under "Categorise now →" with
+//   low       the suggestion and a one-click Accept that runs the same step.
+//
+// A line somebody has already posted, filed, ignored, excluded or tied to a
+// loan is never read, so a match made by hand is never changed. Nothing here
+// ever deletes a statement line. Every accepted (or hand-corrected) match is
+// remembered as a transaction rule, which is what makes the next statement's
+// copy of that payee "high".
+// ---------------------------------------------------------------------------
+
+const BANK_CHARGE_STRICT = /instaalertchg|alertchg|\bsms\b.*chg|chg.*\bsms\b|nwd.*chg|atm.*chg|\bamb\b.*chg|dpchgs|mabchg|\bchgs?\b|\bchrgs?\b|service charges?|bank charges?|\bmin(imum)? bal|non.?maint|\bdebit card (annual|fee)|\bcard fee\b|\bgst on (chg|charges?)/i;
+const BANK_CHARGE_LOOSE = /\b(charges?|fees?|commission)\b/i;
+
+// A debit that is the bank's own charge — "What the bank takes".
+function isBankCharge(txn) {
+  if (txn.type !== 'Debit') return false;
+  const hay = `${txn.description || ''} ${txn.reference || ''}`;
+  const amount = ROUND(txn.amount);
+  if (BANK_CHARGE_STRICT.test(hay) && amount <= 25000) return true;
+  if (BANK_CHARGE_LOOSE.test(hay) && amount <= 5000 && !/^(UPI|IMPS)-/i.test(String(txn.description || ''))) return true;
+  if (/\bepr\d{6,}/i.test(hay) && amount < 200) return true;
+  return false;
+}
+const BANK_CHARGES_CATEGORY = 'Bank Fees and Charges';
+const lineIsCharge = (t) => t.type === 'Debit' && !t.excluded && (t.category === BANK_CHARGES_CATEGORY || (!t.category && !t.categoryKind && isBankCharge(t)));
+
+// The payee a narration carries — what a learnt rule remembers.
+function payeePattern(txn) {
+  const d = String(txn.description || '').toUpperCase();
+  const m = /^UPI[-/]([A-Z][A-Z0-9 .&]{2,40}?)[-/@]/.exec(d)
+    || /^IMPS-\d+-([A-Z][A-Z .&]{2,40}?)-/.exec(d)
+    || /^(?:NEFT|RTGS)\s*(?:DR|CR)?-[A-Z]{4}\d{5,}-([A-Z][A-Z .&]{2,40}?)-/.exec(d)
+    || /^(?:NEFT|RTGS|IMPS)\s*(?:DR|CR)?[- ]([A-Z][A-Z .&]{3,40}?)(?:-|$)/.exec(d);
+  if (m) {
+    const name = normName(m[1]);
+    const words = name.split(' ').filter((w) => w.length >= 3 && !RULE_STOP.test(w));
+    if (words.length && name.replace(/ /g, '').length >= 4) return name;
+  }
+  const word = ruleWords(txn.description).find((w) => /^[A-Z]{5,}$/.test(w));
+  return word || null;
+}
+
+// A learnt client rule names the client for a credit whose narration does not.
+function ruleClient(txn, ctx) {
+  const rule = ruleHit(txn, (ctx.rules || []).filter((r) => r.kind === 'client'));
+  if (!rule) return null;
+  return ctx.clients.find((c) => c.name === rule.category) || null;
+}
+
+// A line the auto pass (and Accept) may act on: nothing filed on it yet.
+const lineOpen = (t, loanLinked) => !t.excluded && txnState(t) === 'Unmatched'
+  && !t.category && !t.categoryKind && !t.createdBillId && !t.billLinks && !loanLinked.has(t.id);
+
+const accountLabel = (accounts, id) => {
+  const a = accounts.find((x) => x.id === id) || accounts[0];
+  return a ? `${a.bank}${a.accNo ? ` ·${String(a.accNo).slice(-4)}` : ''}` : '—';
+};
+
+// What the app would do with one open line, and how sure it is.
+function linePlan(txn, ctx, loans) {
+  const amount = ROUND(txn.amount);
+  const loanCands = loansForLine(txn, loans).filter((l) => !l.linked);
+  const loanClear = loanCands.filter((l) => l.clear);
+  const loanPlan = (l, confidence, why) => ({
+    confidence,
+    module: 'loan',
+    why,
+    rule: null,
+    label: txn.type === 'Credit' ? `${l.name} — money taken by hand` : `${l.name} — cleared, paid back`,
+    action: { type: 'loan', loanId: l.loanId },
+  });
+  if (txn.type === 'Credit') {
+    const read = readLine(txn, ctx);
+    // A client the narration does not name but a learnt rule does.
+    const rc = !txn.clientName && !readClient(txn.description, ctx.clients, ctx.df)
+      ? ruleHit(txn, ctx.rules.filter((x) => x.kind === 'client')) : null;
+    if (read.kind === 'already' && read.paymentId) {
+      const p = ctx.payments.find((x) => x.id === read.paymentId);
+      if (p && (!p.bankTxnId || p.bankTxnId === txn.id)) {
+        return {
+          confidence: read.clear ? 'high' : 'medium',
+          module: 'invoice',
+          why: read.why,
+          rule: null,
+          label: `Proof for the receipt on ${read.invoiceNumber || 'the invoice'}${read.client ? ` · ${read.client}` : ''}`,
+          action: { type: 'linkPayment', paymentId: p.id },
+        };
+      }
+    }
+    const settle = (confidence, ids) => ({
+      confidence,
+      module: 'invoice',
+      why: read.why,
+      rule: rc ? rc.match : null,
+      label: `${read.client || 'Client'} · ${ids.length > 1 ? `${ids.length} invoices` : `invoice ${read.invoiceNumber || ''}`}`.trim(),
+      action: { type: 'settle', invoiceIds: ids, client: read.client || null },
+    });
+    if (read.kind === 'sure' && read.clear && read.invoiceId) return settle('high', [read.invoiceId]);
+    if (read.kind === 'named' && read.plan?.parts?.length) return settle('medium', read.plan.parts.map((x) => x.invoiceId));
+    if (read.kind === 'sure' && read.invoiceId) return settle('medium', [read.invoiceId]);
+    if (read.kind === 'possible' && read.invoiceId) return settle('medium', [read.invoiceId]);
+    if (read.kind === 'amount' && read.invoiceId) return settle('low', [read.invoiceId]);
+    if (loanClear.length === 1) return loanPlan(loanClear[0], 'high', 'the narration names this hand loan and the amount fits');
+    if (loanCands.length === 1) return loanPlan(loanCands[0], 'medium', loanCands[0].why);
+    if (read.kind === 'transfer') {
+      return {
+        confidence: 'medium', module: 'transfer', why: read.why, rule: null, label: 'Our own transfer', action: { type: 'categorise', kind: 'transfer' },
+      };
+    }
+    if (read.kind === 'hand') {
+      return {
+        confidence: 'low', module: 'hand', why: read.why, rule: null, label: `${read.party} — money taken by hand`, action: { type: 'categorise', kind: 'hand', party: read.party },
+      };
+    }
+    return null;
+  }
+
+  // A debit. 1 — a hand loan the narration names.
+  if (loanClear.length === 1) return loanPlan(loanClear[0], 'high', 'the narration names this hand loan and the amount fits what is still to clear');
+  // 2 — a rule the app has learnt.
+  const rule = ruleHit(txn, ctx.rules.filter((r) => r.kind !== 'client'));
+  if (rule) {
+    const ruleWhy = `rule "${rule.match}"`;
+    if ((rule.kind || 'expense') === 'expense' && rule.category) {
+      return {
+        confidence: 'high',
+        module: rule.category === BANK_CHARGES_CATEGORY ? 'charges' : 'expense',
+        why: ruleWhy,
+        rule: rule.match,
+        label: `${rule.category}${rule.vendor ? ` · ${rule.vendor}` : ''}`,
+        action: {
+          type: 'newBill', category: rule.category, vendor: rule.vendor || null, gstRate: rule.gstRate ?? null,
+        },
+      };
+    }
+    if (rule.kind === 'hand') {
+      const loan = loans.find((l) => normName(l.name) === normName(rule.category));
+      // The rule names a loan on file: high when the loan reading agrees, else a suggestion.
+      if (loan) return { ...loanPlan({ loanId: loan.id, name: loan.name }, loanCands.some((c) => c.loanId === loan.id) ? 'high' : 'medium', ruleWhy), rule: rule.match };
+      return {
+        confidence: 'high', module: 'hand', why: ruleWhy, rule: rule.match, label: `${rule.category || 'Hand loan'} — paid out by hand`, action: { type: 'categorise', kind: 'hand', party: rule.category || null },
+      };
+    }
+    if (rule.kind === 'transfer') {
+      return {
+        confidence: 'high', module: 'transfer', why: ruleWhy, rule: rule.match, label: 'Our own transfer', action: { type: 'categorise', kind: 'transfer' },
+      };
+    }
+  }
+  // 3 — an office bill already on file for this exact amount.
+  const hay = tightName(`${txn.description || ''} ${txn.reference || ''}`);
+  const bills = ctx.expenses.filter((e) => billFree(e, txn.id) && !e.bankTxnId && Math.abs(expenseNet(e) - amount) <= 1);
+  const named = bills.filter((e) => tightName(e.vendor).length >= 4 && hay.indexOf(tightName(e.vendor).slice(0, 8)) >= 0);
+  const billPlan = (b, confidence, why) => ({
+    confidence,
+    module: 'expense',
+    why,
+    rule: null,
+    label: `${b.category}${b.vendor ? ` · ${b.vendor}` : ''}${b.billNumber ? ` · bill ${b.billNumber}` : ''}`,
+    action: { type: 'linkBill', billId: b.id },
+  });
+  if (named.length === 1) return billPlan(named[0], 'high', `the narration names ${named[0].vendor} and the amount is the bill's`);
+  const sameDay = bills.filter((e) => e.expenseDate === txn.date);
+  if (sameDay.length === 1) return billPlan(sameDay[0], 'medium', `same amount and same day as the ${sameDay[0].category} bill`);
+  // 4 — the bank's own charges.
+  if (isBankCharge(txn)) {
+    const account = ctx.accounts.find((a) => a.id === txn.bankAccountId) || ctx.accounts[0];
+    return {
+      confidence: 'high',
+      module: 'charges',
+      why: 'the narration reads as a charge the bank took',
+      rule: null,
+      label: `${BANK_CHARGES_CATEGORY} — what the bank takes`,
+      action: {
+        type: 'newBill', category: BANK_CHARGES_CATEGORY, vendor: account ? account.bank : null, gstRate: null,
+      },
+    };
+  }
+  // 5 — what the narration suggests: a payee paid before beats a loan the
+  // narration only partly names; then a bill of the same amount; then a word.
+  const guess = catzGuess(txn, ctx);
+  const paidBefore = guess && guess.kind === 'expense' && guess.category && guess.vendor;
+  if (!paidBefore && loanCands.length === 1) return loanPlan(loanCands[0], 'medium', loanCands[0].why);
+  if (!paidBefore && bills.length === 1) return billPlan(bills[0], 'low', `same amount as the ${bills[0].category} bill of ${bills[0].expenseDate || '—'}`);
+  if (guess && guess.kind === 'expense' && guess.category) {
+    return {
+      confidence: 'medium',
+      module: 'expense',
+      why: guess.why,
+      rule: null,
+      label: `${guess.category}${guess.vendor ? ` · ${guess.vendor}` : ''}`,
+      action: {
+        type: 'newBill', category: guess.category, vendor: guess.vendor || null, gstRate: guess.gstRate ?? null,
+      },
+    };
+  }
+  if (guess && guess.kind === 'hand') {
+    return {
+      confidence: 'medium', module: 'hand', why: guess.why, rule: null, label: `${guess.party} — paid out by hand`, action: { type: 'categorise', kind: 'hand', party: guess.party },
+    };
+  }
+  if (guess && guess.kind === 'transfer') {
+    return {
+      confidence: 'medium', module: 'transfer', why: guess.why, rule: null, label: 'Our own transfer', action: { type: 'categorise', kind: 'transfer' },
+    };
+  }
+  return null;
+}
+
+// A stable key for a plan, so Accept runs the suggestion the screen showed.
+function planKey(plan) {
+  const a = plan.action || {};
+  return [a.type, (a.invoiceIds || []).join('+'), a.paymentId, a.loanId, a.billId, a.category, a.kind, a.party].filter(Boolean).join(':');
+}
+
+// Run one plan: write the record in its own module with this line as proof.
+// Returns { record } on success or { error }.
+async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) {
+  const a = plan.action;
+  if (a.type === 'linkPayment') {
+    const out = await linkPayment(txn, a.paymentId, req);
+    return out.error ? out : { record: `receipt on ${out.payment?.invoice?.invoiceNumber || out.payment?.invoiceId || '—'}` };
+  }
+  if (a.type === 'settle') {
+    const invoices = ctx.invoices.filter((i) => a.invoiceIds.includes(i.id) && isOpenInvoice(i));
+    if (!invoices.length) return { error: 'The invoice is already settled.' };
+    const out = await postAcrossInvoices(txn, invoices, req);
+    if (out.error) return out;
+    const clients = [...new Set(invoices.map((i) => i.client?.name).filter(Boolean))];
+    await prisma.bankTransaction.update({
+      where: { id: txn.id },
+      data: {
+        matched: true,
+        matchedInvoiceId: out.plan.parts[0].invoiceId,
+        reconStatus: 'Reconciled',
+        matchedBy: actor(req),
+        matchedDate: toIsoDate(new Date()),
+        clientName: clients.length === 1 ? clients[0] : (clients.length ? `${clients[0]} +${clients.length - 1}` : null),
+        excess: out.plan.unallocated > 0.5 ? out.plan.unallocated : null,
+      },
+    });
+    return { record: out.plan.parts.map((p) => p.invoiceNumber).join(', ') };
+  }
+  if (a.type === 'loan') {
+    const loan = loans.find((l) => l.id === a.loanId);
+    if (!loan) return { error: 'That hand loan no longer exists.' };
+    if (txn.type === 'Credit' && (loan.links || []).some((l) => l.kind === 'taken')) return { error: 'This loan already has the line it was taken on.' };
+    try {
+      await linkLoanLine(loan, txn, req, { auto: !accepted });
+    } catch (err) {
+      if (err.code === 'P2002') return { error: 'That line is already linked to a hand loan.' };
+      throw err;
+    }
+    return { record: `${loan.name} (${txn.type === 'Credit' ? 'taken' : 'cleared — paid back'})` };
+  }
+  if (a.type === 'linkBill') {
+    const b = await prisma.officeExpense.findUnique({ where: { id: a.billId } });
+    if (!b || !billFree(b, txn.id) || (b.bankTxnId && b.bankTxnId !== txn.id)) return { error: 'That bill is no longer free.' };
+    const data = { bankTxnId: txn.id };
+    if (b.approvalStatus === 'APPROVED') Object.assign(data, { approvalStatus: 'PAID', paidStatus: 'Paid', paidAt: new Date(), paidById: req.user.id });
+    else if (['PAID', 'REIMBURSED'].includes(b.approvalStatus)) data.paidStatus = 'Paid';
+    await prisma.officeExpense.update({ where: { id: b.id }, data });
+    const links = [{
+      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, net: expenseNet(b),
+    }];
+    const left = ROUND(Math.max(0, ROUND(txn.amount) - expenseNet(b)));
+    await prisma.bankTransaction.update({
+      where: { id: txn.id },
+      data: {
+        category: b.category, categoryKind: 'expense', vendor: b.vendor || null, billLinks: JSON.stringify(links), excess: left > 0.5 ? left : null,
+      },
+    });
+    return { record: `bill ${b.expenseCode || b.billNumber || b.id}` };
+  }
+  if (a.type === 'newBill') {
+    const g = Number(a.gstRate || 0);
+    const money = billMoney({ gst: g > 0 ? 'Yes' : 'No', gstRate: g, tds: 'No' }, ROUND(txn.amount));
+    const bill = await prisma.officeExpense.create({
+      data: {
+        category: a.category,
+        expenseAccount: a.category,
+        vendor: a.vendor || null,
+        expenseDate: String(txn.date).slice(0, 10),
+        monthlyAmount: money.base,
+        gstAmount: money.gst,
+        tdsAmount: money.tds,
+        gstRatePct: g > 0 ? g : null,
+        paymentMode: 'Bank Transfer',
+        description: String(txn.description || '').trim().slice(0, 500) || null,
+        notes: `Filed from the bank statement line of ${txn.date}${txn.reference ? ` (Ref ${txn.reference})` : ''}${accepted ? '' : ' — matched automatically on import'}`,
+        frequency: 'One-Time',
+        recurring: false,
+        entryKind: 'expense',
+        paidStatus: 'Paid',
+        approvalStatus: 'PAID',
+        approvedBy: actor(req),
+        createdById: req.user.id,
+        paidById: req.user.id,
+        paidAt: new Date(),
+        destState: OUR_STATE,
+        bankTxnId: txn.id,
+      },
+    });
+    await prisma.bankTransaction.update({
+      where: { id: txn.id },
+      data: {
+        category: a.category, categoryKind: 'expense', vendor: bill.vendor, counterparty: null, createdBillId: bill.id, excess: null,
+      },
+    });
+    return { record: `bill ${bill.expenseCode || bill.id} · ${a.category}` };
+  }
+  if (a.type === 'categorise') {
+    await prisma.bankTransaction.update({
+      where: { id: txn.id },
+      data: {
+        category: null, categoryKind: a.kind, vendor: null, counterparty: a.party || null,
+      },
+    });
+    return { record: a.kind === 'transfer' ? 'our own transfer' : `hand · ${a.party || '—'}` };
+  }
+  return { error: 'Nothing to do for this line.' };
+}
+
+// Remember an accepted / corrected match as a transaction rule.
+async function learnRule(txn, fields) {
+  if (!fields || !fields.category) return null;
+  const match = payeePattern(txn);
+  if (!match) return null;
+  // Already recognised by a rule pointing the same way — nothing new to learn.
+  const hit = ruleHit(txn, await prisma.bankRule.findMany());
+  if (hit && (hit.kind || 'expense') === fields.kind && hit.category === fields.category) return null;
+  return rememberRule(match, { vendor: null, gstRate: null, ...fields });
+}
+
+function ruleFromPlan(plan, ctx, loans) {
+  const a = plan.action;
+  if (a.type === 'settle' || a.type === 'linkPayment') {
+    const inv = a.type === 'settle'
+      ? ctx.invoices.find((i) => i.id === a.invoiceIds[0])
+      : ctx.invoices.find((i) => i.id === (ctx.payments.find((p) => p.id === a.paymentId) || {}).invoiceId);
+    return inv?.client?.name ? { kind: 'client', category: inv.client.name } : null;
+  }
+  if (a.type === 'loan') {
+    const loan = loans.find((l) => l.id === a.loanId);
+    return loan ? { kind: 'hand', category: loan.name } : null;
+  }
+  if (a.type === 'linkBill') {
+    const b = ctx.expenses.find((e) => e.id === a.billId);
+    return b ? { kind: 'expense', category: b.category, vendor: b.vendor || null } : null;
+  }
+  if (a.type === 'newBill') {
+    return {
+      kind: 'expense', category: a.category, vendor: a.vendor || null, gstRate: a.gstRate ?? null,
+    };
+  }
+  if (a.type === 'categorise') return a.kind === 'hand' ? { kind: 'hand', category: a.party || '' } : { kind: 'transfer', category: 'Own transfer' };
+  return null;
+}
+
+const MODULE_NAME = {
+  invoice: 'Invoices', loan: 'Hand loans', expense: 'Office bills', charges: 'What the bank takes', hand: 'Hand loans', transfer: 'Own transfer',
+};
+
+async function logAutoMatch(req, txn, plan, record, how) {
+  await logAudit({
+    userId: req.user.id,
+    action: how === 'accepted' ? 'Bank line matched (accepted) + proof attached' : 'Bank line matched automatically + proof attached',
+    entity: 'BankTransaction',
+    entityId: txn.id,
+    fromValue: `${txn.date} · ${txn.type === 'Credit' ? 'in' : 'out'} ${fmtMoney(txn.amount)} · ${String(txn.description || '').slice(0, 60)}`,
+    toValue: `${MODULE_NAME[plan.module] || plan.module} · ${record} · confidence ${plan.confidence}${plan.rule ? ` · rule "${plan.rule}"` : ''}`,
+  });
+}
+
+// The import's own pass over the debits of one account (credits go through
+// postAllNamed and hand loans through autoLinkLoans first, exactly as before).
+async function autoFileDebits(accountId, firstId, req) {
+  const [all, loans, ctx] = await Promise.all([
+    prisma.bankTransaction.findMany(),
+    prisma.handLoan.findMany({ include: { links: true } }),
+    matchContext(),
+  ]);
+  const linked = new Set(loans.flatMap((l) => l.links.map((x) => x.bankTxnId)));
+  const mine = oldestFirst(onAccount(all, accountId, firstId)).filter((t) => t.type === 'Debit' && lineOpen(t, linked));
+  const done = [];
+  for (const txn of mine) {
+    const plan = linePlan(txn, ctx, loans);
+    if (!plan || plan.confidence !== 'high' || plan.module === 'loan') continue; // loans: autoLinkLoans
+    const out = await applyPlan(txn, plan, ctx, loans, req);
+    if (out.error) continue;
+    done.push({ txnId: txn.id, module: plan.module });
+    await logAutoMatch(req, txn, plan, out.record, 'auto');
+    if (plan.action.type === 'linkBill') ctx.expenses = await prisma.officeExpense.findMany();
+  }
+  return { filed: done.length, charges: done.filter((d) => d.module === 'charges').length, lines: done };
+}
+
+// Releases the statement line behind an office bill that is being deleted
+// (routes/office.js DELETE): the proof link goes, the line goes back to
+// uncategorised, the line itself is kept.
+async function releaseLineForBill(bill) {
+  if (!bill || !bill.bankTxnId) return null;
+  const txn = await prisma.bankTransaction.findUnique({ where: { id: bill.bankTxnId } });
+  if (!txn) return null;
+  if (txn.createdBillId === bill.id) {
+    return prisma.bankTransaction.update({
+      where: { id: txn.id },
+      data: {
+        category: null, categoryKind: null, vendor: null, counterparty: null, createdBillId: null, excess: null,
+      },
+    });
+  }
+  if (txn.billLinks) {
+    let links = [];
+    try { links = JSON.parse(txn.billLinks) || []; } catch { links = []; }
+    const left = links.filter((l) => l.id !== bill.id);
+    if (left.length === links.length) return null;
+    return prisma.bankTransaction.update({
+      where: { id: txn.id },
+      data: left.length
+        ? { billLinks: JSON.stringify(left) }
+        : {
+          category: null, categoryKind: null, vendor: null, counterparty: null, billLinks: null, excess: null,
+        },
+    });
+  }
+  return null;
+}
+
 const lineShape = (t, why) => ({
   txnId: t.id, date: t.date, reference: t.reference || null, description: t.description, amount: ROUND(t.amount), type: t.type, why: why || null,
 });
 
 router.get('/hand-loans', async (req, res) => {
-  const [loans, txns] = await Promise.all([
+  const [loans, txns, accounts, ctx] = await Promise.all([
     prisma.handLoan.findMany({ include: { links: true }, orderBy: { dateTaken: 'desc' } }),
     prisma.bankTransaction.findMany(),
+    prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' } }),
+    matchContext(),
   ]);
   const reads = loanReads(loans, txns);
+  const txnById = new Map(txns.map((t) => [t.id, t]));
+  // S5 / S6: every movement with the statement line it came off (the proof),
+  // and the people money went out to with no hand entry behind it.
+  const movements = loans.flatMap((l) => l.links.map((x) => {
+    const t = txnById.get(x.bankTxnId);
+    return {
+      linkId: x.id,
+      loanId: l.id,
+      person: l.name,
+      lender: l.lender || null,
+      kind: x.kind,
+      date: x.date,
+      amount: ROUND(x.amount),
+      auto: x.auto,
+      txnId: x.bankTxnId,
+      type: t ? t.type : (x.kind === 'taken' ? 'Credit' : 'Debit'),
+      description: t ? t.description : x.description,
+      reference: t ? t.reference : x.reference,
+      balance: t && t.balance != null ? ROUND(t.balance) : null,
+      account: t ? accountLabel(accounts, t.bankAccountId) : '—',
+      accountId: t ? (t.bankAccountId || (accounts[0] && accounts[0].id) || null) : null,
+    };
+  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const linkedIds = new Set(movements.map((m) => m.txnId));
+  const known = new Set(loans.flatMap((l) => [normName(l.name), normName(l.lender)]).filter(Boolean));
+  const people = new Map();
+  txns.forEach((t) => {
+    if (t.type !== 'Debit' || t.excluded || linkedIds.has(t.id) || txnState(t) === 'Ignored') return;
+    let name = null;
+    if (t.categoryKind === 'hand') name = t.counterparty || null;
+    else if (lineOpen(t, linkedIds)) {
+      const g = catzGuess(t, ctx);
+      if (g && g.kind === 'hand' && g.party && !/cash deposited/i.test(g.party)) name = g.party;
+    }
+    if (!name || known.has(normName(name))) return;
+    const k = normName(name);
+    if (!people.has(k)) people.set(k, { name, out: 0, count: 0, last: null, accountIds: new Set(), lines: [] });
+    const p = people.get(k);
+    p.out = ROUND(p.out + Number(t.amount || 0));
+    p.count += 1;
+    if (!p.last || String(t.date) > p.last) p.last = t.date;
+    p.accountIds.add(t.bankAccountId || (accounts[0] && accounts[0].id));
+    p.lines.push({
+      txnId: t.id, date: t.date, amount: ROUND(t.amount), description: t.description, reference: t.reference || null, balance: t.balance == null ? null : ROUND(t.balance), account: accountLabel(accounts, t.bankAccountId), filed: t.categoryKind === 'hand',
+    });
+  });
+  const unentered = [...people.values()].map((p) => ({
+    name: p.name, out: p.out, count: p.count, last: p.last, account: [...p.accountIds].map((id) => accountLabel(accounts, id)).join(', '), lines: p.lines.sort((a, b) => String(b.date).localeCompare(String(a.date))),
+  })).sort((a, b) => b.out - a.out);
   const rows = loans.map((l) => {
     const f = loanFigures(l);
     const r = reads.get(l.id);
@@ -2260,12 +2837,18 @@ router.get('/hand-loans', async (req, res) => {
   });
   res.json({
     loans: rows,
+    movements,
+    unentered,
     summary: {
       loans: rows.length,
       taken: ROUND(rows.reduce((s, l) => s + l.amount, 0)),
       repaid: ROUND(rows.reduce((s, l) => s + l.repaid, 0)),
       pending: ROUND(rows.reduce((s, l) => s + l.pending, 0)),
       cleared: rows.filter((l) => l.cleared).length,
+      paidOutNoEntry: ROUND(unentered.reduce((s, p) => s + p.out, 0)),
+      peopleNoEntry: unentered.length,
+      auto: movements.filter((m) => m.auto).length,
+      accounts: new Set(movements.map((m) => m.accountId).filter(Boolean)).size,
     },
   });
 });
@@ -2358,6 +2941,7 @@ router.post('/hand-loans/:id/link', async (req, res) => {
     if (err.code === 'P2002') return res.status(400).json({ error: 'That line is already linked to a hand loan' });
     throw err;
   }
+  await learnRule(txn, { kind: 'hand', category: loan.name });
   await logAudit({
     userId: req.user.id, action: txn.type === 'Credit' ? 'Hand loan taking linked' : 'Hand loan repayment linked', entity: 'HandLoan', entityId: loan.id,
     toValue: `${txn.date} · ${fmtMoney(txn.amount)}${txn.reference ? ` · ${txn.reference}` : ''}`,
@@ -2378,6 +2962,159 @@ router.delete('/hand-loans/links/:linkId', async (req, res) => {
 
 router.post('/hand-loans/auto-match', async (req, res) => {
   res.json(await autoLinkLoans(req));
+});
+
+// ---------------------------------------------------------------------------
+// S5 — the proof strip, "What the bank takes", and one-click Accept.
+// ---------------------------------------------------------------------------
+
+// Every payment the books hold, and whether a document stands behind it:
+// a client receipt (the bank line, or the proof on the invoice itself when
+// there is no receipt row), a paid office bill (the bank line or its bill
+// file), and every hand-loan movement (always a bank line).
+router.get('/proof', async (req, res) => {
+  let invoices;
+  try {
+    invoices = await prisma.invoice.findMany({
+      select: {
+        id: true, receivedAmount: true, proofFile: true, proofRef: true, _count: { select: { payments: true } },
+      },
+    });
+  } catch {
+    invoices = (await prisma.invoice.findMany({ select: { id: true, receivedAmount: true, _count: { select: { payments: true } } } }));
+  }
+  const [payments, bills, loanLinks] = await Promise.all([
+    prisma.invoicePayment.findMany({ select: { id: true, bankTxnId: true } }),
+    prisma.officeExpense.findMany({ where: { paidStatus: 'Paid' }, select: { id: true, entryKind: true, bankTxnId: true, proofFile: true, proofName: true } }),
+    prisma.handLoanLink.count(),
+  ]);
+  const onInvoice = invoices.filter((i) => Number(i.receivedAmount || 0) > 0.5 && !i._count.payments);
+  const receipts = { total: payments.length + onInvoice.length, withProof: payments.filter((p) => p.bankTxnId).length + onInvoice.filter((i) => i.proofFile || i.proofRef).length };
+  const office = bills.filter((b) => b.entryKind !== 'hand');
+  const billsOut = { total: office.length, withProof: office.filter((b) => b.bankTxnId || b.proofFile || b.proofName).length };
+  const loans = { total: loanLinks, withProof: loanLinks };
+  const total = receipts.total + billsOut.total + loans.total;
+  const withProof = receipts.withProof + billsOut.withProof + loans.withProof;
+  res.json({
+    total, withProof, missing: total - withProof, receipts, bills: billsOut, loans,
+  });
+});
+
+// The bank's own charges, every account, month by month.
+router.get('/charges', async (req, res) => {
+  const txns = await prisma.bankTransaction.findMany();
+  const lines = txns.filter(lineIsCharge);
+  const byMonth = new Map();
+  lines.forEach((t) => {
+    const k = String(t.date || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(k)) return;
+    if (!byMonth.has(k)) byMonth.set(k, { key: k, count: 0, amount: 0, notFiled: 0 });
+    const m = byMonth.get(k);
+    m.count += 1;
+    m.amount = ROUND(m.amount + Number(t.amount || 0));
+    if (t.category !== BANK_CHARGES_CATEGORY) m.notFiled += 1;
+  });
+  const months = [...byMonth.values()].sort((a, b) => b.key.localeCompare(a.key));
+  const total = ROUND(months.reduce((s, m) => s + m.amount, 0));
+  res.json({
+    months,
+    total,
+    monthsCounted: months.length,
+    average: months.length ? ROUND(total / months.length) : 0,
+    notFiled: lines.filter((t) => t.category !== BANK_CHARGES_CATEGORY).length,
+    notFiledAmount: ROUND(lines.filter((t) => t.category !== BANK_CHARGES_CATEGORY).reduce((s, t) => s + Number(t.amount || 0), 0)),
+  });
+});
+
+// One-click Accept on a suggestion under "Categorise now →": runs exactly the
+// step the automatic pass would have run, then remembers it as a rule.
+router.post('/:id/accept', async (req, res) => {
+  const txn = await loadTxn(req.params.id);
+  if (!txn) return res.status(404).json({ error: 'Transaction not found' });
+  const [loans, ctx] = await Promise.all([prisma.handLoan.findMany({ include: { links: true } }), matchContext()]);
+  const linked = new Set(loans.flatMap((l) => l.links.map((x) => x.bankTxnId)));
+  if (!lineOpen(txn, linked)) return res.status(400).json({ error: 'This line is already filed, posted or ignored — undo that first.' });
+  const plan = linePlan(txn, ctx, loans);
+  if (!plan) return res.status(400).json({ error: 'The app has no suggestion for this line — open it and file it by hand.' });
+  if (req.body?.key && req.body.key !== planKey(plan)) {
+    return res.status(409).json({ error: 'The suggestion for this line has changed — look at it again.', plan: { ...plan, key: planKey(plan) } });
+  }
+  const out = await applyPlan(txn, plan, ctx, loans, req, { accepted: true });
+  if (out.error) return res.status(400).json({ error: out.error });
+  await logAutoMatch(req, txn, plan, out.record, 'accepted');
+  let rule = null;
+  if (!plan.rule) {
+    rule = await learnRule(txn, ruleFromPlan(plan, ctx, loans));
+    if (rule) await logAudit({ userId: req.user.id, action: 'Transaction rule learnt', entity: 'BankRule', entityId: rule.id, toValue: `"${rule.match}" → ${rule.category} (${rule.kind})` });
+  }
+  return res.json({
+    accepted: true, record: out.record, module: plan.module, label: plan.label, rule: rule ? { id: rule.id, match: rule.match, category: rule.category, kind: rule.kind } : null,
+  });
+});
+
+// "⬇ Whole workbook" (S6): the whole Bank & Reconciliation screen as one
+// Excel file — accounts, every statement line with what it is filed as, the
+// hand-loan movements, what the bank takes month by month, and the rules.
+router.get('/workbook', requirePerm('accounts', 'accounts', 'Bank & Reconciliation', 'export'), async (req, res) => {
+  const ExcelJS = require('exceljs');
+  const accounts = await ensureAccounts();
+  const firstId = accounts[0].id;
+  const [txns, loans, rules] = await Promise.all([
+    prisma.bankTransaction.findMany({ orderBy: [{ date: 'asc' }, { createdAt: 'asc' }] }),
+    prisma.handLoan.findMany({ include: { links: true } }),
+    prisma.bankRule.findMany({ orderBy: { createdAt: 'asc' } }),
+  ]);
+  const loanOf = new Map(loans.flatMap((l) => l.links.map((x) => [x.bankTxnId, { loan: l, link: x }])));
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'TeamLink Accounts';
+  const sheet = (name, cols, rows) => {
+    const ws = wb.addWorksheet(name);
+    ws.columns = cols.map(([header, key, width, numFmt]) => ({ header, key, width: width || 16, style: numFmt ? { numFmt } : undefined }));
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+    rows.forEach((r) => ws.addRow(r));
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    return ws;
+  };
+  const INR = '#,##,##0.00';
+  sheet('Accounts', [['Bank', 'bank', 18], ['Account name', 'name', 30], ['Account no', 'accNo', 18], ['Opening balance', 'openBal', 16, INR], ['Opening date', 'openDate', 14], ['Lines', 'lines', 8], ['Amount in bank', 'inBank', 16, INR], ['Amount in the books', 'inBooks', 18, INR]],
+    accounts.map((a) => {
+      const s = accountStat(a, onAccount(txns, a.id, firstId));
+      return { bank: a.bank, name: a.name || '', accNo: a.accNo || '', openBal: Number(a.openBal || 0), openDate: a.openDate || '', lines: s.lines, inBank: s.inBank, inBooks: s.inBooks };
+    }));
+  const filedAs = (t) => {
+    const l = loanOf.get(t.id);
+    if (l) return `Hand loan · ${l.loan.name} · ${l.link.kind === 'taken' ? 'taken' : 'cleared — paid back'}`;
+    if (txnState(t) === 'Reconciled') return `Client receipt · ${t.clientName || '—'}`;
+    if (t.categoryKind === 'transfer') return 'Our own transfer';
+    if (t.categoryKind === 'hand') return `Hand · ${t.counterparty || '—'}`;
+    if (t.category) return `Office bill · ${t.category}`;
+    if (txnState(t) === 'Ignored') return 'Ignored';
+    return t.excluded ? 'Excluded' : 'Uncategorised';
+  };
+  sheet('Statement lines', [['Account', 'account', 22], ['Date', 'date', 12], ['Narration', 'description', 60], ['Reference', 'reference', 20], ['Money in', 'credit', 14, INR], ['Money out', 'debit', 14, INR], ['Balance after', 'balance', 16, INR], ['State', 'state', 12], ['Filed as', 'filed', 40]],
+    txns.map((t) => ({
+      account: accountLabel(accounts, t.bankAccountId), date: t.date, description: t.description, reference: t.reference || '', credit: t.type === 'Credit' ? ROUND(t.amount) : null, debit: t.type === 'Debit' ? ROUND(t.amount) : null, balance: t.balance == null ? null : ROUND(t.balance), state: txnState(t), filed: filedAs(t),
+    })));
+  sheet('Hand loans', [['Person', 'person', 26], ['Date', 'date', 12], ['What happened', 'kind', 22], ['Amount', 'amount', 14, INR], ['Account', 'account', 22], ['Narration', 'description', 60], ['Picked up on its own', 'auto', 10]],
+    loans.flatMap((l) => l.links.map((x) => {
+      const t = txns.find((y) => y.id === x.bankTxnId);
+      return { person: l.name, date: x.date, kind: x.kind === 'taken' ? 'Taken by hand' : 'Cleared — paid back', amount: ROUND(x.amount), account: t ? accountLabel(accounts, t.bankAccountId) : '—', description: x.description || '', auto: x.auto ? 'yes' : '' };
+    })));
+  const charges = new Map();
+  txns.filter(lineIsCharge).forEach((t) => {
+    const k = String(t.date).slice(0, 7);
+    const m = charges.get(k) || { month: k, count: 0, amount: 0 };
+    m.count += 1; m.amount = ROUND(m.amount + Number(t.amount || 0));
+    charges.set(k, m);
+  });
+  sheet('What the bank takes', [['Month', 'month', 12], ['Charges', 'count', 10], ['Amount', 'amount', 14, INR]], [...charges.values()].sort((a, b) => a.month.localeCompare(b.month)));
+  sheet('Transaction rules', [['Text on the statement', 'match', 30], ['Becomes', 'category', 30], ['Kind', 'kind', 12], ['Vendor', 'vendor', 24]], rules.map((r) => ({ match: r.match, category: r.category, kind: r.kind, vendor: r.vendor || '' })));
+  await logAudit({ userId: req.user.id, action: 'Bank workbook exported', entity: 'BankTransaction', toValue: `${txns.length} line(s) · ${accounts.length} account(s)` });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="bank-and-reconciliation-${toIsoDate(new Date())}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 // Every debit the app already recognises becomes an office bill in one press.
@@ -2415,7 +3152,7 @@ router.get('/rules', async (req, res) => {
   ]);
   res.json(rules.map((r) => ({
     ...r,
-    group: coaGroupOf(r.category),
+    group: r.kind === 'client' ? 'Client receipt' : r.kind === 'hand' ? 'Hand loan' : r.kind === 'transfer' ? 'Own transfer' : coaGroupOf(r.category),
     lines: transactions.filter((t) => ruleHit(t, [r])).length,
   })));
 });
@@ -2707,4 +3444,5 @@ function parseCsv(text) {
 }
 
 router.importStatement = importStatement;
+router.releaseLineForBill = releaseLineForBill;
 module.exports = router;

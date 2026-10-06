@@ -52,6 +52,50 @@ const POSTING_ENTITY = 'RequirementPosting';
 
 const day = (d) => (d ? new Date(d).toISOString() : null);
 
+// ---------------------------------------------------------------------------
+// THE SIX SITES (ATS change list §5 "Posting" / §16, 2026-10-03). On a job
+// the user ticks the sites; each tick is stored by name in
+// Requirement.postingSources (no migration). Nothing recorded yet (null / '')
+// means "the free sites" — Job Portal, Website, Google Jobs — which is what
+// user notes #7 asked for ("posted to all sources"). Unticking everything is
+// stored as 'None' so it is not read back as "nothing recorded".
+//   free  Job Portal (our own app, pushed), Website + Google Jobs (feeds this
+//         app serves: /api/public/jobs.feed and /api/public/jobs.jsonld)
+//   paid  Naukri, Shine, Indeed — no account / API: "Needs account"
+// ---------------------------------------------------------------------------
+const SITES = [
+  { id: 'jobportal', name: 'Job Portal', source: 'TeamLink Job Portal', kind: 'free' },
+  { id: 'naukri', name: 'Naukri', source: 'Naukri', kind: 'paid' },
+  { id: 'shine', name: 'Shine', source: 'Shine', kind: 'paid' },
+  { id: 'indeed', name: 'Indeed', source: 'Indeed', kind: 'paid' },
+  // Save & Post (2026-10-05): LinkedIn is a source too (partner API, utils/jobBoards/linkedin.js).
+  { id: 'linkedin', name: 'LinkedIn', source: 'LinkedIn', kind: 'paid' },
+  { id: 'website', name: 'Website', source: 'TeamLink Website', kind: 'free' },
+  { id: 'google', name: 'Google Jobs', source: 'Google Jobs', kind: 'free' },
+];
+const FREE_SITE_IDS = SITES.filter((s) => s.kind === 'free').map((s) => s.id);
+const PUBLIC_SITE_IDS = ['jobportal', 'website', 'google'];
+const NONE_TICKED = 'None';
+const siteCsv = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
+// The ticked site ids. Nothing recorded -> the free sites.
+function tickedSites(r) {
+  const raw = r ? r.postingSources : null;
+  if (raw == null || String(raw).trim() === '') return [...FREE_SITE_IDS];
+  const names = siteCsv(raw);
+  if (names.length === 1 && names[0] === NONE_TICKED) return [];
+  return SITES.filter((s) => names.includes(s.source) || names.includes(s.name)).map((s) => s.id);
+}
+const siteTicked = (r, id) => tickedSites(r).includes(id);
+// Does the job belong on ANY public channel (portal, careers page, feeds)?
+const wantsPublic = (r) => tickedSites(r).some((id) => PUBLIC_SITE_IDS.includes(id));
+// The stored value for a set of ticked ids. Other names already in the field
+// that are not one of the six (e.g. "Social Media") are kept.
+function postingSourcesFor(r, ids) {
+  const keep = siteCsv(r && r.postingSources).filter((n) => n !== NONE_TICKED && !SITES.some((s) => s.source === n || s.name === n));
+  const names = [...SITES.filter((s) => ids.includes(s.id)).map((s) => s.source), ...keep];
+  return names.length ? names.join(', ') : NONE_TICKED;
+}
+
 // Was the requirement last unpublished BY A PERSON (Job Portal workspace),
 // rather than taken down automatically when it closed?
 async function manuallyUnpublished(r) {
@@ -99,7 +143,8 @@ async function autoPost(requirementId, ctx = {}) {
   try {
     const r = await prisma.requirement.findUnique({ where: { id: requirementId } });
     if (!r) return { ok: false, skipped: 'no such requirement' };
-    const live = requirementIsLive(r.status);
+    // A job whose ticks name no public site is kept off every public channel.
+    const live = requirementIsLive(r.status) && wantsPublic(r);
     // A status move between two live statuses is not a reopen.
     const revived = ctx.trigger === 'create' || ctx.trigger === 'retry'
       || (ctx.trigger === 'status' && !requirementIsLive(ctx.prevStatus));
@@ -133,21 +178,26 @@ async function autoPost(requirementId, ctx = {}) {
         userId: ctx.actorId || null, actorName: ctx.actorName || null,
         action: 'Requirement auto-posted to all sources', entity: 'Requirement', entityId: r.id,
         fromValue: 'Not published',
-        toValue: r.internal
-          ? 'TeamLink Job Portal, careers page (internal hire — not in the job-board feed)'
-          : 'TeamLink Job Portal, careers page, job-board feeds (Naukri, Indeed, LinkedIn, Shine)',
+        // Each ticked site's real result is its own RequirementPosting audit row
+        // (utils/jobConnectors.js) — nothing here claims a board posted it.
+        toValue: 'Published — posting to each ticked site (each site logs its own result)',
       });
-      await audit(ctx, r, 'Auto-posted', 'Careers page', 'Listed on the careers page and the website feed');
-      if (!r.internal) await audit(ctx, r, 'Auto-posted', 'Job board feeds', 'In the XML / JSON-LD job feeds boards pull');
     } else if (change === 'taken-down') {
       await logAudit({
         userId: ctx.actorId || null, actorName: ctx.actorName || null,
         action: 'Requirement taken down from all sources', entity: 'Requirement', entityId: r.id,
         fromValue: 'Published', toValue: `Requirement is ${requirementStatusLabel(r.status)}`,
       });
-      await audit(ctx, r, 'Auto-removed', 'Careers page', `Requirement is ${requirementStatusLabel(r.status)}`);
-      if (!r.internal) await audit(ctx, r, 'Auto-removed', 'Job board feeds', `Requirement is ${requirementStatusLabel(r.status)}`);
     }
+
+    // SAVE & POST (2026-10-05): every ticked source's own connector — post,
+    // update, or take down — in the background, one result row per source
+    // (utils/jobConnectors.js). Runs for every trigger, including a job that
+    // goes live when its agreement turns Active (openParkedJobs).
+    // eslint-disable-next-line global-require
+    if (!ctx.skipSources) await require('./jobConnectors').syncAllLater(r.id, {
+      actorId: ctx.actorId || null, actorName: ctx.actorName || null, trigger: ctx.sourceTrigger || ctx.trigger || 'edit',
+    });
 
     // Never on the portal and nothing to do there.
     if (!change && !r.portalPublished && !r.portalPublishedAt) return { ok: true, change: null };
@@ -168,103 +218,48 @@ async function autoPost(requirementId, ctx = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// "Posted on" — per-source status for the requirement page.
+// PER-SOURCE STATUS (Save & Post, 2026-10-05). Both views now read the
+// stored result of each source's connector (utils/jobConnectors.js,
+// RequirementPosting) — the job page card (siteStatuses) and the older
+// "Posted on" panel / drawer line (postingChannels, same rows reshaped).
 // ---------------------------------------------------------------------------
-async function postingChannels(r) {
-  const live = requirementIsLive(r.status);
-  const published = !!r.portalPublished;
-  const statusText = requirementStatusLabel(r.status);
-  const portalCfg = bridge.status();
-
-  const [lastFailure, manual, integrations, manualLog] = await Promise.all([
-    prisma.syncLog.findFirst({
-      where: { recordRef: r.id, status: 'Failed', reason: { startsWith: 'Job Portal push failed' } },
-      orderBy: { createdAt: 'desc' },
-    }),
-    manuallyUnpublished(r),
-    prisma.integration.findMany({ where: { id: { in: JOB_BOARDS.map((b) => b.id) } }, select: { id: true, connected: true, state: true } }),
-    prisma.auditLog.findMany({
-      where: { entity: POSTING_ENTITY, entityId: r.id, fromValue: { in: JOB_BOARDS.map((b) => b.name) } },
-      orderBy: { createdAt: 'desc' },
-      include: { user: { select: { name: true } } },
-      take: 40,
-    }),
-  ]);
-
-  const notLive = r.portalPublishedAt
-    ? { status: 'Taken down', tone: 'grey', detail: `Requirement is ${statusText} — removed automatically.` }
-    : { status: 'Not posted', tone: 'grey', detail: `Requirement is ${statusText} — it posts automatically when it goes live.` };
-  const unpublishedByHand = manual
-    ? { status: 'Not posted', tone: 'amber', detail: `Unpublished by ${manual.by || 'a user'} on ${new Date(manual.at).toLocaleDateString('en-IN')} — press Retry to post it again.` }
-    : { status: 'Pending', tone: 'amber', detail: 'Will be posted on the next save or sync — press Retry to post now.' };
-
-  // 1. TeamLink Job Portal — really pushed, really confirmed.
-  let portal;
-  if (!portalCfg.configured) {
-    portal = { status: 'Not configured', tone: 'grey', detail: 'JOB_PORTAL_SYNC_TOKEN / JOB_PORTAL_PUSH_SECRET are not set in backend/.env.' };
-  } else if (!live) portal = notLive;
-  else if (!published) portal = unpublishedByHand;
-  else if (r.portalSyncStatus === 'Synced') {
-    portal = { status: 'Posted', tone: 'green', detail: `Open on the TeamLink Job Portal since ${new Date(r.portalPublishedAt || r.updatedAt).toLocaleDateString('en-IN')}.`, link: bridge.jobUrl(r.id) };
-  } else if (r.portalSyncStatus === 'Failed') {
-    const why = lastFailure ? lastFailure.reason.replace(/^Job Portal push failed:\s*/, '') : 'the last push did not go through';
-    portal = { status: 'Failed', tone: 'red', detail: `Not on the portal: ${why}.`, reason: why, at: lastFailure ? lastFailure.createdAt : null };
-  } else {
-    portal = { status: 'Pending', tone: 'amber', detail: 'Published — waiting for the portal to confirm.' };
-  }
-
-  // 2. Careers page + website feed — served from this database, so it is
-  // exactly as posted as the requirement is published.
-  let careers;
-  if (!live) careers = notLive;
-  else if (!published) careers = unpublishedByHand;
-  else careers = { status: 'Posted', tone: 'green', detail: 'On the public careers page and the website job feed.', link: `/careers/${r.id}`, feed: FEED_PATHS.json };
-
-  const channels = [
-    { id: 'jobportal', name: 'TeamLink Job Portal', kind: 'push', retry: true, ...portal },
-    { id: 'careers', name: 'Careers page & website feed', kind: 'feed', ...careers },
-  ];
-
-  // 3. Job boards — feed-based (no posting API is implemented).
-  const connected = new Map(integrations.map((i) => [i.id, i.connected]));
-  JOB_BOARDS.forEach((b) => {
-    const entries = manualLog.filter((l) => l.fromValue === b.name);
-    const lastManual = entries.find((l) => ['Posted manually', 'Removed'].includes(l.action));
-    let st;
-    if (r.internal) {
-      st = { status: 'Not applicable', tone: 'grey', detail: 'TeamLink internal hire — kept to TeamLink’s own channels (Job Portal, careers page).' };
-    } else if (!live) st = notLive;
-    else if (!published) st = unpublishedByHand;
-    else if (lastManual && lastManual.action === 'Posted manually') {
-      st = { status: 'Posted', tone: 'green', detail: `Posted manually by ${lastManual.user ? lastManual.user.name : 'a user'} on ${new Date(lastManual.createdAt).toLocaleDateString('en-IN')}.`, link: lastManual.toValue || null };
-    } else {
-      st = {
-        status: 'Feed ready',
-        tone: 'blue',
-        detail: connected.get(b.id)
-          ? `${b.name} is marked connected, but TeamLink has no ${b.name} posting API — the job is in the XML feed ${b.name} pulls.`
-          : `In the XML job feed — connect in Integrations (register the feed URL in your ${b.name} employer account) and ${b.name} collects it.`,
-        feed: FEED_PATHS.xml,
-      };
-    }
-    channels.push({ id: b.id, name: b.name, kind: 'board', ...st });
-  });
-
+// eslint-disable-next-line global-require
+const connectors = () => require('./jobConnectors');
+async function siteStatuses(r, user = null) {
+  return connectors().siteStatuses(r, user);
+}
+async function postingChannels(r, user = null) {
+  const sites = await connectors().siteStatuses(r, user);
+  const channels = sites.filter((s) => s.ticked || s.status !== 'Off').map((s) => ({
+    id: s.id, name: s.name, kind: s.kind, status: s.status, tone: s.tone, detail: s.reason, reason: s.reason,
+    link: s.link, retry: s.canRetry, externalJobId: s.externalJobId, postedAt: s.postedAt, retryCount: s.retryCount,
+  }));
+  const count = (st) => channels.filter((c) => c.status === st).length;
   return {
-    live,
-    published,
+    live: requirementIsLive(r.status),
+    published: !!r.portalPublished,
     publishedAt: day(r.portalPublishedAt),
     unpublishedAt: day(r.portalUnpublishedAt),
     internal: !!r.internal,
     channels,
     feeds: FEED_PATHS,
-    summary: {
-      posted: channels.filter((c) => c.status === 'Posted').length,
-      feedReady: channels.filter((c) => c.status === 'Feed ready').length,
-      failed: channels.filter((c) => c.status === 'Failed').length,
-      pending: channels.filter((c) => c.status === 'Pending').length,
-    },
+    summary: { posted: count('Posted'), feedReady: count('Submitted to feed'), failed: count('Failed'), pending: count('Pending'), integrationRequired: count('Integration Required') },
   };
 }
 
-module.exports = { autoPost, postingChannels, JOB_BOARDS, FEED_PATHS };
+// The Job Portal's failure in words a new joiner understands.
+function plainPortalReason(raw) {
+  const t = String(raw || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return 'The Job Portal did not accept the job last time.';
+  if (/not reachable/i.test(t)) return 'The Job Portal app was not running, so the job could not be sent. Start the Job Portal app, then press Retry.';
+  if (/did not answer in time/i.test(t)) return 'The Job Portal was too slow to answer. Press Retry in a minute.';
+  if (/Cannot (POST|PUT)/i.test(t) || /answered 404/i.test(t)) return 'The Job Portal app is an old version that cannot take jobs yet. Update the Job Portal app, then press Retry.';
+  if (/answered 401|answered 403|token|secret/i.test(t)) return 'The Job Portal refused our key. Ask the Admin to check the Job Portal key on the server.';
+  if (/SANDBOX/i.test(t)) return 'This is the test copy — the Job Portal is never contacted from here.';
+  return `The Job Portal said: ${t.slice(0, 160)}`;
+}
+
+module.exports = {
+  autoPost, postingChannels, JOB_BOARDS, FEED_PATHS,
+  SITES, tickedSites, siteTicked, wantsPublic, postingSourcesFor, siteStatuses, plainPortalReason,
+};

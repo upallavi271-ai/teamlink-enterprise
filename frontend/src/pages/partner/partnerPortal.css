@@ -1,0 +1,98 @@
+/* Partner Portal (B7) — scoped under .pp-*; uses the app's tokens, fonts,
+   buttons, table and modal styles. Copied from the vendor portal's look so
+   both outside portals feel the same; no shared file. */
+.pp-login .pp-login-title{margin-top:8px;font-weight:700;font-size:16px;color:var(--brand,#1F3864)}
+.pp-login .pp-show{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:12px}
+.pp-login .pp-wide{width:100%;justify-content:center;margin-top:16px}
+
+.pp-page{min-height:100vh;background:var(--paper)}
+.pp-top{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 20px;background:var(--paper-raised);border-bottom:1px solid var(--line);box-shadow:var(--shadow-sm)}
+.pp-brand{display:flex;align-items:center;gap:12px;min-width:0}
+.pp-top-title{font-weight:700;color:var(--brand,#1F3864);font-size:15px;white-space:nowrap;padding-left:12px;border-left:1px solid var(--line)}
+.pp-top-right{display:flex;align-items:center;gap:10px;min-width:0}
+.pp-top-name{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}
+.pp-top-name small{font-weight:400;color:var(--ink-soft)}
+.pp-main{max-width:1180px;margin:0 auto;padding:20px}
+.pp-head h1{font-size:22px;margin:0 0 4px}
+.pp-head{margin-bottom:14px}
+
+.pp-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.pp-tab{border:1px solid var(--line);background:var(--paper-raised);border-radius:999px;padding:8px 16px;font-weight:600;cursor:pointer;font-size:13.5px;color:var(--ink)}
+.pp-tab.on{background:var(--brand,#1F3864);border-color:var(--brand,#1F3864);color:#fff}
+.pp-tab em{font-style:normal;opacity:.85;margin-left:6px}
+
+.pp-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.pp-job{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:left;cursor:pointer;font:inherit;color:inherit;display:flex;flex-direction:column;gap:6px}
+.pp-job:hover{border-color:var(--brand,#1F3864)}
+.pp-job h3{margin:0;font-size:15px}
+.pp-job .pp-meta{font-size:12.5px;color:var(--ink-soft)}
+.pp-job .pp-foot{display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:12.5px}
+
+.pp-stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.pp-stat div{background:var(--paper-raised);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.pp-stat b{display:block;font-size:20px}
+.pp-stat span{font-size:12px;color:var(--ink-soft)}
+
+.pp-tag{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.pp-green{background:var(--green-tint);color:var(--green)}
+.pp-blue{background:var(--blue-tint);color:var(--blue)}
+.pp-yellow{background:var(--amber-tint);color:var(--amber)}
+.pp-red{background:var(--red-tint);color:var(--red)}
+.pp-grey{background:var(--line-soft);color:var(--ink-soft)}
+
+.pp-table table{width:100%}
+.pp-table th{white-space:nowrap}
+.pp-table td.num,.pp-table th.num{text-align:right}
+.pp-rows{display:none}
+.pp-empty{background:var(--paper-raised);border:1px dashed var(--line);border-radius:12px;padding:40px 20px;text-align:center;color:var(--ink-soft)}
+.pp-empty h3{color:var(--ink);margin:0 0 6px}
+
+.pp-overlay{position:fixed;inset:0;z-index:60;background:rgba(22,32,43,.35);display:flex;justify-content:flex-end}
+.pp-drawer{width:min(620px,100%);height:100%;background:var(--paper-raised);box-shadow:var(--shadow-md);display:flex;flex-direction:column;overflow:hidden}
+.pp-drawer-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line)}
+.pp-drawer-head h2{font-size:17px;margin:2px 0 0}
+.pp-drawer-code{font-size:12px;color:var(--ink-soft);font-weight:600}
+.pp-drawer-body{padding:14px 18px 30px;overflow:auto}
+.pp-sec{margin-bottom:18px}
+.pp-sec h3{font-size:13.5px;margin:0 0 8px}
+.pp-dl{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;margin:0;font-size:13.5px}
+.pp-dl dt{color:var(--ink-soft)}
+.pp-dl dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.pp-pre{white-space:pre-wrap;font-size:13px}
+.pp-list{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:10px}
+.pp-list li{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 12px;font-size:13px}
+.pp-list li+li{border-top:1px solid var(--line-soft)}
+.pp-none{font-size:13px;color:var(--ink-soft);padding:10px 12px;border:1px dashed var(--line);border-radius:10px}
+
+.pp-form label{display:block;margin:10px 0 4px;font-size:12.5px;font-weight:600}
+.pp-form input,.pp-form textarea,.pp-form select{width:100%}
+.pp-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pp-consent{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px}
+.pp-consent input{width:auto;margin-top:3px}
+.pp-form-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.pp-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:80;background:var(--ink);color:#fff;padding:10px 18px;border-radius:10px;font-size:13.5px;box-shadow:var(--shadow-md)}
+.pp-notice{border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:6px;background:var(--paper-raised)}
+.pp-notice.unread{border-color:var(--brand,#1F3864)}
+.pp-notice small{color:var(--ink-soft)}
+.pp-bell{position:relative}
+.pp-bell em{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border-radius:999px;font-size:10px;font-style:normal;padding:1px 5px;font-weight:700}
+
+@media (max-width: 760px){
+  .pp-top{padding:8px 12px;flex-wrap:wrap;row-gap:6px}
+  .pp-brand{flex:1 1 auto}
+  .pp-top-right{flex:1 1 100%;justify-content:space-between}
+  .pp-top-name{max-width:70vw}
+  .pp-top-title{font-size:13.5px;padding-left:8px}
+  .pp-main{padding:14px 12px}
+  .pp-head h1{font-size:19px}
+  .pp-table{display:none}
+  .pp-rows{display:flex;flex-direction:column;gap:8px}
+  .pp-row{display:block;width:100%;text-align:left;background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;color:inherit}
+  .pp-row-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .pp-row-meta{font-size:12.5px;color:var(--ink-soft);margin-top:3px}
+  .pp-two{grid-template-columns:1fr}
+  .pp-dl{grid-template-columns:105px 1fr}
+  .pp-drawer{width:100%}
+  .pp-cards{grid-template-columns:1fr}
+}

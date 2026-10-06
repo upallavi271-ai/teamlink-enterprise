@@ -8,6 +8,8 @@
 .att-self .att-range{align-items:center;margin-bottom:10px}
 .att-self .att-range label{margin:0}
 .att-self .att-note{font-size:11px;margin-top:2px}
+/* A day off (holiday / weekly off): no colour. */
+.status.att-off{background:#f1f3f6;color:#5b6472}
 .att-self .att-num{text-align:center}
 .att-self .att-capture{display:block;max-width:100%;border-radius:8px;margin:0 auto}
 .att-self .att-days{display:flex;gap:10px;flex-wrap:wrap}

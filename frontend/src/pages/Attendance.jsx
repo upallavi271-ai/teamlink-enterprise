@@ -17,8 +17,10 @@ import MyAttendance, { downloadFrom } from './attendance/MyAttendance.jsx';
 import { MonthlySummaryTab, PunchImageButton } from './attendance/TeamAttendance.jsx';
 import { DayKpis, RangeBar, RangeKpis, DateTotalsTable, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
 import { DayStatus } from './attendance/MyAttendance.jsx';
+import NotifySettings from './attendance/NotifySettings.jsx';
 import CheckinSettings from './attendance/CheckinSettings.jsx';
 import AlertSettings from './attendance/AlertSettings.jsx';
+import KpiReport from './attendance/KpiReport.jsx';
 import ExportMenu from '../components/ExportMenu.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../components/dataio/DataIoBar.jsx';
@@ -66,59 +68,11 @@ function StatusPill({ status }) {
 
 const TREND_RANGE_KEY = 'tl_range_attendance_trend';
 
-// Per-person day counts for a range (Dashboard / Biometric list in range mode).
-function PeopleInRange({ rows, kpi, onClearKpi, title }) {
-  const [q, setQ] = useState('');
-  const shown = rows.filter((r) => matchesKpi(r, kpi)
-    && (!q || `${r.employeeCode} ${r.name} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
-  const page = usePaged(shown);
-  return (
-    <Panel style={{ marginTop: 16 }}>
-      <PanelHead title={`${title}${kpi ? ` · ${KPI_NAME[kpi] || kpi}` : ''}`} />
-      <div className="filter-row" style={{ margin: '12px 18px' }}>
-        {kpi && <button className="btn btn-sm" onClick={onClearKpi} title="Show everyone again">✕ {KPI_NAME[kpi] || kpi}</button>}
-        <input type="search" placeholder="Search code, name, department…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-        <span className="small-muted" style={{ alignSelf: 'center' }}>{shown.length} of {rows.length} people</span>
-      </div>
-      <ScrollTable>
-        <table>
-          <thead>
-            <tr>
-              <th>Code</th><th>Name</th><th>Department</th><th title="Days on the rolls in the range">Days</th><th>Working days</th><th>Present</th><th>Late</th>
-              <th>Half Day</th><th>Absent</th><th>On Leave</th><th>No record</th><th>Week-off / Holiday</th>
-            </tr>
-          </thead>
-          <tbody>
-            {page.slice.map((r) => (
-              <tr key={r.employeeId}>
-                <td><b>{r.employeeCode}</b></td>
-                <td>{r.name}<div className="att-sub">{r.role || ''}</div></td>
-                <td className="cell-muted">{r.department || '—'}</td>
-                <td className="att-num">{r.days}</td>
-                <td className="att-num">{r.workingDays}</td>
-                <td className="att-num"><b>{r.present}</b></td>
-                <td className="att-num">{r.late}</td>
-                <td className="att-num">{r.halfDay}</td>
-                <td className="att-num">{r.absent}</td>
-                <td className="att-num">{r.onLeave}</td>
-                <td className="att-num">{r.noRecord + r.notYet}</td>
-                <td className="att-num">{r.offDay}</td>
-              </tr>
-            ))}
-            {shown.length === 0 && <tr><td colSpan="12"><ListEmpty lf={{ activeCount: q || kpi ? 1 : 0, clear: () => { setQ(''); onClearKpi(); } }} noun="people" title="No one on the rolls in this period." /></td></tr>}
-          </tbody>
-        </table>
-      </ScrollTable>
-      {page.total > 0 && <Pager page={page} noun="people" />}
-    </Panel>
-  );
-}
-
 const KPI_NAME = {
   ...BUCKET_LABEL,
-  late: 'Late arrivals', checkedIn: 'Checked in', checkedOut: 'Checked out', missingCheckOut: 'Missing check-out', punched: 'People with punches',
+  headcount: 'Everyone (headcount)', late: 'Late arrivals', checkedIn: 'Checked in', checkedOut: 'Checked out', missingCheckOut: 'Missing check-out', punched: 'People with punches',
   presentAny: 'Present on ≥ 1 day', presentAll: 'Present every working day', halfDayAny: 'Half day on ≥ 1 day', absentAny: 'Absent on ≥ 1 day',
-  onLeaveAny: 'On leave on ≥ 1 day', noRecordAny: 'No record on ≥ 1 day', lateAny: 'Late on ≥ 1 day',
+  onLeaveAny: 'On leave on ≥ 1 day', noRecordAny: 'No device data on ≥ 1 day', lateAny: 'Late on ≥ 1 day',
 };
 
 function NoDataNotice({ data, to }) {
@@ -126,7 +80,7 @@ function NoDataNotice({ data, to }) {
   return (
     <div className="notice att-notice">
       No punch or marked attendance has been recorded after <b>{fmtDay(data.latestDataDate)}</b> — past working days since then show as
-      <b> No record</b> (not Absent) until the device punches or an import arrive.
+      <b> No device data</b> (not Absent) until the device punches or an import arrive.
     </div>
   );
 }
@@ -196,7 +150,7 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
           computation as the Biometric list and the Punch Log
           (routes/attendance.js dayReport()). */}
       <Panel>
-        <PanelHead title={isRange ? `Attendance ${fmtDay(data.from)} → ${fmtDay(data.to)}` : `Attendance on ${fmtDay(data.date)}`}>
+        <PanelHead title="Attendance">
           {/* Data I/O for the chosen period: Export all (a summary row per
               person) · Export one employee (every day) — GET
               /api/insights/attendance/export. Attendance is imported with the
@@ -208,30 +162,12 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
             <button type="button" className="btn btn-sm" onClick={() => goTab('biometric')}>Open date-wise list →</button>
           </span>
         </PanelHead>
-        <div style={{ padding: '12px 18px 6px' }}>
-          <RangeBar from={range.from} to={range.to} onChange={pickRange} latest={data.latestDataDate} today={data.today} />
-          {range.from > data.today && <div className="notice">This period is in the future — nobody can have attendance yet.</div>}
-          <NoDataNotice data={data} to={range.to} />
-          {isRange ? (
-            <>
-              <RangeKpis summary={data.summary} from={data.from} to={data.to} active={kpi} onPick={setKpi} />
-              <div className="att-kpi-sep">Date-wise totals — click a date to open that day</div>
-              <DateTotalsTable days={data.days} onPickDay={(d) => pickRange(d, d)} />
-            </>
-          ) : (
-            <DayKpis
-              kpis={k}
-              date={data.date}
-              headcount={data.headcount}
-              active={kpi}
-              onPick={(key) => { setKpi(key); setShowMarking(true); }}
-              extra={[{ key: 'halfDayCut', value: k.halfDayCut, label: `Late half-day cuts (${data.month})`, hint: 'Payroll: late days beyond the free allowance, this month' }]}
-            />
-          )}
-        </div>
+        {/* THE ATTENDANCE REPORT (user, 2026-10-05): Day / Week / Month,
+            Department -> Employee, the cards and their lists, Export to Excel
+            (./attendance/KpiReport.jsx). Its period also drives the daily
+            marking and the regularization list below. */}
+        <KpiReport onRangeChange={(f, t) => { if (f !== range.from || t !== range.to) pickRange(f, t); }} />
       </Panel>
-
-      {isRange && <PeopleInRange rows={data.summary.rows} kpi={kpi} onClearKpi={() => setKpi('')} title="People — days in the period" />}
 
       <TwoCol>
         {!isRange ? (
@@ -296,7 +232,7 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
                     <td><b>{r.employeeCode}</b></td>
                     <td>{r.name}</td>
                     <td className="cell-muted">{r.department || '—'}</td>
-                    <td>{r.dayStatus ? <DayStatus status={r.dayStatus === 'Missing Check-In' && r.bucket === 'noRecord' ? 'No record' : r.dayStatus} /> : '—'}</td>
+                    <td>{r.dayStatus ? <DayStatus status={r.bucket === 'noRecord' ? 'No device data' : r.dayStatus} /> : '—'}</td>
                     <td><StatusPill status={r.status} /></td>
                     <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
                     <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
@@ -382,7 +318,7 @@ const bioFields = (seen, roles) => [
 
 const REPORT_COLS = [
   ['employeeNo', 'Employee No'], ['employeeRef', 'Employee Ref No'], ['name', 'Employee Name'], ['department', 'Department'],
-  ['designation', 'Designation'], ['dateLabel', 'Date'], ['firstCheckIn', 'First Check In'], ['lastCheckOut', 'Last Check Out'],
+  ['designation', 'Designation'], ['dateLabel', 'Date'], ['dayStatusCol', 'Day status'], ['firstCheckIn', 'First Check In'], ['lastCheckOut', 'Last Check Out'],
   ['workLocation', 'Work Location'], ['totalTimeWorked', 'Total Time Worked'], ['totalBreak', 'Total Time In Break'], ['totalHours', 'Total Hours'],
 ];
 
@@ -471,13 +407,14 @@ function BiometricTab() {
           </thead>
           <tbody>
             {page.slice.map((r) => (
-              <tr key={`${r.employeeId}-${r.date}`} title={`${r.dateLabel}: ${r.bucket === 'noRecord' ? 'No record' : r.status}${r.note ? ` — ${r.note}` : ''}${r.source && r.source !== '—' ? ` · ${r.source}` : ''}`}>
+              <tr key={`${r.employeeId}-${r.date}`} title={`${r.dateLabel}: ${r.bucket === 'noRecord' ? 'No device data' : r.status}${r.note ? ` — ${r.note}` : ''}${r.source && r.source !== '—' ? ` · ${r.source}` : ''}`}>
                 <td><b>{r.employeeNo}</b></td>
                 <td>{r.employeeRef}</td>
                 <td>{r.name}</td>
                 <td className="cell-muted">{r.department || ''}</td>
                 <td className="cell-muted">{r.designation || ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.dateLabel}</td>
+                <td>{r.status ? <DayStatus status={r.bucket === 'noRecord' ? 'No device data' : r.status} earlyLogout={r.earlyLogout} /> : ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.firstCheckIn || ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.lastCheckOut || ''}</td>
                 <td className="cell-muted">{r.workLocation || ''}</td>
@@ -487,11 +424,11 @@ function BiometricTab() {
               </tr>
             ))}
             {data && rows.length === 0 && (
-              <tr><td colSpan="12">
+              <tr><td colSpan="13">
                 <ListEmpty lf={{ activeCount: lf.activeCount || kpi ? 1 : 0, clear: clearAll }} noun="rows" title="No check-ins in this period." />
               </td></tr>
             )}
-            {!data && !error && <tr><td colSpan="12" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+            {!data && !error && <tr><td colSpan="13" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
           </tbody>
         </table>
       </ScrollTable>
@@ -780,13 +717,15 @@ function MethodsTab({ canEdit, canAssign, canAlerts }) {
   }
   useEffect(load, []);
 
+  const [saved, setSaved] = useState('');
   async function save(patch) {
-    setError('');
+    setError(''); setSaved('');
     const next = { ...policy, ...patch };
     setPolicy(next);
     try {
       const res = await api.put('/attendance/policy', next);
       setPolicy(res.data);
+      setSaved('Saved.');
     } catch (err) {
       setError(err.response?.data?.error || 'Could not save the policy');
     }
@@ -831,9 +770,42 @@ function MethodsTab({ canEdit, canAssign, canAlerts }) {
             <label>Minimum hours for a full day</label>
             <input type="number" disabled={!canEdit} defaultValue={policy.fullDayHours} onBlur={(e) => save({ fullDayHours: Number(e.target.value) })} />
           </div>
+          {/* HRMS items 2 / 3: the working day and its two halves. */}
+          <div className="grid-2">
+            <div className="field">
+              <label>Working day starts</label>
+              <input type="time" disabled={!canEdit} defaultValue={policy.workStartTime} onBlur={(e) => save({ workStartTime: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Working day ends</label>
+              <input type="time" disabled={!canEdit} defaultValue={policy.workEndTime} onBlur={(e) => save({ workEndTime: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>First half ends / second half starts</label>
+              <input type="time" disabled={!canEdit} defaultValue={policy.halfDaySplit} onBlur={(e) => save({ halfDaySplit: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Early logout from (leaving before this = Half day)</label>
+              <input type="time" disabled={!canEdit} defaultValue={policy.earlyLogoutFrom || '17:00'} onBlur={(e) => save({ earlyLogoutFrom: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Early logout: minutes allowed before the end</label>
+              <input type="number" min="0" max="240" disabled={!canEdit} defaultValue={policy.earlyLogoutGraceMinutes} onBlur={(e) => save({ earlyLogoutGraceMinutes: Number(e.target.value) })} />
+            </div>
+          </div>
+          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5, marginBottom: 8 }}>
+            <input type="checkbox" style={{ width: 16, height: 16, minHeight: 0 }} disabled={!canEdit} checked={!!policy.halfDayBySession} onChange={(e) => save({ halfDayBySession: e.target.checked })} />
+            A half day needs one full half (not just the half-day hours)
+          </label>
+          {saved && <div className="small-muted">{saved}</div>}
           {error && <div className="error-text">{error}</div>}
           <div className="small-muted" style={{ fontSize: 11.5 }}>
             Late days beyond the free allowance become half-day cuts in the monthly report.
+            {' '}First half {policy.workStartTime}–{policy.halfDaySplit}, second half {policy.halfDaySplit}–{policy.workEndTime}.
+            {' '}Leaving between {policy.earlyLogoutFrom || '17:00'} and {policy.workEndTime} is an <b>Early Logout</b> ({policy.earlyLogoutFrom || '17:00'} sharp counts as early logout).
+            {' '}Leaving before {policy.earlyLogoutFrom || '17:00'}, or coming at / after {policy.halfDaySplit}, is a <b>Half Day</b>.
+            {' '}No check-in and no leave or request is <b>Absent</b>.
+            {!policy.attendanceRulesFrom && <> The minimum hours above are the old rule — payroll still uses them until the new rule is switched on for pay.</>}
           </div>
         </PanelPad>
       )}
@@ -842,6 +814,8 @@ function MethodsTab({ canEdit, canAssign, canAlerts }) {
     {canAssign && <MethodAssignment />}
     {/* Late / missing-punch alerts — HR settings (configure permission). */}
     {canAlerts && <AlertSettings />}
+    {/* HRMS item 14: which events send an in-app note and an email. */}
+    {canAlerts && <NotifySettings />}
     </>
   );
 }

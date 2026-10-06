@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import ClientsTabs from '../components/clients/ClientsTabs.jsx';
 import Combo from '../components/Combo.jsx';
 import AtsDataTools from '../components/AtsDataTools.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
-import {
-  AGREEMENT_STATUS_CODES, agreementStatusLabel, agreementBadgeClass, agreementIsActive,
-  protoDate,
-} from '../atsVocab';
+import ScopeLine from '../components/ScopeLine.jsx';
+import { agreementIsActive } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import { downloadAgreementPdf } from '../components/agreements/AgreementPanel.jsx';
+// Spec 6 — the step badge, and the Admin's agreement settings.
+import { AgreementStepChip, AGREEMENT_STEPS, agreementStepLabel, agreementStepOf } from '../components/clients/AgreementStep.jsx';
+import { AgreementSettingsButton } from '../components/agreements/AgreementSettings.jsx';
+import AgreementLinkCard from '../components/agreements/AgreementLinkCard.jsx';
+import Modal from '../components/Modal.jsx';
 
 // The monthly agreement report (moved here from the Requirements screen's old
 // "Agreement Report" sub-tab, §5): counts from each client's own milestones;
@@ -35,16 +37,6 @@ const MONTH = (value) => {
 // at the gate behind it. The per-client actions live on the client's own
 // Agreement tab (ClientDetail), which this links straight into.
 // ---------------------------------------------------------------------------
-const STEPS = [
-  ['DRAFT', 'Draft', 'Generated or uploaded, not yet sent'],
-  ['SENT', 'Sent', 'Out with the client for signature'],
-  ['VIEWED', 'Viewed', 'The client has opened the document'],
-  ['CLIENT_CONFIRMATION_PENDING', 'Client Confirmation Pending', 'Confirmation formally requested'],
-  ['SIGNED', 'Signed', 'Client e-signed and confirmed by OTP — awaiting TeamLink countersign'],
-  ['ACTIVE', 'Active', 'Countersigned — requirements can go live and profiles can be shared'],
-  ['EXPIRED', 'Expired', 'Past its end date — requirements are blocked again'],
-  ['REJECTED', 'Rejected', 'Declined by the client'],
-];
 
 export default function Agreements() {
   const navigate = useNavigate();
@@ -59,13 +51,20 @@ export default function Agreements() {
   const clientList = can(user, 'ats', 'clients', 'Client List', 'view');
   const lifecycleView = can(user, 'ats', 'clients', 'Agreement Lifecycle', 'view');
   const desk = clientList && lifecycleView;
-  const blocked = clientList && !lifecycleView;
+  // 2026-10-05: a TL VIEWS their team's client agreements (read-only list
+  // from /agreement/list); the server says no to anyone else.
+  const blocked = false;
   const [clients, setClients] = useState([]);
   const [execution, setExecution] = useState(new Map());
   const [listError, setListError] = useState('');
+  // Never "No agreements yet" (or a bare count) while the list is loading.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [showReport, setShowReport] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
+  // The agreement link dialog (SA / Admin): the client row it is for.
+  const [linkFor, setLinkFor] = useState(null);
 
   useEffect(() => {
     if (blocked) return;
@@ -81,8 +80,14 @@ export default function Agreements() {
           })));
         }
       })
-      .catch((err) => setListError(err.response?.data?.error || ''));
-    if (desk) api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
+      .catch((err) => setListError(err.response?.data?.error || ''))
+      .finally(() => { if (!desk) setLoaded(true); });
+    if (desk) {
+      api.get('/clients')
+        .then((res) => { setClients(res.data); setLoadError(''); })
+        .catch((err) => { setClients([]); setLoadError(err.response?.data?.error || 'Could not load agreements. Please try again.'); })
+        .finally(() => setLoaded(true));
+    }
   }, [desk, blocked]);
   const openRow = (c) => navigate(desk ? `/clients/${c.id}?tab=agreement` : `/agreements/${c.id}`);
 
@@ -117,7 +122,7 @@ export default function Agreements() {
   }, [clients]);
 
   const rows = useMemo(() => clients.filter((c) => {
-    if (statusFilter && c.agreementStatus !== statusFilter) return false;
+    if (statusFilter && agreementStepOf(c.agreementStatus) !== statusFilter) return false;
     if (search && !`${c.name} ${c.agreementId || ''} ${c.clientCode || ''}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   }), [clients, statusFilter, search]);
@@ -126,151 +131,145 @@ export default function Agreements() {
   if (blocked) {
     return (
       <div>
-        <ClientsTabs active="agreements" />
-        <div className="notice">Client agreements are not part of your Clients view — they are with the BDE team, Accounts and Admin.</div>
+        <div className="notice">Agreements are not part of your role.</div>
       </div>
     );
   }
+
+  // Spec 6 + simplicity checklist: the step is a choice with counts (zero
+  // steps hidden), not a strip of eight boxes; 8 columns; plain words.
+  const stepCounts = {};
+  clients.forEach((c) => { const k = agreementStepOf(c.agreementStatus); stepCounts[k] = (stepCounts[k] || 0) + 1; });
+  const stepOptions = [...AGREEMENT_STEPS.map(([k]) => k), 'REJECTED'].filter((k) => stepCounts[k]);
+  const canSettings = can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit');
 
   return (
     <div>
       <div className="page-head">
         <div>
           <h1>Agreements</h1>
-          <div className="page-sub">{desk ? 'Jobs workspace — the service agreement lifecycle across every client account' : 'Signed client agreements — view and download (read-only)'}</div>
+          <div className="page-sub">{desk ? 'Which client agreements need a next step?' : 'Signed client agreements. Read and download.'}</div>
+          <div className="page-sub">{loaded ? <ScopeLine user={user} count={clients.length} noun="agreement" inline /> : 'Loading…'}</div>
         </div>
-        {/* Template · Import · Export: the agreement register (the rows shown)
-            and agreement status / fee / date updates for clients on file. */}
-        {desk && <AtsDataTools
-          module="agreements"
-          kinds={['agreements']}
-          onImported={() => api.get('/clients').then((res) => setClients(res.data)).catch(() => {})}
-          body={() => ({ ids: statusFilter || search ? rows.map((c) => c.id) : null })}
-        />}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {canSettings && <AgreementSettingsButton />}
+          {desk && <AtsDataTools
+            module="agreements"
+            kinds={['agreements']}
+            onImported={() => api.get('/clients').then((res) => setClients(res.data)).catch(() => {})}
+            body={() => ({ ids: statusFilter || search ? rows.map((c) => c.id) : null })}
+          />}
+        </div>
       </div>
 
-      <ClientsTabs active="agreements" />
 
       {listError && !desk && <div className="notice red"><span>{listError}</span></div>}
-      <div className="notice">
-        <div>
-          <b>Agreement workflow.</b>
-          {' Add Client → Generate → Send to client (email + SMS + WhatsApp) → client reads it, presses OK, Proceed → '}
-          e-signs (type / draw / upload) → confirms with an OTP on their registered mobile → Signed → TeamLink countersigns → Active.
-          <div style={{ marginTop: 4 }}>
-            A client requirement cannot go live until its agreement is <b>Active</b>. Requirements raised
-            before that are parked at <b>Agreement Check</b> — the server refuses to open them, it does not
-            merely hide the button.
-          </div>
+      {loadError && <div className="notice red"><span>{loadError}</span></div>}
+
+      {/* 2026-10-05: signed by the client, waiting for TeamLink to sign & stamp
+          and make it Active — one obvious chip with the count. */}
+      {(stepCounts.SIGNED || 0) > 0 && (
+        <div style={{ margin: '0 0 8px' }}>
+          <button type="button" className={`btn btn-sm${statusFilter === 'SIGNED' ? ' btn-primary' : ''}`} onClick={() => setStatusFilter(statusFilter === 'SIGNED' ? '' : 'SIGNED')}>
+            {`⏳ Waiting to be made Active (${stepCounts.SIGNED})`}
+          </button>
         </div>
-      </div>
-
-      <div className="statbar">
-        {STEPS.map(([code, label]) => (
-          <div
-            key={code}
-            className="statitem"
-            style={{ cursor: 'pointer', borderColor: statusFilter === code ? 'var(--navy)' : undefined }}
-            onClick={() => setStatusFilter(statusFilter === code ? '' : code)}
-          >
-            <div className="n">{counts[code] || 0}</div>
-            <div className="l">{label}</div>
-          </div>
-        ))}
-      </div>
-
+      )}
       <div className="filter-row">
-        <input placeholder="Search client, code or agreement id…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input placeholder="Search client or agreement number…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <Combo value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">All agreement statuses</option>
-          {AGREEMENT_STATUS_CODES.map((s) => <option key={s} value={s}>{agreementStatusLabel(s)}</option>)}
+          <option value="">Any step</option>
+          {stepOptions.map((s) => <option key={s} value={s}>{`${agreementStepLabel(s)} (${stepCounts[s]})`}</option>)}
         </Combo>
-        <button type="button" className="btn btn-sm" disabled={!search && !statusFilter} onClick={() => { setSearch(''); setStatusFilter(''); }}>Clear filters</button>
-        <span className="cell-muted" style={{ fontSize: 12 }}>{`${rows.length} agreement(s)`}</span>
+        {(search || statusFilter) && <button type="button" className="btn btn-sm" onClick={() => { setSearch(''); setStatusFilter(''); }}>Clear all</button>}
+        <span className="cell-muted" style={{ fontSize: 12 }}>{rows.length ? `${rows.length} agreement${rows.length === 1 ? '' : 's'}` : ''}</span>
       </div>
 
       <div className="tbl-wrap">
         <table>
           <thead>
             <tr>
-              <th>Client</th><th>Client Code</th><th>Agreement ID</th><th>Status</th>
-              <th>Source</th><th>Fee %</th><th>Agreement Date</th><th>Expiry</th>
-              <th>Signed By</th><th>Execution</th>{desk && <><th>Live Reqs</th><th>Held at Gate</th></>}<th>Action</th>
+              <th>Client</th><th>Agreement no.</th><th>Step</th><th>Fee</th><th>Ends</th>
+              {desk && <><th>Open jobs</th><th>Jobs waiting</th></>}<th />
             </tr>
           </thead>
           <tbody>
             {paged.slice.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => openRow(c)}>
-                <td>{c.name}</td>
-                <td className="cell-muted">{c.clientCode || '—'}</td>
+                <td><b>{c.name}</b></td>
                 <td className="cell-muted">{c.agreementId || '—'}</td>
-                <td><span className={`status ${agreementBadgeClass(c.agreementStatus)}`}>{agreementStatusLabel(c.agreementStatus)}</span></td>
-                <td className="cell-muted">{c.agreementSource || '—'}</td>
-                <td className="cell-muted">{c.agreementFeePercent != null ? `${c.agreementFeePercent}%` : '—'}</td>
-                <td className="cell-muted">{c.agreementStart || (c.agreementActivatedAt ? protoDate(c.agreementActivatedAt) : '—')}</td>
-                <td className="cell-muted">{c.agreementEnd || '—'}</td>
-                <td className="cell-muted">{c.agreementSignedBy || '—'}</td>
                 <td>
-                  {execution.get(c.id)?.awaitingCountersign && <span className="status pending">Awaiting countersign</span>}
-                  {execution.get(c.id)?.linkExpired && <span className="status rejected">Link expired</span>}
-                  {!execution.get(c.id)?.awaitingCountersign && !execution.get(c.id)?.linkExpired && <span className="cell-muted">—</span>}
+                  <AgreementStepChip status={c.agreementStatus} />
+                  {execution.get(c.id)?.awaitingCountersign && <span className="clrel-sub">Waiting for TeamLink to sign</span>}
+                  {execution.get(c.id)?.linkExpired && <span className="clrel-sub" style={{ color: 'var(--red)' }}>Link ended. Make a new link.</span>}
                 </td>
-                {desk && <td>{liveFor(c.id)}</td>}
+                <td className="cell-muted">{c.agreementFeePercent != null ? `${c.agreementFeePercent}%` : '—'}</td>
+                <td className="cell-muted">{c.agreementEnd || (c.agreementStart ? 'Renews yearly' : '—')}</td>
+                {desk && <td>{liveFor(c.id) || <span className="cell-muted">—</span>}</td>}
                 {desk && (
                   <td>
-                    {agreementIsActive(c.agreementStatus)
-                      ? <span className="cell-muted">0</span>
-                      : <b style={{ color: blockedFor(c.id) ? 'var(--red)' : undefined }}>{blockedFor(c.id)}</b>}
+                    {!agreementIsActive(c.agreementStatus) && blockedFor(c.id)
+                      ? <b style={{ color: 'var(--amber)' }}>{blockedFor(c.id)}</b>
+                      : <span className="cell-muted">—</span>}
                   </td>
                 )}
                 <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
-                  <Link className="btn btn-sm" to={desk ? `/clients/${c.id}?tab=agreement` : `/agreements/${c.id}`}>Open Agreement</Link>
+                  {/* The row itself opens the agreement (no separate "Open"). */}
+                  {execution.has(c.id) && (
+                    <button type="button" className="btn btn-sm" onClick={() => navigate(`/agreements/${c.id}`)}>📄 View agreement</button>
+                  )}
+                  {canSettings && execution.has(c.id) && ['DRAFT', 'SENT', 'VIEWED'].includes(agreementStepOf(c.agreementStatus)) && (
+                    <button type="button" className="btn btn-sm" onClick={() => setLinkFor(c)}>
+                      {agreementStepOf(c.agreementStatus) === 'DRAFT' ? '🔗 Create agreement link' : '🔗 Link'}
+                    </button>
+                  )}
                   {execution.get(c.id)?.pdfAvailable && (
                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => downloadAgreementPdf(c.id, `${c.agreementId || 'agreement'}-${String(c.name).replace(/[^\w.-]+/g, '-')}`).catch(() => {})}>PDF</button>
                   )}
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={desk ? 13 : 11} className="small-muted" style={{ padding: 16 }}>No agreements match.</td></tr>
+            {!loaded && (
+              <tr><td colSpan={desk ? 8 : 6} className="small-muted" style={{ padding: 16 }}>Loading agreements…</td></tr>
+            )}
+            {loaded && rows.length === 0 && (
+              <tr><td colSpan={desk ? 8 : 6} className="small-muted" style={{ padding: 16 }}>{clients.length ? 'No agreements match. Clear the search or the step.' : 'No agreements yet. Add a client to make one.'}</td></tr>
             )}
           </tbody>
         </table>
       </div>
       <Pager page={paged} noun="agreements" />
+      {linkFor && (
+        <Modal title={`Agreement link · ${linkFor.name}`} onClose={() => setLinkFor(null)}>
+          <AgreementLinkCard
+            clientId={linkFor.id}
+            onChanged={() => api.get('/clients').then((res) => setClients(res.data)).catch(() => {})}
+          />
+        </Modal>
+      )}
 
       <div style={{ margin: '14px 0 6px' }}>
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setShowReport((v) => !v)}>
-          {showReport ? '▾ Monthly agreement report' : '▸ Monthly agreement report'}
+          {showReport ? '▾ Month by month' : '▸ Month by month'}
         </button>
       </div>
       {showReport && (months.length === 0
-        ? <div className="empty-mini">No agreement activity recorded yet.</div>
+        ? <div className="empty-mini">No agreement activity yet.</div>
         : (
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>Month</th><th>Agreements Created</th><th>Signed</th><th>Active</th><th>Expired</th><th>Pending</th></tr></thead>
+              <thead><tr><th>Month</th><th>Drafts made</th><th>Signed</th><th>Active</th><th>Ended</th><th>Waiting</th></tr></thead>
               <tbody>
                 {months.map(([key, m]) => (
                   <tr key={key}>
-                    <td><b>{key}</b></td><td>{m.created}</td><td className="cell-muted">{m.signed}</td>
-                    <td className="cell-muted">{m.active}</td><td className="cell-muted">{m.expired}</td><td className="cell-muted">{m.pending}</td>
+                    <td><b>{key}</b></td><td>{m.created || '—'}</td><td className="cell-muted">{m.signed || '—'}</td>
+                    <td className="cell-muted">{m.active || '—'}</td><td className="cell-muted">{m.expired || '—'}</td><td className="cell-muted">{m.pending || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ))}
-
-      <div className="section-label">What each status means</div>
-      <div className="card">
-        {STEPS.map(([code, label, note]) => (
-          <div className="kv" key={code}>
-            <span className="k"><span className={`status ${agreementBadgeClass(code)}`}>{label}</span></span>
-            <span className="cell-muted">{note}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

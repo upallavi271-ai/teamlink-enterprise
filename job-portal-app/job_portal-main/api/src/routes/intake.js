@@ -206,7 +206,13 @@ export default function intakeRoutes() {
         `delete from email_messages
           where mailbox_id = $1
             and ($2::boolean is not true
-                 or status in ('needs_review','failed','ignored','new'))
+                 -- needs_mapping belongs here and was missing. It is the
+                 -- status of a digest whose role had no requirement, so it
+                 -- is exactly the one worth re-reading once the missing
+                 -- requirement exists (or once the code that creates it is
+                 -- fixed) — and it was the one status a rescan could not
+                 -- reach, leaving those emails stuck for good.
+                 or status in ('needs_review','needs_mapping','failed','ignored','new'))
           returning id`, [req.params.id, b.onlyUnresolved !== false])).rowCount);
 
       res.json({ cleared, note: 'The next sync will read these emails again.' });
@@ -393,12 +399,25 @@ export default function intakeRoutes() {
         // Which job board to process. `all` is both, and the default,
         // because a recruiter pressing Sync means "get my candidates".
         board: z.enum(['all', 'naukri', 'shine']).optional(),
+        /*
+         * Give the mail this reader could not read another chance.
+         *
+         * Every improvement to the parser used to apply only to mail that
+         * had not arrived yet. Seventeen real Shine responses stayed at
+         * "No candidate name could be read from this email" after the
+         * parser that could read them existed, because the sync skips
+         * anything it has already decided on. This is how a recruiter
+         * asks for those to be looked at again; it only revisits
+         * outcomes where no candidate was created.
+         */
+        retry: z.boolean().optional(),
       }), req.body);
 
       const board = b.board || 'all';
+      const retry = b.retry === true;
       const out = b.mailboxId
-        ? [await syncMailbox(req.session, b.mailboxId, { limit: b.limit, board })]
-        : await syncAll(req.session, { onlyAuto: false, board });
+        ? [await syncMailbox(req.session, b.mailboxId, { limit: b.limit, board, retry })]
+        : await syncAll(req.session, { onlyAuto: false, board, retry });
 
       /*
        * What happened, counted per outcome.
@@ -414,18 +433,18 @@ export default function intakeRoutes() {
       /*
        * Which boards this reader has actually been proven against.
        *
-       * Naukri's shapes were built from real emails out of a live
-       * mailbox. Shine's were written from its documented format and no
-       * Shine message has ever been seen, so a recruiter pressing Sync
-       * Shine and getting nothing has two possible explanations - Shine
-       * sent nothing, or the reader does not recognise what Shine sends
-       * - and no way to tell them apart. Saying so is the difference
-       * between a quiet afternoon and a silent failure.
+       * BOTH, now. This block used to explain that Shine's shapes came
+       * from its documentation because no Shine message had ever been
+       * seen - and the mailbox held seventeen of them, all filed as
+       * unreadable. Both boards are read from real mail today, so
+       * `unverified` is normally empty and the note below does not
+       * appear.
        *
-       * `unverified` is a NOTE, not a warning to dismiss: the path runs,
-       * the parsing is the same labelled-block reader Naukri's
-       * per-candidate mails already use, and the first real Shine email
-       * either confirms it or says exactly what to change.
+       * The machinery is kept rather than deleted, because it earns its
+       * place the moment a third board is added: a recruiter pressing
+       * Sync and getting nothing needs to know whether the board sent
+       * nothing or the reader could not read it. That ambiguity is
+       * exactly what cost seventeen candidates.
        */
       const boards = Object.values(SOURCES)
         .filter((src) => board === 'all' || src.id === board)
@@ -440,6 +459,9 @@ export default function intakeRoutes() {
           ? `No ${unverified.join(' or ')} email has been read here yet, so that `
             + 'format has not been confirmed against a real message. Forward one '
             + 'to this mailbox if a response is missing.'
+          : retry && results.some((r) => r.status === 'already_processed')
+          ? 'Some messages were left alone because they already produced a '
+            + 'candidate or are waiting for a requirement to be chosen.'
           : undefined,
         synced: out,
         emailsRead: tally((x) => x.seen),
@@ -448,6 +470,8 @@ export default function intakeRoutes() {
         imported: tally((x) => x.imported),
         updated: countStatus('updated'),
         duplicates: countStatus('duplicate') + countStatus('already_processed'),
+        // How many previously unreadable messages were looked at again.
+        retried: out.reduce((n, x) => n + (x.retried || 0), 0),
         needsMapping: tally((x) => x.needsMapping),
         needsReview: tally((x) => x.needsReview),
         notAnApplication: countStatus('ignored'),
@@ -583,10 +607,23 @@ export default function intakeRoutes() {
       if (ctx.email && ctx.must_change_password) {
         const password = temporaryPassword();
         const hash = await hashPassword(password);
-        await withUser(ENGINE, (c) => c.query(
-          `update users set password_hash=$2, must_change_password=true, password_set_at=now()
-            where id=$1`, [ctx.user_id, hash]));
-        credentials = { email: ctx.email, password };
+
+        /*
+         * THROUGH THE DEFINER FUNCTION. The direct UPDATE here matched
+         * no policy on `users` and so affected zero rows without
+         * raising, which meant the credentials sent below had never been
+         * stored and could not sign anybody in. See 0070.
+         */
+        const stored = await withUser(ENGINE, async (c) => (await c.query(
+          `select auth_set_password($1,$2,true,null) as ok`,
+          [ctx.user_id, hash])).rows[0]);
+
+        /* Only claim a password exists if one was actually written. */
+        if (stored && stored.ok === true) {
+          credentials = { email: ctx.email, password };
+        } else {
+          console.error('[intake] the temporary password was not stored for user', ctx.user_id);
+        }
       }
 
       const messages = buildEventMessages('APPLICATION_IMPORTED', {

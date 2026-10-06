@@ -53,4 +53,25 @@ api.interceptors.response.use(undefined, (error) => {
   throw error;
 });
 
+// B8 OVERRIDE: adding a person who does not meet a job's rules (POST
+// /applications → 409 NEEDS_OVERRIDE) asks for a reason, for EVERY "Add to
+// job" button at once, and sends the same request again with it. Cancel
+// leaves the original error with the caller (nothing is added).
+api.interceptors.response.use(undefined, async (error) => {
+  const config = error.config;
+  const data = error.response?.data;
+  if (!config || error.response?.status !== 409 || !data || data.code !== 'NEEDS_OVERRIDE' || config.b8OverrideAsked) throw error;
+  // B9.11: POST /candidates with "Apply to job" asks the same question.
+  if (!/\/(applications|candidates)\/?$/.test(String(config.url || '')) || (config.method || '').toLowerCase() !== 'post') throw error;
+  const { askOverrideReason } = await import('./components/match/OverridePrompt.jsx');
+  const reason = await askOverrideReason(data);
+  if (!reason) {
+    error.response.data = { ...data, error: 'Not added.', cancelled: true };
+    throw error;
+  }
+  let body = config.data;
+  try { body = typeof body === 'string' ? JSON.parse(body) : (body || {}); } catch { body = {}; }
+  return api({ ...config, b8OverrideAsked: true, data: { ...body, overrideReason: reason } });
+});
+
 export default api;

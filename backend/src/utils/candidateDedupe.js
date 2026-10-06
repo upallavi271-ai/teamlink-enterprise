@@ -409,6 +409,8 @@ async function mergeCandidates({ masterId, donorIds, user }) {
       moved.messages += (await tx.candidateMessage.updateMany({ where, data })).count;
       moved.notes += (await tx.candidateNote.updateMany({ where, data })).count;
       moved.documents += (await tx.candidateDocument.updateMany({ where, data })).count;
+      // resume_: stored resume versions follow the person (never cascade-deleted).
+      await tx.candidateResume.updateMany({ where, data });
       moved.invoices += (await tx.invoice.updateMany({ where, data })).count;
       moved.users += (await tx.user.updateMany({ where, data })).count;
       moved.auditRows += (await tx.auditLog.updateMany({ where: { entity: 'Candidate', entityId: d.id }, data: { entityId: masterId } })).count;

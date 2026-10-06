@@ -51,7 +51,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const {
-  applicationWhere, requirementWhere, scopeOf, atsViewRole,
+  applicationWhere, requirementWhere, atsScopeOf: scopeOf, atsViewRole,
 } = require('./scope');
 const {
   REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel,
@@ -549,6 +549,8 @@ function personSets(world, person) {
     sets.activeCandidates = { kind: 'applications', ids: mine.map((a) => a.id) };
     sets.needsAction = { kind: 'actions', ids: world.actions.filter((x) => x.ownerUserId === id).map((x) => x.id) };
     sets.interviewsToday = { kind: 'applications', ids: mine.filter((a) => isToday(a.interviewAt) && !DEAD_INTERVIEW.includes(a.interviewStatus)).map((a) => a.id) };
+    // ATS layout v3 §5 — the Team performance snapshot (Sent · Interviews · Joined).
+    sets.submitted = { kind: 'applications', ids: mine.filter((a) => SUBMITTED_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.interviews = { kind: 'applications', ids: mine.filter((a) => INTERVIEW_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.selected = { kind: 'applications', ids: mine.filter((a) => SELECTED_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.joined = { kind: 'joined', ids: world.joined.filter((a) => a.recruiterUserId === id).map((a) => a.id) };
@@ -584,6 +586,7 @@ function personSets(world, person) {
     sets.needsAction = { kind: 'actions', ids: owned.map((x) => x.id) };
     sets.interviews = { kind: 'applications', ids: apps.filter((a) => INTERVIEW_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.selected = { kind: 'applications', ids: apps.filter((a) => SELECTED_STAGES.includes(a.stage)).map((a) => a.id) };
+    sets.submitted = { kind: 'applications', ids: apps.filter((a) => SUBMITTED_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.joined = {
       kind: 'joined',
       ids: world.joined.filter((a) => a.tlUserId === id || (a.recruiterUserId && teamIds.has(a.recruiterUserId))).map((a) => a.id),
@@ -620,7 +623,7 @@ const METRIC_HINTS = {
   joined: 'Joined / hired',
   clients: 'Clients whose Owner BDE they are (or assigned to them)',
   activeClients: 'Their clients with at least one live requirement',
-  submitted: 'Active applications on their clients submitted to the client (Client Submission onward)',
+  submitted: 'Active applications submitted to the client (Client Submission onward) — on their clients for a BDE, their own for a recruiter, their team for a TL',
   feedbackPending: 'Submitted and waiting on the client decision (Shared with Client / Client Review)',
   clientActions: 'Client-side next actions owned by them',
   recruiters: 'Recruiters whose seat reports to them',
@@ -969,4 +972,7 @@ module.exports = {
   TEAM_ROLE_LABELS, METRIC_LABELS, isAdminViewer, teamAccess, teamPeopleWhere,
   teamWorkloadRows, assignmentRows, pendingActionRows, formerWorkloadRows,
   teamMemberDetail, memberMetricList, rememberRows, forgetWorld,
+  // The ATS dashboard's Team leads section (utils/atsHome.js, 2026-10-05)
+  // reads the same team and the same sets, so its numbers match this page.
+  teamWorld: loadWorld, personSets,
 };

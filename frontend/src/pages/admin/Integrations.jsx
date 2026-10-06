@@ -5,6 +5,10 @@ import Modal from '../../components/Modal.jsx';
 import { useJobPortalUrl } from '../JobPortalRedirect.jsx';
 import BiometricPanel from './BiometricPanel.jsx';
 import JobPortalSyncPanel from '../ats/JobPortalSyncPanel.jsx';
+// Health tab (change list 2026-10-03 §16): Job Portal / Email / eSSL / AI in plain words.
+import IntegrationHealthPanel from './IntegrationHealth.jsx';
+// Save & Post (2026-10-05): a job board's own details panel on its card.
+import JobBoardIntegration from '../../components/jobs/JobBoardIntegration.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged, PAGE_SIZES } from '../../components/Pager.jsx';
 
@@ -37,8 +41,10 @@ export default function Integrations() {
   // dashboard's job-source status links there); /ats/job-portal opens on it.
   const [searchParams] = useSearchParams();
   const { pathname } = useLocation();
+  // Health opens first: what is broken and how to fix it (?tab=health|connections|jobportal).
   const [tab, setTab] = useState(() => (
-    searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal' : 'connections'));
+    searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal'
+      : searchParams.get('tab') === 'connections' ? 'connections' : 'health'));
   const [data, setData] = useState(null);
   const [jp, setJp] = useState(null);
   const [configuring, setConfiguring] = useState(null); // { channel, values }
@@ -124,20 +130,27 @@ export default function Integrations() {
 
   const jpStats = data.jobPortal;
   const bioChannel = data.channels.find((c) => c.id === 'biometric');
+  // `failed` = records still failing; `portalError` = the last run could not
+  // reach the portal at all (shown as that, not as a pile of "failed" items).
   const jpBadge = jpStats.failed
     ? { cls: 'rejected', txt: `${jpStats.failed} failed` }
-    : { cls: jp && jp.status === 'Connected' ? 'active' : 'pending', txt: jp ? jp.status : 'Not Connected' };
+    : jpStats.portalError
+      ? { cls: 'rejected', txt: 'Last sync failed' }
+      : { cls: jp && jp.status === 'Connected' ? 'active' : 'pending', txt: jp ? jp.status : 'Not Connected' };
 
   return (
     <div>
       <div className="page-head">
         <div><h1>Integrations</h1>
-          <div className="page-sub">{tab === 'connections'
+          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'connections'
             ? 'Every outside channel the platform talks to — messaging, email, calling, scheduling, job boards, storage, finance and developer access.'
             : 'Synchronisation between the TeamLink Job Portal and this ATS — status, controls and the record of every sync.'}</div></div>
       </div>
 
       <div className="tabs" style={{ marginBottom: 16 }}>
+        <div className={`tab${tab === 'health' ? ' active' : ''}`} onClick={() => setTab('health')}>
+          Health
+        </div>
         <div className={`tab${tab === 'connections' ? ' active' : ''}`} onClick={() => setTab('connections')}>
           Connections — all channels <span className="status active">{data.connected} of {data.total}</span>
         </div>
@@ -146,11 +159,11 @@ export default function Integrations() {
         </div>
       </div>
 
-      <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
+      {tab !== 'health' && <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
         {tab === 'jobportal'
           ? "Job Portal sync status, errors and logs — whether the portal answers, requirements that did not reach it (with Retry), what has come across and the log of every record. Publishing is done per requirement; the applications themselves are screened in Candidates & Pipeline → Job Portal Candidates. The portal's own connection and credentials sit on the Connections tab, under Job Boards."
           : 'The connection side of every channel — switch one on, add its credentials, test it or disconnect it. What actually syncs from the TeamLink Job Portal is on the Job Portal tab.'}
-      </div>
+      </div>}
 
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
@@ -171,7 +184,7 @@ export default function Integrations() {
         <BiometricPanel onConfigure={() => openConfigure(bioChannel)} onChanged={load} />
       )}
 
-      {tab === 'connections' ? (
+      {tab === 'health' ? <IntegrationHealthPanel /> : tab === 'connections' ? (
         <div className="panel panel-pad">
           <h3 style={{ fontSize: 14, marginBottom: 2 }}>Integrations</h3>
           <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
@@ -234,7 +247,8 @@ export default function Integrations() {
                         <button className="btn btn-sm" onClick={() => openConfigure(c)}>Configure →</button>
                       </span>
                     </div>
-                    {c.error && <div className="cell-muted" style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--red)' }}>{c.error}</div>}
+                    {c.error && !c.jobBoard && <div className="cell-muted" style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--red)' }}>{c.error}</div>}
+                    {c.jobBoard && <JobBoardIntegration channel={c} run={run} onConfigure={openConfigure} reloadKey={`${c.state}|${c.lastTest || ''}|${c.lastSync || ''}`} />}
                   </div>
                 ))}
               </div>
@@ -258,6 +272,19 @@ export default function Integrations() {
           {configuring.channel.fields.map(([label, placeholder]) => {
             const secret = (configuring.channel.secretFields || []).includes(label);
             const hint = (configuring.channel.secretHints || {})[label];
+            // A posting-method choice, e.g. "Posting method (Amplify API / XML feed)".
+            const choice = /^Posting method \((.+)\)$/.exec(label);
+            if (choice) {
+              const opts = choice[1].split(' / ');
+              return (
+                <div className="field" key={label}>
+                  <label>Posting method</label>
+                  <select value={configuring.values[label] || opts[0]} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
+                    {opts.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
+              );
+            }
             if (configuring.channel.id === 'biometric' && label === 'Status') {
               return (
                 <div className="field" key={label}>
@@ -523,15 +550,15 @@ function JobPortalTab({ jp, stats, run }) {
             <div className="kv"><span className="k">Sync Status</span>
               <span><span className={`status ${connected ? 'active' : 'pending'}`}>{jp.lastSyncResult}</span></span></div>
             <div className="kv"><span className="k">Mode</span>
-              <span>Separate application at <code>{portalUrl}</code> (JOB_PORTAL_URL), with its own PostgreSQL database</span></div>
+              <span>Your Job Portal, opened from this site at <code>{portalUrl}/</code>. It keeps its own database and starts with TeamLink.</span></div>
             <div className="kv"><span className="k">Real-time channel</span>
-              <span><span className="conn-dot ok" />The portal posts each application to this ATS as it is made</span></div>
-            <div className="kv"><span className="k">Sync direction</span><span>Two-way — requirements out, applications in (at startup, hourly and on Sync)</span></div>
+              <span><span className="conn-dot ok" />Within seconds — an application on the portal lands in Candidates → New from job portal, with its resume</span></div>
+            <div className="kv"><span className="k">Sync direction</span><span>Both ways — a job published in ATS is on the portal within seconds; closing it takes it off</span></div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 190 }}>
             <button className="btn btn-primary btn-sm" onClick={() => run(() => api.post('/admin/integrations/job-portal/sync'), (r) => (r.data.portal && !r.data.portal.ok
-              ? `Job Portal sync failed: ${r.data.portal.error}`
-              : `${r.data.portal ? `${r.data.portal.jobs} job(s) live on the portal, ${r.data.portal.closed} closed, ${r.data.portal.created} new application(s). ` : ''}${r.data.synced} synced, ${r.data.failed} failed.`))}>Sync</button>
+              ? `Job Portal check failed: ${r.data.portal.error}`
+              : `Synced.${r.data.portal ? ` ${r.data.portal.jobs} job(s) on the portal now, ${r.data.portal.created || 0} new application(s) brought in.` : ''}`))}>Sync now</button>
             <a className="btn btn-sm" href={`${portalUrl}/`} target="_blank" rel="noreferrer">Open Job Portal ↗</a>
             <button className="btn btn-sm" onClick={() => run(() => api.post('/admin/integrations/jobportal/test'), (r) => `TeamLink Job Portal: ${r.data.result}`)}>Test Connection</button>
             <button className="btn btn-sm" onClick={() => setShowConfig(true)}>Configure</button>
@@ -551,11 +578,10 @@ function JobPortalTab({ jp, stats, run }) {
           <strong>Open Job Portal</strong> opens the TeamLink Job Portal (<code>{portalUrl}</code>) in a new tab. It never
           triggers a sync.
           <br />
-          <strong>Sync</strong> pushes every published, live requirement to the portal as a job, closes the ones that
-          are no longer published or live, and pulls in any portal application not yet in this ATS (new candidates are
-          matched by email, then phone). It also runs at startup and hourly, and a single requirement is pushed the
-          moment it is published, unpublished or changed. Not yet synced: resumes (the file stays on the portal) and
-          stage changes made here flowing back to the candidate&apos;s portal dashboard.
+          <strong>How it works.</strong> The Job Portal is your own portal, unchanged, opened from this site at /jobs.
+          It keeps its own database. A job published here is on the portal within seconds; an application (with its
+          resume) is in Candidates within seconds, with the duplicate check (by email, then phone).
+          <strong> Sync now</strong> sends every published job again and brings in any application that was missed.
         </div>
       </div>
 
@@ -569,14 +595,13 @@ function JobPortalTab({ jp, stats, run }) {
           foot={<button className="btn btn-primary" onClick={() => setShowConfig(false)}>Close</button>}
         >
           <div className="notice amber">
-            The Job Portal is a separate application. Its address and the two shared secrets are server settings in
-            backend/.env (and the portal&apos;s own .env), never entered on this screen: JOB_PORTAL_URL,
-            JOB_PORTAL_SYNC_TOKEN, JOB_PORTAL_PUSH_SECRET, JOB_PORTAL_SYNC_INTERVAL_MS.
+            The Job Portal starts with TeamLink and opens at {portalUrl}/. Its settings are in backend/.env
+            (names only: JOB_PORTAL_EMBED, JOB_PORTAL_SYNC_TOKEN, JOB_PORTAL_PUSH_SECRET).
           </div>
-          <div className="kv"><span className="k">Connection type</span><span>Server to server — {portalUrl}</span></div>
-          <div className="kv"><span className="k">Portal data store</span><span>The portal&apos;s own PostgreSQL database</span></div>
-          <div className="kv"><span className="k">Sync direction</span><span>Requirements out; applications and candidates in</span></div>
-          <div className="kv"><span className="k">Sync frequency</span><span>On publish / change, on &quot;Sync&quot;, at startup and hourly</span></div>
+          <div className="kv"><span className="k">Connection type</span><span>Embedded — {portalUrl}/</span></div>
+          <div className="kv"><span className="k">Portal data store</span><span>The Job Portal&apos;s own database (job-portal-app)</span></div>
+          <div className="kv"><span className="k">Sync direction</span><span>Both ways</span></div>
+          <div className="kv"><span className="k">Sync frequency</span><span>Within seconds, plus a full check every hour</span></div>
           {/* ---- SYNC SEAM ------------------------------------------------
               A real Enterprise ↔ Portal sync attaches here. It needs, in this
               order: (1) the portal reading its job list from GET /api/public/jobs

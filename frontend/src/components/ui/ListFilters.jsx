@@ -265,7 +265,8 @@ export default function ListFilterBar({ lf, storageKey, extra, noun, className =
         extra={(
           <>
             {sortCtl}
-            {noun && (
+            {/* Never a bare zero: no count line when the list is empty. */}
+            {noun && lf.total > 0 && (
               <span className="small-muted lf-count">
                 {lf.activeCount ? `${lf.rows.length.toLocaleString('en-IN')} of ${lf.total.toLocaleString('en-IN')} ${noun}` : `${lf.total.toLocaleString('en-IN')} ${noun}`}
               </span>
@@ -289,7 +290,7 @@ export function ListEmpty({ lf, noun = 'records', title, hint, icon, compact = t
         compact={compact}
         icon={icon || '🔍'}
         title={`No ${noun} match these filters.`}
-        hint="Remove a filter chip above, or clear all filters."
+        hint="Clear the filters to see everything."
         action={<button type="button" className="btn btn-sm" onClick={lf.clear}>Clear filters</button>}
       />
     );

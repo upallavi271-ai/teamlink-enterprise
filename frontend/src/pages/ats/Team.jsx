@@ -1,16 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isClientUser, productRole } from '../../permissions';
-import FilterChips from '../../components/FilterChips.jsx';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
+import ListPageHeader, {
+  StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useLocalFacets,
+} from '../../components/ui/ListPageHeader.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
-import { leftOn } from '../../components/PeopleFilter.jsx';
 import Recruiter360, { metricLink } from './Recruiter360.jsx';
+import FormerHistory from './FormerHistory.jsx';
+import PendingWork from '../../components/team/PendingWork.jsx';
+import DeptTeamsAdmin from '../../components/team/DeptTeamsAdmin.jsx';
+import FollowUps from './FollowUps.jsx';
+// ATS layout v3 §5 — the performance snapshot's progress bars (shared kit).
+import { ProgressBar } from '../../components/charts';
 import './Team.css';
+import { Help } from '../../components/ui/Guide.jsx';
 
 // ---------------------------------------------------------------------------
 // RECRUITER & BDE — the operational control centre for Recruiter / TL / BDE
@@ -35,7 +43,14 @@ import './Team.css';
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 const SELF_ROLES = ['RECRUITER', 'BDE'];
-const ROLE_SWITCH = [['RECRUITER', 'Recruiter'], ['BDE', 'BDE'], ['TL', 'TL']];
+// Display words only (ATS layout v3 §5: Admin / Dept Head / BDE / Recruiter) —
+// the role codes and what each role may do are unchanged.
+const ROLE_SWITCH = [['RECRUITER', 'Recruiter'], ['BDE', 'Client manager (BDE)'], ['TL', 'Dept Head (TL)']];
+const ROLE_WORD = {
+  SUPER_ADMIN: 'Admin', ADMIN: 'Admin', MANAGER: 'Admin', ASSISTANT_MANAGER: 'Admin',
+  STL: 'Dept Head', TL: 'Dept Head', BDE: 'BDE', RECRUITER: 'Recruiter',
+};
+const roleWord = (r) => ROLE_WORD[r.role] || ROLE_WORD[r.roleGroup] || r.roleLabel || '';
 // Old ?tab= links still land in the right place.
 const LEGACY_TABS = {
   recruiters: { view: 'people', role: 'RECRUITER' },
@@ -48,45 +63,52 @@ const LEGACY_TABS = {
 };
 const fmt = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('en-IN'));
 const lc = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
-const uniqSorted = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+
+// The shared list layout (spec 2026-10-03 §B): every filter lives in the
+// Filters panel with browser-counted options (useLocalFacets — the page holds
+// these lists whole). pred(row, key, value) is the ONE match rule per tab, used
+// both to filter the table and to count the options (so a count is exactly
+// what picking it shows).
+const isSet = (v) => v !== '' && v !== undefined && v !== null;
+const applyFilters = (rows, values, pred) => {
+  const keys = Object.keys(values).filter((k) => isSet(values[k]));
+  return keys.length ? rows.filter((r) => keys.every((k) => pred(r, k, values[k]))) : rows;
+};
+const personKey = (p) => (p && p.name ? (p.id ? `id:${p.id}` : `name:${p.name}`) : null);
+const optLabel = (opts, v, fallback) => ((opts || []).find((o) => o.value === v) || {}).label || fallback || v;
+// "Sort" for a table that also sorts by its column headers: a value the
+// headers produced that the menu does not list is added, so the two agree.
+const sortValue = (s) => (s.key ? `${s.key}:${s.dir}` : '');
+const parseSort = (v) => { const [key, dir] = String(v || '').split(':'); return { key: key || '', dir: dir || 'desc' }; };
 
 // A number that opens the list it counts.
 function NumLink({ to, value, danger, title }) {
   if (value === null || value === undefined) return <span className="cell-muted">—</span>;
   const cls = `pw-num${danger && value > 0 ? ' danger' : ''}${value === 0 ? ' zero' : ''}`;
-  if (!to || value === 0) return <span className={cls} title={title}>{fmt(value)}</span>;
+  // Never a bare zero in a table cell: a quiet dash instead of "0".
+  if (value === 0) return <span className={cls} title={title}>—</span>;
+  if (!to) return <span className={cls} title={title}>{fmt(value)}</span>;
   return <Link className={cls} to={to} title={title} onClick={(e) => e.stopPropagation()}>{fmt(value)}</Link>;
 }
 
 // Due chip: 🔴 overdue · 🟡 due today · 🟢 upcoming · no due date.
 const DUE_META = {
-  overdue: ['🔴', 'Overdue', 'red'],
-  today: ['🟡', 'Due today', 'amber'],
-  upcoming: ['🟢', 'Upcoming', 'green'],
+  overdue: ['🔴', 'Late', 'red'],
+  today: ['🟠', 'Due today', 'amber'],
+  upcoming: ['🔵', 'Upcoming', 'blue'],
   none: ['', 'No due date', 'grey'],
 };
 function DueChip({ status, dueAt, source }) {
   const [icon, label, tone] = DUE_META[status] || DUE_META.none;
   const title = status === 'none'
-    ? 'No real due date yet — the row came in with its stage already set (imported) and nobody has moved it or set a follow-up'
-    : `${label}${dueAt ? ` — due ${day(dueAt)}` : ''}${source === 'follow-up' ? ' (follow-up)' : source === 'stage-sla' ? ' (stage SLA)' : ''}`;
+    ? 'No due date yet. Moving the step or adding a follow-up sets one.'
+    : `${label}${dueAt ? ` — due ${day(dueAt)}` : ''}${source === 'follow-up' ? ' (follow-up)' : source === 'stage-sla' ? ' (days for this step)' : ''}`;
   return (
     <span className="pw-due" title={title}>
       <StatusChip tone={tone}>{icon ? `${icon} ` : ''}{status === 'none' ? '—' : label}</StatusChip>
       {dueAt && status !== 'none' && <span className="small-muted pw-due-date">{day(dueAt)}</span>}
     </span>
-  );
-}
-
-function Select({ label, value, onChange, options, all, width }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} title={label} style={{ width: width || 'auto', maxWidth: 220 }}>
-      <option value="">{all || `All ${label.toLowerCase()}s`}</option>
-      {options.map((o) => (Array.isArray(o)
-        ? <option key={o[0]} value={o[0]}>{o[1]}</option>
-        : <option key={o} value={o}>{o}</option>))}
-    </select>
   );
 }
 
@@ -99,6 +121,7 @@ function SortTh({ id, label, sort, setSort, title, num }) {
         {label}
         <span className="pw-sort-arrow" aria-hidden="true">{on ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
       </button>
+      {title && <Help text={title} />}
     </th>
   );
 }
@@ -108,34 +131,128 @@ function SortTh({ id, label, sort, setSort, title, num }) {
 // ===========================================================================
 const PEOPLE_COLUMNS = {
   RECRUITER: [
-    ['openRequirements', 'Open Requirements', 'Live requirements assigned to them'],
-    ['activeCandidates', 'Active Candidates', 'Active ATS applications they own — not Candidate Master (Hold, Rejected, Joined and Job Portal screening left out)'],
-    ['needsAction', 'Needs Action', 'Active applications whose one next action is theirs (the shared next-action rule)'],
+    ['openRequirements', 'Open jobs', 'Open jobs given to them'],
+    ['activeCandidates', 'People in process', 'People they are moving through a job now'],
+    ['needsAction', 'Needs action', 'Next steps that are theirs to do'],
   ],
   BDE: [
-    ['clients', 'Clients', 'Clients whose Owner BDE they are (or assigned to them on Users)'],
-    ['openRequirements', 'Open Requirements', 'Live requirements of their clients'],
-    ['submitted', 'Submitted', 'Active applications submitted to their clients (Client Submission onward)'],
-    ['feedbackPending', 'Client Feedback Pending', 'Submitted and waiting on the client decision'],
-    ['interviews', 'Interviews', 'Interview Scheduled / Completed'],
-    ['selected', 'Selected', 'Selected, Offer or Offer Accepted — not yet joined'],
-    ['activeClients', 'Active Clients', 'Their clients with at least one live requirement'],
-    ['clientActions', 'Client Actions', 'Client-side next actions owned by them'],
+    ['clients', 'Clients', 'Clients they look after'],
+    ['openRequirements', 'Open jobs', 'Open jobs of their clients'],
+    ['submitted', 'Sent to client', 'People sent to their clients'],
+    ['feedbackPending', 'Waiting for client', 'Sent and waiting for the client'],
+    ['interviews', 'Interviews', 'Interviews booked or done'],
+    ['selected', 'Selected', 'Selected or offered, not joined yet'],
+    ['activeClients', 'Active clients', 'Their clients with an open job'],
+    ['clientActions', 'Client tasks', 'Client next steps that are theirs'],
   ],
   TL: [
     ['recruiters', 'Recruiters', 'Recruiters whose seat reports to them'],
-    ['requirements', 'Requirements', 'Live requirements they lead or their recruiters hold'],
-    ['candidates', 'Candidates', 'Active applications of their team'],
-    ['pendingReviews', 'Pending Reviews', 'Next actions owned by them (TL Review → Approve / Reject / Hold)'],
+    ['requirements', 'Jobs', 'Open jobs of their team'],
+    ['candidates', 'Candidates', 'People in process in their team'],
+    ['pendingReviews', 'Waiting for check', 'Candidates waiting for their check'],
   ],
 };
 
+// Status (user, 2026-10-05): Active / Former / All. FORMER = everyone who has
+// left — the people from HRMS (GET /ats/team?view=former, utils/formerPeople.js)
+// and any login marked Left. A former person is listed under EVERY department
+// they worked in (r.departments, each with dates in r.stints).
+const isFormer = (r) => !!r.former || r.status === 'Left';
+const peopleTl = (r) => (r.tl ? (r.tlUserId ? `id:${r.tlUserId}` : `name:${r.tl}`) : null);
+const deptsOf = (r) => (r.former && r.departments ? r.departments : [r.department]);
+const sectionsOf = (r) => (r.former && r.sections ? r.sections : [r.section]);
+const PEOPLE_FIELDS = [
+  { key: 'role', get: (r) => r.roleGroup },
+  { key: 'dept', get: deptsOf },
+  { key: 'section', get: sectionsOf },
+  { key: 'tl', get: peopleTl, label: (v, r) => r.tl },
+  { key: 'client', get: (r) => (r.clientOptions || []).map((c) => c.id), label: (v, r) => ((r.clientOptions || []).find((c) => c.id === v) || {}).name || v },
+  { key: 'status', get: (r) => (isFormer(r) ? 'Former' : 'Active') },
+];
+function peoplePred(r, k, v) {
+  switch (k) {
+    case 'role': return r.roleGroup === v;
+    case 'dept': return deptsOf(r).includes(v);
+    case 'section': return sectionsOf(r).includes(v);
+    case 'tl': return v.startsWith('id:') ? r.tlUserId === v.slice(3) : lc(r.tl) === lc(v.slice(5));
+    case 'client': return (r.clientOptions || []).some((c) => c.id === v);
+    case 'status': return v === 'Former' ? isFormer(r) : !isFormer(r);
+    default: return true;
+  }
+}
+const monthYear = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : '?');
+// "Medical · Oct 2025 – Jan 2026" — one line per department they worked in;
+// the picked department first and in bold.
+function Stints({ r, dept }) {
+  const list = [...(r.stints || [])].sort((a, b) => (b.department === dept) - (a.department === dept));
+  if (!list.length) return <span className="cell-muted">—</span>;
+  return list.map((s) => (
+    <span key={s.department} className={`fh-stint${s.department === dept ? ' is-picked' : ''}`} title={s.via.join(', ')}>
+      {`${s.department} · ${monthYear(s.from)} – ${monthYear(s.to)}`}
+    </span>
+  ));
+}
+
+// PERFORMANCE SNAPSHOT (ATS layout v3 §5) — for the people listed below:
+// sent to the client, at interview, joined. Each bar is scaled to the best
+// in the list and opens the exact list it counts (metricLink — the same sets
+// as the table's numbers). Sent and Interviews are where people are NOW;
+// Joined is everyone who joined.
+const SNAP = [['submitted', 'Sent to client', 'blue'], ['interviews', 'Interviews', 'yellow'], ['joined', 'Joined', 'green']];
+const SNAP_TOP = 8;
+function PerfSnapshot({ list, onOpen }) {
+  const [all, setAll] = useState(false);
+  const people = list.filter((r) => !r.former && r.counts);
+  const max = Object.fromEntries(SNAP.map(([k]) => [k, Math.max(1, ...people.map((r) => Number(r.counts[k]) || 0))]));
+  const ranked = [...people]
+    .filter((r) => SNAP.some(([k]) => Number(r.counts[k]) > 0))
+    .sort((a, b) => (b.counts.joined || 0) - (a.counts.joined || 0) || (b.counts.submitted || 0) - (a.counts.submitted || 0) || String(a.name).localeCompare(String(b.name)));
+  const shown = all ? ranked : ranked.slice(0, SNAP_TOP);
+  return (
+    <section className="card pw-snap">
+      <div className="pw-snap-head">
+        <h3>Performance snapshot</h3>
+        <span className="small-muted">Sent to client and interviews: where people are now. Joined: everyone who joined.</span>
+      </div>
+      {!ranked.length && <div className="small-muted pw-snap-empty">Nobody here has sent a person to a client yet.</div>}
+      {shown.map((r) => (
+        <div key={r.id} className="pw-snap-row">
+          <div className="pw-snap-who">
+            <button type="button" className="pw-person" onClick={() => onOpen(r.id)} title="Open their 360">{r.name}</button>
+            <span className="pw-role-word">{roleWord(r)}</span>
+            {r.department && <span className="small-muted">{r.department}</span>}
+          </div>
+          {SNAP.map(([k, label, tone]) => {
+            const v = Number(r.counts[k]) || 0;
+            // The number is the person's own; the bar is against the best here.
+            const bar = (
+              <>
+                <span className="pw-snap-lbl"><span>{label}</span><b>{v ? v.toLocaleString('en-IN') : 'None'}</b></span>
+                <ProgressBar value={v} max={max[k]} tone={v ? tone : 'grey'} />
+              </>
+            );
+            return v
+              ? <Link key={k} className="pw-snap-cell" to={metricLink(r.id, k)} title={`Open ${r.name}'s ${label.toLowerCase()}`}>{bar}</Link>
+              : <span key={k} className="pw-snap-cell">{bar}</span>;
+          })}
+        </div>
+      ))}
+      {ranked.length > SNAP_TOP && (
+        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAll(!all)}>
+          {all ? 'Show the top 8' : `Show all ${ranked.length}`}
+        </button>
+      )}
+    </section>
+  );
+}
+
 function PeopleTab({
-  rows, loading, isLead, isAdmin, initialRole, onOpen, formerRows, showFormer, setShowFormer, formerBusy,
+  rows, loading, isLead, initialRole, onOpen, onOpenFormer, formerAllowed, formerLoading, clientsOf, onShown,
 }) {
   const presentRoles = useMemo(() => ROLE_SWITCH.filter(([id]) => rows.some((r) => r.roleGroup === id)), [rows]);
+  const defaultRole = presentRoles[0] ? presentRoles[0][0] : 'RECRUITER';
   const [roleSel, setRoleSel] = useState(initialRole || '');
-  const role = presentRoles.some(([id]) => id === roleSel) ? roleSel : (presentRoles[0] ? presentRoles[0][0] : 'RECRUITER');
+  const role = presentRoles.some(([id]) => id === roleSel) ? roleSel : defaultRole;
   const [q, setQ] = useState('');
   const [dept, setDept] = useState('');
   const [section, setSection] = useState('');
@@ -146,34 +263,17 @@ function PeopleTab({
   useEffect(() => { setSection(''); setTl(''); setClient(''); setSort({ key: '', dir: 'desc' }); }, [role]);
 
   const inRole = useMemo(() => rows.filter((r) => r.roleGroup === role), [rows, role]);
-  const deptOptions = uniqSorted(inRole.map((r) => r.department));
-  const sectionOptions = uniqSorted(inRole.filter((r) => !dept || r.department === dept).map((r) => r.section));
-  const tlOptions = useMemo(() => {
-    const m = new Map();
-    inRole.forEach((r) => { if (r.tl) m.set(r.tlUserId ? `id:${r.tlUserId}` : `name:${r.tl}`, r.tl); });
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [inRole]);
-  const clientOptions = useMemo(() => {
-    const m = new Map();
-    inRole.forEach((r) => (r.clientOptions || []).forEach((c) => m.set(c.id, c.name)));
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [inRole]);
+  // Everyone in scope — current and former (the page merges them) — searched;
+  // the panel's options are counted over this.
+  const searched = useMemo(() => rows
+    .filter((r) => !q || `${r.name} ${r.employeeCode || ''} ${r.recruiterCode || ''} ${r.seatLabel || ''}`.toLowerCase().includes(lc(q))), [rows, q]);
+  const values = useMemo(() => ({
+    role, dept, section, tl, client, status,
+  }), [role, dept, section, tl, client, status]);
+  const facets = useLocalFacets(searched, PEOPLE_FIELDS, values, peoplePred);
 
   const list = useMemo(() => {
-    const out = [
-      ...inRole,
-      ...(showFormer && formerRows ? formerRows.filter((r) => r.roleGroup === role) : []),
-    ].filter((r) => {
-      if (dept && r.department !== dept) return false;
-      if (section && r.section !== section) return false;
-      if (tl) {
-        if (tl.startsWith('id:') ? r.tlUserId !== tl.slice(3) : lc(r.tl) !== lc(tl.slice(5))) return false;
-      }
-      if (status && !r.former && (r.status || 'Active') !== status) return false;
-      if (client && !(r.clientOptions || []).some((c) => c.id === client)) return false;
-      if (q && !`${r.name} ${r.employeeCode || ''} ${r.recruiterCode || ''}`.toLowerCase().includes(lc(q))) return false;
-      return true;
-    });
+    const out = applyFilters(searched, values, peoplePred);
     if (!sort.key) return out;
     const dir = sort.dir === 'asc' ? 1 : -1;
     return [...out].sort((a, b) => {
@@ -184,19 +284,32 @@ function PeopleTab({
       if (y === undefined) return -1;
       return dir * (x - y) || String(a.name).localeCompare(String(b.name));
     });
-  }, [inRole, formerRows, showFormer, role, dept, section, tl, status, client, q, sort]);
+  }, [searched, values, sort]);
 
   const cols = PEOPLE_COLUMNS[role] || [];
-  const nameLabel = { RECRUITER: 'Person', BDE: 'BDE', TL: 'TL' }[role];
+  const nameLabel = { RECRUITER: 'Person', BDE: 'Client manager', TL: 'Dept Head' }[role];
+  const noun = { RECRUITER: 'recruiters', BDE: 'client managers', TL: 'dept heads' }[role] || 'people';
+  const roleCount = (id) => ((facets.role || []).find((o) => o.value === id) || {}).count || 0;
   const chips = [
+    role !== defaultRole && { key: 'role', label: 'Role', value: (ROLE_SWITCH.find(([id]) => id === role) || [])[1] || role, onRemove: () => setRoleSel(defaultRole) },
     dept && { key: 'dept', label: 'Department', value: dept, onRemove: () => { setDept(''); setSection(''); } },
     section && { key: 'section', label: 'Section', value: section, onRemove: () => setSection('') },
-    tl && { key: 'tl', label: 'TL', value: (tlOptions.find(([v]) => v === tl) || [])[1] || tl, onRemove: () => setTl('') },
-    client && { key: 'client', label: 'Client', value: (clientOptions.find(([v]) => v === client) || [])[1] || 'Selected', onRemove: () => setClient('') },
-    status !== 'Active' && { key: 'status', label: 'Status', value: status || 'Active + Left', onRemove: () => setStatus('Active') },
-    q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') },
+    tl && { key: 'tl', label: 'Team lead', value: optLabel(facets.tl, tl, tl.slice(tl.indexOf(':') + 1)), onRemove: () => setTl('') },
+    client && { key: 'client', label: 'Client', value: optLabel(facets.client, client, 'Selected'), onRemove: () => setClient('') },
+    status !== 'Active' && { key: 'status', label: 'Showing', value: status === 'Former' ? 'Former people' : 'Active + former', onRemove: () => setStatus('Active') },
   ].filter(Boolean);
-  const clearAll = () => { setDept(''); setSection(''); setTl(''); setClient(''); setStatus('Active'); setQ(''); };
+  const clearAll = () => { setRoleSel(defaultRole); setDept(''); setSection(''); setTl(''); setClient(''); setStatus('Active'); setQ(''); };
+  // The page's export takes exactly the rows shown.
+  useEffect(() => { if (onShown) onShown(list.map((r) => r.id), status); }, [list, status, onShown]);
+  const statusCount = (v) => ((facets.status || []).find((o) => o.value === v) || {}).count || 0;
+  const sortOptions = [
+    ['', 'Default order'], ['name:asc', 'Name A–Z'], ['name:desc', 'Name Z–A'],
+    ...cols.map(([id, label]) => [`${id}:desc`, `Most ${label.toLowerCase()}`]),
+  ];
+  if (sort.key && !sortOptions.some(([k]) => k === sortValue(sort))) {
+    const col = cols.find(([id]) => id === sort.key);
+    sortOptions.push([sortValue(sort), col ? `Fewest ${col[1].toLowerCase()}` : sortValue(sort)]);
+  }
   const bdeEmpty = role === 'BDE' && inRole.length > 0 && inRole.every((r) => !(r.counts && r.counts.clients));
   const showCols = role === 'BDE' ? cols.slice(0, 6) : cols;
   const extraCols = role === 'BDE' ? cols.slice(6) : [];
@@ -204,60 +317,66 @@ function PeopleTab({
   return (
     <>
       {isLead && (
-        <>
-          <div className="filter-row pw-filters">
-            {presentRoles.length > 1 && (
-              <span className="pw-role-switch" role="group" aria-label="Role">
-                {presentRoles.map(([id, label]) => (
-                  <button key={id} type="button" className={role === id ? 'active' : ''} onClick={() => setRoleSel(id)} aria-pressed={role === id}>{label}</button>
-                ))}
-              </span>
-            )}
-            <input placeholder={`Search ${nameLabel.toLowerCase()} name or code`} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-            {deptOptions.length > 1 && <Select label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={deptOptions} />}
-            {role !== 'BDE' && sectionOptions.length > 1 && <Select label="Section" value={section} onChange={setSection} options={sectionOptions} />}
-            {role === 'RECRUITER' && tlOptions.length > 1 && <Select label="TL" value={tl} onChange={setTl} options={tlOptions} all="All TLs" />}
-            {role === 'BDE' && clientOptions.length > 0 && <Select label="Client" value={client} onChange={setClient} options={clientOptions} />}
-            {role !== 'TL' && (
-              <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status" title="Status" style={{ width: 'auto' }}>
-                <option value="Active">Active</option>
-                <option value="Left">Left</option>
-                <option value="">Active + Left</option>
-              </select>
-            )}
-            {isAdmin && role === 'RECRUITER' && (
-              <label className="pw-former-toggle" title="Also list the people who used to hold these Recruiter Codes, with who replaced them">
-                <input type="checkbox" checked={showFormer} onChange={(e) => setShowFormer(e.target.checked)} />
-                {' '}Show former holders{formerBusy ? ' …' : ''}
-              </label>
-            )}
-            <button className="btn btn-sm" type="button" onClick={clearAll} disabled={!chips.length}>Clear All</button>
-            <span className="small-muted pw-shown">{`${list.length} ${nameLabel === 'Person' ? 'recruiter' : nameLabel}${list.length === 1 ? '' : 's'}`}</span>
-          </div>
-          <FilterChips filters={chips} onClearAll={clearAll} />
-        </>
+        <ListToolbar
+          search={q}
+          onSearch={setQ}
+          placeholder={`Search ${nameLabel.toLowerCase()} name or code`}
+          filterCount={chips.length}
+          sort={sortValue(sort)}
+          sortOptions={sortOptions}
+          onSort={(v) => setSort(parseSort(v))}
+          chips={[...chips, q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') }].filter(Boolean)}
+          onClearAll={clearAll}
+          panel={(
+            <>
+              {presentRoles.length > 1 && (
+                <PanelField label="Role">
+                  <select value={role} onChange={(e) => setRoleSel(e.target.value)} aria-label="Role">
+                    {presentRoles.map(([id, label]) => <option key={id} value={id}>{`${label} (${fmt(roleCount(id))})`}</option>)}
+                  </select>
+                </PanelField>
+              )}
+              <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
+              {role !== 'BDE' && <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />}
+              {role === 'RECRUITER' && <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />}
+              {role === 'BDE' && <FacetSelect label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />}
+            </>
+          )}
+        />
       )}
       {bdeEmpty && (
         <div className="notice pw-notice">
-          <b>No BDE owns a client yet.</b> Today no client has an Owner BDE and no requirement names a BDE, so every BDE shows 0.
-          The BDE numbers count a BDE&apos;s <i>clients</i>: set the Owner BDE on <Link to="/clients">Clients</Link> (Admin), assign clients to the BDE on
-          Administration → Users, or name the BDE on a requirement — the numbers fill in from there.
+          <b>No client manager has a client yet.</b> Set one on each client in <Link to="/clients">Clients</Link>, and these numbers fill in.
         </div>
       )}
       {loading
         ? <div className="small-muted" style={{ padding: 16 }}>Loading…</div>
         : (
           <>
+            {isLead && status !== 'Former' && <PerfSnapshot list={list} onOpen={onOpen} />}
             <div className="pw-tablebar">
-              <span className="small-muted">Click a name for their 360 — every number opens the exact list it counts.</span>
+              <span className="small-muted">
+                {status === 'Former' ? 'Click a name to see their work history.' : 'Click a name or a number to see the list.'}
+              </span>
+              {isLead && formerAllowed && (
+                <div className="fh-seg" role="group" aria-label="Active or former people">
+                  {[['Active', 'Active', statusCount('Active')], ['Former', 'Former', statusCount('Former')], ['', 'All', null]].map(([v, label, n]) => (
+                    <button key={label} type="button" className={status === v ? 'on' : ''} aria-pressed={status === v} onClick={() => setStatus(v)}>
+                      {label}
+                      {v === 'Former' && formerLoading ? <span className="n">…</span> : (n ? <span className="n">{fmt(n)}</span> : null)}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+            {status !== 'Active' && formerLoading && <div className="small-muted pw-notice">Loading the people who have left…</div>}
             <div className="tbl-wrap">
               <table className="pw-table">
                 <thead>
                   <tr>
                     <SortTh id="name" label={nameLabel} sort={sort} setSort={setSort} />
-                    {role === 'RECRUITER' && <><th>Dept</th><th>Section</th><th>TL</th></>}
-                    {role === 'TL' && <><th>Dept</th><th>Section</th></>}
+                    {role === 'RECRUITER' && <><th>Department · Section</th><th title="TL = team lead">Team lead</th><th>Clients<Help text="Clients of the open jobs given to them" /></th></>}
+                    {role === 'TL' && <><th>Department</th><th>Section</th></>}
                     {showCols.map(([id, label, title]) => <SortTh key={id} id={id} label={label} title={title} sort={sort} setSort={setSort} num />)}
                     {extraCols.map(([id, label, title]) => <SortTh key={id} id={id} label={label} title={title} sort={sort} setSort={setSort} num />)}
                   </tr>
@@ -265,39 +384,46 @@ function PeopleTab({
                 <tbody>
                   {list.map((r) => {
                     const c = r.counts || {};
-                    const open = !r.former ? () => onOpen(r.id) : null;
+                    // A former person opens their work history; everyone else their 360.
+                    const open = r.former ? () => onOpenFormer(r.id) : () => onOpen(r.id);
+                    const t = r.totals || {};
                     return (
-                      <tr key={r.id} className={r.former ? 'pw-former' : 'pw-click'} onClick={open || undefined}>
+                      <tr key={r.id} className={r.former ? 'pw-former pw-click' : 'pw-click'} onClick={open}>
                         <td>
-                          {open
-                            ? <button type="button" className="pw-person" onClick={(e) => { e.stopPropagation(); open(); }} title={`Open ${r.roleLabel} 360`}>{r.name}</button>
-                            : <div className="pw-name">{r.name}</div>}
+                          <button type="button" className="pw-person" onClick={(e) => { e.stopPropagation(); open(); }} title={r.former ? `Open ${r.name}'s work history` : `Open ${r.roleLabel} 360`}>{r.name}</button>
+                          {roleWord(r) && <span className="pw-role-word">{roleWord(r)}</span>}
                           {r.role === 'STL' && <span className="small-muted"> · STL</span>}
                           {(r.seatLabel || r.recruiterCode) && <div className="small-muted">{r.seatLabel || r.recruiterCode}</div>}
-                          {r.status === 'Left' && !r.former && <span className="status rejected pw-left">Left</span>}
-                          {r.former && (
-                            <div className="small-muted">
-                              {[r.leftOn ? `Left ${leftOn(r.leftOn)}` : 'Left', r.replacedBy && `replaced by ${r.replacedBy}`].filter(Boolean).join(' · ')}
-                            </div>
-                          )}
+                          {r.status === 'Left' && !r.former && <div><span className="fh-leftline">Left</span></div>}
+                          {r.former && <div><span className="fh-leftline">{r.leftOn ? `Left on ${day(r.leftOn)}` : 'Left · last day not recorded'}</span></div>}
+                          {r.former && role === 'BDE' && <div className="small-muted"><Stints r={r} dept={dept} /></div>}
                         </td>
                         {role === 'RECRUITER' && (
                           <>
-                            <td>{r.department || <span className="cell-muted">—</span>}</td>
-                            <td>{r.section || <span className="cell-muted">—</span>}</td>
+                            <td>
+                              {r.former ? <Stints r={r} dept={dept} /> : (r.department || <span className="cell-muted">—</span>)}
+                              {(r.former ? (r.sections || []).join(', ') : r.section) && <div className="small-muted">{r.former ? (r.sections || []).join(', ') : r.section}</div>}
+                            </td>
                             <td>{r.tl || <span className="cell-muted">—</span>}</td>
+                            <td className="pw-clients">{(() => {
+                              const names = r.former ? [] : [...((clientsOf && clientsOf.get(r.id)) || [])].sort();
+                              if (!names.length) return <span className="cell-muted">—</span>;
+                              return <span title={names.join(', ')}>{`${names.length} · ${names.slice(0, 2).join(', ')}${names.length > 2 ? ` +${names.length - 2}` : ''}`}</span>;
+                            })()}</td>
                           </>
                         )}
                         {role === 'TL' && (
                           <>
-                            <td>{r.department || <span className="cell-muted">—</span>}</td>
-                            <td>{r.section || <span className="cell-muted">—</span>}</td>
+                            <td>{r.former ? <Stints r={r} dept={dept} /> : (r.department || <span className="cell-muted">—</span>)}</td>
+                            <td>{(r.former ? (r.sections || []).join(', ') : r.section) || <span className="cell-muted">—</span>}</td>
                           </>
                         )}
                         {r.former
                           ? (
                             <td colSpan={showCols.length + extraCols.length} className="small-muted">
-                              {`Historical: ${fmt(r.requirementsWorked)} requirement(s) worked · ${fmt(r.candidatesWorked)} candidate(s)${r.joined ? ` · ${fmt(r.joined)} joined` : ''}`}
+                              {t.added
+                                ? `Their work: ${fmt(t.jobs)} job(s) · ${fmt(t.added)} candidate(s) added · ${fmt(t.sent)} sent to client · ${fmt(t.interviews)} interview(s) · ${fmt(t.joined)} joined`
+                                : 'No ATS work recorded under their name'}
                             </td>
                           )
                           : [...showCols, ...extraCols].map(([id, label]) => (
@@ -311,19 +437,20 @@ function PeopleTab({
                   {list.length === 0 && (
                     <tr>
                       <td colSpan={1 + (role === 'RECRUITER' ? 3 : role === 'TL' ? 2 : 0) + cols.length} style={{ padding: 0 }}>
-                        <EmptyState compact icon="👥" title={chips.length ? 'Nobody matches these filters.' : `No ${nameLabel === 'Person' ? 'recruiters' : `${nameLabel}s`} in your scope.`} />
+                        <EmptyState
+                          compact
+                          icon="👥"
+                          title={status === 'Former'
+                            ? (formerLoading ? 'Loading the people who have left…' : `No former ${noun}${dept ? ` in ${dept}` : ' in your area'}.`)
+                            : (chips.length || q ? 'Nobody matches these filters.' : `No ${noun} in your area yet.`)}
+                        />
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-            <div className="small-muted pw-legend">
-              {cols.map(([id, label, title], i) => (
-                <span key={id}>{i ? ' · ' : ''}<b>{label}</b> {title.charAt(0).toLowerCase() + title.slice(1)}</span>
-              ))}
-              .
-            </div>
+            <ListFooter from={list.length ? 1 : 0} to={list.length} total={list.length} noun={noun} />
           </>
         )}
     </>
@@ -339,12 +466,35 @@ const ASSIGN_TONE = {
   'Fully Assigned': 'green', 'Recruiter Missing': 'amber', 'BDE Missing': 'amber', 'TL Missing': 'amber', 'Needs Assignment': 'red',
 };
 
-function personOpts(rows, pick) {
-  const m = new Map();
-  rows.forEach((r) => pick(r).forEach((p) => { if (p && p.name) m.set(p.id ? `id:${p.id}` : `name:${p.name}`, p.name); }));
-  return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-}
+// On screen: no bare "TL" / "BDE" in a status (the filter values stay the same).
+const ASSIGN_PLAIN = { 'TL Missing': 'Team lead missing', 'BDE Missing': 'Client manager missing' };
 const personMatch = (value, p) => !!p && (value.startsWith('id:') ? p.id === value.slice(3) : lc(p.name) === lc(value.slice(5)));
+const REQ_STATUS_LABEL = Object.fromEntries(REQ_STATUS);
+const ASSIGN_FIELDS = [
+  { key: 'status', get: (r) => [r.live ? 'live' : null, ['ON_HOLD', 'CLOSED'].includes(r.status) ? r.status : null], label: (v) => REQ_STATUS_LABEL[v] || v },
+  { key: 'dept', get: (r) => r.department },
+  { key: 'section', get: (r) => r.section },
+  { key: 'tl', get: (r) => personKey(r.tl), label: (v, r) => r.tl.name },
+  { key: 'recruiter', get: (r) => (r.recruiters || []).map(personKey), label: (v, r) => ((r.recruiters || []).find((p) => personKey(p) === v) || {}).name || v },
+  { key: 'bde', get: (r) => (r.bde ? personKey(r.bde) : r.bdeRequired ? 'none' : null), label: (v, r) => (v === 'none' ? 'BDE missing (client reqs)' : r.bde.name) },
+  { key: 'client', get: (r) => r.client },
+  { key: 'type', get: (r) => r.type },
+  { key: 'assign', get: (r) => r.assignment },
+];
+function assignPred(r, k, v) {
+  switch (k) {
+    case 'status': return v === 'live' ? !!r.live : r.status === v;
+    case 'dept': return r.department === v;
+    case 'section': return r.section === v;
+    case 'tl': return personMatch(v, r.tl);
+    case 'recruiter': return (r.recruiters || []).some((p) => personMatch(v, p));
+    case 'bde': return v === 'none' ? !!(r.bdeRequired && !r.bde) : personMatch(v, r.bde);
+    case 'client': return r.client === v;
+    case 'type': return r.type === v;
+    case 'assign': return r.assignment === v;
+    default: return true;
+  }
+}
 
 function AssignmentsTab({ rows, error, initial }) {
   const navigate = useNavigate();
@@ -361,29 +511,25 @@ function AssignmentsTab({ rows, error, initial }) {
   const [layout, setLayout] = useState('table');
   const all = rows || [];
 
-  const base = useMemo(() => all.filter((r) => {
-    if (status === 'live' ? !r.live : status && r.status !== status) return false;
-    return true;
-  }), [all, status]);
-  const deptOptions = uniqSorted(base.map((r) => r.department));
-  const sectionOptions = uniqSorted(base.filter((r) => !dept || r.department === dept).map((r) => r.section));
-  const tlOptions = useMemo(() => personOpts(base, (r) => [r.tl]), [base]);
-  const recruiterOptions = useMemo(() => personOpts(base, (r) => r.recruiters || []), [base]);
-  const bdeOptions = useMemo(() => personOpts(base, (r) => [r.bde]), [base]);
-  const clientOptions = useMemo(() => uniqSorted(base.map((r) => r.client)), [base]);
+  const [sort, setSort] = useState('');
+  const searched = useMemo(() => all.filter((r) => !q || `${r.reqCode || ''} ${r.title} ${r.client}`.toLowerCase().includes(lc(q))), [all, q]);
+  const values = useMemo(() => ({
+    status, dept, section, tl, recruiter, bde, client, type, assign,
+  }), [status, dept, section, tl, recruiter, bde, client, type, assign]);
+  const facets = useLocalFacets(searched, ASSIGN_FIELDS, values, assignPred);
 
-  const list = useMemo(() => base.filter((r) => {
-    if (dept && r.department !== dept) return false;
-    if (section && r.section !== section) return false;
-    if (tl && !personMatch(tl, r.tl)) return false;
-    if (recruiter && !(r.recruiters || []).some((p) => personMatch(recruiter, p))) return false;
-    if (bde === 'none' ? !(r.bdeRequired && !r.bde) : bde && !personMatch(bde, r.bde)) return false;
-    if (client && r.client !== client) return false;
-    if (type && r.type !== type) return false;
-    if (assign && r.assignment !== assign) return false;
-    if (q && !`${r.reqCode || ''} ${r.title} ${r.client}`.toLowerCase().includes(lc(q))) return false;
-    return true;
-  }), [base, dept, section, tl, recruiter, bde, client, type, assign, q]);
+  const list = useMemo(() => {
+    const out = applyFilters(searched, values, assignPred);
+    if (!sort) return out;
+    const by = {
+      title: (r) => String(r.title || ''),
+      client: (r) => String(r.client || ''),
+    }[sort];
+    if (by) return [...out].sort((a, b) => by(a).localeCompare(by(b)));
+    // Needs Assignment first, Fully Assigned last.
+    const rank = (r) => ASSIGNMENT_STATUSES.length - ASSIGNMENT_STATUSES.indexOf(r.assignment);
+    return [...out].sort((a, b) => rank(b) - rank(a) || String(a.title || '').localeCompare(String(b.title || '')));
+  }, [searched, values, sort]);
   const page = usePaged(list);
   const tally = useMemo(() => {
     const t = {};
@@ -391,42 +537,47 @@ function AssignmentsTab({ rows, error, initial }) {
     return t;
   }, [list]);
 
-  const label = (opts, v) => (opts.find(([x]) => x === v) || [])[1] || v;
+  const nameOf = (v) => v.slice(v.indexOf(':') + 1);
   const chips = [
     dept && { key: 'dept', label: 'Department', value: dept, onRemove: () => { setDept(''); setSection(''); } },
     section && { key: 'section', label: 'Section', value: section, onRemove: () => setSection('') },
-    tl && { key: 'tl', label: 'TL', value: label(tlOptions, tl), onRemove: () => setTl('') },
-    recruiter && { key: 'rec', label: 'Recruiter', value: label(recruiterOptions, recruiter), onRemove: () => setRecruiter('') },
-    bde && { key: 'bde', label: 'BDE', value: bde === 'none' ? 'Missing' : label(bdeOptions, bde), onRemove: () => setBde('') },
+    tl && { key: 'tl', label: 'Team lead', value: optLabel(facets.tl, tl, nameOf(tl)), onRemove: () => setTl('') },
+    recruiter && { key: 'rec', label: 'Recruiter', value: optLabel(facets.recruiter, recruiter, nameOf(recruiter)), onRemove: () => setRecruiter('') },
+    bde && { key: 'bde', label: 'Client manager', value: bde === 'none' ? 'Missing' : optLabel(facets.bde, bde, nameOf(bde)), onRemove: () => setBde('') },
     client && { key: 'client', label: 'Client', value: client, onRemove: () => setClient('') },
     type && { key: 'type', label: 'Type', value: type, onRemove: () => setType('') },
     status !== 'live' && { key: 'status', label: 'Status', value: (REQ_STATUS.find(([v]) => v === status) || [])[1] || 'All', onRemove: () => setStatus('live') },
     assign && { key: 'assign', label: 'Assignment', value: assign, onRemove: () => setAssign('') },
-    q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') },
   ].filter(Boolean);
   const clearAll = () => { setQ(''); setDept(''); setSection(''); setTl(''); setRecruiter(''); setBde(''); setClient(''); setType(''); setStatus('live'); setAssign(''); };
 
   if (error) return <div className="notice red">{error}</div>;
   return (
     <>
-      <div className="filter-row pw-filters">
-        <input placeholder="Search requirement, REQ code or client" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-        {deptOptions.length > 1 && <Select label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={deptOptions} />}
-        {sectionOptions.length > 1 && <Select label="Section" value={section} onChange={setSection} options={sectionOptions} />}
-        {tlOptions.length > 1 && <Select label="TL" value={tl} onChange={setTl} options={tlOptions} all="All TLs" />}
-        {recruiterOptions.length > 1 && <Select label="Recruiter" value={recruiter} onChange={setRecruiter} options={recruiterOptions} />}
-        <Select label="BDE" value={bde} onChange={setBde} options={[['none', 'BDE missing (client reqs)'], ...bdeOptions]} />
-        {clientOptions.length > 1 && <Select label="Client" value={client} onChange={setClient} options={clientOptions} />}
-        <Select label="Type" value={type} onChange={setType} options={[['Client', 'Client'], ['Internal', 'Internal']]} all="Client + Internal" />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status" title="Requirement status" style={{ width: 'auto' }}>
-          {REQ_STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          <option value="">All statuses</option>
-        </select>
-        <Select label="Assignment" value={assign} onChange={setAssign} options={ASSIGNMENT_STATUSES} all="Any assignment" />
-        <button className="btn btn-sm" type="button" onClick={clearAll} disabled={!chips.length}>Clear All</button>
-        <span className="small-muted pw-shown">{rows ? `${fmt(list.length)} of ${fmt(all.length)} requirement(s)` : ''}</span>
-      </div>
-      <FilterChips filters={chips} onClearAll={clearAll} />
+      <ListToolbar
+        search={q}
+        onSearch={setQ}
+        placeholder="Search job, job code or client"
+        filterCount={chips.length}
+        sort={sort}
+        sortOptions={[['', 'Default order'], ['title', 'Job A–Z'], ['client', 'Client A–Z'], ['assign', 'Needs assignment first']]}
+        onSort={setSort}
+        chips={[...chips, q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') }].filter(Boolean)}
+        onClearAll={clearAll}
+        panel={(
+          <>
+            <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
+            <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
+            <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />
+            <FacetSelect label="Recruiter" value={recruiter} onChange={setRecruiter} options={facets.recruiter} allLabel="All recruiters" />
+            <FacetSelect label="Client manager (BDE)" value={bde} onChange={setBde} options={facets.bde} allLabel="All client managers" />
+            <FacetSelect label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />
+            <FacetSelect label="Type" value={type} onChange={setType} options={facets.type} allLabel="Client + Internal" />
+            <FacetSelect label="Status" value={status} onChange={setStatus} options={facets.status} allLabel="All statuses" />
+            <FacetSelect label="Assignment" value={assign} onChange={setAssign} options={facets.assign} allLabel="Any assignment" />
+          </>
+        )}
+      />
       {rows && list.length > 0 && (
         <div className="pw-assign-bar">
           <span className="pw-layout" role="group" aria-label="Layout">
@@ -447,7 +598,7 @@ function AssignmentsTab({ rows, error, initial }) {
           <table className="pw-table pw-assign">
             <thead>
               <tr>
-                <th>Requirement</th><th>Client</th><th>Type</th><th>Dept</th><th>Section</th><th>TL</th><th>Recruiter</th><th>BDE</th><th>Status</th>
+                <th>Job</th><th>Client · type</th><th>Department · Section</th><th>Team lead</th><th>Recruiter</th><th>Client manager</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -457,12 +608,16 @@ function AssignmentsTab({ rows, error, initial }) {
                     <div className="pw-name">{r.title}</div>
                     {r.reqCode && <div className="small-muted">{r.reqCode}</div>}
                   </td>
-                  <td>{r.client}</td>
-                  <td><StatusChip tone={r.internal ? 'blue' : 'grey'}>{r.type}</StatusChip></td>
-                  <td>{r.department || <span className="cell-muted">—</span>}</td>
-                  <td>{r.section || <span className="cell-muted">—</span>}</td>
                   <td>
-                    {r.tl ? <span title={r.tl.source === 'seat' ? "From the recruiter's seat (not set on the requirement)" : undefined}>{r.tl.name}{r.tl.source === 'seat' && <span className="small-muted"> (seat)</span>}</span>
+                    {r.client}
+                    <div><StatusChip tone={r.internal ? 'blue' : 'grey'}>{r.type}</StatusChip></div>
+                  </td>
+                  <td>
+                    {r.department || <span className="cell-muted">—</span>}
+                    {r.section && <div className="small-muted">{r.section}</div>}
+                  </td>
+                  <td>
+                    {r.tl ? <span title={r.tl.source === 'seat' ? "From the recruiter's seat (not set on the job)" : undefined}>{r.tl.name}{r.tl.source === 'seat' && <span className="small-muted"> (seat)</span>}</span>
                       : <span className="pw-missing">Missing</span>}
                   </td>
                   <td>
@@ -472,38 +627,41 @@ function AssignmentsTab({ rows, error, initial }) {
                   </td>
                   <td>
                     {!r.bdeRequired
-                      ? <span className="cell-muted" title="Internal requirement — no BDE needed">—</span>
+                      ? <span className="cell-muted" title="Internal job — no client manager needed">—</span>
                       : r.bde
-                        ? <span title={r.bde.source === 'client' ? "The client's Owner BDE" : 'Named on the requirement'}>{r.bde.name}{r.bde.source === 'client' && <span className="small-muted"> (client owner)</span>}</span>
+                        ? <span title={r.bde.source === 'client' ? "The client's client manager" : 'Named on the job'}>{r.bde.name}{r.bde.source === 'client' && <span className="small-muted"> (client owner)</span>}</span>
                         : <span className="pw-missing">Missing</span>}
                   </td>
                   <td>
-                    <StatusChip tone={ASSIGN_TONE[r.assignment]}>{r.assignment}</StatusChip>
+                    <StatusChip tone={ASSIGN_TONE[r.assignment]}>{ASSIGN_PLAIN[r.assignment] || r.assignment}</StatusChip>
                     <div className="small-muted">{r.statusLabel}</div>
                   </td>
                 </tr>
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan="9" style={{ padding: 0 }}>
+                  <td colSpan="7" style={{ padding: 0 }}>
                     <EmptyState
                       compact
                       icon="📋"
-                      title={all.length ? 'No requirements match these filters.' : 'No requirements in your scope.'}
-                      action={chips.length ? <button type="button" className="btn btn-sm" onClick={clearAll}>Clear filters</button> : null}
+                      title={all.length ? 'No jobs match these filters.' : 'No jobs in your area yet.'}
+                      action={chips.length || q ? <button type="button" className="btn btn-sm" onClick={clearAll}>Clear filters</button> : null}
                     />
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-          {list.length > 0 && <Pager page={page} noun="requirements" />}
+          {list.length > 0 && (
+            <ListFooter from={page.from} to={page.to} total={list.length} noun="jobs">
+              <Pager page={page} noun="jobs" />
+            </ListFooter>
+          )}
         </div>
       )}
+      {rows && layout === 'tree' && list.length > 0 && <ListFooter from={1} to={list.length} total={list.length} noun="jobs" />}
       <div className="small-muted pw-legend">
-        <b>Fully Assigned</b> TL, recruiter and (client requirements) BDE named · <b>Recruiter / TL / BDE Missing</b> exactly one is missing ·{' '}
-        <b>Needs Assignment</b> two or more missing. Internal requirements need no BDE — they show <b>BDE: —</b> and never count it as missing.
-        A TL marked (seat) comes from the recruiter&apos;s seat; a BDE marked (client owner) is the client&apos;s Owner BDE.
+        <b>Fully Assigned</b> = team lead, recruiter and client manager named. Internal jobs need no client manager.
       </div>
     </>
   );
@@ -517,23 +675,23 @@ function group(rows, keyOf) {
 }
 function MissingCount({ rows }) {
   const n = rows.filter((r) => r.assignment !== 'Fully Assigned').length;
-  return <span className="small-muted">{`${fmt(rows.length)} req${n ? ` · ${fmt(n)} need assignment` : ''}`}</span>;
+  return <span className="small-muted">{`${fmt(rows.length)} job${rows.length === 1 ? '' : 's'}${n ? ` · ${fmt(n)} need people` : ''}`}</span>;
 }
 function AssignmentTree({ rows }) {
   const REQS_SHOWN = 12;
   return (
     <div className="pw-tree-wrap">
       <section className="pw-tree">
-        <h4>Department → Section → TL → Recruiter → Requirement</h4>
+        <h4>By department and team</h4>
         {group(rows, (r) => r.department || 'No department').map(([d, dr]) => (
           <details key={d} open={rows.length < 60}>
             <summary><b>{d}</b> <MissingCount rows={dr} /></summary>
             {group(dr, (r) => r.section).map(([s, sr]) => (
               <details key={s} className="pw-tree-l2">
                 <summary>{s} <MissingCount rows={sr} /></summary>
-                {group(sr, (r) => (r.tl ? r.tl.name : 'TL missing')).map(([t, tr]) => (
+                {group(sr, (r) => (r.tl ? r.tl.name : 'Team lead missing')).map(([t, tr]) => (
                   <details key={t} className="pw-tree-l3">
-                    <summary>{t === 'TL missing' ? <span className="pw-missing">TL missing</span> : <>TL {t}</>} <MissingCount rows={tr} /></summary>
+                    <summary>{t === 'Team lead missing' ? <span className="pw-missing">Team lead missing</span> : <>Team lead {t}</>} <MissingCount rows={tr} /></summary>
                     {group(tr, (r) => ((r.recruiters || []).length ? r.recruiters.map((p) => p.name).join(', ') : 'Recruiter missing')).map(([rc, rr]) => (
                       <div key={rc} className="pw-tree-l4">
                         <div>{rc === 'Recruiter missing' ? <span className="pw-missing">Recruiter missing</span> : <>Recruiter {rc}</>} <MissingCount rows={rr} /></div>
@@ -556,17 +714,17 @@ function AssignmentTree({ rows }) {
         ))}
       </section>
       <section className="pw-tree">
-        <h4>Client → BDE</h4>
+        <h4>By client</h4>
         {group(rows, (r) => r.client).map(([c, cr]) => {
-          const byBde = group(cr, (r) => (!r.bdeRequired ? 'BDE: — (internal)' : r.bde ? r.bde.name : 'BDE missing'));
+          const byBde = group(cr, (r) => (!r.bdeRequired ? 'Internal (no client manager)' : r.bde ? r.bde.name : 'Client manager missing'));
           return (
             <details key={c}>
               <summary><b>{c}</b> <MissingCount rows={cr} /></summary>
               <ul>
                 {byBde.map(([b, br]) => (
                   <li key={b}>
-                    {b === 'BDE missing' ? <span className="pw-missing">BDE missing</span> : b}
-                    {' '}<span className="small-muted">{`${fmt(br.length)} requirement(s)`}</span>
+                    {b === 'Client manager missing' ? <span className="pw-missing">Client manager missing</span> : b}
+                    {' '}<span className="small-muted">{`${fmt(br.length)} job(s)`}</span>
                   </li>
                 ))}
               </ul>
@@ -581,7 +739,29 @@ function AssignmentTree({ rows }) {
 // ===========================================================================
 // PENDING ACTIONS
 // ===========================================================================
-const DUE_FILTER = [['overdue', '🔴 Overdue'], ['today', '🟡 Due today'], ['upcoming', '🟢 Upcoming'], ['none', 'No due date']];
+const DUE_FILTER = [['overdue', '🔴 Late'], ['today', '🟠 Due today'], ['upcoming', '🔵 Upcoming'], ['none', 'No due date']];
+const DUE_LABEL = Object.fromEntries(DUE_FILTER);
+const PENDING_FIELDS = [
+  { key: 'dept', get: (r) => r.department },
+  { key: 'section', get: (r) => r.section },
+  { key: 'tl', get: peopleTl, label: (v, r) => r.tl },
+  { key: 'owner', get: (r) => (r.ownerUserId ? `id:${r.ownerUserId}` : r.owner ? `name:${r.owner}` : 'none'), label: (v, r) => (v === 'none' ? 'No named owner' : r.owner || 'Selected person') },
+  { key: 'action', get: (r) => r.action },
+  { key: 'due', get: (r) => r.dueStatus, label: (v) => DUE_LABEL[v] || v },
+];
+function pendingPred(r, k, v) {
+  switch (k) {
+    case 'dept': return r.department === v;
+    case 'section': return r.section === v;
+    case 'tl': return v.startsWith('id:') ? r.tlUserId === v.slice(3) : lc(r.tl) === lc(v.slice(5));
+    case 'owner':
+      if (v === 'none') return !(r.ownerUserId || r.owner);
+      return v.startsWith('id:') ? r.ownerUserId === v.slice(3) : lc(r.owner) === lc(v.slice(5));
+    case 'action': return r.action === v;
+    case 'due': return r.dueStatus === v;
+    default: return true;
+  }
+}
 
 function PendingTab({ data, error, initial, selfId, selfMode }) {
   const navigate = useNavigate();
@@ -593,33 +773,31 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
   const [owner, setOwner] = useState(initial.owner !== undefined ? initial.owner : (selfMode && selfId ? `id:${selfId}` : ''));
   const [action, setAction] = useState(initial.action || '');
   const [due, setDue] = useState(initial.due || '');
+  const [sort, setSort] = useState('');
   const all = rows || [];
-  const deptOptions = uniqSorted(all.map((r) => r.department));
-  const sectionOptions = uniqSorted(all.filter((r) => !dept || r.department === dept).map((r) => r.section));
-  const tlOptions = useMemo(() => {
-    const m = new Map();
-    all.forEach((r) => { if (r.tl) m.set(r.tlUserId ? `id:${r.tlUserId}` : `name:${r.tl}`, r.tl); });
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [all]);
+  const searched = useMemo(() => all.filter((r) => !q || `${r.candidate} ${r.requirement} ${r.reqCode || ''} ${r.client || ''}`.toLowerCase().includes(lc(q))), [all, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const values = useMemo(() => ({
+    dept, section, tl, owner, action, due,
+  }), [dept, section, tl, owner, action, due]);
+  const facets = useLocalFacets(searched, PENDING_FIELDS, values, pendingPred);
+  // "Me" (a recruiter's / BDE's default) stays choosable even with nothing of theirs pending.
   const ownerOptions = useMemo(() => {
-    const m = new Map();
-    all.forEach((r) => { if (r.owner) m.set(r.ownerUserId ? `id:${r.ownerUserId}` : `name:${r.owner}`, r.owner); });
-    const out = [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    if (owner && owner !== 'none' && !m.has(owner)) out.unshift([owner, owner.startsWith('id:') && owner.slice(3) === selfId ? 'Me' : 'Selected person']);
+    const out = (facets.owner || []).map((o) => (selfId && o.value === `id:${selfId}` ? { ...o, label: `${o.label} (me)` } : o));
+    if (owner && owner !== 'none' && !out.some((o) => o.value === owner)) {
+      out.unshift({ value: owner, label: owner.startsWith('id:') && owner.slice(3) === selfId ? 'Me' : 'Selected person', count: 0 });
+    }
     return out;
-  }, [all, owner, selfId]);
-  const actionOptions = uniqSorted(all.map((r) => r.action));
+  }, [facets.owner, owner, selfId]);
 
-  const list = useMemo(() => all.filter((r) => {
-    if (dept && r.department !== dept) return false;
-    if (section && r.section !== section) return false;
-    if (tl && (tl.startsWith('id:') ? r.tlUserId !== tl.slice(3) : lc(r.tl) !== lc(tl.slice(5)))) return false;
-    if (owner === 'none' ? (r.ownerUserId || r.owner) : owner && (owner.startsWith('id:') ? r.ownerUserId !== owner.slice(3) : lc(r.owner) !== lc(owner.slice(5)))) return false;
-    if (action && r.action !== action) return false;
-    if (due && r.dueStatus !== due) return false;
-    if (q && !`${r.candidate} ${r.requirement} ${r.reqCode || ''} ${r.client || ''}`.toLowerCase().includes(lc(q))) return false;
-    return true;
-  }), [all, dept, section, tl, owner, action, due, q]);
+  const list = useMemo(() => {
+    const out = applyFilters(searched, values, pendingPred);
+    if (sort === 'due') {
+      const t = (r) => (r.dueAt && r.dueStatus !== 'none' ? new Date(r.dueAt).getTime() : Infinity);
+      return [...out].sort((a, b) => t(a) - t(b));
+    }
+    if (sort === 'candidate') return [...out].sort((a, b) => String(a.candidate || '').localeCompare(String(b.candidate || '')));
+    return out;
+  }, [searched, values, sort]);
   const page = usePaged(list);
   const dueTally = useMemo(() => {
     const t = {};
@@ -631,29 +809,37 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
   const chips = [
     dept && { key: 'dept', label: 'Department', value: dept, onRemove: () => { setDept(''); setSection(''); } },
     section && { key: 'section', label: 'Section', value: section, onRemove: () => setSection('') },
-    tl && { key: 'tl', label: 'TL', value: label(tlOptions, tl), onRemove: () => setTl('') },
-    owner && { key: 'owner', label: 'Owner', value: owner === 'none' ? 'No named owner' : label(ownerOptions, owner), onRemove: () => setOwner('') },
+    tl && { key: 'tl', label: 'Team lead', value: optLabel(facets.tl, tl, tl.slice(tl.indexOf(':') + 1)), onRemove: () => setTl('') },
+    owner && { key: 'owner', label: 'Owner', value: owner === 'none' ? 'No named owner' : optLabel(ownerOptions, owner, owner.slice(owner.indexOf(':') + 1)), onRemove: () => setOwner('') },
     action && { key: 'action', label: 'Action', value: action, onRemove: () => setAction('') },
     due && { key: 'due', label: 'Due', value: label(DUE_FILTER, due), onRemove: () => setDue('') },
-    q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') },
   ].filter(Boolean);
   const clearAll = () => { setQ(''); setDept(''); setSection(''); setTl(''); setOwner(''); setAction(''); setDue(''); };
 
   if (error) return <div className="notice red">{error}</div>;
   return (
     <>
-      <div className="filter-row pw-filters">
-        <input placeholder="Search candidate, requirement or client" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-        {deptOptions.length > 1 && <Select label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={deptOptions} />}
-        {sectionOptions.length > 1 && <Select label="Section" value={section} onChange={setSection} options={sectionOptions} />}
-        {tlOptions.length > 1 && <Select label="TL" value={tl} onChange={setTl} options={tlOptions} all="All TLs" />}
-        <Select label="Owner" value={owner} onChange={setOwner} options={[['none', 'No named owner'], ...ownerOptions]} all="Any owner" />
-        <Select label="Action Type" value={action} onChange={setAction} options={actionOptions} all="All actions" />
-        <Select label="Due Status" value={due} onChange={setDue} options={DUE_FILTER} all="Any due status" />
-        <button className="btn btn-sm" type="button" onClick={clearAll} disabled={!chips.length}>Clear All</button>
-        <span className="small-muted pw-shown">{rows ? `${fmt(list.length)} of ${fmt(all.length)} action(s)` : ''}</span>
-      </div>
-      <FilterChips filters={chips} onClearAll={clearAll} />
+      <ListToolbar
+        search={q}
+        onSearch={setQ}
+        placeholder="Search name, job or client"
+        filterCount={chips.length}
+        sort={sort}
+        sortOptions={[['', 'Default order'], ['due', 'Due soonest'], ['candidate', 'Name A–Z']]}
+        onSort={setSort}
+        chips={[...chips, q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') }].filter(Boolean)}
+        onClearAll={clearAll}
+        panel={(
+          <>
+            <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
+            <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
+            <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />
+            <FacetSelect label="Owner" value={owner} onChange={setOwner} options={ownerOptions} allLabel="Any owner" />
+            <FacetSelect label="Next step" value={action} onChange={setAction} options={facets.action} allLabel="All next steps" />
+            <FacetSelect label="Due" value={due} onChange={setDue} options={facets.due} allLabel="Any" />
+          </>
+        )}
+      />
       {rows && list.length > 0 && (
         <div className="pw-assign-bar">
           {DUE_FILTER.filter(([k]) => dueTally[k]).map(([k, l]) => (
@@ -668,7 +854,7 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
         <div className="tbl-wrap">
           <table className="pw-table">
             <thead>
-              <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Current Stage</th><th>Next Action</th><th>Owner</th><th>Due</th></tr>
+              <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Next step</th><th>Owner</th><th>Due</th></tr>
             </thead>
             <tbody>
               {page.slice.map((r) => (
@@ -680,11 +866,11 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
                   </td>
                   <td>{r.client || <span className="cell-muted">—</span>}</td>
                   <td><StatusChip status={r.stageLabel}>{r.stageLabel}</StatusChip></td>
-                  <td><span className="link-btn">{r.action} →</span>{r.waitingOn && <div className="small-muted">{`waiting on the ${r.waitingOn.toLowerCase()}`}</div>}</td>
+                  <td><span className="link-btn">{r.action} →</span>{r.waitingOn && <div className="small-muted">{`waiting for the ${r.waitingOn.toLowerCase()}`}</div>}</td>
                   <td>
                     {r.owner
-                      ? <span title={r.ownerSource === 'attributed' ? 'Not named on the requirement — the person this work is attributed to' : undefined}>{r.owner}</span>
-                      : <span className="pw-missing" title="The requirement names nobody for this step">No {r.ownerRole || 'owner'} named</span>}
+                      ? <span title={r.ownerSource === 'attributed' ? 'Not named on the job — the person doing this work' : undefined}>{r.owner}</span>
+                      : <span className="pw-missing" title="The job names nobody for this step">No {r.ownerRole || 'owner'} named</span>}
                     {r.owner && r.ownerRole && <div className="small-muted">{r.ownerRole}</div>}
                   </td>
                   <td><DueChip status={r.dueStatus} dueAt={r.dueAt} source={r.dueSource} /></td>
@@ -696,21 +882,23 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
                     <EmptyState
                       compact
                       icon="🎉"
-                      title={all.length ? 'Nothing pending matches these filters.' : 'Nothing is pending in your scope.'}
-                      action={chips.length ? <button type="button" className="btn btn-sm" onClick={clearAll}>Clear filters</button> : null}
+                      title={all.length ? 'No tasks match these filters.' : 'No tasks waiting. You are all caught up.'}
+                      action={chips.length || q ? <button type="button" className="btn btn-sm" onClick={clearAll}>Clear filters</button> : null}
                     />
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-          {list.length > 0 && <Pager page={page} noun="pending actions" />}
+          {list.length > 0 && (
+            <ListFooter from={page.from} to={page.to} total={list.length} noun="tasks">
+              <Pager page={page} noun="tasks" />
+            </ListFooter>
+          )}
         </div>
       )}
       <div className="small-muted pw-legend">
-        One row per active ATS application: its current stage, its ONE next action, the owner and the due date (an open follow-up&apos;s date, else
-        the day it entered the stage + the stage SLA). <b>Overdue</b> only when that date has passed and the action is still pending. Rows imported with
-        their stage already set have no real due date until somebody moves them or sets a follow-up — they show <b>—</b>, never Overdue.
+        One row per person on a job: the next step, who does it, and by when. <b>Late</b> = the due date has passed.
       </div>
     </>
   );
@@ -729,7 +917,7 @@ function MetricList({ personId, metric, onOpen }) {
     setError('');
     api.get(`/ats/team/${encodeURIComponent(personId)}`, { params: { metric } })
       .then((r) => setD(r.data))
-      .catch((e) => setError(e.response?.data?.error || 'This list could not be opened.'));
+      .catch((e) => setError(e.response?.data?.error || 'Could not open this list. Please try again.'));
   }, [personId, metric]);
   const rows = useMemo(() => (d ? d.rows.filter((r) => !q || JSON.stringify([r.candidate, r.requirement, r.title, r.name, r.client, r.reqCode]).toLowerCase().includes(lc(q))) : []), [d, q]);
   const page = usePaged(rows);
@@ -752,11 +940,11 @@ function MetricList({ personId, metric, onOpen }) {
       <div className="tbl-wrap">
         <table className="pw-table">
           <thead>
-            {kind === 'requirements' && <tr><th>Requirement</th><th>Client</th><th>Type</th><th>Dept · Section</th><th>TL</th><th>Recruiter</th><th>Status</th></tr>}
-            {(kind === 'applications' || kind === 'joined') && <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Stage</th><th>Next Action</th><th>Updated</th></tr>}
-            {kind === 'clients' && <tr><th>Client</th><th className="num">Open Requirements</th><th className="num">Requirements</th><th>Status</th></tr>}
-            {kind === 'people' && <tr><th>Recruiter</th><th>Section</th><th className="num">Open Requirements</th><th className="num">Active Candidates</th><th className="num">Needs Action</th></tr>}
-            {kind === 'actions' && <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Current Stage</th><th>Next Action</th><th>Owner</th><th>Due</th></tr>}
+            {kind === 'requirements' && <tr><th>Job</th><th>Client</th><th>Type</th><th>Department · Section</th><th>Team lead</th><th>Recruiter</th><th>Status</th></tr>}
+            {(kind === 'applications' || kind === 'joined') && <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Next step</th><th>Updated</th></tr>}
+            {kind === 'clients' && <tr><th>Client</th><th className="num">Open jobs</th><th className="num">All jobs</th><th>Status</th></tr>}
+            {kind === 'people' && <tr><th>Recruiter</th><th>Section</th><th className="num">Open jobs</th><th className="num">People in process</th><th className="num">Needs action</th></tr>}
+            {kind === 'actions' && <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Next step</th><th>Owner</th><th>Due</th></tr>}
           </thead>
           <tbody>
             {kind === 'requirements' && page.slice.map((r) => (
@@ -835,7 +1023,10 @@ export default function Team() {
 
   const legacy = LEGACY_TABS[searchParams.get('tab') || ''] || null;
   const rawView = searchParams.get('view') || (legacy && legacy.view) || 'people';
-  const view = ['people', 'assignments', 'pending', 'list'].includes(rawView) ? rawView : 'people';
+  // §13 (2026-10-03): 'whohas' = Who has pending work (leads), 'org' = Departments & teams (Admin).
+  // 'followups' (2026-10-03): the Follow-ups screen is a tab here, not a module.
+  const view = ['people', 'assignments', 'pending', 'list', 'whohas', 'org', 'followups'].includes(rawView) ? rawView : 'people';
+  const leadView = isAdmin || ['TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(atsRole);
   useEffect(() => {
     if (rawView === 'seats' && isAdmin) navigate('/admin/positions?tab=history', { replace: true });
   }, [rawView, isAdmin, navigate]);
@@ -851,44 +1042,67 @@ export default function Team() {
     setPeople((p) => ({ ...p, loading: true, error: '' }));
     api.get('/ats/team', { params: { shape: 'v2' } })
       .then((res) => setPeople({ rows: res.data.rows || [], loading: false, error: '' }))
-      .catch((e) => setPeople({ rows: [], loading: false, error: e.response?.data?.error || 'Could not load Recruiter & BDE — the server did not answer.' }));
+      .catch((e) => setPeople({ rows: [], loading: false, error: e.response?.data?.error || 'Could not load this page. Please try again.' }));
   }, [reloadKey]);
   const [assignments, setAssignments] = useState({ rows: null, error: '' });
   const [pending, setPending] = useState({ data: null, error: '' });
   useEffect(() => {
-    if (view === 'assignments' && assignments.rows === null && !assignments.error) {
+    // Loaded up front (not only on the tab) so the Assignments tab shows its count.
+    if (assignments.rows === null && !assignments.error) {
       api.get('/ats/team', { params: { view: 'assignments' } })
         .then((res) => setAssignments({ rows: res.data.rows || [], error: '' }))
-        .catch((e) => setAssignments({ rows: null, error: e.response?.data?.error || 'Could not load the assignments.' }));
+        .catch((e) => setAssignments({ rows: null, error: e.response?.data?.error || 'Could not load the jobs list. Please try again.' }));
     }
   }, [view, assignments, reloadKey]);
   useEffect(() => {
     if (pending.data === null && !pending.error) {
       api.get('/ats/team', { params: { view: 'pending' } })
         .then((res) => setPending({ data: res.data, error: '' }))
-        .catch((e) => setPending({ data: null, error: e.response?.data?.error || 'Could not load the pending actions.' }));
+        .catch((e) => setPending({ data: null, error: e.response?.data?.error || 'Could not load the tasks. Please try again.' }));
     }
   }, [pending, reloadKey]);
   const reload = () => { setAssignments({ rows: null, error: '' }); setPending({ data: null, error: '' }); setReloadKey((k) => k + 1); };
+  // A recruiter's assigned clients: the clients of the open jobs given to them.
+  const clientsOf = useMemo(() => {
+    const m = new Map();
+    (assignments.rows || []).forEach((r) => {
+      if (!r.live || !r.client || r.client === '—') return;
+      (r.recruiters || []).forEach((x) => { if (!m.has(x.id)) m.set(x.id, new Set()); m.get(x.id).add(r.client); });
+    });
+    return m;
+  }, [assignments.rows]);
 
-  // Former seat holders — Super Admin / Admin only (the server refuses others).
-  const [showFormer, setShowFormer] = useState(false);
-  const [formerRows, setFormerRows] = useState(null);
-  const [formerBusy, setFormerBusy] = useState(false);
+  // FORMER PEOPLE (user, 2026-10-05) — everyone who has left, from HRMS, under
+  // the departments they worked in (GET /ats/team?view=former). Leads only:
+  // the server gives a Recruiter / BDE nobody. Loaded after the main list, so
+  // "Former" is ready by the time it is clicked.
+  const [former, setFormer] = useState({ rows: null, allowed: isLead, loading: false });
+  const [openFormer, setOpenFormer] = useState(null);
+  useEffect(() => { setOpenFormer(null); }, [location.search]);
   useEffect(() => {
-    if (!showFormer || formerRows || !isAdmin) return;
-    setFormerBusy(true);
-    api.get('/ats/team', { params: { former: 1 } })
-      .then((res) => setFormerRows(res.data.filter((r) => r.former)))
-      .catch(() => setShowFormer(false))
-      .finally(() => setFormerBusy(false));
-  }, [showFormer, formerRows, isAdmin]);
+    if (!isLead || people.loading) return undefined;
+    let alive = true;
+    setFormer((f) => ({ ...f, loading: true }));
+    api.get('/ats/team', { params: { view: 'former' } })
+      .then((res) => { if (alive) setFormer({ rows: res.data.rows || [], allowed: !!res.data.allowed, loading: false }); })
+      .catch(() => { if (alive) setFormer({ rows: [], allowed: false, loading: false }); });
+    return () => { alive = false; };
+  }, [isLead, people.loading, reloadKey]);
+  // Current + former in one list; a login that has left is listed once, as
+  // the former person (with their history).
+  const peopleRows = useMemo(() => {
+    if (!former.rows || !former.rows.length) return people.rows;
+    const leftIds = new Set(former.rows.map((r) => r.userId).filter(Boolean));
+    return [...people.rows.filter((r) => !(r.status === 'Left' && leftIds.has(r.id))), ...former.rows];
+  }, [people.rows, former.rows]);
+  const [shown, setShown] = useState({ ids: null, status: 'Active' });
+  const onShown = useCallback((ids, status) => setShown({ ids, status }), []);
 
   if (isClientUser(user)) {
     return (
       <div className="empty">
         <h3>Not available for your role</h3>
-        <div>Recruiter &amp; BDE is internal TeamLink information and isn&apos;t part of your client scope.</div>
+        <div>This page is only for the TeamLink team.</div>
       </div>
     );
   }
@@ -904,47 +1118,40 @@ export default function Team() {
     ? (selfMode ? pending.data.rows.filter((r) => r.ownerUserId === (user && user.id)).length : pending.data.rows.length)
     : null;
   const VIEWS = [
-    ['people', selfMode ? 'My Workload' : 'People & Workload'],
-    ['assignments', selfMode ? 'My Assignments' : 'Assignments'],
-    ['pending', selfMode ? 'My Pending Actions' : 'Pending Actions'],
+    ['people', selfMode ? 'My Workload' : 'People & Workload', people.loading ? null : people.rows.length, 'Recruiters, client managers and team leads in your area'],
+    ['assignments', selfMode ? 'My Assignments' : 'Assignments', assignments.rows ? assignments.rows.filter((r) => r.live).length : null, 'Open jobs and who works on them'],
+    ['pending', selfMode ? 'My tasks' : 'Tasks', pendingCount, selfMode ? 'Next steps that are yours' : 'Every next step and who does it'],
+    ...(leadView ? [['whohas', 'Who has work waiting', null, 'Waiting, late and follow-ups late, per person']] : []),
+    ['followups', selfMode ? 'My follow-ups' : 'Follow-ups', null, 'Who to contact, why, and by when'],
+    ...(isAdmin ? [['org', 'Departments & teams', null, 'Give a TL departments, move a recruiter — with history']] : []),
   ];
   const exportTab = view === 'people' ? 'recruiters' : view === 'assignments' ? 'assignments' : null;
-  const exportIds = view === 'assignments' && assignments.rows ? assignments.rows.map((r) => r.id) : view === 'people' ? people.rows.map((r) => r.id) : null;
+  const exportIds = view === 'assignments' && assignments.rows ? assignments.rows.map((r) => r.id) : view === 'people' ? (shown.ids || people.rows.map((r) => r.id)) : null;
 
   return (
     <div className="pw-page">
-      <div className="page-head">
-        <div>
-          <h1>{selfMode ? 'My Workload' : 'Recruiter & BDE'}</h1>
-          <div className="page-sub">
-            {selfMode
-              ? 'Your requirements, the applications you own and what is waiting on you — click a number to open the list behind it.'
-              : 'Who is responsible, what is assigned to whom, and who must act now — click a name for their 360, a number for its list.'}
-          </div>
-        </div>
-        {isLead && exportTab && (
+      <ListPageHeader
+        title={selfMode ? 'My Workload' : 'Team'}
+        question={selfMode ? 'Your jobs, your numbers and your tasks — all in one place.' : 'Who is on the team, what each person works on, and how busy they are.'}
+        data={isLead && exportTab ? (
           <AtsDataTools
             module="team"
             kinds={['requirement-assignments']}
             onImported={reload}
-            body={() => ({ tab: exportTab, former: view === 'people' && showFormer, ids: exportIds })}
+            body={() => ({ tab: exportTab, former: view === 'people' && shown.status !== 'Active' && !!former.rows, ids: exportIds })}
           />
-        )}
-      </div>
+        ) : null}
+      />
 
-      <div className="pw-views" role="tablist" aria-label="Section">
-        {VIEWS.map(([id, label]) => (
-          <button key={id} type="button" role="tab" aria-selected={view === id || (view === 'list' && id === 'people')} className={`pw-view${view === id || (view === 'list' && id === 'people') ? ' active' : ''}`} onClick={() => setView(id)}>
-            {label}
-            {id === 'pending' && pendingCount !== null ? <span className="pw-count">{fmt(pendingCount)}</span> : null}
-          </button>
-        ))}
-        {isAdmin && (
-          <Link className="pw-seat-link" to="/admin/positions?tab=history" title="Who held each Recruiter Code when — Administration → Positions & Seat History">
-            Seat History →
-          </Link>
-        )}
-      </div>
+      <StatusTabs
+        label="Section"
+        tabs={VIEWS.map(([key, label, count, hint]) => ({ key, label, count, hint }))}
+        value={view === 'list' ? 'people' : view}
+        onChange={setView}
+        hideZero={!isAdmin}
+        // No "Seat History →" link here (2026-10-03): it is already in the menu
+        // (Administration → Positions & Seat History).
+      />
 
       {people.error && (
         <div className="notice red" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -961,19 +1168,22 @@ export default function Team() {
       )}
       {view === 'people' && (
         <PeopleTab
-          rows={people.rows}
+          rows={peopleRows}
           loading={people.loading}
           isLead={isLead}
-          isAdmin={isAdmin}
           initialRole={(legacy && legacy.role) || searchParams.get('role') || ''}
           onOpen={setOpenPerson}
-          formerRows={formerRows}
-          showFormer={showFormer}
-          setShowFormer={setShowFormer}
-          formerBusy={formerBusy}
+          onOpenFormer={setOpenFormer}
+          formerAllowed={former.allowed}
+          formerLoading={former.loading || (isLead && !former.rows)}
+          clientsOf={clientsOf}
+          onShown={onShown}
         />
       )}
       {view === 'assignments' && <AssignmentsTab key={location.search} rows={assignments.rows} error={assignments.error} initial={assignInitial} />}
+      {view === 'whohas' && leadView && <PendingWork />}
+      {view === 'followups' && <FollowUps embedded />}
+      {view === 'org' && isAdmin && <DeptTeamsAdmin />}
       {view === 'pending' && (
         <PendingTab
           key={location.search}
@@ -985,6 +1195,7 @@ export default function Team() {
         />
       )}
       {openPerson && <Recruiter360 personId={openPerson} onClose={() => setOpenPerson(null)} />}
+      {openFormer && <FormerHistory personId={openFormer} onClose={() => setOpenFormer(null)} />}
     </div>
   );
 }

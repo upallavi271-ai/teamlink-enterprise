@@ -1,0 +1,27 @@
+/* HRMS item 15 — Manage Fields + Extra details. Everything scoped under .xfields. */
+.xfields .xf-list{display:flex;flex-direction:column;gap:8px}
+.xfields .xf-row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line,#dde3ee);border-radius:8px;background:var(--paper-raised,#fff)}
+.xfields .xf-row.off{opacity:.6}
+.xfields .xf-main{min-width:0;flex:1 1 260px}
+.xfields .xf-type{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11.5px;background:var(--blue-tint,#e8f0fe);color:var(--blue,#1d4ed8)}
+.xfields .xf-sub{font-size:12px;margin-top:3px;overflow-wrap:anywhere}
+.xfields .xf-acts{display:flex;gap:6px;flex-wrap:wrap}
+.xfields .xf-req{color:var(--red,#c0392b)}
+.xfields .xf-empty{padding:18px;text-align:center;color:var(--ink-soft,#5b6474);border:1px dashed var(--line,#dde3ee);border-radius:8px}
+.xfields .xf-form,.xfields .xf-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.xfields .xf-wide{grid-column:1/-1}
+.xfields .xf-form .field,.xfields .xf-field{display:flex;flex-direction:column;gap:4px}
+.xfields .xf-form textarea{width:100%;font:inherit}
+.xfields .xf-check{display:flex;align-items:center;gap:8px;font-size:13px}
+.xfields .xf-chips{display:flex;flex-wrap:wrap;gap:6px}
+.xfields .xf-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line,#dde3ee);border-radius:999px;font-size:12.5px;cursor:pointer}
+.xfields .xf-chip.on{background:var(--blue-tint,#e8f0fe);border-color:var(--blue,#1d4ed8);color:var(--blue,#1d4ed8)}
+.xfields .xf-chip input{margin:0}
+.xfields .xf-file{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.xfields .xf-pick{position:relative;overflow:hidden;cursor:pointer;margin:0}
+.xfields .xf-pick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;font-size:0}
+.xfields .xf-view{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 16px}
+@media (max-width:640px){
+  .xfields .xf-form,.xfields .xf-grid,.xfields .xf-view{grid-template-columns:1fr}
+  .xfields .xf-acts{width:100%}
+}

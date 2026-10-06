@@ -119,7 +119,9 @@ ${items}
 
 router.get('/jobs.feed', async (req, res) => {
   const base = publicBase(req);
-  const jobs = await feedJobs();
+  // Only jobs with "Website" ticked (utils/jobPosting.js; nothing ticked = the free sites).
+  // eslint-disable-next-line global-require
+  const jobs = (await feedJobs()).filter((j) => require('../utils/jobPosting').siteTicked(j, 'website'));
   res.set('Access-Control-Allow-Origin', '*');
   res.json(jobs.map((j) => ({
     id: j.id,
@@ -133,7 +135,7 @@ router.get('/jobs.feed', async (req, res) => {
     skills: listOf(j.skills),
     description: feedDescription(j),
     postedAt: j.portalPublishedAt || j.createdAt,
-    applyUrl: `${base}/careers/${j.id}`,
+    applyUrl: `${base}/careers/${j.id}?src=TeamLink%20Website`,
   })));
 });
 
@@ -146,9 +148,28 @@ const EMPLOYMENT_TYPE = {
 };
 router.get('/jobs.jsonld', async (req, res) => {
   const base = publicBase(req);
-  const jobs = (await feedJobs()).filter((j) => !j.internal);
+  // Only client jobs with "Google Jobs" ticked (utils/jobPosting.js).
+  // eslint-disable-next-line global-require
+  const jobs = (await feedJobs()).filter((j) => !j.internal && require('../utils/jobPosting').siteTicked(j, 'google'));
   res.set('Access-Control-Allow-Origin', '*');
-  res.type('application/ld+json').send(JSON.stringify(jobs.map((j) => {
+  res.type('application/ld+json').send(JSON.stringify(jobs.map((j) => jobPostingLd(j, base)), null, 1));
+});
+
+// ONE job's JobPosting, for the careers page to embed as <script
+// type="application/ld+json"> — Google for Jobs reads the markup on the job's
+// own page. 404 unless the job is live, published, a client job and has
+// "Google Jobs" ticked.
+router.get('/jobs/:id/jsonld', async (req, res) => {
+  // An id or a readable slug (utils/jobSlug.js).
+  const j = await require('../utils/jobSlug').findByIdOrSlug(req.params.id); // eslint-disable-line global-require
+  // eslint-disable-next-line global-require
+  const ok = j && !j.internal && j.portalPublished && requirementIsLive(j.status) && require('../utils/jobPosting').siteTicked(j, 'google');
+  if (!ok) return res.status(404).json({ error: 'Not listed' });
+  return res.type('application/ld+json').send(JSON.stringify(jobPostingLd(j, publicBase(req))));
+});
+
+function jobPostingLd(j, base) {
+  {
     const posted = new Date(j.portalPublishedAt || j.createdAt);
     const closing = j.closingDate && !Number.isNaN(new Date(j.closingDate).getTime()) ? new Date(j.closingDate) : null;
     const remote = /remote/i.test(String(j.workMode || ''));
@@ -171,10 +192,10 @@ router.get('/jobs.jsonld', async (req, res) => {
       ...(j.experience ? { experienceRequirements: j.experience } : {}),
       ...(listOf(j.skills).length ? { skills: listOf(j.skills).join(', ') } : {}),
       directApply: true,
-      url: `${base}/careers/${j.id}`,
+      url: `${base}${require('../utils/jobSlug').careersPath(j, 'Google Jobs')}`, // eslint-disable-line global-require
     };
-  }), null, 1));
-});
+  }
+}
 
 router.get('/jobs/:id', async (req, res) => {
   const job = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
@@ -196,7 +217,7 @@ router.get('/jobs/:id', async (req, res) => {
 // The job board or channel an applicant came through, from the apply link's
 // ?src= tag (the requirement page tags each source's link). Only these names
 // are accepted; anything else counts as the Job Portal itself.
-const TRACKED_SOURCES = ['Naukri', 'Indeed', 'Shine', 'LinkedIn', 'Facebook', 'WhatsApp', 'X', 'TeamLink Website'];
+const TRACKED_SOURCES = ['Naukri', 'Indeed', 'Shine', 'LinkedIn', 'Facebook', 'WhatsApp', 'X', 'TeamLink Website', 'Google Jobs'];
 
 router.post('/jobs/:id/apply', async (req, res) => {
   const { name, email, phone } = req.body;
@@ -205,6 +226,12 @@ router.post('/jobs/:id/apply', async (req, res) => {
 
   const job = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!job || !requirementIsLive(job.status)) return res.status(404).json({ error: 'Job not found' });
+  // A paused / archived client takes no new applications (spec 2026-10-03 §A).
+  // The public is not told why.
+  // eslint-disable-next-line global-require
+  if (!job.internal && await require('../utils/clientLifecycle').newWorkRefusalFor(job.clientId)) {
+    return res.status(409).json({ error: 'This job is not accepting applications right now.' });
+  }
 
   // ONE CANDIDATE MASTER: an applicant already on file — by the normalised
   // email or phone (utils/candidateDedupe.js keys, as the Add Candidate form
@@ -247,6 +274,12 @@ router.post('/jobs/:id/apply', async (req, res) => {
       applicationMethod: 'Auto-Apply',
     },
   });
+  // b6_ (ATS-100): the apply link's utm_* / ?ref=<code>, on the application.
+  try {
+    // eslint-disable-next-line global-require
+    const CR = require('../utils/candidateRecord');
+    if (CR.supported()) await CR.attach({ application, candidate, utm: req.body, refCode: req.body.ref, via: 'LINK' });
+  } catch (err) { console.error(`[public] source not stored for ${application.id}: ${err.message}`); }
   await prisma.syncLog.create({
     data: { entity: 'Applications', status: 'Success', reason: `${candidate.name} → ${job.title}`, recordRef: application.id },
   });
@@ -276,13 +309,16 @@ router.get('/my-applications', (req, res) => {
 // The old one-step "type your name to sign" route is gone: it signed an
 // agreement with no signature image and no OTP.
 
-router.get('/agreement/:token', async (req, res) => {
+// Rate-limited per IP (utils/publicRateLimit.js); the token is stored hashed
+// (utils/agreementSigning.js findByToken).
+// eslint-disable-next-line global-require
+const agreementLinkLimit = require('../utils/publicRateLimit').rateLimit({ bucket: 'agreement-open', max: 60, windowMs: 10 * 60000 });
+router.get('/agreement/:token', agreementLinkLimit, async (req, res) => {
   // eslint-disable-next-line global-require
   const signing = require('../utils/agreementSigning');
-  const token = String(req.params.token || '');
-  const client = /^[a-f0-9]{32,64}$/.test(token) ? await prisma.client.findUnique({ where: { esignToken: token } }) : null;
+  const client = await signing.findByToken(req.params.token);
   const link = signing.linkState(client);
-  if (!link.ok) return res.status(link.code).json({ error: link.error, expired: link.code === 410 });
+  if (!link.ok) return res.status(link.code).json({ error: link.error, expired: link.code === 410 && !link.revoked, revoked: !!link.revoked });
 
   // Opening the link is a step: SENT -> VIEWED the first time, audited.
   let current = client;
@@ -310,13 +346,26 @@ router.post('/agreement/:token/sign', (req, res) => res.status(410).json({
 // one thing: setting that one login's password. See utils/employeeInvite.js;
 // no password is ever emailed, echoed or logged.
 
+// A CANDIDATE portal invite is not redeemable here: its link must prove the
+// email with a one-time code first (routes/portalPublic.js, spec B2).
+async function isCandidateInvite(token) {
+  if (!/^[a-f0-9]{64}$/.test(String(token || ''))) return false;
+  const hash = require('crypto').createHash('sha256').update(String(token)).digest('hex'); // eslint-disable-line global-require
+  const u = await prisma.user.findFirst({ where: { setPasswordTokenHash: hash }, select: { role: true } });
+  return !!(u && u.role === 'CANDIDATE');
+}
+
 router.get('/set-password/:token', async (req, res) => {
+  if (await isCandidateInvite(req.params.token)) return res.json({ portalInvite: true, path: `/portal-invite/${req.params.token}` });
   const info = await inspectSetPasswordToken(req.params.token);
   if (!info.ok) return res.status(404).json({ error: info.reason });
   res.json({ name: info.name, email: info.email, expiresAt: info.expiresAt });
 });
 
 router.post('/set-password/:token', async (req, res) => {
+  if (await isCandidateInvite(req.params.token)) {
+    return res.status(409).json({ error: 'Open this link on the portal invite page — your email must be confirmed with a code first.' });
+  }
   const result = await redeemSetPasswordToken(req.params.token, req.body && req.body.password);
   if (!result.ok) {
     return res.status(result.code === 'weak' ? 400 : 410).json({ error: result.reason });

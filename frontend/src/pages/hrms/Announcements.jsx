@@ -14,6 +14,8 @@ import AudiencePicker, { DeliverVia, EMPTY_AUDIENCE, audienceReady } from '../..
 import {
   ComposeModal, Field, AiAssist, CheckLine, useSubmit,
 } from '../../components/ComposeForm.jsx';
+import { useSearchParams } from 'react-router-dom';
+import { JoinMeeting, meetingLinkError } from '../../components/MeetingLink.jsx';
 
 const CATEGORIES = ['General', 'Policy', 'Event', 'Holiday'];
 // An announcement is not per employee and has no status, so its filters are
@@ -41,17 +43,20 @@ export const AN_FEATURES = [
 // departments, or named employees), Also deliver via, Pin to top, then
 // [Post Announcement] [Cancel].
 function NewAnnouncementModal({ onClose, onSaved }) {
-  const [form, setForm] = useState({ title: '', body: '', category: 'General', pinned: false });
+  const [form, setForm] = useState({ title: '', body: '', category: 'General', pinned: false, meetingLink: '', meetingAt: '' });
   const [audience, setAudience] = useState(EMPTY_AUDIENCE);
   const [channels, setChannels] = useState([]);
   const { busy, error, setError, run } = useSubmit();
+  const linkError = meetingLinkError(form.meetingLink);
 
   async function submit() {
     if (!form.title.trim()) { setError('Enter a title.'); return; }
     if (!form.body.trim()) { setError('Enter the announcement text.'); return; }
+    if (linkError) { setError(linkError); return; }
     if (!audienceReady(audience)) { setError(audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one employee.'); return; }
+    const link = form.meetingLink.trim();
     const res = await run(() => api.post('/announcements', {
-      ...form, audience, channels, date: new Date().toISOString().slice(0, 10),
+      ...form, meetingLink: link, meetingAt: link ? form.meetingAt : '', audience, channels, date: new Date().toISOString().slice(0, 10),
     }), 'Could not post the announcement');
     if (res) onSaved(res.data);
   }
@@ -66,6 +71,21 @@ function NewAnnouncementModal({ onClose, onSaved }) {
           {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
         </Combo>
       </Field>
+      {/* Optional — for a meeting, event or training. People get a
+          "Join meeting" button on the notice board and in their bell. */}
+      <div className="mtg-fields">
+        <Field label="Meeting link (optional)">
+          <input type="url" inputMode="url" placeholder="https://meet.google.com/..." value={form.meetingLink} onChange={(e) => setForm({ ...form, meetingLink: e.target.value })} />
+          {form.meetingLink.trim() && linkError
+            ? <div className="mtg-err">{linkError}</div>
+            : <div className="mtg-hint">Paste a Google Meet, Zoom or Teams link. People will see a “Join meeting” button.</div>}
+        </Field>
+        {form.meetingLink.trim() && !linkError && (
+          <Field label="Meeting date & time (optional)">
+            <input type="datetime-local" value={form.meetingAt} onChange={(e) => setForm({ ...form, meetingAt: e.target.value })} />
+          </Field>
+        )}
+      </div>
       <AudiencePicker value={audience} onChange={setAudience} />
       <DeliverVia value={channels} onChange={setChannels} />
       <CheckLine checked={form.pinned} onChange={(pinned) => setForm({ ...form, pinned })}>Pin to top</CheckLine>
@@ -91,6 +111,39 @@ export default function Announcements({ view, onOpen, onBack }) {
     api.get('/announcements').then((res) => setAnnouncements(res.data));
   }
   useEffect(load, []);
+
+  // ONE ANNOUNCEMENT OPENED — from its title on the notice board, or from a
+  // notification (the bell links here with ?open=<title>&at=<sent time>,
+  // because a Notification row has no id column for it). The match is the
+  // newest announcement with that title posted closest to that time.
+  const [params, setParams] = useSearchParams();
+  const [openedId, setOpenedId] = useState(null);
+  const wantTitle = params.get('open');
+  const wantAt = params.get('at');
+  useEffect(() => {
+    if (!wantTitle || !announcements.length) return;
+    const t = new Date(wantAt || Date.now()).getTime();
+    const same = announcements.filter((a) => a.title === wantTitle)
+      .sort((a, b) => Math.abs(new Date(a.createdAt).getTime() - t) - Math.abs(new Date(b.createdAt).getTime() - t));
+    if (same[0]) setOpenedId(same[0].id);
+    const next = new URLSearchParams(params);
+    next.delete('open'); next.delete('at');
+    setParams(next, { replace: true });
+  }, [wantTitle, wantAt, announcements]); // eslint-disable-line react-hooks/exhaustive-deps
+  const opened = openedId ? announcements.find((a) => a.id === openedId) : null;
+  const detail = opened && (
+    <div className="mtg-detail" role="region" aria-label="Announcement">
+      <div className="mtg-d-top">
+        <div>
+          <h3>{opened.pinned && '📌 '}{opened.title}</h3>
+          <div className="mtg-d-meta">{[opened.category || 'General', opened.target, opened.date, opened.postedBy && `by ${opened.postedBy}`].filter(Boolean).join(' · ')}</div>
+        </div>
+        <button type="button" className="btn btn-sm" onClick={() => setOpenedId(null)}>Close</button>
+      </div>
+      <div className="mtg-d-body">{opened.body}</div>
+      {opened.meetingLink && <JoinMeeting href={opened.meetingLink} when={opened.meetingWhen} />}
+    </div>
+  );
 
   async function togglePin(a) { await api.put(`/announcements/${a.id}/pin`); load(); }
 
@@ -203,6 +256,7 @@ export default function Announcements({ view, onOpen, onBack }) {
     <div>
       <QaRow style={{ marginBottom: 14 }}>{newButton}</QaRow>
       {sent && <div className="notice">{sent}</div>}
+      {detail}
       {bar}
       <TwoCol style={{ alignItems: 'start' }}>
         <PanelPad>
@@ -210,8 +264,9 @@ export default function Announcements({ view, onOpen, onBack }) {
           {shown.length === 0 ? none : page.slice.map((a) => (
             <AssignRow key={a.id}>
               <span>
-                {a.pinned && '📌 '}<b>{a.title}</b><br />
+                {a.pinned && '📌 '}<button type="button" className="mtg-open-title" onClick={() => setOpenedId(a.id)} title="Open this announcement">{a.title}</button><br />
                 <span className="cell-muted" style={{ fontSize: 11.5 }}>{a.body} · {a.target || ''} · {a.date || ''}</span>
+                {a.meetingLink && <><br /><JoinMeeting small href={a.meetingLink} when={a.meetingWhen} /></>}
               </span>
               <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span className={`status ${a.category === 'Policy' ? 'pending' : 'active'}`}>{a.category || 'General'}</span>

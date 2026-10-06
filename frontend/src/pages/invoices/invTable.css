@@ -144,3 +144,65 @@
   .inv-grid .inv-acts .btn { padding: 3px 7px; font-size: 11.5px; }
 }
 .inv-grid .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---- S7.7 table fixes (2026-10-05) ----
+   a. the box is never taller than the room under the app's sticky top bar
+      (54px), so its own sticky header always shows below that bar;
+   b/c. Invoice No pinned left, Actions pinned right (Client too on wide screens);
+   d. a navy head with small uppercase labels that never cut off;
+   e. one continuous, sticky TOTAL band;
+   g. money right-aligned, monospace, Indian grouping (money2). */
+.inv-grid-wrap { max-height: max(320px, calc(100vh - 54px - 24px)); scroll-margin-top: 62px; }
+.inv-grid { min-width: 0; --inv-head: var(--navy-deep, #1f3864); }
+.inv-grid thead th {
+  background: var(--inv-head);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .12);
+  vertical-align: middle;
+}
+.inv-grid thead th.stk-l1 { box-shadow: inset -1px 0 0 rgba(255, 255, 255, .14); }
+.inv-grid thead th.stk-l2 { box-shadow: inset -1px 0 0 rgba(255, 255, 255, .14), 6px 0 8px -6px rgba(22, 32, 43, .3); }
+.inv-grid thead th.stk-r { box-shadow: inset 1px 0 0 rgba(255, 255, 255, .14), -6px 0 8px -6px rgba(22, 32, 43, .3); }
+.inv-grid .stk-l1 { overflow: visible; text-overflow: clip; }
+.inv-grid td.stk-l1 { box-shadow: inset -1px 0 0 var(--line); }
+.inv-grid .inv-no .inv-mono { white-space: nowrap; }
+.inv-grid th.c-btype { min-width: 170px; }
+.inv-grid th.c-cgstin { min-width: 175px; }
+.inv-grid th.c-before, .inv-grid th.c-after, .inv-grid th.c-receivable,
+.inv-grid th.c-received, .inv-grid th.c-pending { min-width: 140px; }
+.inv-grid th.c-gst, .inv-grid th.c-tds { min-width: 120px; }
+.inv-grid th.c-tdscert { min-width: 100px; }
+.inv-grid th.c-pays { min-width: 100px; }
+.inv-grid td.num, .inv-grid tfoot td.num { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 12.5px; letter-spacing: -.01em; text-align: right; }
+.inv-grid tfoot td { padding-top: 11px; padding-bottom: 11px; }
+.inv-grid tfoot td.tf-blank { box-shadow: inset 0 2px 0 var(--line); }
+.inv-grid tfoot .tf-k { font-weight: 800; letter-spacing: .06em; color: var(--navy); }
+.inv-grid tfoot .tf-n { font-weight: 500; font-size: 12px; color: var(--ink-soft); }
+/* Below 1200px only Invoice No stays pinned on the left, so the money
+   columns keep room to scroll. */
+@media (max-width: 1199px) {
+  .inv-grid .stk-l2, .inv-grid thead th.stk-l2, .inv-grid tfoot td.stk-l2 { position: static; box-shadow: none; }
+  .inv-grid td.stk-l2 { box-shadow: none; }
+}
+/* The Columns chooser in the table bar (shared component, styled here so
+   it never depends on another page's stylesheet). */
+.inv-tbar .colchooser { position: relative; display: inline-block; }
+.inv-tbar .colchooser-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; background: var(--paper-raised, #fff); border: 1px solid var(--line, #dfe5ee); border-radius: 10px; box-shadow: 0 8px 24px rgba(18, 28, 52, .14); padding: 8px 12px; min-width: 220px; max-height: 60vh; overflow: auto; }
+.inv-tbar .colchooser-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; cursor: pointer; margin: 0; }
+.inv-tbar .colchooser-item input { width: 15px; height: 15px; margin: 0; }
+.inv-tbar .colchooser-item.is-locked { color: var(--ink-soft, #5b6478); cursor: default; }
+.inv-tbar .colchooser-reset { margin-top: 6px; font-size: 12px; font-weight: 600; }
+/* The shared ScrollSync box (components/accounts/ScrollSync.jsx) now holds
+   the table: it scrolls sideways only, with synced top + bottom bars, and
+   lifts the header under the app's top bar and the TOTAL row above the
+   bottom bar — so the box no longer needs its own height. */
+.tlss-body.inv-grid-wrap { max-height: none; overflow-x: auto; overflow-y: hidden; border-top: 1px solid var(--line); }
+.inv-tpanel .tlss { border-top: 0; }
+.inv-tpanel .tlss-bar { margin-left: 8px; margin-right: 8px; }

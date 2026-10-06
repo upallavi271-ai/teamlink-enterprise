@@ -1,0 +1,51 @@
+/* Client Pause / Archive / Delete (spec 2026-10-03 §A) — scoped under .cllc-* */
+.cllc-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; line-height: 16px; white-space: nowrap; vertical-align: middle;
+}
+.cllc-badge.paused { background: var(--amber-tint); color: var(--amber); border: 1px solid #f0dcb8; }
+.cllc-badge.archived { background: var(--amber-tint); color: var(--amber); border: 1px solid #f0dcb8; }
+
+.cllc-chip {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  line-height: 18px; white-space: nowrap; border: 1px solid var(--line);
+}
+.cllc-chip.paused { background: var(--amber-tint); color: var(--amber); border-color: #f0dcb8; }
+/* Four colours only: orange waiting (paused / archived / inactive / pending),
+   green done (approved), red problem (rejected). */
+.cllc-chip.archived, .cllc-chip.inactive { background: var(--amber-tint); color: var(--amber); border-color: #f0dcb8; }
+.cllc-chip.approved { background: var(--green-tint); color: var(--green); border-color: transparent; }
+.cllc-chip.rejected { background: var(--red-tint); color: var(--red); border-color: transparent; }
+.cllc-chip.pending { background: var(--amber-tint); color: var(--amber); border-color: #f0dcb8; }
+
+.cllc-banner b { margin-right: 2px; }
+
+.cllc-dialog { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cllc-explain { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+.cllc-explain li { margin: 2px 0; }
+.cllc-req { color: var(--red); }
+.cllc-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); user-select: all; }
+.cllc-blockers { margin-bottom: 0; }
+
+.cllc-panel { border: 1px solid #f0dcb8; background: #fffaf1; border-radius: 8px; margin: 0 0 12px; }
+.cllc-panel-head {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 9px 12px; cursor: pointer; text-align: left; font-size: 12.5px; color: var(--ink);
+}
+.cllc-count {
+  display: inline-block; margin-left: 6px; min-width: 18px; padding: 0 6px; border-radius: 999px;
+  background: var(--amber); color: #fff; font-size: 11px; line-height: 18px; text-align: center;
+}
+.cllc-panel-body { border-top: 1px solid #f0dcb8; padding: 4px 12px 8px; }
+.cllc-req-row {
+  display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px dashed #f0dcb8; flex-wrap: wrap;
+}
+.cllc-req-row:last-child { border-bottom: 0; }
+.cllc-req-main { min-width: 0; flex: 1 1 260px; font-size: 12.5px; }
+.cllc-req-reason { margin: 2px 0; color: var(--ink); overflow-wrap: anywhere; }
+.cllc-req-act { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cllc-reject { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cllc-reject input { min-width: 200px; max-width: 100%; }
+
+.cllc-head-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }

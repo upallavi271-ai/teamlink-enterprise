@@ -117,8 +117,8 @@ function DrawPad({ onBlob }) {
   );
 }
 
-export default function SignatureCapture({ name, onChange, disabled = false }) {
-  const [method, setMethod] = useState('typed');
+export default function SignatureCapture({ name, onChange, disabled = false, initial = 'drawn' }) {
+  const [method, setMethod] = useState(initial);
   const [font, setFont] = useState(FONTS[0][1]);
   const [upload, setUpload] = useState(null);
   const [preview, setPreview] = useState('');
@@ -149,7 +149,7 @@ export default function SignatureCapture({ name, onChange, disabled = false }) {
   return (
     <div className={`sig-capture${disabled ? ' is-disabled' : ''}`}>
       <div className="sig-tabs" role="tablist">
-        {[['typed', 'Type'], ['drawn', 'Draw'], ['uploaded', 'Upload']].map(([k, label]) => (
+        {[['drawn', '✍️ Draw with finger / mouse'], ['typed', '⌨️ Type my name'], ['uploaded', '📷 Upload a signature image']].map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={method === k} className={`sig-tab${method === k ? ' on' : ''}`} onClick={() => pick(k)} disabled={disabled}>
             {label}
           </button>

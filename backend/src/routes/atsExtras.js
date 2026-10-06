@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
 const {
-  applicationWhere, requirementWhere, candidateWhere, clientWhere, scopeOf, CLIENT_SHARED_STAGES,
+  applicationWhere, requirementWhere, candidateWhere, clientWhere, atsScopeOf: scopeOf, CLIENT_SHARED_STAGES,
 } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const {
@@ -20,6 +20,9 @@ const {
   teamWorkloadRows, isAdminViewer, formerWorkloadRows, teamAccess,
   teamMemberDetail, memberMetricList, assignmentRows, pendingActionRows,
 } = require('../utils/teamWorkload');
+// Former people (user, 2026-10-05): leavers from HRMS and their whole work
+// history, under the departments they worked in. utils/formerPeople.js.
+const { formerPeopleRows, formerPersonHistory } = require('../utils/formerPeople');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -56,6 +59,10 @@ router.get('/team', async (req, res, next) => {
     const fresh = req.query.fresh === '1';
     if (req.query.view === 'assignments') return res.json({ rows: await assignmentRows(req.user, { fresh }) });
     if (req.query.view === 'pending') return res.json(await pendingActionRows(req.user, { fresh }));
+    // GET /team?view=former — former Recruiters / TLs / STLs / BDEs in the
+    // caller's area (Admin all; Manager / STL / TL their departments / team;
+    // a Recruiter / BDE nobody).
+    if (req.query.view === 'former') return res.json(await formerPeopleRows(req.user, { fresh }));
     // Active logins only, as always; ?includeLeft=1 (and the screen's v2
     // shape, for its Status filter) also returns people who have left.
     const includeLeft = req.query.includeLeft === '1' || req.query.shape === 'v2';
@@ -68,6 +75,17 @@ router.get('/team', async (req, res, next) => {
     }
     if (req.query.shape === 'v2') return res.json({ rows, helperReady });
     return res.json(rows);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /team/former/:id — one former person's work history (fp:<employeeId>).
+router.get('/team/former/:id', async (req, res, next) => {
+  try {
+    if (!(await teamGate(req, res))) return undefined;
+    const out = await formerPersonHistory(req.user, req.params.id, { fresh: req.query.fresh === '1' });
+    return res.status(out.status).json(out.body);
   } catch (err) {
     return next(err);
   }
@@ -170,6 +188,10 @@ function shapeRecruitment(app) {
     interviewAt: app.interviewAt,
     mode: app.interviewMode,
     meeting: app.interviewMeetingLink || app.interviewLocation || null,
+    meetingLink: app.interviewMeetingLink || null,
+    location: app.interviewLocation || null,
+    // When the slot ended (for "feedback is late" in red on the calendar).
+    completedAt: app.interviewCompletedAt || null,
     status: app.interviewStatus,
     statusLabel: interviewStatusLabel(app.interviewStatus),
     score: app.interviewScore,
@@ -260,6 +282,10 @@ router.get('/calendar', async (req, res) => {
   ]);
 
   const recruitment = recruitmentApps.map(shapeRecruitment);
+  // B4: the panel of each interview (current round), migrated on read for old rows.
+  // eslint-disable-next-line global-require
+  const panels = await require('../utils/interviewPanel').panelsFor(recruitmentApps);
+  recruitment.forEach((r) => { r.panel = panels.get(r.id) || []; });
   const ai = aiApps.map(shapeAi).map(withExpiry);
   // Review #3 §11 — "AI Interview · Score 82% · Completed 27 Sep": WHEN the AI
   // interview was completed, from the pipeline history (the move into AI
@@ -348,10 +374,114 @@ async function recordEvent(applicationId, status, extra = {}) {
   await prisma.interviewEvent.create({ data: { applicationId, status, ...extra } });
 }
 
-async function respondWith(res, id) {
+async function respondWith(res, id, extra = {}) {
   const app = await prisma.application.findUnique({ where: { id }, include: CALENDAR_INCLUDE });
-  res.json(shapeRecruitment(app));
+  const row = shapeRecruitment(app);
+  // eslint-disable-next-line global-require
+  row.panel = (await require('../utils/interviewPanel').panelsFor([app])).get(app.id) || [];
+  res.json({ ...row, ...extra });
 }
+
+// ---------------------------------------------------------------------------
+// B4 (2026-10-06): THE INTERVIEW PANEL, AND "CREATE MEETING LINK".
+//   GET  /interviews/panel-options?q=        staff logins to pick from
+//   PUT  /interviews/:id/panel               { panel: [{userId} | {name, email}] }
+//   POST /interviews/:id/panel/:pid/feedback one panelist's own scorecard
+//   GET  /interviews/meeting-link/setup      is Calendar Sync set up? (+ steps)
+//   POST /interviews/:id/meeting-link        a REAL Meet / Teams link, or
+//                                            "built, needs an account"
+// The overall decision is still ONE (the Internal feedback + Decide).
+// ---------------------------------------------------------------------------
+router.get('/interviews/panel-options', async (req, res) => {
+  // eslint-disable-next-line global-require
+  res.json({ rows: await require('../utils/interviewPanel').staffOptions(req.query.q) });
+});
+
+router.put('/interviews/:id/panel', async (req, res) => {
+  const app = await loadInterview(req, res);
+  if (!app) return undefined;
+  // eslint-disable-next-line global-require
+  const PANEL = require('../utils/interviewPanel');
+  if (!PANEL.ready()) return res.status(503).json({ error: 'The panel is being set up (database update pending). Please try again later.' });
+  const parsed = await PANEL.parsePanel((req.body || {}).panel);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  if (!parsed.entries || !parsed.entries.length) return res.status(400).json({ error: 'Add at least one interviewer.' });
+  const round = app.interviewRound || 1;
+  await PANEL.setPanel(app.id, round, parsed.entries);
+  const names = PANEL.namesOf(parsed.entries);
+  await prisma.application.update({ where: { id: app.id }, data: { interviewer: names } });
+  await logAudit({ userId: req.user.id, action: `Interview panel set — round ${round}`, entity: 'Application', entityId: app.id, fromValue: app.interviewer || '—', toValue: names });
+  return respondWith(res, app.id, { message: `Saved. Panel: ${names}.` });
+});
+
+router.post('/interviews/:id/panel/:pid/feedback', async (req, res) => {
+  // eslint-disable-next-line global-require
+  const PANEL = require('../utils/interviewPanel');
+  if (!PANEL.ready()) return res.status(503).json({ error: 'The panel is being set up. Please try again later.' });
+  const member = await prisma.interviewPanelist.findUnique({ where: { id: req.params.pid } });
+  if (!member || member.applicationId !== req.params.id) return res.status(404).json({ error: 'That panel member was not found on this interview.' });
+  // The panelist themself, or anyone who runs this interview (for an outside
+  // interviewer whose feedback came by phone / email).
+  const own = !!member.userId && member.userId === req.user.id;
+  let app;
+  if (own) {
+    app = await prisma.application.findUnique({ where: { id: member.applicationId }, include: { candidate: true, requirement: { include: { client: true } } } });
+    if (!app || !app.interviewStatus) return res.status(400).json({ error: 'No interview on this application' });
+  } else {
+    app = await loadInterview(req, res);
+    if (!app) return undefined;
+  }
+  if (['CANCELLED', 'NO_SHOW'].includes(app.interviewStatus)) {
+    return res.status(409).json({ error: `This interview is ${interviewStatusLabel(app.interviewStatus)} — no feedback is due.` });
+  }
+  const card = PANEL.readScorecard(req.body);
+  if (card.error) return res.status(400).json({ error: card.error });
+  await prisma.interviewPanelist.update({
+    where: { id: member.id },
+    data: { ...card.data, feedbackAt: new Date(), feedbackById: req.user.id, feedbackByName: own ? req.user.name : `${req.user.name} (for ${member.name})` },
+  });
+  await logAudit({ userId: req.user.id, action: `Panel feedback — ${member.name}: ${card.data.recommendation}`, entity: 'Application', entityId: app.id, toValue: card.data.recommendation });
+  const r = app.requirement || {};
+  // eslint-disable-next-line global-require
+  await require('../utils/notify').notifyUsers([r.recruiterId, r.tlId], {
+    title: `Panel feedback: ${app.candidate.name}`,
+    message: `${member.name} — ${card.data.recommendation}. Open Interviews → Waiting for feedback to see the whole panel and decide.`,
+    exceptUserId: req.user.id,
+  });
+  return respondWith(res, app.id, { message: `Saved. ${member.name}: ${card.data.recommendation}.` });
+});
+
+router.get('/interviews/meeting-link/setup', async (req, res) => {
+  // eslint-disable-next-line global-require
+  res.json(await require('../utils/meetingLinks').setupReport());
+});
+
+router.post('/interviews/:id/meeting-link', async (req, res) => {
+  const app = await loadInterview(req, res);
+  if (!app) return undefined;
+  if (!app.interviewAt) return res.status(409).json({ error: 'Book the date and time first.' });
+  if (String(app.interviewMode || '').toLowerCase().includes('person')) return res.status(409).json({ error: 'This interview is in person, so it needs no meeting link.' });
+  // eslint-disable-next-line global-require
+  const ML = require('../utils/meetingLinks');
+  const r = app.requirement || {};
+  const company = r.internal ? 'TeamLink' : (r.client && r.client.name) || '';
+  const made = await ML.createMeeting({
+    title: `Interview: ${app.candidate.name} — ${r.title || 'Job'}${company ? ` (${company})` : ''}`,
+    description: `Round ${app.interviewRound || 1}. Interviewer(s): ${app.interviewer || 'to be confirmed'}. Booked in TeamLink.`,
+    start: app.interviewAt,
+  });
+  if (made.needsAccount) {
+    return res.status(409).json({
+      needsAccount: true,
+      error: 'Built — needs an account. Ask your Admin to connect Google Meet or Microsoft Teams in Administration → Integrations → Calendar Sync. Until then, paste the meeting link by hand.',
+      setup: made.report,
+    });
+  }
+  if (!made.ok) return res.status(502).json({ error: made.error });
+  await prisma.application.update({ where: { id: app.id }, data: { interviewMeetingLink: made.url } });
+  await logAudit({ userId: req.user.id, action: `Meeting link created — ${made.provider}`, entity: 'Application', entityId: app.id, fromValue: app.interviewMeetingLink || '—', toValue: made.url, reason: made.eventId ? `calendar event ${made.eventId}` : null });
+  return respondWith(res, app.id, { message: `${made.provider} link created and saved on the interview.`, meetingLink: made.url });
+});
 
 // Scheduled -> Confirmed -> Started -> Completed -> Pending Feedback. No skipping.
 router.patch('/interviews/:id/advance', async (req, res) => {
@@ -419,18 +549,47 @@ router.post('/interviews/:id/cancel', async (req, res) => {
     userId: req.user.id, action: `Interview cancelled — ${reason}`, entity: 'Application',
     entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'Cancelled',
   });
+  // Everyone who was told about the booking is told it is off (§11).
+  await require('../utils/interviewNotices').announceInterview(app.id, 'cancelled', { actor: req.user, reason }); // eslint-disable-line global-require
   await respondWith(res, app.id);
 });
 
+// "Did not attend" (change list §11, 2026-10-03) — asked from the interview's
+// feedback form only (the calendar row has no No Show button). A reason is
+// required, and a new time may be offered in the same step: the slot is then
+// rescheduled (history keeps both) and everyone is told.
 router.post('/interviews/:id/no-show', async (req, res) => {
   const app = await loadInterview(req, res);
   if (!app) return;
-  await prisma.application.update({ where: { id: app.id }, data: { interviewStatus: 'NO_SHOW' } });
-  await recordEvent(app.id, 'NO_SHOW', { by: req.user.name });
+  const reason = String(req.body.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'Say why the candidate did not attend.' });
+  if (['CANCELLED', 'FEEDBACK_SUBMITTED'].includes(app.interviewStatus)) {
+    return res.status(409).json({ error: `This interview is ${interviewStatusLabel(app.interviewStatus)} — it cannot be marked "did not attend".` });
+  }
+  let when = null;
+  if (req.body.rescheduleAt) {
+    when = new Date(req.body.rescheduleAt);
+    if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'The new time is not valid.' });
+    if (when.getTime() < Date.now() - 5 * 60000) return res.status(400).json({ error: 'The new time has already passed — pick a later time.' });
+  }
+  await prisma.application.update({ where: { id: app.id }, data: { interviewStatus: 'NO_SHOW', interviewCancelReason: `Did not attend — ${reason}` } });
+  await recordEvent(app.id, 'NO_SHOW', { reason: `Did not attend — ${reason}`, by: req.user.name });
   await logAudit({
-    userId: req.user.id, action: 'Interview no-show', entity: 'Application',
-    entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'No Show',
+    userId: req.user.id, action: `Interview — did not attend (${reason})`, entity: 'Application',
+    entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'No Show', reason,
   });
+  const IN = require('../utils/interviewNotices'); // eslint-disable-line global-require
+  if (when) {
+    const fromSlot = app.interviewAt ? app.interviewAt.toISOString() : '—';
+    await prisma.application.update({
+      where: { id: app.id },
+      data: { interviewStatus: 'RESCHEDULED', interviewAt: when, interviewRescheduleCount: app.interviewRescheduleCount + 1, interviewCancelReason: null },
+    });
+    await recordEvent(app.id, 'RESCHEDULED', { reason: `New time after did not attend — ${reason}`, by: req.user.name, fromSlot, toSlot: when.toISOString() });
+    await IN.announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason: 'The candidate did not attend — a new time is booked' });
+  } else {
+    await IN.announceInterview(app.id, 'no_show', { actor: req.user, reason, candidateEmail: true });
+  }
   await respondWith(res, app.id);
 });
 
@@ -460,6 +619,8 @@ router.post('/interviews/:id/reschedule', async (req, res) => {
     userId: req.user.id, action: `Interview rescheduled — ${reason}`, entity: 'Application',
     entityId: app.id, fromValue: fromSlot, toValue: when.toISOString(),
   });
+  // Everyone is told the new time; the reminders re-arm for the new slot.
+  await require('../utils/interviewNotices').announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason }); // eslint-disable-line global-require
   await respondWith(res, app.id);
 });
 
@@ -476,6 +637,20 @@ router.post('/interviews/:id/reschedule', async (req, res) => {
 router.post('/interviews/:id/feedback', async (req, res) => {
   const app = await loadInterview(req, res);
   if (!app) return;
+  // The short form (rating · strengths · concerns · decision — change list
+  // §11) is folded into the same record; see utils/shortFeedback.js.
+  const SF = require('../utils/shortFeedback'); // eslint-disable-line global-require
+  const short = SF.fromShortForm(req.body);
+  const shortProblem = SF.shortFormProblem(short);
+  if (shortProblem) return res.status(400).json({ error: shortProblem });
+  if (short) {
+    req.body.feedback = short.overall;
+    Object.assign(req.body, short.ratings);
+    if (req.body.score === undefined) req.body.score = '';
+  }
+  if (['CANCELLED', 'NO_SHOW'].includes(app.interviewStatus)) {
+    return res.status(409).json({ error: `This interview is ${interviewStatusLabel(app.interviewStatus)} — book a new time before giving feedback.` });
+  }
   const feedback = (req.body.feedback || req.body.overall || '').trim();
   if (!feedback) return res.status(400).json({ error: 'Feedback is required' });
   // Selected / Rejected / Hold. The prototype’s older wording
@@ -521,7 +696,9 @@ router.post('/interviews/:id/feedback', async (req, res) => {
     create: { applicationId: app.id, kind: 'Internal', ...data },
     update: data,
   });
-  await recordEvent(app.id, 'FEEDBACK_SUBMITTED', { reason: `Feedback recorded — ${result}`, by: req.user.name });
+  // Round N in the history (layout v3); "Next round" = passed this round, the
+  // next one is booked through the same Schedule popup (stored as Selected).
+  await recordEvent(app.id, 'FEEDBACK_SUBMITTED', { reason: `Round ${app.interviewRound || 1} feedback — ${req.body.nextRound === true ? 'Next round' : result}`, by: req.user.name });
   // §32 — Interview Scheduled -> Interview Completed is a stage move: history,
   // follow-ups and the next person's notification (utils/stageEvents.js).
   if (app.stage === 'INTERVIEW_SCHEDULED') {

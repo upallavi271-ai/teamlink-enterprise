@@ -2,7 +2,8 @@
 // Offers, Joining, Internal Hiring). Nothing here decides anything: the API
 // refuses, these helpers only render.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ListToolbar, FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import api from '../../api';
 import Combo from '../../components/Combo.jsx';
 import PeopleFilter, { useAtsWorkers, personOptions } from '../../components/PeopleFilter.jsx';
@@ -71,7 +72,7 @@ export function useWorkspace(url) {
   function load() {
     api.get(url)
       .then((res) => setData(res.data))
-      .catch((err) => { setData((d) => ({ ...d, loading: false })); setError(err.response?.data?.error || 'Could not load this workspace.'); });
+      .catch((err) => { setData((d) => ({ ...d, loading: false })); setError(err.response?.data?.error || 'Could not load the list. Please try again.'); });
   }
   useEffect(load, [url]);
 
@@ -84,7 +85,7 @@ export function useWorkspace(url) {
       load();
       return true;
     } catch (err) {
-      setError(err.response?.data?.error || 'That action could not be completed.');
+      setError(err.response?.data?.error || 'Could not save that change. Please try again.');
       return false;
     } finally {
       setBusy(false);
@@ -119,16 +120,9 @@ export function Panel({ title, subtitle, children, onClose }) {
 
 export function HiringTypeChip({ value }) {
   const internal = value === 'TeamLink Internal Hire';
-  return (
-    // §30 — the hiring type is information, not a state: blue for both.
-    // §35 — the two flows, spelled the same way on every screen.
-    <span className="status new" title={internal
-      ? 'TeamLink Internal Hire: Selected → Offer → Offer Accepted → Joined → Hired → HRMS employee. Never invoiced.'
-      : 'Client Placement: Selected → Client Joining → Accounts (invoice → receivable). No offer stage; never an HRMS employee.'}
-    >
-      {internal ? 'Internal Hire' : 'Client Placement'}
-    </span>
-  );
+  // The hiring type is information, not a state: small grey text, not a
+  // coloured chip, and no step strip in a tooltip (simplicity checklist).
+  return <span className="small-muted">{internal ? 'TeamLink hire' : 'Client hire'}</span>;
 }
 
 // The shared filter set for Interviews & Joining (user notes #1 / #11, review
@@ -189,10 +183,10 @@ export const intJoinActive = (filters) => FILTER_KEYS.filter((k) => filters[k]).
 // screen's own date either way, or candidate A–Z.
 export function intJoinSorts(dateLabel = 'Date') {
   return [
-    { key: '', label: 'Recently updated' },
-    { key: 'dateDesc', label: `${dateLabel} — newest first` },
-    { key: 'dateAsc', label: `${dateLabel} — oldest first` },
-    { key: 'name', label: 'Candidate A–Z' },
+    { key: '', label: 'Latest change' },
+    { key: 'dateDesc', label: 'Newest' },
+    { key: 'dateAsc', label: 'Oldest' },
+    { key: 'name', label: 'Name A–Z' },
   ];
 }
 export function sortIntJoin(rows, sort, getDate) {
@@ -251,9 +245,9 @@ export function IntJoinFilters({
     { key: 'status', label: statusLabel, value: statusOpt ? statusOpt.label : filters.status, onRemove: () => setFilter({ status: '' }) },
     { key: 'hiringType', label: 'Hiring type', value: filters.hiringType, onRemove: () => setFilter({ hiringType: '' }) },
     { key: 'client', label: 'Client', value: filters.client, onRemove: () => setFilter({ client: '' }) },
-    { key: 'requirement', label: 'Requirement', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
+    { key: 'requirement', label: 'Job', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
     { key: 'candidate', label: 'Candidate', value: filters.candidate, onRemove: () => setFilter({ candidate: '' }) },
-    { key: 'bde', label: 'BDE', value: bdeLabel, onRemove: () => setFilter({ bde: '' }) },
+    { key: 'bde', label: 'Client manager (BDE)', value: bdeLabel, onRemove: () => setFilter({ bde: '' }) },
     { key: 'dates', label: dateLabel, value: dates, onRemove: () => setFilter({ from: '', to: '' }) },
   ];
   const sorts = intJoinSorts(dateLabel.replace(/ range$/i, ''));
@@ -267,7 +261,7 @@ export function IntJoinFilters({
           <>
             <input
               type="search"
-              placeholder="Search candidate or requirement…"
+              placeholder="Search name or job…"
               value={filters.q}
               onChange={(e) => setFilter({ q: e.target.value })}
               style={{ minWidth: 220 }}
@@ -302,7 +296,7 @@ export function IntJoinFilters({
       >
         <HierarchyFilter value={h} onChange={setHier} show={{ department: false, section: false, recruiter: false }} />
         {!noClient && clientDesk && sel('client', 'All clients', opts.clients, 'Client')}
-        {sel('requirement', 'All requirements', opts.requirements, 'Requirement')}
+        {sel('requirement', 'All jobs', opts.requirements, 'Job')}
         {sel('candidate', 'All candidates', opts.candidates, 'Candidate')}
         <PeopleFilter role="BDE" department={filters.department} value={filters.bde} onChange={(v) => setFilter({ bde: v })} />
         <span className="lf-dates" title={dateLabel}>
@@ -340,4 +334,80 @@ export function matchesShared(row, filters, dateValue, personIds = null) {
   if (!inRange(dateValue, filters.from, filters.to)) return false;
   if (q && !`${row.candidate.name} ${row.candidate.email || ''} ${row.requirement.title} ${row.requirement.client?.name || ''} ${row.interviewCode || ''}`.toLowerCase().includes(q)) return false;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// THE SIMPLE LIST TOOLBAR for Feedback / Offers / Joining (simplicity
+// checklist 2026-10-03, §9 §10): one search box, ONE Filters button, a
+// compact sort, active filters as chips with Clear all. The options CASCADE
+// and carry counts (useLocalFacets over the screen's own rows — the rows are
+// already your area, cut by the server), zero options are hidden.
+//   const { rows, toolbar } = useIntJoinList(allRows, { status, dateOf, … })
+// ---------------------------------------------------------------------------
+const EMPTY_LIST = { q: '', department: '', client: '', job: '', recruiter: '', hiringType: '', status: '' };
+export function useIntJoinList(allRows, {
+  status = null, // { label, get(row) -> value, text(value) -> label }
+  dateOf = () => null,
+  defaultSort = '',
+  placeholder = 'Search name or job…',
+  sortOptions = null,
+} = {}) {
+  const { user } = useAuth();
+  const clientDesk = can(user, null, 'clients', 'Client List', 'view');
+  const [f, setF] = useState(EMPTY_LIST);
+  const [sort, setSort] = useState(defaultSort);
+  const set = (patch) => setF((x) => ({ ...x, ...patch }));
+  const fields = useMemo(() => [
+    { key: 'department', get: (r) => r.requirement.department },
+    ...(clientDesk ? [{ key: 'client', get: (r) => (r.hiringType === 'TeamLink Internal Hire' ? 'TeamLink (internal)' : r.requirement.client?.name) }] : []),
+    { key: 'job', get: (r) => r.requirement.title },
+    { key: 'recruiter', get: (r) => (r.requirement.recruiter ? r.requirement.recruiter.id : null), label: (v, r) => r.requirement.recruiter.name },
+    { key: 'hiringType', get: (r) => r.hiringType, label: (v) => (v === 'TeamLink Internal Hire' ? 'TeamLink hire' : 'Client hire') },
+    ...(status ? [{ key: 'status', get: status.get, label: (v) => (status.text ? status.text(v) : v) }] : []),
+  ], [clientDesk, status]);
+  const searched = useMemo(() => {
+    const q = f.q.trim().toLowerCase();
+    return (allRows || []).filter((r) => !q || `${r.candidate.name} ${r.requirement.title} ${r.requirement.client?.name || ''}`.toLowerCase().includes(q));
+  }, [allRows, f.q]);
+  const values = useMemo(() => Object.fromEntries(fields.map((x) => [x.key, f[x.key]])), [fields, f]);
+  const facets = useLocalFacets(searched, fields, values);
+  const rows = useMemo(() => {
+    const list = searched.filter((r) => fields.every((x) => !values[x.key] || String(x.get(r) ?? '') === String(values[x.key])));
+    if (sort === 'name') return [...list].sort((a, b) => String(a.candidate.name).localeCompare(String(b.candidate.name)));
+    if (sort === 'oldest' || sort === 'newest') {
+      const t = (r) => { const v = dateOf(r); const n = v ? new Date(v).getTime() : NaN; return Number.isNaN(n) ? Infinity : n; };
+      return [...list].sort((a, b) => (sort === 'oldest' ? t(a) - t(b) : t(b) - t(a)));
+    }
+    return list;
+  }, [searched, fields, values, sort]); // eslint-disable-line react-hooks/exhaustive-deps
+  const label = (key, v) => ((facets[key] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
+  const NAMES = { department: 'Department', client: 'Client', job: 'Job', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
+  const chips = [
+    ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
+    f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
+  ].filter(Boolean);
+  const toolbar = (
+    <ListToolbar
+      search={f.q}
+      onSearch={(v) => set({ q: v })}
+      placeholder={placeholder}
+      filterCount={chips.filter((c) => c.key !== 'q').length}
+      sort={sort}
+      sortOptions={sortOptions || [['', 'Latest change'], ['newest', 'Newest'], ['oldest', 'Oldest'], ['name', 'Name A–Z']]}
+      onSort={setSort}
+      chips={chips}
+      onClearAll={() => setF(EMPTY_LIST)}
+      panel={(
+        <>
+          {status && <FacetSelect label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
+          <FacetSelect label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
+          {clientDesk && <FacetSelect label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
+          <FacetSelect label="Job" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All jobs" />
+          <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
+          <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
+        </>
+      )}
+    />
+  );
+  return { rows, toolbar, active: chips.length, clear: () => setF(EMPTY_LIST) };
 }

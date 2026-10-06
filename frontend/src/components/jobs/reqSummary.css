@@ -1,0 +1,5 @@
+/* Requirement detail — the one summary strip (user 2026-10-03). Scoped under .reqsum-. */
+.reqsum-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 14px;padding:10px 12px;margin:6px 0 12px;border:1px solid var(--line);border-radius:10px;background:var(--card,#fff)}
+.reqsum-item{display:flex;flex-direction:column;gap:2px;min-width:0}
+.reqsum-k{font-size:11px;font-weight:600;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.03em}
+.reqsum-v{font-size:13px;color:var(--ink);overflow-wrap:anywhere}

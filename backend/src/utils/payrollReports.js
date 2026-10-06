@@ -53,7 +53,9 @@ function compare(expected, booked) {
   return diffs;
 }
 
-async function reconciliation(month) {
+// SPEC B's per-employee comparison (one journal per record). Kept for months
+// booked that way; S3 books one journal per month — see reconciliation().
+async function legacyReconciliation(month) {
   const [entries, journals, index] = await Promise.all([
     prisma.employeePayrollRun.findMany({ where: { month }, include: { employee: true }, orderBy: { employee: { name: 'asc' } } }),
     prisma.journalEntry.findMany({ where: { month, referenceType: { in: ['PAYROLL_RUN', 'PAYROLL_PAYMENT'] } }, include: { lines: true } }),
@@ -148,6 +150,96 @@ async function reconciliation(month) {
   };
 }
 
+// S3 (2026-10-05): HRMS vs ledger for a month booked as ONE journal.
+// Expected = the approved records' totals on the mapped ledgers (+ the salary
+// payment once paid); booked = every HRMS-payroll journal line of the month,
+// reversals included (so a reversed posting nets to zero).
+async function reconciliation(month) {
+  // eslint-disable-next-line global-require
+  const P = require('./payrollPosting');
+  const legacyJournals = await prisma.journalEntry.count({ where: { month, referenceType: { in: ['PAYROLL_RUN', 'PAYROLL_PAYMENT'] } } });
+  if (legacyJournals) return legacyReconciliation(month);
+  const [entries, st, { map }, index] = await Promise.all([
+    prisma.employeePayrollRun.findMany({ where: { month }, include: { employee: true }, orderBy: { employee: { name: 'asc' } } }),
+    P.monthState(month),
+    P.getMapping(),
+    accountIndex(),
+  ]);
+  const journals = st.runId ? await prisma.journalEntry.findMany({
+    where: {
+      source: 'HRMS_PAYROLL',
+      OR: [
+        { referenceType: { in: ['PAYROLL_MONTH', 'PAYROLL_MONTH_PAYMENT'] }, referenceId: st.runId },
+        { referenceType: 'REVERSAL', idempotencyKey: { startsWith: `payroll-month:${st.runId}:` } },
+      ],
+    },
+    include: { lines: true },
+  }) : [];
+  const codeOf = (k) => { const a = index.get(String(map[k]).toLowerCase()); return a ? a : { code: map[k], name: map[k] }; };
+  const final = entries.filter((e) => FINAL_STATUSES.includes(e.status));
+  const expected = new Map();
+  P.COMPONENTS.forEach((c) => {
+    const amt = final.reduce((n, e) => n + paise(c.amount(e) || 0), 0);
+    if (!amt) return;
+    const a = codeOf(c.key);
+    addTo(expected, a.code, a.name, c.side === 'debit' ? amt : 0, c.side === 'credit' ? amt : 0);
+  });
+  const paidNet = entries.filter((e) => e.status === 'PAID').reduce((n, e) => n + paise(e.netPay), 0);
+  const payJe = journals.find((j) => j.referenceType === 'PAYROLL_MONTH_PAYMENT');
+  if (paidNet) {
+    const sp = codeOf('salaryPayable');
+    addTo(expected, sp.code, sp.name, paidNet, 0);
+    const bankLine = payJe && payJe.lines.find((l) => l.credit > 0);
+    const bk = bankLine ? { code: bankLine.accountCode, name: bankLine.accountName } : codeOf('bank');
+    addTo(expected, bk.code, bk.name, 0, paidNet);
+  }
+  const booked = bookedLines(journals);
+  const byAccount = [...new Set([...expected.keys(), ...booked.keys()])].sort().map((code) => {
+    const e = expected.get(code) || { debit: 0, credit: 0 };
+    const b = booked.get(code) || { debit: 0, credit: 0 };
+    // Compare the NET movement (a reversal books the mirror on both sides).
+    const eNet = e.debit - e.credit;
+    const bNet = b.debit - b.credit;
+    return {
+      accountCode: code, accountName: e.name || b.name,
+      expectedDebit: r2(Math.max(eNet, 0)), bookedDebit: r2(Math.max(bNet, 0)), expectedCredit: r2(Math.max(-eNet, 0)), bookedCredit: r2(Math.max(-bNet, 0)),
+      ok: eNet === bNet,
+    };
+  });
+  const rows = entries.filter((e) => FINAL_STATUSES.includes(e.status)).map((e) => {
+    const cost = paise(e.earnedGross + e.pfEmployer + e.esiEmployer);
+    const flags = [];
+    if (!st.posted) flags.push('NOT_BOOKED');
+    if (e.status === 'PAID' && !st.payment) flags.push('PAYMENT_MISSING');
+    return {
+      entryId: e.id, employeeId: e.employeeId, employeeCode: e.employee.employeeCode, name: e.employee.name,
+      status: e.status, netPay: e.netPay, costToCompany: r2(cost),
+      expectedDebit: r2(cost), bookedDebit: st.posted ? r2(cost) : 0, difference: st.posted ? 0 : r2(-cost),
+      journals: st.journalEntry ? [st.journalEntry.id] : [], flags, ok: flags.length === 0, diffs: [],
+    };
+  });
+  const hrms = await monthlyPayrollTotals(month);
+  const expenseCodes = ['salary', 'employerPf', 'employerEsi'].map((k) => codeOf(k).code);
+  const bookedExpense = expenseCodes.reduce((n, c) => { const b = booked.get(c); return n + (b ? b.debit - b.credit : 0); }, 0);
+  const sp = booked.get(codeOf('salaryPayable').code) || { debit: 0, credit: 0 };
+  const legacy = hrms.source === 'legacy-run';
+  return {
+    month, period: monthLabel(month), source: hrms.source, mode: 'month',
+    note: legacy ? `${monthLabel(month)} was processed as a month run before per-employee payroll and the ledger existed; nothing was booked to the journal for it, so there is nothing to reconcile.`
+      : st.records && !st.finalized ? `${st.blockReason}` : null,
+    posted: st.posted, journalEntryId: st.journalEntry ? st.journalEntry.id : null,
+    hrms: {
+      employees: hrms.employees, grossPay: hrms.grossPay, earnedGross: hrms.earnedGross, net: hrms.net,
+      employerContributions: hrms.employerContributions, totalCost: hrms.totalCost, paid: hrms.paid,
+    },
+    ledger: { salaryExpense: r2(bookedExpense), payableToEmployees: r2(sp.credit), paidFromPayable: r2(sp.debit), journals: journals.length },
+    difference: legacy ? null : r2(bookedExpense - Math.round(hrms.totalCost * 100)),
+    mismatches: rows.filter((r) => !r.ok).length + byAccount.filter((a) => !a.ok).length,
+    rows,
+    byAccount,
+  };
+}
+
 // ---- Compliance -------------------------------------------------------------
 async function compliance({ month = null, year = null, includeDraft = false }) {
   const statuses = includeDraft ? ['DRAFT', 'PENDING_APPROVAL', ...FINAL_STATUSES] : FINAL_STATUSES;
@@ -189,4 +281,4 @@ async function compliance({ month = null, year = null, includeDraft = false }) {
   return { year: y, statuses, months, totals };
 }
 
-module.exports = { reconciliation, compliance };
+module.exports = { reconciliation, legacyReconciliation, compliance };

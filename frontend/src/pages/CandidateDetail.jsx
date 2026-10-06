@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import NextStepBlock from '../components/NextStepBlock.jsx';
@@ -17,12 +17,23 @@ import {
 } from '../components/Candidate360.jsx';
 import StatusChip from '../components/ui/StatusChip.jsx';
 import { LocationRequirementsPanel } from '../components/CandidateReach.jsx';
+// resume_: stored resume files + versions, and the 3-number match.
+import ResumePanel from '../components/resume/ResumePanel.jsx';
+import { EligibleRequirementsPanel } from '../components/resume/MatchSplit.jsx';
 import PortalInviteButton from '../components/portal/PortalInviteButton.jsx';
+import { ClientPausedBanner, lifecycleOf as clientLifecycleOf } from '../components/clients/ClientLifecycle.jsx';
 // Candidate 360 (spec 2026-09-29 §9): the same header + tabs as the big window.
 import {
-  C360Header, C360Tabs, candidateCode, currentAppOf,
-  PipelineTab, SubmissionsTab, OffersTab, JoiningTab, AiScoresTab,
+  C360Header, C360Tabs, currentAppOf, tabKeyOf, ApplicationsMini,
+  PipelineTab, SubmissionsTab, OffersTab, JoiningTab,
 } from '../components/Candidate360Tabs.jsx';
+// cand7_ (Candidates §7): the profile top and the other agents' mount points.
+import ProfileTop from '../components/candidate/ProfileTop.jsx';
+import ProfileLeft from '../components/candidate/ProfileLeft.jsx';
+import { RecordDocuments } from '../components/candidate/CandidateRecord.jsx'; // ATS-100 B5
+import {
+  FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot,
+} from '../components/candidate/ProfileSlots.jsx';
 
 // The candidate record, in nine tabs:
 //   Overview · Application · AI Match · Pipeline History · Interviews ·
@@ -39,6 +50,7 @@ const list = (value) => String(value || '').split(',').map((s) => s.trim()).filt
 // nothing else in this file may put that word on a row.
 const MESSAGE_STATUS_LABEL = {
   NOT_SENT_NO_PROVIDER: 'Not sent — no provider',
+  NOT_SENT_SWITCHED_OFF: 'Not sent — candidate emails are switched off',
   QUEUED: 'Queued',
   RETRY: 'Retrying',
   SENT: 'Sent',
@@ -51,6 +63,7 @@ const MESSAGE_STATUS_LABEL = {
 };
 const MESSAGE_STATUS_CLASS = {
   NOT_SENT_NO_PROVIDER: 'pending',
+  NOT_SENT_SWITCHED_OFF: 'pending',
   QUEUED: 'pending',
   RETRY: 'pending',
   SENT: 'active',
@@ -82,7 +95,10 @@ export default function CandidateDetail() {
   const [candidate, setCandidate] = useState(null);
   // Set when the API refuses this record for scope reasons.
   const [denied, setDenied] = useState('');
-  const [tab, setTab] = useState('overview');
+  const [tab, setTabRaw] = useState('applications');
+  const setTab = (k) => setTabRaw(tabKeyOf(k));
+  const navigate = useNavigate();
+  const [refreshKey, setRefreshKey] = useState(0);
   const [error, setError] = useState('');
   const [flash, setFlash] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
@@ -106,16 +122,16 @@ export default function CandidateDetail() {
     api.get(`/candidates/${id}`)
       .then((res) => setCandidate(res.data))
       .catch((err) => setDenied([403, 404].includes(err.response?.status)
-        ? (err.response?.data?.error || 'This record is not available to you')
-        : 'This candidate could not be loaded just now — refresh to try again.'));
+        ? (err.response?.data?.error || 'You cannot open this person.')
+        : 'Could not load this person. Please try again.'));
   }
   useEffect(load, [id]);
   useEffect(() => {
-    if (tab !== 'activity') return;
+    if (tab !== 'history') return;
     api.get(`/candidates/${id}/followup-log`)
       .then((res) => setFollowUpLog(res.data.entries || []))
       .catch(() => setFollowUpLog([]));
-  }, [tab, id]);
+  }, [tab, id, refreshKey]);
 
   async function addToPipeline(requirementId) {
     setError('');
@@ -123,7 +139,7 @@ export default function CandidateDetail() {
       await api.post('/applications', { candidateId: id, requirementId });
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add this candidate to the pipeline');
+      setError(err.response?.data?.error || 'Could not add this person to the job. Please try again.');
     }
   }
 
@@ -143,11 +159,11 @@ export default function CandidateDetail() {
         history: data.history || [],
       });
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not open the follow-up for this application');
+      setError(err.response?.data?.error || 'Could not open the follow-up. Please try again.');
       return;
     }
     if (!data.canRecord) {
-      setError('A follow-up is recorded by its owner — you are not on this requirement’s assignment chain.');
+      setError('Only the people on this job can add its follow-up.');
       return;
     }
     const current = data.current;
@@ -188,7 +204,7 @@ export default function CandidateDetail() {
       const res = await api.get(`/followups/application/${applicationId}`);
       setFollowUpThread({ title, history: res.data.history || [] });
     } catch (err) {
-      setFollowUpError(err.response?.data?.error || 'Could not record this follow-up');
+      setFollowUpError(err.response?.data?.error || 'Could not save the follow-up. Please try again.');
     } finally {
       setFollowUpSaving(false);
     }
@@ -203,7 +219,7 @@ export default function CandidateDetail() {
       setNoteDraft('');
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not save this note');
+      setError(err.response?.data?.error || 'Could not save the note. Please try again.');
     }
   }
 
@@ -216,7 +232,7 @@ export default function CandidateDetail() {
       setDocDraft({ docType: 'Resume', name: '', note: '' });
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not record this document');
+      setError(err.response?.data?.error || 'Could not save the document. Please try again.');
     }
   }
 
@@ -241,6 +257,10 @@ export default function CandidateDetail() {
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const canEditMaster = can(user, 'ats', 'candidates', 'Candidate Master', 'edit');
+  // cand7_: the props every ProfileSlots mount gets.
+  const slot = {
+    c, app: primary, user, internal, onChanged: load, onAddToJob: addToPipeline, onSeeTab: setTab,
+  };
   // A follow-up is an APPLICATION's, so the count is how many of this
   // candidate's applications currently carry one — not a number on the
   // candidate.
@@ -276,42 +296,46 @@ export default function CandidateDetail() {
   return (
     <div>
       <Link className="small-muted" to="/candidates">← Back to candidates</Link>
-      <div className="page-head" style={{ marginTop: 10 }}>
-        <div>
-          <h1 style={{ fontSize: 20 }}>{c.name}</h1>
-          <div className="page-sub">
-            {[
-              c.code || candidateCode(c.id),
-              c.phone,
-              c.email,
-              c.location,
-              c.experienceYears != null ? `${c.experienceYears} yrs exp` : null,
-              c.source ? `source: ${c.source}` : null,
-            ].filter(Boolean).join(' · ')}
-          </div>
-          {list(c.skills).length > 0 && (
-            <div style={{ marginTop: 6 }}>
-              {list(c.skills).slice(0, 12).map((s) => <span className="skillpill" key={s}>{s}</span>)}
-            </div>
-          )}
-        </div>
-        <div>
-          {c.currentStage
-            ? (
-              <StatusChip status={c.stageGroupLabel}>
-                {c.stageGroupLabel}
-                {c.stageDetailLabel && c.stageDetailLabel !== c.stageGroupLabel ? ` · ${c.stageDetailLabel}` : ''}
-              </StatusChip>
-            )
-            : <span className="small-muted">No application</span>}
-          {/* User notes #4 — the candidate's own portal login (recruiter invite). */}
-          {internal && <div style={{ marginTop: 8 }}><PortalInviteButton kind="candidate" id={c.id} /></div>}
-        </div>
+      {/* cand7_: initials · name · phone · email · location · current step +
+          the big Call / WhatsApp / Mail / SMS buttons; the portal invite beside them. */}
+      <div style={{ marginTop: 10 }}>
+        <ProfileTop
+          c={c}
+          app={primary}
+          internal={internal}
+          onChanged={() => { setRefreshKey((n) => n + 1); load(); }}
+          extra={internal ? <PortalInviteButton kind="candidate" id={c.id} /> : null}
+        />
       </div>
+      {c.profileStatus === 'Archived' && (
+        <div className="notice amber" style={{ marginBottom: 10 }}>This person is archived — hidden from every list. Nothing was deleted.</div>
+      )}
+      {/* B7: sent by an agency / freelancer partner — who owns the person and until when. */}
+      {c.partnerOwner && (
+        <div className={`notice ${c.partnerOwner.active ? 'blue' : 'grey'}`} style={{ marginBottom: 10 }}>
+          <span><b>Partner: {c.partnerOwner.name}</b> ({c.partnerOwner.type}) sent this person{c.partnerOwner.until ? ` · ${c.partnerOwner.active ? 'theirs till' : 'ownership ended'} ${c.partnerOwner.until}` : ''}. The partner sees each step in their portal; a joining creates their payout in Invoices → Partner payouts.</span>
+        </div>
+      )}
 
       {/* Always on top: Current Application · Current Stage · Next Action
           (+ who owns it) — the same strip as the big window. */}
       <C360Header c={c} app={primary} onBackToLatest={() => setSelectedAppId(null)} />
+
+      {/* Spec 2026-10-03 §A — an application at a PAUSED / ARCHIVED client:
+          warn before anyone submits (the server refuses the share anyway). */}
+      {internal && (() => {
+        const seen = new Set();
+        return (c.applications || [])
+          .filter((a) => a.requirement && !a.requirement.internal && a.requirement.client
+            && ['Paused', 'Archived'].includes(clientLifecycleOf(a.requirement.client))
+            && !['REJECTED', 'JOINED', 'HIRED'].includes(a.stage))
+          .filter((a) => { const k = a.requirement.client.id || a.requirement.client.name; if (seen.has(k)) return false; seen.add(k); return true; })
+          .map((a) => (
+            <ClientPausedBanner key={a.id} clientName={a.requirement.client.name} lifecycle={clientLifecycleOf(a.requirement.client)}>
+              {` (job: ${a.requirement.title || 'a job'})`}
+            </ClientPausedBanner>
+          ));
+      })()}
 
       {/* §28 / §41 — where this is, who owns it, what is owed and when, then
           ONE button. Internal only: a client login has no follow-up chain to
@@ -319,7 +343,7 @@ export default function CandidateDetail() {
       {internal && primary && !['REJECTED', 'HOLD'].includes(c.currentStage) && (
         <NextStepBlock
           stageLabel={primary.stageLabel || c.currentStageLabel}
-          owner={primary.nextActionOwnerName || 'No owner named'}
+          owner={primary.nextActionOwnerName || 'No one named'}
           ownerRole={primary.nextActionOwnerRole}
           nextAction={primary.followUp?.nextAction || primary.nextAction}
           due={primary.followUp?.dueDate}
@@ -343,13 +367,17 @@ export default function CandidateDetail() {
       {c.duplicateHint && (
         <div className="notice amber" style={{ marginBottom: 12 }}>
           {`${c.duplicateHint.count} other profile(s) share this phone or email: ${c.duplicateHint.names.join(', ')}.`}
-          {c.duplicateHint.canMerge && <> <Link to="/candidates/duplicates">Review duplicates →</Link></>}
+          {c.duplicateHint.canMerge && <> <Link to="/candidates/duplicates">See duplicates</Link></>}
         </div>
       )}
-      {/* The ten Candidate 360 tabs (same as the big window). */}
+      {/* ATS layout v3: left = personal info, resume, skills, CTC, notice;
+          right = Applications · Notes · Documents · Timeline (same as the big window). */}
+      <div className="pfl-frame">
+      <ProfileLeft c={c} user={user} internal={internal} slot={slot} onChanged={load} onDeleted={() => navigate('/candidates')} />
+      <div className="pfl-right">
       <C360Tabs tab={tab} setTab={setTab} c={c} />
 
-      {tab === 'overview' && (
+      {tab === 'applications' && (
       <div className="c360-page">
         <div className="cdw-card">
           <div className="cdw-label">
@@ -368,7 +396,7 @@ export default function CandidateDetail() {
         <div>
           {primary && (
             <div className="cdw-card">
-              <div className="cdw-label">Pipeline</div>
+              <div className="cdw-label">Progress</div>
               <PipelineSteps
                 user={user}
                 app={primary}
@@ -387,10 +415,12 @@ export default function CandidateDetail() {
         </div>
       </div>
       )}
+      {/* v3: the per-client table (Job · Client · Step) is below; "Also a good fit" sits with Fit. */}
+      {tab === 'applications' && <RejectionHistorySlot {...slot} />}
 
       {!internal && viewer.withheld?.length > 0 && (
         <div className="notice">
-          Some of this record is internal to TeamLink and is not part of what you are shown:
+          Some details are only for the TeamLink team:
           {` ${viewer.withheld.join(', ')}.`}
         </div>
       )}
@@ -398,91 +428,15 @@ export default function CandidateDetail() {
 
       {error && <div className="error-text">{error}</div>}
 
-      {/* --- Overview: Name, Phone, Email, Location, Experience, Skills,
-              Resume, Source. --- */}
-      {tab === 'overview' && (
-        <div className="two-col">
-          <div>
-            <div className="card section">
-              <h3 style={{ fontSize: 13, marginBottom: 10 }}>Profile</h3>
-              <div className="grid-2">
-                <div className="kv"><span className="k">Name</span><span>{c.name}</span></div>
-                <div className="kv"><span className="k">Phone</span><span>{c.phone || '—'}</span></div>
-                <div className="kv"><span className="k">Email</span><span>{c.email || '—'}</span></div>
-                <div className="kv"><span className="k">Location</span><span>{c.location || '—'}</span></div>
-                <div className="kv">
-                  <span className="k">Experience (total / relevant)</span>
-                  <span>{`${c.experienceYears != null ? `${c.experienceYears} yrs` : '—'} / ${c.relevantExperienceYears != null ? `${c.relevantExperienceYears} yrs` : '—'}`}</span>
-                </div>
-                <div className="kv"><span className="k">Resume</span><span>{c.resumeName || '—'}</span></div>
-                <div className="kv"><span className="k">Source</span><span>{c.source || '—'}</span></div>
-                <div className="kv"><span className="k">First Source</span><span>{c.firstSource || '—'}</span></div>
-              </div>
-              <div className="section-label">Skills</div>
-              <div>
-                {list(c.skills).length
-                  ? list(c.skills).map((s) => <span className="skillpill" key={s}>{s}</span>)
-                  : <span className="small-muted">No skills on file</span>}
-              </div>
-            </div>
-          </div>
-          <div>
-            <div className="card">
-              <h3 style={{ fontSize: 13, marginBottom: 10 }}>More</h3>
-              <div className="kv"><span className="k">Preferred Location</span><span>{c.preferredLocation || '—'}</span></div>
-              <div className="kv"><span className="k">Current Company</span><span>{c.currentCompany || '—'}</span></div>
-              <div className="kv"><span className="k">Current Designation</span><span>{c.currentDesignation || '—'}</span></div>
-              <div className="kv"><span className="k">Education</span><span>{c.education || '—'}</span></div>
-              <div className="kv"><span className="k">Notice Period</span><span>{c.noticePeriod || '—'}</span></div>
-              <div className="kv"><span className="k">Availability</span><span>{c.availability || '—'}</span></div>
-              {/* Salary is a commercial internal — the server does not send it
-                  to a client login, so there is nothing here to hide. */}
-              {c.currentSalary !== undefined && (
-                <div className="kv">
-                  <span className="k">Current / Expected Salary</span>
-                  <span>{`${c.currentSalary || '—'} / ${c.expectedSalary || '—'}`}</span>
-                </div>
-              )}
-              <div className="kv"><span className="k">Added</span><span>{protoDate(c.createdAt)}</span></div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* v3: the profile facts (personal info, skills, CTC, notice period), the resume and Archive / Delete are on the left (components/candidate/ProfileLeft.jsx). */}
 
       {/* --- Application: Requirement, Client, Recruiter, TL, BDE,
               Applied Date, Current Stage. --- */}
       {tab === 'applications' && (
         <>
-          {primary ? (
-            <div className="card section">
-              <h3 style={{ fontSize: 13, marginBottom: 10 }}>Current application</h3>
-              <div className="grid-2">
-                <div className="kv">
-                  <span className="k">Requirement</span>
-                  <span><Link to={`/requirements/${primary.requirementId}`}>{primary.requirement?.title || '—'}</Link></span>
-                </div>
-                <div className="kv">
-                  <span className="k">Client</span>
-                  <span>{primary.requirement?.internal ? 'TeamLink Internal' : primary.requirement?.client?.name || '—'}</span>
-                </div>
-                <div className="kv"><span className="k">Recruiter</span><span>{primary.requirement?.recruiter?.name || '—'}</span></div>
-                <div className="kv"><span className="k">TL</span><span>{primary.requirement?.tl || '—'}</span></div>
-                <div className="kv"><span className="k">BDE</span><span>{primary.requirement?.bde?.name || '—'}</span></div>
-                <div className="kv"><span className="k">Applied Date</span><span>{protoDate(primary.createdAt)}</span></div>
-                <div className="kv">
-                  <span className="k">Current Stage</span>
-                  <span>
-                    <StatusChip status={primary.stageGroupLabel} />
-                    {primary.stageDetailLabel && primary.stageDetailLabel !== primary.stageGroupLabel
-                      ? <span className="small-muted">{` ${primary.stageDetailLabel}`}</span>
-                      : null}
-                  </span>
-                </div>
-                <div className="kv"><span className="k">Owner</span><span>{primary.owner || '—'}</span></div>
-              </div>
-            </div>
-          ) : (
-            <div className="empty"><h3>No application yet</h3><div>This candidate is in the master but not in any pipeline.</div></div>
+          {/* v3: the current application (with Recruiter · TL · BDE) is the card at the top of this tab. */}
+          {!primary && (
+            <div className="empty"><h3>Not on any job yet</h3><div>Add this person to a job to start.</div></div>
           )}
 
           {(applications.length > 0 || c.otherTeamApplications > 0) && (
@@ -491,15 +445,16 @@ export default function CandidateDetail() {
                 {`Applications (${applications.length}) · ${new Set(applications.map((a) => (a.requirement?.internal ? 'internal' : a.requirement?.clientId))).size} client(s)`}
                 {` · ${applications.filter((a) => !['REJECTED', 'JOINED', 'HIRED'].includes(a.stage)).length} active · ${applications.filter((a) => a.stage === 'REJECTED').length} rejected · ${applications.filter((a) => ['JOINED', 'HIRED'].includes(a.stage)).length} joined`}
                 {c.otherTeamApplications > 0 && <b>{` · +${c.otherTeamApplications} in other teams`}</b>}
-                {applications.length > 1 && <span className="small-muted"> · click a row to open that application above</span>}
+                {applications.length > 1 && <span className="small-muted"> · click a row to see it above</span>}
               </div>
               <div className="tbl-wrap">
                 <table className="rq-reach-apps">
                   <thead>
                     <tr>
-                      <th>#</th><th>Requirement</th><th>Client</th><th>Applied on</th><th>Current stage</th><th>In this stage since</th>
-                      <th>Last update</th><th>Next action</th>
-                      <th>Department</th><th>Recruiter</th><th>TL</th><th>BDE</th><th>Owner</th><th>Status</th>
+                      {/* 8 columns (simplicity checklist #12). Department / team lead /
+                          client manager of the picked job are in the card above. */}
+                      <th>Job</th><th>Client</th><th>Applied on</th><th>Step</th><th>At this step since</th>
+                      <th>Next step</th><th>Owner</th><th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -508,9 +463,8 @@ export default function CandidateDetail() {
                         key={a.id}
                         className={`${applications.length > 1 ? 'rq-click' : ''}${primary && a.id === primary.id ? ' is-selected' : ''}`}
                         onClick={applications.length > 1 ? () => openApplication(a.id) : undefined}
-                        title={applications.length > 1 ? 'Open this application above' : undefined}
+                        title={applications.length > 1 ? 'See this job above' : undefined}
                       >
-                        <td className="cell-muted">{i + 1}</td>
                         <td>
                           <Link to={`/requirements/${a.requirementId}`} onClick={(e) => e.stopPropagation()}>
                             {a.requirement?.reqCode ? `${a.requirement.reqCode} · ` : ''}{a.requirement?.title || '—'}
@@ -524,18 +478,13 @@ export default function CandidateDetail() {
                         </td>
                         <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>
                           {a.stageSince ? dateTime(a.stageSince) : '—'}
-                          {a.stageMoves > 0 && <div className="small-muted">{`${a.stageMoves} stage change(s)`}</div>}
+                          {a.stageMoves > 0 && <div className="small-muted">{`${a.stageMoves} step move(s)`}</div>}
                         </td>
-                        <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{a.updatedAt ? dateTime(a.updatedAt) : '—'}</td>
                         <td className="cell-muted">
                           {['REJECTED', 'JOINED', 'HIRED'].includes(a.stage)
                             ? '—'
                             : (a.followUp && !a.followUp.completedAt && a.followUp.nextAction) || a.nextAction || '—'}
                         </td>
-                        <td className="cell-muted">{a.requirement?.department || '—'}</td>
-                        <td className="cell-muted">{a.requirement?.recruiter?.name || '—'}</td>
-                        <td className="cell-muted">{a.requirement?.tl || '—'}</td>
-                        <td className="cell-muted">{a.requirement?.bde?.name || '—'}</td>
                         <td className="cell-muted">{a.owner || '—'}</td>
                         <td><span className={`status ${lifeStatusClass(a.lifeStatus)}`}>{a.lifeStatus}</span></td>
                       </tr>
@@ -545,7 +494,7 @@ export default function CandidateDetail() {
               </div>
               {c.otherTeamApplications > 0 && (
                 <div className="small-muted" style={{ marginTop: 6 }}>
-                  {`${c.otherTeamApplications} more application(s) for this candidate belong to other teams — counted, not shown, because they are outside your access.`}
+                  {`${c.otherTeamApplications} more with other teams (not shown).`}
                 </div>
               )}
             </>
@@ -563,7 +512,7 @@ export default function CandidateDetail() {
                   {c.rejectedBy.map((r) => (
                     <div key={r.applicationId} style={{ fontSize: 13, marginBottom: 3 }}>
                       <span className="status rejected">{r.clientName || '—'}</span>{' '}
-                      <Link to={`/requirements/${r.requirementId}`}>{r.requirementTitle || 'Requirement'}</Link>
+                      <Link to={`/requirements/${r.requirementId}`}>{r.requirementTitle || 'Job'}</Link>
                       <span className="small-muted">
                         {r.at ? ` · ${protoDate(r.at)}` : ''}{r.side ? ` · ${r.side}` : ''}{r.reason ? ` · ${r.reason}` : ''}{r.by ? ` · recorded by ${r.by}` : ''}
                       </span>
@@ -572,14 +521,14 @@ export default function CandidateDetail() {
                 </div>
               )}
               <div className="section-label" style={{ margin: '0 0 4px' }}>
-                {`Still eligible for ${c.eligibleTotal ?? (c.eligibleClients?.filter((x) => !x.rejectedEarlier).length || 0)} client(s) — open requirements in the same department matching 60% or more`}
+                {`Still a good fit for ${c.eligibleTotal ?? (c.eligibleClients?.filter((x) => !x.rejectedEarlier).length || 0)} client(s) — open jobs, Fit 60%+`}
                 {(c.eligibleClients || []).length > 0 && ` · top ${c.eligibleClients.length} shown`}
               </div>
-              {(c.eligibleClients || []).length === 0 && <div className="small-muted">No open requirement at another client matches this candidate yet.</div>}
+              {(c.eligibleClients || []).length === 0 && <div className="small-muted">No open job at another client fits yet.</div>}
               {(c.eligibleClients || []).map((ec) => (
                 <div key={ec.clientId || 'internal'} style={{ fontSize: 13, marginBottom: 4 }}>
                   <span className={`status ${ec.rejectedEarlier ? 'pending' : 'active'}`}>{ec.clientName}</span>
-                  {ec.rejectedEarlier && <span className="small-muted"> (rejected this candidate before — check before sharing)</span>}
+                  {ec.rejectedEarlier && <span className="small-muted"> (rejected this person before — check first)</span>}
                   <span className="small-muted">
                     {' — '}{ec.requirements.slice(0, 4).map((r) => `${r.title} (${r.match}%)`).join(', ')}{ec.requirements.length > 4 ? ` +${ec.requirements.length - 4} more` : ''}
                   </span>
@@ -602,16 +551,17 @@ export default function CandidateDetail() {
             Due Date · Next Follow-up · Status
           Status is Upcoming / Due Today / Overdue / Completed, derived on the
           server from the due date so it is never stale. --- */}
-      {tab === 'activity' && internal && <div className="section-label">{`Follow-ups (${followUpCount}) — one per application`}</div>}
-      {tab === 'activity' && internal && (
+      {tab === 'history' && <HistoryTimelineSlot {...slot} refreshKey={refreshKey} withActivity={false} />}
+      {tab === 'history' && internal && <div className="section-label">{followUpCount ? `Follow-ups (${followUpCount}) — one per job` : 'Follow-ups — one per job'}</div>}
+      {tab === 'history' && internal && (
         <>
           <div className="tbl-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Requirement</th><th>Client</th><th>Owner</th><th>Owner Role</th>
-                  <th>TL</th><th>BDE</th><th>Last Contacted</th><th>Next Action</th>
-                  <th>Due Date</th><th>Next Follow-up</th><th>Status</th>
+                  {/* 7 columns (checklist #12); team lead / client manager are on the Overview. */}
+                  <th>Job</th><th>Owner</th><th>Last contacted</th><th>Next step</th>
+                  <th>Due</th><th>Next follow-up</th><th>Status</th>
                   {canRecordFollowUp && <th />}
                 </tr>
               </thead>
@@ -620,14 +570,11 @@ export default function CandidateDetail() {
                   const f = a.followUp;
                   return (
                     <tr key={a.id}>
-                      <td><Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link></td>
-                      <td className="cell-muted">
-                        {a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'}
+                      <td>
+                        <Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link>
+                        <div className="small-muted">{a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'}</div>
                       </td>
-                      <td>{f?.ownerName || a.owner || '—'}</td>
-                      <td className="cell-muted">{f?.ownerRole || '—'}</td>
-                      <td className="cell-muted">{f?.tlName || a.requirement?.tl || '—'}</td>
-                      <td className="cell-muted">{f?.bdeName || a.requirement?.bde?.name || '—'}</td>
+                      <td>{f?.ownerName || a.owner || '—'}{f?.ownerRole ? <div className="small-muted">{f.ownerRole}</div> : null}</td>
                       <td className="cell-muted">{f?.lastContactedAt ? dateTime(f.lastContactedAt) : '—'}</td>
                       <td>{f?.nextAction || <span className="small-muted">{a.nextAction || '—'}</span>}</td>
                       <td className="cell-muted">{f?.dueDate ? protoDate(f.dueDate) : '—'}</td>
@@ -636,11 +583,11 @@ export default function CandidateDetail() {
                         {f
                           ? (
                             <>
-                              <span className={`status ${followUpStatusClass(f.status)}`}>{f.status}</span>
+                              <span className={`status ${followUpStatusClass(f.status)}`}>{f.status === 'Overdue' ? 'Late' : f.status === 'Due Today' ? 'Due today' : f.status}</span>
                               {f.daysOverdue > 0 && <div className="small-muted" style={{ marginTop: 3 }}>{`${f.daysOverdue} day(s) late`}</div>}
                               {f.escalatedAdminAt
-                                ? <div className="small-muted">Escalated to Super Admin</div>
-                                : f.escalatedTlAt ? <div className="small-muted">Escalated to TL</div> : null}
+                                ? <div className="small-muted">Sent up to Super Admin</div>
+                                : f.escalatedTlAt ? <div className="small-muted">Sent up to team lead</div> : null}
                             </>
                           )
                           : <span className="small-muted">Not set</span>}
@@ -660,8 +607,8 @@ export default function CandidateDetail() {
                 })}
                 {applications.length === 0 && (
                   <tr>
-                    <td colSpan={canRecordFollowUp ? 12 : 11} className="small-muted" style={{ padding: 16 }}>
-                      This candidate is in the master but not in any pipeline, so there is nothing to follow up on.
+                    <td colSpan={canRecordFollowUp ? 8 : 7} className="small-muted" style={{ padding: 16 }}>
+                      Not on any job yet, so there is nothing to follow up.
                     </td>
                   </tr>
                 )}
@@ -669,10 +616,7 @@ export default function CandidateDetail() {
             </table>
           </div>
           <div className="small-muted" style={{ marginTop: 8 }}>
-            A follow-up belongs to the application, not to the person — the same candidate on two requirements
-            owes two follow-ups. Recording one closes the open one and opens the next, so the thread below keeps
-            its whole history. An overdue follow-up escalates to the TL, and then to a Super Admin; because this
-            app runs no scheduler, that is evaluated whenever this list or the dashboard is loaded.
+            Each job has its own follow-up. A late one goes to the team lead.
           </div>
 
           {followUpThread && (
@@ -696,7 +640,7 @@ export default function CandidateDetail() {
                       </tr>
                     ))}
                     {followUpThread.history.length === 0 && (
-                      <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No follow-up recorded on this application yet.</td></tr>
+                      <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No follow-up on this job yet.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -714,7 +658,7 @@ export default function CandidateDetail() {
           {followUpLog === null && <div className="small-muted">Loading…</div>}
           {followUpLog && followUpLog.length === 0 && (
             <div className="empty-mini">
-              Nobody has contacted this candidate from the app yet. Use Contact — every call, WhatsApp and SMS lands here.
+              No calls or messages yet. Use the Call / WhatsApp buttons above.
             </div>
           )}
           {followUpLog && followUpLog.length > 0 && (
@@ -723,7 +667,7 @@ export default function CandidateDetail() {
                 <thead>
                   <tr>
                     <th>When</th><th>Channel</th><th>What</th><th>Why</th>
-                    <th>Outcome</th><th>What was said</th><th>By</th><th>Requirement</th>
+                    <th>Outcome</th><th>What was said</th><th>By</th><th>Job</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -782,7 +726,7 @@ export default function CandidateDetail() {
         >
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>
             {`Owner ${followUpDraft.ownerName || '—'} (${followUpDraft.ownerRole || '—'}) · `}
-            {`TL ${followUpDraft.tlName || '—'} · BDE ${followUpDraft.bdeName || '—'}`}
+            {`Team lead ${followUpDraft.tlName || '—'} · Client manager ${followUpDraft.bdeName || '—'}`}
           </div>
           <div className="grid-2">
             <label className="field">
@@ -796,7 +740,7 @@ export default function CandidateDetail() {
               </Combo>
             </label>
             <label className="field">
-              <span>Due Date *</span>
+              <span>Due date *</span>
               <input
                 type="date"
                 value={followUpDraft.dueDate}
@@ -804,7 +748,7 @@ export default function CandidateDetail() {
               />
             </label>
             <label className="field">
-              <span>Next Follow-up</span>
+              <span>Next follow-up</span>
               <input
                 type="date"
                 value={followUpDraft.nextFollowUpAt}
@@ -813,7 +757,7 @@ export default function CandidateDetail() {
             </label>
           </div>
           <label className="field">
-            <span>Next Action *</span>
+            <span>Next step *</span>
             <input
               value={followUpDraft.nextAction}
               placeholder="What is owed next?"
@@ -830,105 +774,25 @@ export default function CandidateDetail() {
             />
           </label>
           <div className="cell-muted" style={{ fontSize: 11.5 }}>
-            Saving records that contact happened now, closes the open follow-up on this application and opens
-            this one. Overdue follow-ups alert the TL, then a Super Admin.
+            Saving closes the old follow-up and starts this one.
           </div>
           {followUpError && <div className="error-text">{followUpError}</div>}
         </Modal>
       )}
 
       {/* --- AI Match. Internal only, and framed as what it is. --- */}
-      {tab === 'ai' && <AiScoresTab c={c} app={primary} internal={internal} />}
-      {tab === 'ai' && internal && (
-        c.aiMatch ? (
-          <>
-            <div className="notice amber">
-              {c.aiMatch.advisory}
-            </div>
-            <div className="two-col">
-              <div>
-                <div className="card section">
-                  <h3 style={{ fontSize: 13, marginBottom: 10 }}>
-                    {`Scored against: ${c.aiMatch.requirementTitle}`}
-                  </h3>
-                  <div className="kv"><span className="k">Match Score</span><span><b>{`${c.aiMatch.overall}%`}</b></span></div>
-                  <div className="kv">
-                    <span className="k">Experience Match</span>
-                    <span>{`${c.aiMatch.experienceMatch.percent}% — ${c.aiMatch.experienceMatch.reason || '—'}`}</span>
-                  </div>
-                  <div className="kv">
-                    <span className="k">Relevant Experience</span>
-                    <span>{`${c.aiMatch.experienceMatch.relevantPercent}% — ${c.aiMatch.experienceMatch.relevantReason || '—'}`}</span>
-                  </div>
-                  <div className="kv">
-                    <span className="k">Education Match</span>
-                    <span>{`${c.aiMatch.educationMatch.percent}% — ${c.aiMatch.educationMatch.reason || '—'}`}</span>
-                  </div>
-                  <div className="kv">
-                    <span className="k">Location</span>
-                    <span>{`${c.aiMatch.locationMatch.percent}% — ${c.aiMatch.locationMatch.reason || '—'}`}</span>
-                  </div>
-                  <div className="kv">
-                    <span className="k">Salary expectation</span>
-                    <span>{`${c.aiMatch.salaryMatch.percent}% — ${c.aiMatch.salaryMatch.reason || '—'}`}</span>
-                  </div>
-                  <div className="kv">
-                    <span className="k">Notice period</span>
-                    <span>{`${c.aiMatch.noticeMatch.percent}% — ${c.aiMatch.noticeMatch.reason || '—'}`}</span>
-                  </div>
-
-                  <div className="section-label">Matched skills</div>
-                  <div>
-                    {c.aiMatch.matchedSkills.length
-                      ? c.aiMatch.matchedSkills.map((s) => <span className="skillpill match" key={s}>{s}</span>)
-                      : <span className="small-muted">None of the mandatory skills matched.</span>}
-                  </div>
-                  <div className="section-label">Missing skills</div>
-                  <div>
-                    {c.aiMatch.missingSkills.length
-                      ? c.aiMatch.missingSkills.map((s) => <span className="skillpill miss" key={s}>{s}</span>)
-                      : <span className="small-muted">No mandatory skill is missing.</span>}
-                  </div>
-                </div>
-              </div>
-              <div>
-                <div className="card section">
-                  <h3 style={{ fontSize: 13, marginBottom: 10 }}>AI Recommendation</h3>
-                  <div style={{ fontSize: 13 }}>{c.aiMatch.recommendation}</div>
-                  <div className="divider" />
-                  <div className="section-label">Why it scored</div>
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12.5 }}>
-                    {c.aiMatch.reasons.map((r) => <li key={r}>{r}</li>)}
-                    {c.aiMatch.reasons.length === 0 && <li className="small-muted">No positive signals recorded.</li>}
-                  </ul>
-                  <div className="section-label">Gaps</div>
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12.5 }}>
-                    {c.aiMatch.gaps.map((g) => <li key={g}>{g}</li>)}
-                    {c.aiMatch.gaps.length === 0 && <li className="small-muted">No gaps recorded.</li>}
-                  </ul>
-                  <div className="divider" />
-                  <div className="small-muted">
-                    The recruiter decides. Nothing on this tab moves a candidate forward or backward, and no
-                    stage in Pipeline History was ever set by the scorer.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="empty">
-            <h3>No AI match to show</h3>
-            <div>A match score is calculated against a requirement, so it appears once this candidate is in a pipeline.</div>
-          </div>
-        )
-      )}
-
+      {/* v3: Fit folds into Applications. */}
+      {tab === 'applications' && internal && <div className="section-label">Fit</div>}
+      {tab === 'applications' && <FitSlot {...slot} />}
+      {tab === 'applications' && <AlsoGoodFitSlot {...slot} />}
+      {/* cand7_: the AI match detail moved to the Fit tab (components/candidate/ProfileSlots.jsx FitSlot). */}
       {/* --- Pipeline History: the stage chain, Who / When / Action / Comment. --- */}
       {/* --- Feedback: AI score and interview feedback, per application,
               in separate cards — never mixed. --- */}
-      {tab === 'interviews' && viewer.kind !== 'candidate' && (
+      {tab === 'applications' && viewer.kind !== 'candidate' && applications.length > 0 && <div className="section-label">Interview feedback</div>}
+      {tab === 'applications' && viewer.kind !== 'candidate' && (
         applications.length === 0
-          ? <div className="empty"><h3>No application yet</h3></div>
+          ? <div className="empty"><h3>Not on any job yet</h3></div>
           : [...applications].sort((x, y) => String(y.createdAt).localeCompare(String(x.createdAt))).map((a) => (
             <div className="card section" key={a.id}>
               <h3 style={{ fontSize: 13, marginBottom: 8 }}>
@@ -940,12 +804,12 @@ export default function CandidateDetail() {
           ))
       )}
 
-      {tab === 'pipeline' && <PipelineTab c={c} app={primary} user={user} />}
-      {tab === 'submissions' && <SubmissionsTab c={c} />}
-      {tab === 'offers' && <OffersTab c={c} />}
-      {tab === 'joining' && <JoiningTab c={c} />}
-      {tab === 'activity' && <div className="section-label">Activity history</div>}
-      {tab === 'activity' && (
+      {tab === 'applications' && <PipelineTab c={c} app={primary} user={user} />}
+      {tab === 'applications' && <SubmissionsTab c={c} />}
+      {tab === 'applications' && <OffersTab c={c} />}
+      {tab === 'applications' && <JoiningTab c={c} />}
+      {tab === 'history' && <div className="section-label">Activity history</div>}
+      {tab === 'history' && (
         <>
           {internal && (
             <div className="card section">
@@ -953,14 +817,14 @@ export default function CandidateDetail() {
               <ActivityList items={c.activity} />
             </div>
           )}
-          <div className="section-label">Pipeline history</div>
+          <div className="section-label">Step history</div>
           <div className="tbl-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>When</th><th>Who</th><th>Stage</th><th>Action</th>
+                  <th>When</th><th>Who</th><th>Step</th><th>Action</th>
                   {internal && <th>Comment</th>}
-                  <th>Requirement</th>
+                  <th>Job</th>
                 </tr>
               </thead>
               <tbody>
@@ -984,7 +848,7 @@ export default function CandidateDetail() {
                     </td>
                     <td>
                       {h.action}
-                      {h.derived && <div className="small-muted">Derived from the application record — predates pipeline history</div>}
+                      {h.derived && <div className="small-muted">From the job record (older entry)</div>}
                       {/* The full Rejected / Hold record. Reason category and
                           the detailed reason are internal reasoning and the
                           server withholds them from external logins, so this
@@ -1005,22 +869,22 @@ export default function CandidateDetail() {
                   </tr>
                 ))}
                 {history.length === 0 && (
-                  <tr><td colSpan={internal ? 6 : 5} className="small-muted" style={{ padding: 16 }}>No pipeline history yet.</td></tr>
+                  <tr><td colSpan={internal ? 6 : 5} className="small-muted" style={{ padding: 16 }}>No step moves yet.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
           <div className="small-muted" style={{ marginTop: 8 }}>
-            Every stage change writes one row here, with the person who made it. Rows marked
-            &ldquo;derived&rdquo; are reconstructed from an application created before this history was kept.
+            Each step move is one row, with who made it.
           </div>
         </>
       )}
 
       {/* --- Interviews --- */}
-      {tab === 'interviews' && (
+      {tab === 'applications' && interviews.length > 0 && <div className="section-label">{`Interviews (${interviews.length})`}</div>}
+      {tab === 'applications' && (
         interviews.length === 0
-          ? <div className="empty"><h3>No interviews yet</h3></div>
+          ? null
           : interviews.map((a) => (
             <div className="card section" key={a.id}>
               <h3 style={{ fontSize: 13, marginBottom: 8 }}>
@@ -1047,7 +911,7 @@ export default function CandidateDetail() {
               )}
               {internal && a.aiInterviewStatus && (
                 <div className="kv">
-                  <span className="k">AI screening interview (separate from the client interview)</span>
+                  <span className="k">AI interview</span>
                   <span>{aiHeadline(a, aiCompletedAt(history, a))}</span>
                 </div>
               )}
@@ -1056,21 +920,15 @@ export default function CandidateDetail() {
       )}
 
       {/* --- Communications: Email / SMS / WhatsApp history. --- */}
-      {tab === 'activity' && viewer.kind !== 'client' && <div className="section-label">{`Communication (${communications.length})`}</div>}
-      {tab === 'activity' && viewer.kind !== 'client' && (
+      {tab === 'history' && viewer.kind !== 'client' && <div className="section-label">{communications.length ? `Messages and calls (${communications.length})` : 'Messages and calls'}</div>}
+      {tab === 'history' && viewer.kind !== 'client' && (
         <>
           <div className="notice amber">
             <span>
               {c.communications.some((m) => m.status === 'SENT')
-                ? <b>Only rows marked Sent were accepted by the provider.</b>
-                : <b>Nothing on this tab has been delivered yet.</b>}
-              {' '}
-              {c.communicationsNote}
-              {' '}
-              Each row is the record of a message this app decided to send when a stage changed — the trigger,
-              the template, the recipient and the sending employee&rsquo;s own address. A Sent row carries the
-              provider&rsquo;s own message reference; delivery to the inbox is not confirmed, because there is
-              no bounce/delivery webhook yet.
+                ? <b>Only rows marked Sent left the app.</b>
+                : <b>No message has gone out yet.</b>}
+              {c.communicationsNote ? <>{' '}{c.communicationsNote}</> : null}
             </span>
           </div>
           <div className="tbl-wrap">
@@ -1109,7 +967,7 @@ export default function CandidateDetail() {
                   </tr>
                 ))}
                 {communications.length === 0 && (
-                  <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No communications recorded yet. Moving this candidate to a stage that contacts them (AI Interview Scheduled, Interview Scheduled, Selected, Offer, Joined, Hold, Rejected) writes rows here.</td></tr>
+                  <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No messages yet. Moving a step that contacts the person adds a row here.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1126,72 +984,17 @@ export default function CandidateDetail() {
         </>
       )}
 
-      {/* --- Documents: Resume, ID, Certificates, Offer, Joining. --- */}
-      {tab === 'resume' && (
-        <>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr><th>Type</th><th>Document</th><th>Note</th><th>Recorded by</th><th>When</th>{internal && <th>Visibility</th>}</tr>
-              </thead>
-              <tbody>
-                {documents.map((d) => (
-                  <tr key={d.id}>
-                    <td><span className="status new">{d.docType}</span></td>
-                    <td>{d.name}</td>
-                    <td className="cell-muted">{d.note || '—'}</td>
-                    <td className="cell-muted">{d.uploadedByName || '—'}</td>
-                    <td className="cell-muted">{protoDate(d.createdAt)}</td>
-                    {internal && (
-                      <td className="cell-muted">
-                        {d.internalOnly ? <span className="status hold">Internal only</span> : 'Shared'}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-                {documents.length === 0 && (
-                  <tr><td colSpan={internal ? 6 : 5} className="small-muted" style={{ padding: 16 }}>No documents on file.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {internal && canEditMaster && (
-            <form className="card section" style={{ marginTop: 14 }} onSubmit={addDocument}>
-              <h3 style={{ fontSize: 13, marginBottom: 10 }}>Record a document</h3>
-              <div className="grid-3">
-                <label className="field">
-                  <span>Type</span>
-                  <Combo value={docDraft.docType} onChange={(e) => setDocDraft({ ...docDraft, docType: e.target.value })}>
-                    {['Resume', 'ID', 'Certificate', 'Offer', 'Joining'].map((t) => <option key={t}>{t}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>Document name</span>
-                  <input value={docDraft.name} onChange={(e) => setDocDraft({ ...docDraft, name: e.target.value })} placeholder="e.g. arjun-mehta-resume.pdf" />
-                </label>
-                <label className="field">
-                  <span>Note</span>
-                  <input value={docDraft.note} onChange={(e) => setDocDraft({ ...docDraft, note: e.target.value })} />
-                </label>
-              </div>
-              <button className="btn btn-primary btn-sm" type="submit">Add document</button>
-              <div className="small-muted" style={{ marginTop: 8 }}>
-                This records the document against the candidate. File storage is not wired up — the row is a
-                reference, not an uploaded file. Offer paperwork is marked internal-only by default because it
-                carries the commercial terms.
-              </div>
-            </form>
-          )}
-        </>
-      )}
+      {/* --- Documents (ATS-100 B5): certifications + documents with a real file
+              (upload / view / download, audited; delete with a reason). Old
+              name-only rows are listed too. --- */}
+      {tab === 'documents' && <RecordDocuments c={c} internal={internal} />}
 
       {/* --- Notes: internal recruiter / TL notes. Never served to a client. --- */}
-      {tab === 'activity' && internal && <div className="section-label">{`Notes (${notes.length})`}</div>}
-      {tab === 'activity' && internal && (
+      {tab === 'notes' && internal && <div className="section-label">{notes.length ? `Notes (${notes.length})` : 'Notes'}</div>}
+      {tab === 'notes' && internal && (
         <>
           <div className="notice">
-            Internal notes. The API does not serve this tab, or any note on it, to a client or candidate login —
-            the field is absent from their payload, not merely hidden.
+            Only TeamLink staff see these notes. Clients never do.
           </div>
           {canEditMaster && (
             <form className="card section" onSubmit={addNote}>
@@ -1215,7 +1018,7 @@ export default function CandidateDetail() {
                   </tr>
                 ))}
                 {notes.length === 0 && (
-                  <tr><td colSpan="4" className="small-muted" style={{ padding: 16 }}>No internal notes yet.</td></tr>
+                  <tr><td colSpan="4" className="small-muted" style={{ padding: 16 }}>No notes yet.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1224,8 +1027,8 @@ export default function CandidateDetail() {
       )}
 
       {/* --- Audit History: who changed what, when. --- */}
-      {tab === 'activity' && internal && <div className="section-label">Audit trail</div>}
-      {tab === 'activity' && internal && (
+      {tab === 'history' && internal && <div className="section-label">Changes</div>}
+      {tab === 'history' && internal && (
         <div className="tbl-wrap">
           <table>
             <thead><tr><th>When</th><th>Who</th><th>Action</th><th>From</th><th>To</th><th>Record</th></tr></thead>
@@ -1241,40 +1044,17 @@ export default function CandidateDetail() {
                 </tr>
               ))}
               {audit.length === 0 && (
-                <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>No audit entries for this candidate.</td></tr>
+                <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>No changes recorded yet.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* --- Matching Requirements (kept from the previous screen). --- */}
-      {tab === 'applications' && internal && <div className="section-label">Matching requirements</div>}
-      {tab === 'applications' && internal && (
-        <div className="tbl-wrap">
-          <table>
-            <thead><tr><th>Requirement</th><th>Client</th><th>Location</th><th>Match</th><th>Action</th></tr></thead>
-            <tbody>
-              {matching.map((r) => (
-                <tr key={r.id}>
-                  <td><Link to={`/requirements/${r.id}`}>{r.title}</Link></td>
-                  <td>{r.internal ? 'TeamLink Internal' : r.client?.name || '—'}</td>
-                  <td>{r.location || '—'}</td>
-                  <td><span className="link-btn">{r.match.overall}%</span></td>
-                  <td>
-                    {can(user, 'ats', 'candidates', 'Applications', 'create')
-                      ? <button className="btn btn-sm btn-primary" onClick={() => addToPipeline(r.id)}>Add to Pipeline</button>
-                      : <span className="small-muted">No permission</span>}
-                  </td>
-                </tr>
-              ))}
-              {matching.length === 0 && (
-                <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>No new matching requirements above 50%.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* --- Eligible requirements: the 3-number match (resume_, components/resume/MatchSplit.jsx). --- */}
+      {/* cand7_: "Eligible requirements" is on the Fit tab now (FitSlot). */}
+      </div>
+      </div>
     </div>
   );
 }

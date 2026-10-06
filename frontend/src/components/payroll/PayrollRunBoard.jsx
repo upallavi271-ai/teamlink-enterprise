@@ -16,21 +16,19 @@ import './payrollRun.css';
 import ListFilterBar, { useListFilters, ListEmpty } from '../ui/ListFilters.jsx';
 import Pager, { usePaged } from '../Pager.jsx';
 import DataIoBar from '../dataio/DataIoBar.jsx';
+import PayrollAccountsStrip from './PayrollAccountsStrip.jsx';
 
 const inr0 = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 
 // The list filter standard for the three tables on this board.
 const empSearch = (code, name) => ({ key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${code(r) || ''} ${name(r) || ''}` });
-const syncLabel = (e) => {
-  const s = e.paymentSync || e.accrualSync;
-  if (!s) return 'Not synced';
-  return `${s.kind === 'PAYMENT' ? 'Payment ' : ''}${String(s.status || '').toLowerCase()}`;
-};
+// S3: the month is posted as one journal, so a record is Posted / Paid / Not posted.
+const syncLabel = (e) => (e.status === 'PAID' ? 'Paid' : e.status === 'SYNCED_TO_ACCOUNTS' ? 'Posted' : 'Not posted');
 const ENTRY_FIELDS = [
   empSearch((e) => e.employee?.employeeCode, (e) => e.employee?.name),
   { key: 'status', label: 'Status', options: Object.keys(STATUS_LABEL).map((k) => ({ value: k, label: STATUS_LABEL[k] })), get: (e) => e.status, primary: true },
   { key: 'department', label: 'Department', get: (e) => e.employee?.department, primary: true },
-  { key: 'sync', label: 'Accounts sync', allLabel: 'Any sync state', get: syncLabel },
+  { key: 'sync', label: 'Accounts', allLabel: 'Posted or not', options: ['Posted', 'Paid', 'Not posted'], get: syncLabel },
   { key: 'source', label: 'Attendance source', allLabel: 'Any attendance source', options: ['HR override', 'Attendance'], get: (e) => (e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'Attendance') },
   { key: 'lop', label: 'Loss of pay', allLabel: 'Everyone', options: ['With LOP days'], match: (e) => Number(e.daysLop) > 0 },
 ];
@@ -177,12 +175,13 @@ function EntryDetail({ id, onClose }) {
             <span>Structure version</span><b>{data.version ? `from ${data.version.effectiveFrom.slice(0, 7)}${data.version.effectiveTo ? ` to ${data.version.effectiveTo}` : ''}` : '—'}</b>
             <span>Payroll days / LOP</span><b>{e.workingDays} / {e.daysLop} ({e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'attendance'})</b>
             <span>Gross / LOP / earned</span><b>{inr0(e.grossPay)} − {inr0(e.lopDeduction)} = {inr0(e.earnedGross)}</b>
+            {Number(e.incentive) > 0 && <><span>Incentive (in gross)</span><b>{inr0(e.incentive)} — recruiter joinings, given by Super Admin</b></>}
             <span>Deductions</span><b>PF {inr0(e.pfEmployee)} · ESI {inr0(e.esiEmployee)} · PT {inr0(e.professionalTax)} · TDS {inr0(e.tds)} · Other {inr0(e.otherDeductions)} · LOP {inr0(e.lopDeduction)} = {inr0(e.totalDeductions)}</b>
             <span>Net pay</span><b>{inr0(e.netPay)}</b>
             <span>Employer</span><b>PF {inr0(e.pfEmployer)} · ESI {inr0(e.esiEmployer)}</b>
             {e.rejectionReason && <><span>Sent back</span><b>{e.rejectionReason}</b></>}
           </div>
-          <SectionLabel style={{ margin: '14px 0 6px' }}>Journal payload (HRMS → Accounts)</SectionLabel>
+          <SectionLabel style={{ margin: '14px 0 6px' }}>This employee's share of the month's journal</SectionLabel>
           <table className="prb-journal">
             <thead><tr><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
             <tbody>
@@ -191,7 +190,7 @@ function EntryDetail({ id, onClose }) {
               <tr className="tot"><td>Total</td><td>{money(p.debit.reduce((n, l) => n + l.amount, 0))}</td><td>{money(p.credit.reduce((n, l) => n + l.amount, 0))}</td></tr>
             </tbody>
           </table>
-          <div className="prb-note">Idempotency key <code>{p.idempotency_key}</code> — a retry can never book this twice.</div>
+          <div className="prb-note">{p.note || 'Part of the one journal entry booked for the whole month.'}</div>
           <SectionLabel style={{ margin: '14px 0 6px' }}>History</SectionLabel>
           {data.history.length === 0 ? <div className="small-muted">No transitions yet.</div> : (
             <ul className="prb-hist">
@@ -216,64 +215,7 @@ function EntryDetail({ id, onClose }) {
   );
 }
 
-function MarkPaidModal({ entries, onClose, onDone }) {
-  const [paidDate, setPaidDate] = useState(new Date().toISOString().slice(0, 10));
-  const [reference, setReference] = useState('');
-  const [txn, setTxn] = useState('');
-  const [cands, setCands] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const single = entries.length === 1 ? entries[0] : null;
-  useEffect(() => {
-    if (!single) return;
-    api.get(`/payroll/entries/${single.id}/bank-matches`).then((r) => { setCands(r.data.candidates); if (r.data.suggested) setTxn(r.data.suggested); }).catch(() => setCands([]));
-  }, [single?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const total = entries.reduce((n, e) => n + e.netPay, 0);
-  async function go() {
-    setBusy(true); setError('');
-    try {
-      const r = await api.post('/payroll/entries/mark-paid', { ids: entries.map((e) => e.id), paidDate, reference: reference || undefined, bankTransactionId: txn || undefined });
-      onDone(bulkMessage('Marked paid', r.data));
-    } catch (err) {
-      const d = err.response?.data;
-      if (d?.results) onDone(bulkMessage('Marked paid', d)); else setError(errText(err, 'Could not mark paid.'));
-    } finally { setBusy(false); }
-  }
-  return (
-    <Modal
-      title={single ? `Mark paid — ${single.employee.name}` : `Mark ${entries.length} records paid`}
-      onClose={onClose}
-      footer={(
-        <>
-          <button className="btn btn-sm" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary btn-sm" disabled={busy} onClick={go}>{busy ? 'Booking…' : `Mark paid · ${inr0(total)}`}</button>
-        </>
-      )}
-    >
-      <div className="prb-note">Books the bank payment in Accounts (Dr Payable to Employee / Cr Bank) for each record, then marks it Paid.</div>
-      <div className="grid-2" style={{ marginTop: 10 }}>
-        <div className="field"><label>Paid on</label><input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} /></div>
-        <div className="field"><label>Bank reference (optional)</label><input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / batch no." /></div>
-      </div>
-      {single ? (
-        <div className="field">
-          <label>Bank statement line (optional)</label>
-          <select value={txn} onChange={(e) => setTxn(e.target.value)}>
-            <option value="">— Match automatically if exactly one fits —</option>
-            {cands.map((t) => <option key={t.id} value={t.id}>{t.date} · {t.description} · {money(t.amount)}</option>)}
-          </select>
-          {cands.length === 0 && <div className="prb-note">No unmatched bank debit of exactly {money(single.netPay)} on file yet.</div>}
-        </div>
-      ) : (
-        <div className="field">
-          <label>Bank statement line for the whole batch (optional ID — must equal {money(total)})</label>
-          <input value={txn} onChange={(e) => setTxn(e.target.value)} placeholder="BankTransaction id" />
-        </div>
-      )}
-      {error && <div className="error-text">{error}</div>}
-    </Modal>
-  );
-}
+// (Mark paid is now one action for the whole month: PayrollAccountsStrip.jsx.)
 
 export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () => {} }) {
   const [data, setData] = useState(null);
@@ -282,9 +224,8 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   const [busy, setBusy] = useState('');
   const [selected, setSelected] = useState({});
   const [detail, setDetail] = useState(null);
-  const [paying, setPaying] = useState(null);
-  const [syncNow, setSyncNow] = useState(true);
   const [attKey, setAttKey] = useState(0);
+  const [stripKey, setStripKey] = useState(0);
 
   function load() {
     setError('');
@@ -304,12 +245,16 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
     setBusy(label); setMessage(''); setError('');
     try {
       const r = await api.post(url, body);
-      setMessage(r.data.results ? bulkMessage(label, r.data) : `${label}: done`);
+      // Approving the last pending record finalizes the month: it is posted
+      // to Accounts as ONE journal (S3) — say what happened.
+      const post = (r.data.posting || []).find((x) => x.month === month);
+      const postText = !post ? '' : post.posted ? ` · Posted to Accounts${post.voucherNo ? ` (${post.voucherNo})` : ''}.` : post.error ? ` · Not posted to Accounts: ${post.error}` : '';
+      setMessage((r.data.results ? bulkMessage(label, r.data) : `${label}: done`) + postText);
     } catch (err) {
       const d = err.response?.data;
       if (d?.results) setMessage(bulkMessage(label, d)); else setError(errText(err, `${label} failed`));
     } finally {
-      setBusy(''); load(); onChanged();
+      setBusy(''); load(); onChanged(); setStripKey((k) => k + 1);
     }
   }
   async function recalc() {
@@ -346,19 +291,14 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
           ))}
           {data && <span className="prb-tot">Net {inr0(data.totals.netPay)} · Gross {inr0(data.totals.grossPay)} · Employer PF/ESI {inr0(data.totals.pfEmployer + data.totals.esiEmployer)}</span>}
         </div>
+        <PayrollAccountsStrip month={month} reloadKey={reloadKey + stripKey} onChanged={() => { load(); onChanged(); }} />
         <div className="prb-actions">
           {a.prepare && <button className="btn btn-sm" disabled={!!busy || (!count('DRAFT'))} onClick={() => act('Submitted', '/payroll/entries/submit', idsOr('DRAFT'))}>Submit {chosen.length ? 'selected' : 'all drafts'} for approval</button>}
           {a.approve && (
             <>
-              <button className="btn btn-sm" disabled={!!busy || !count('PENDING_APPROVAL')} onClick={() => act('Approved', '/payroll/entries/approve', { ...idsOr('PENDING_APPROVAL'), sync: a.post ? syncNow : false })}>Approve {chosen.length ? 'selected' : 'all pending'}</button>
+              <button className="btn btn-sm" disabled={!!busy || !count('PENDING_APPROVAL')} onClick={() => act('Approved', '/payroll/entries/approve', idsOr('PENDING_APPROVAL'))}>Approve {chosen.length ? 'selected' : 'all pending'}</button>
               <button className="btn btn-sm" disabled={!!busy || !chosen.some((e) => e.status === 'PENDING_APPROVAL')} onClick={reject}>Send back</button>
-              {a.post && <label className="prb-check"><input type="checkbox" checked={syncNow} onChange={(e) => setSyncNow(e.target.checked)} /> sync to Accounts on approval</label>}
-            </>
-          )}
-          {a.post && (
-            <>
-              <button className="btn btn-sm" disabled={!!busy || !count('APPROVED')} onClick={() => act('Synced', '/payroll/entries/sync', idsOr('APPROVED'))}>Sync {chosen.length ? 'selected' : 'all approved'} to Accounts</button>
-              <button className="btn btn-sm" disabled={!!busy || !count('SYNCED_TO_ACCOUNTS')} onClick={() => setPaying(chosen.length ? chosen.filter((e) => e.status === 'SYNCED_TO_ACCOUNTS') : entries.filter((e) => e.status === 'SYNCED_TO_ACCOUNTS'))}>Mark {chosen.length ? 'selected' : 'all synced'} paid</button>
+              <span className="prb-note">When every record is approved, the month is posted to Accounts as one journal.</span>
             </>
           )}
           {!a.prepare && !a.approve && !a.post && <span className="prb-note">View only.</span>}
@@ -389,7 +329,6 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
               </thead>
               <tbody>
                 {page.slice.map((e) => {
-                  const sync = e.paymentSync || e.accrualSync;
                   return (
                     <tr key={e.id}>
                       <td><input type="checkbox" checked={!!selected[e.id]} onChange={(ev) => setSelected((s) => ({ ...s, [e.id]: ev.target.checked }))} /></td>
@@ -406,10 +345,9 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                       <td className="cell-muted">{inr0(e.otherDeductions)}</td>
                       <td><b>{inr0(e.netPay)}</b></td>
                       <td className="cell-muted">{inr0(e.pfEmployer + e.esiEmployer)}</td>
-                      <td>{sync ? <span className={`status ${SYNC_CLS[sync.status]}`} title={sync.lastError || ''}>{sync.kind === 'PAYMENT' ? 'Payment ' : ''}{sync.status.toLowerCase()}</span> : <span className="cell-muted">—</span>}</td>
+                      <td>{e.status === 'PAID' ? <span className="lb-badge green">Paid</span> : e.status === 'SYNCED_TO_ACCOUNTS' ? <span className="lb-badge green">Posted</span> : <span className="lb-badge grey">Not posted</span>}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <button className="btn btn-sm" onClick={() => setDetail(e.id)}>Details</button>
-                        {a.post && e.status === 'SYNCED_TO_ACCOUNTS' && <> <button className="btn btn-sm" onClick={() => setPaying([e])}>Mark paid</button></>}
                       </td>
                     </tr>
                   );
@@ -423,7 +361,6 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
       <AttendancePanel month={month} canEdit={!!a.prepare} reloadKey={attKey} onChanged={() => {}} />
       {(a.post || a.approve) && <SyncLogPanel month={month} canRetry={!!a.post} reloadKey={reloadKey + (data ? data.entries.length : 0)} onChanged={load} />}
       {detail && <EntryDetail id={detail} onClose={() => setDetail(null)} />}
-      {paying && paying.length > 0 && <MarkPaidModal entries={paying} onClose={() => setPaying(null)} onDone={(msg) => { setPaying(null); setMessage(msg); load(); onChanged(); }} />}
     </div>
   );
 }

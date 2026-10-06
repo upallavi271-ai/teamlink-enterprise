@@ -23,7 +23,7 @@ import './reach.css';
 
 const TONE = {
   Posted: 'green', Pending: 'amber', Failed: 'red', 'Not configured': 'grey', 'Feed ready': 'blue',
-  'Not posted': 'grey', 'Taken down': 'grey', 'Not applicable': 'grey',
+  'Not posted': 'amber', 'Taken down': 'grey', 'Not applicable': 'grey',
 };
 const origin = () => (typeof window !== 'undefined' ? window.location.origin : '');
 
@@ -54,11 +54,11 @@ export function PostedOnPanel({ requirementId, compact = false, onChanged }) {
       const r = await api.post(`/requirements/${requirementId}/postings/retry`);
       setData(r.data);
       setNote(r.data.result && r.data.result.ok === false
-        ? `Retried — the TeamLink Job Portal still refused: ${r.data.result.error}`
-        : 'Posted again on every source.');
+        ? `Still not posted: ${r.data.result.error}`
+        : 'Posted again on every site.');
       if (onChanged) onChanged();
     } catch (e) {
-      setError(e.response?.data?.error || 'Retry was refused.');
+      setError(e.response?.data?.error || 'Could not retry. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -79,7 +79,7 @@ export function PostedOnPanel({ requirementId, compact = false, onChanged }) {
       <div className="rq-reach-head">
         <h3>Posted on</h3>
         <span className="small-muted">
-          {`${s.posted || 0} posted${s.feedReady ? ` · ${s.feedReady} feed ready` : ''}${s.failed ? ` · ${s.failed} failed` : ''}${s.pending ? ` · ${s.pending} pending` : ''}`}
+          {[s.posted ? `${s.posted} posted` : '', s.failed ? `${s.failed} failed` : '', s.pending ? `${s.pending} waiting` : ''].filter(Boolean).join(' · ')}
         </span>
       </div>
       {rows.map((c) => (
@@ -91,7 +91,7 @@ export function PostedOnPanel({ requirementId, compact = false, onChanged }) {
             {c.link && (
               <>
                 {' '}
-                <a href={/^https?:/i.test(c.link) ? c.link : `${origin()}${c.link.startsWith('/') ? '' : '/'}${c.link}`} target="_blank" rel="noreferrer">open ↗</a>
+                <a href={/^https?:/i.test(c.link) ? c.link : `${origin()}${c.link.startsWith('/') ? '' : '/'}${c.link}`} target="_blank" rel="noreferrer">See job post</a>
               </>
             )}
           </span>
@@ -103,16 +103,6 @@ export function PostedOnPanel({ requirementId, compact = false, onChanged }) {
           <span className="small-muted rq-reach-detail">
             {boards.map((b) => `${b.name}: ${b.status}`).join(' · ')}
           </span>
-        </div>
-      )}
-      {!compact && !data.internal && data.live && data.published && (
-        <div className="rq-reach-feeds small-muted">
-          Job-board feeds (boards pull these — nothing is pushed):{' '}
-          <button type="button" className="link-btn" onClick={() => copy(`${origin()}${data.feeds.xml}`, 'XML feed URL copied — register it in the board’s employer account.')}>XML (Indeed / Naukri / Shine)</button>
-          {' · '}
-          <button type="button" className="link-btn" onClick={() => copy(`${origin()}${data.feeds.jsonld}`, 'JSON-LD feed URL copied (schema.org JobPosting).')}>JSON-LD (Google for Jobs)</button>
-          {' · '}
-          <Link to="/admin/integrations?tab=jobportal">Integrations →</Link>
         </div>
       )}
       {(note || error) && <div className={`small-muted rq-reach-note${error ? ' is-error' : ''}`}>{error || note}</div>}
@@ -135,7 +125,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
     setData(null); setError(''); setAdded([]);
     api.get(`/requirements/${requirementId}/location-candidates`)
       .then((r) => setData(r.data))
-      .catch((e) => setError(e.response?.status === 403 ? '' : (e.response?.data?.error || 'Could not count candidates in this location.')));
+      .catch((e) => setError(e.response?.status === 403 ? '' : (e.response?.data?.error || 'Could not load people nearby. Please try again.')));
   }, [requirementId]);
 
   async function add(c) {
@@ -145,22 +135,22 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
       setAdded((a) => [...a, c.id]);
       if (onAdded) onAdded();
     } catch (e) {
-      setError(e.response?.data?.error || 'Could not add this candidate.');
+      setError(e.response?.data?.error || 'Could not add this person. Please try again.');
     } finally {
       setBusy('');
     }
   }
 
-  if (!data && !error) return summaryOnly ? null : <div className="card section rq-reach"><div className="small-muted">Counting candidates in this location…</div></div>;
+  if (!data && !error) return summaryOnly ? null : <div className="card section rq-reach"><div className="small-muted">Loading…</div></div>;
   if (!data) return error ? <div className="card section rq-reach"><div className="small-muted">{error}</div></div> : null;
   const place = data.cities.length ? data.cities.join(' / ') : (data.location || 'this location');
 
   if (!data.cities.length) {
     return (
       <div className="card section rq-reach">
-        <h3>Eligible candidates by location</h3>
+        <h3>People nearby</h3>
         <div className="small-muted">
-          {data.location ? `“${data.location}” is not a city the matcher recognises.` : 'No location on this requirement yet — add one in Edit Requirement to see who is nearby.'}
+          {data.location ? `We don't know the city “${data.location}”.` : 'Add a location in Edit job to see people nearby.'}
         </div>
       </div>
     );
@@ -168,10 +158,10 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
 
   const headline = (
     <>
-      <b>{`Eligible candidates in ${place}: ${nf(data.total)}`}</b>
+      <b>{`People in ${place}: ${data.total ? nf(data.total) : 'none yet'}`}</b>
       <span className="small-muted">
-        {` · ${nf(data.strong)} strong match (≥${data.threshold}% on skills, experience and the rest)`}
-        {data.alreadyLinked ? ` · ${nf(data.alreadyLinked)} already on this requirement` : ''}
+        {data.strong ? ` · ${nf(data.strong)} good fit (${data.threshold}%+)` : ''}
+        {data.alreadyLinked ? ` · ${nf(data.alreadyLinked)} already on this job` : ''}
       </span>
     </>
   );
@@ -179,7 +169,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
   if (summaryOnly) {
     return (
       <div className="card section rq-reach">
-        <h3>Candidates in this location</h3>
+        <h3>People nearby</h3>
         <div>{headline}</div>
         {data.byCity.length > 1 && <div className="small-muted">{data.byCity.map((b) => `${b.city}: ${nf(b.count)}`).join(' · ')}</div>}
         {onOpenList && <button type="button" className="btn btn-sm" onClick={onOpenList}>See the top 20 →</button>}
@@ -193,13 +183,13 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
       <div className="rq-reach-head"><div>{headline}</div></div>
       {data.byCity.length > 1 && <div className="small-muted">{data.byCity.map((b) => `${b.city}: ${nf(b.count)}`).join(' · ')}</div>}
       <div className="small-muted" style={{ margin: '4px 0 8px' }}>
-        Current or preferred location in {place} (Hyderabad includes Secunderabad and its localities). Only candidates you may see are counted.
-        {added.length > 0 && ` ${added.length} added to this requirement.`}
+        {`Lives in or wants to work in ${place}.`}
+        {added.length > 0 && ` ${added.length} added to this job.`}
       </div>
       {error && <div className="error-text">{error}</div>}
       <div className="tbl-wrap">
         <table>
-          <thead><tr><th>Candidate</th><th>Location</th><th>Experience</th><th>Matching skills</th><th>Match</th>{data.canAdd && <th />}</tr></thead>
+          <thead><tr><th>Candidate</th><th>Location</th><th>Experience</th><th>Matching skills</th><th>Fit %</th>{data.canAdd && <th />}</tr></thead>
           <tbody>
             {rows.map((c) => (
               <tr key={c.id}>
@@ -210,23 +200,23 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
                 </td>
                 <td className="cell-muted">{c.experienceYears != null ? `${c.experienceYears} yrs` : '—'}</td>
                 <td className="cell-muted">{(c.matchedSkills || []).join(', ') || '—'}</td>
-                <td><StatusChip tone={c.match >= data.threshold ? 'green' : c.match >= 50 ? 'amber' : 'grey'}>{`${c.match}%`}</StatusChip></td>
+                <td><StatusChip tone={c.match >= data.threshold ? 'green' : c.match >= 50 ? 'amber' : 'blue'}>{`${c.match}%`}</StatusChip></td>
                 {data.canAdd && (
                   <td>
                     <button type="button" className="btn btn-sm" disabled={busy === c.id} onClick={() => add(c)}>
-                      {busy === c.id ? 'Adding…' : 'Add to requirement'}
+                      {busy === c.id ? 'Adding…' : 'Add to job'}
                     </button>
                   </td>
                 )}
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={data.canAdd ? 6 : 5} className="small-muted" style={{ padding: 12 }}>No candidate in {place} who is not already on this requirement.</td></tr>
+              <tr><td colSpan={data.canAdd ? 6 : 5} className="small-muted" style={{ padding: 12 }}>No one else in {place} yet.</td></tr>
             )}
           </tbody>
         </table>
       </div>
-      {data.total > rows.length && <div className="small-muted">{`Top ${rows.length} by match of ${nf(data.total)}.`}</div>}
+      {data.total > rows.length && <div className="small-muted">{`Best ${rows.length} of ${nf(data.total)}.`}</div>}
     </div>
   );
 }

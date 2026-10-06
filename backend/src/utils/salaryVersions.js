@@ -83,6 +83,7 @@ const MIRRORED = [
   'payMode', 'ctc', 'stipend', 'basic', 'hra', 'bonus', 'specialAllowance', 'employerPf', 'employeePf',
   'professionalTax', 'gratuity', 'esiApplicable', 'esiEmployee', 'esiEmployer', 'tds', 'otherDeductions',
   'effectiveFrom', 'effectiveTo',
+  'conveyance', // Payroll import (2026-10-06): the registers' Conveyance earning
 ];
 
 // Re-chain effectiveTo across an employee's versions and mirror the latest

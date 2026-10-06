@@ -254,7 +254,10 @@ function featureInfoOf(moduleId) {
 }
 
 const ROLE_ACCESS_MODULES = [
-  { id: 'dashboard', label: 'Dashboard', features: ['KPI Overview', 'Department Strength', 'Pending Approvals', 'Alerts & Notifications', 'Upcoming Interviews', 'Quick Actions', 'Recruiter Leaderboard', 'Role & User Management'] },
+  // 'System Alerts' (per-role spec 2026-10-03): the company-wide system
+  // warnings — Job Portal connection / sync failures and AI credits. Super
+  // Admin by default; Admin only when granted here.
+  { id: 'dashboard', label: 'Dashboard', features: ['KPI Overview', 'Department Strength', 'Pending Approvals', 'Alerts & Notifications', 'Upcoming Interviews', 'Quick Actions', 'Recruiter Leaderboard', 'Role & User Management', 'System Alerts'] },
   // Job Portal is NOT a module of its own. It is three features of Jobs /
   // Requirements, because that is where the work sits:
   //   Job Portal Workspace     — the internal Publish → Sync → Applications →
@@ -267,13 +270,26 @@ const ROLE_ACCESS_MODULES = [
   //                              them. A client holds this and never the two
   //                              features above, which is exactly why they can
   //                              never reach the internal workspace.
-  { id: 'requirements', label: 'Jobs / Requirements', features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline', 'Job Portal Workspace', 'Job Portal Applications', 'Client Job Portal', 'Bulk Import'] },
+  // 'Requirement Request' (per-role spec 2026-10-03): ASK for a new job
+  // instead of creating it. A BDE (who may no longer create a job) and a
+  // CLIENT (portal "new requirement request") hold `create`; the request is
+  // saved as a DRAFT requirement that a lead activates (Requirement Detail /
+  // approve). Bulk Import with Requirement Request but no Create Requirement
+  // = import as requests (permissions.js ioAccessFor importMode 'request').
+  { id: 'requirements', label: 'Jobs / Requirements', features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline', 'Job Portal Workspace', 'Job Portal Applications', 'Client Job Portal', 'Bulk Import', 'Requirement Request'] },
   // 'Bulk Import' (requirements + clients, 2026-09-29 role specs): the Import
   // and Template buttons. Separate from Create / Add Client because a TL may
   // raise ONE requirement but not import a sheet, and a BDE may add their own
   // client but not bulk-import clients.
-  { id: 'clients', label: 'Clients', features: ['Client List', 'Add Client', 'Client Detail', 'Agreement Lifecycle', 'Commercial Terms', 'Client Requirements', 'Bulk Import'] },
-  { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores'] },
+  // Client lifecycle (2026-10-03): 'Pause / Reactivate Client' — edit = pause
+  // or reactivate directly, create = only REQUEST a pause (an Admin / Manager
+  // approves); 'Archive Client' — edit; 'Delete Client' — delete (permanent,
+  // empty clients only; the route enforces emptiness). 'Client Notes' —
+  // create = add a note to the client's Activity.
+  { id: 'clients', label: 'Clients', features: ['Client List', 'Add Client', 'Client Detail', 'Agreement Lifecycle', 'Commercial Terms', 'Client Requirements', 'Bulk Import', 'Client Notes', 'Pause / Reactivate Client', 'Archive Client', 'Delete Client', 'Client Portal Logins'] },
+  // 'Bulk Import' on candidates (2026-10-03): the candidate / application
+  // sheet import, separate from adding one candidate by hand.
+  { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores', 'Bulk Import', 'Candidate Portal Invite'] },
   { id: 'recruiterbde', label: 'Recruiter & BDE', features: ['Recruiter Workload', 'BDE Workload', 'Team View', 'Pending Actions'] },
   // Interviews & Joining: Interview Calendar - Interview Feedback - Offers -
   // Joining - Internal Hiring. Client Feedback is its own feature because a
@@ -294,8 +310,10 @@ const ROLE_ACCESS_MODULES = [
   // an action without the confirm step. permissions.js aiAccessFor() is the
   // one reader.
   { id: 'ai', label: 'AI Assistant & Agent', features: ['Ask the Assistant', 'Voice Input', 'Suggested Prompts', 'Answers from HRMS Data', 'Answers from ATS Data', 'Answers from Accounts Data', 'Agent Actions'] },
-  { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports', 'HRMS Reports'] },
-  { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs'] },
+  // 'My Results' — a recruiter's own numbers (submitted, interviews, selected,
+  // joined); 'Client Reports' — a client's own company numbers on the portal.
+  { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports', 'HRMS Reports', 'My Results', 'Client Reports'] },
+  { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs', 'Vendor Logins', 'Vendor Audit', 'Vendor Bills Review'] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -356,13 +374,13 @@ const CATALOG_ROLES = [
 const ROLE_SCOPE_DESC = {
   SUPER_ADMIN: 'Whole company — every department, full access',
   ADMIN: 'Whole company — every department, full access',
-  MANAGER: 'Whole company — view and export only; approves on the approval chain and assigns LMS courses',
-  ASSISTANT_MANAGER: 'Whole company — view and export only; approves on the approval chain and assigns LMS courses',
-  STL: 'Own department(s): its sections, TLs and recruiters, plus the department’s unassigned openings',
-  TL: 'Own section: own requirements and own recruiters’ candidates (reviews and approves their work)',
-  HR: 'Every employee in HRMS; in ATS only Internal Hiring (TeamLink’s own openings)',
-  RECRUITER: 'Own requirements, own candidates and the clients on them; own HRMS record',
-  BDE: 'Own clients, their requirements and the client decisions; own HRMS record',
+  MANAGER: 'ATS: their department(s) — create / assign / activate / hold / close jobs, move Manager steps; HRMS: whole company, view and export only (approves on the approval chain, assigns LMS courses)',
+  ASSISTANT_MANAGER: 'ATS: their assigned team(s) (their department when no team is set) — create jobs, assign, hold; Clients view only; HRMS: view and export only (approval chain, LMS assignment)',
+  STL: 'Own section (department): its teams, TLs and recruiters, plus the unassigned openings; Clients names only',
+  TL: 'Own team: team requirements and the team’s candidates (TL Review); Clients name only',
+  HR: 'Every employee in HRMS; in ATS only Internal Hiring (TeamLink’s own openings) — no client jobs, no Clients, no Recruiter & BDE',
+  RECRUITER: 'Own jobs, own candidates, own interviews and own results; a client’s NAME on their requirements only; own HRMS record',
+  BDE: 'Own clients, their jobs and the candidates submitted to them (no recruiter notes / internal scores); requests jobs, does not create them; own HRMS record',
   CLIENT: 'Own company only — its requirements, the candidates shared with it, interviews, joinings and agreement',
   ACCOUNTANT: 'Accounts (invoices, payments, expenses, payroll accounts); no ATS',
   EMPLOYEE: 'Own HRMS record only; no ATS work until given an ATS role',

@@ -89,6 +89,11 @@ model User {
   setPasswordTokenHash String?
   setPasswordExpiresAt DateTime?
   setPasswordUsedAt    DateTime?
+  // Client portal login type (spec B1, 2026-10-03): REVIEWER | VIEWER | BILLING.
+  // CLIENT logins only; null = a client login created before types existed.
+  portalType           String?
+  // Last time an Admin confirmed this client login is still needed (quarterly review).
+  portalReviewedAt     DateTime?
 
   // Login administration — the prototype's Users screen (usersView, line 9893).
   username    String?
@@ -241,6 +246,7 @@ model Client {
   // for display; the provider transaction id is what proves the signature.
   agreementAadhaarLast4  String?
   agreementEsignTxnId    String?
+  agreementLinkMeta      String? // agreement link settings "LINK;d=14;m=1;r=…" (utils/agreementSigning.js linkMeta)
   agreementEsignProvider String?
   agreementVerifyMobile  String? // masked for display
   agreementVerifiedAt    DateTime?
@@ -251,9 +257,59 @@ model Client {
   agreementOtpAttempts   Int       @default(0)
   agreementVerifyNote    String?
 
+  // --- Add Client in 9 sections (2026-10-05) ---------------------------
+  companyType          String? // Corporate | MNC | Startup | SME | Consultancy | Other
+  companyEmail         String?
+  contactAltPhone      String?
+  secondaryBde         String?
+  clientSource         String? // BDE | Referral | Website | Existing Client | Other
+  feeType              String? // PERCENT_CTC | FIXED | PER_CANDIDATE
+  feeAmount            Float? // Rs. when feeType is FIXED / PER_CANDIDATE
+  gstApplicable        String? // Yes | No
+  tdsApplicable        String? // Yes | No
+  replacementTerms     String?
+  specialTerms         String? // printed in the agreement (clause 17)
+  billingAddress       String?
+  billingSameAsAddress Boolean?
+  billingEmail         String?
+  invoiceEmail         String?
+  paymentMethod        String?
+  paymentBankName      String?
+  paymentUpi           String?
+  paymentReferenceNote String?
+  bankAccountHolder    String?
+  bankAccountNoEnc     String? // AES-256-GCM (utils/secrets.js), never sent to a browser
+  bankAccountLast4     String?
+  bankIfsc             String?
+  // Internal only — never shown to the client (agreement, link page, PDF, portal, emails).
+  internalNotes           String?
+  specialInstructions     String?
+  recruitmentInstructions String?
+  internalRemarks         String?
+  documents            ClientDocument[]
   requirements Requirement[]
   users        User[]
   invoices     Invoice[]
+}
+
+model ClientDocument {
+  id             String   @id @default(cuid())
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind           String   @default("OTHER") // AGREEMENT | GST | REGISTRATION | PAN | OTHER
+  name           String
+  fileStored     String // utils/attachments.js stored name
+  fileName       String?
+  fileMime       String?
+  fileSize       Int?
+  expiryDate     String? // YYYY-MM-DD
+  pending        Boolean  @default(false)
+  uploadedById   String?
+  uploadedByName String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([clientId])
 }
 
 model Requirement {
@@ -337,12 +393,42 @@ model Requirement {
 
   applications Application[]
   invoices     Invoice[]
+  postings     RequirementPosting[] // Save & Post: one row per posting source
 
   // ATS dashboard performance (migration 20260926140000_ats_dashboard_indexes).
   @@index([clientId])
   @@index([recruiterId])
   @@index([tlId])
   @@index([department])
+  // spec_: master Qualification / Specialisation ids (old free text stays as "old value").
+  qualificationId  String?
+  specialisationId String?
+  minFit           Int? // fit_: minimum Overall Fit % for "Eligible"; null = Admin default (50)
+
+  @@index([specialisationId])
+}
+
+// Save & Post (2026-10-05): the result of publishing a job on one posting
+// source (utils/jobConnectors.js). One row per (job, source); the master job
+// is Requirement.id, so a source never gets a second requirement.
+model RequirementPosting {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  source        String // jobportal | website | google | naukri | indeed | shine
+  status        String      @default("Pending") // Posted | Failed | Integration Required | Pending | Removed
+  externalJobId String? // the board's own id for the job (ours for our own sites)
+  externalUrl   String? // where candidates see it
+  postedAt      DateTime? // first confirmed Posted (kept across updates)
+  removedAt     DateTime?
+  errorMessage  String? // plain words; never a credential
+  attempts      Int         @default(0)
+  lastTriedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([requirementId, source])
+  @@index([source, status])
 }
 
 model Candidate {
@@ -398,9 +484,36 @@ model Candidate {
   messages     CandidateMessage[]
   notes        CandidateNote[]
   documents    CandidateDocument[]
+  // resume_: virtual back-reference only — no column is added to Candidate.
+  resumes      CandidateResume[]
+  // spec_: master Qualification / Specialisation ids.
+  qualificationId  String?
+  specialisationId String?
 
   @@index([externalRef])
   @@index([createdAt])
+  @@index([specialisationId])
+  // b5_: CONSENT (null consentStatus = "Not recorded" — never faked for imports)
+  consentStatus        String? // GIVEN | NOT_GIVEN | WITHDRAWN
+  consentPurposes      String? // comma list: Recruitment, Messages, Share with clients
+  consentAt            DateTime?
+  consentSource        String? // portal | careers | recruiter | import | referral
+  consentProof         String? // form version / IP / recruiter note
+  consentWithdrawnAt   DateTime?
+  consentByName        String?
+  doNotContact         Boolean   @default(false) // set on Withdrawn: bulk sends / exports skip
+  // b5_: referred by (an employee id, or only a name for an outside person)
+  referredByEmployeeId String?
+  referredByName       String?
+  // b6_: the campus drive they were added from
+  campusDriveId        String?
+  certifications       CandidateCertification[]
+  @@index([campusDriveId])
+  // b7_: partner ownership (first-submitter wins for Partner.ownershipDays)
+  ownerPartnerId       String?
+  ownerUntil           DateTime?
+  ownerSubmissionId    String?
+  @@index([ownerPartnerId])
 }
 
 model Application {
@@ -443,6 +556,12 @@ model Application {
 
   // Per-application detail the prototype's pipeline columns read from.
   matchScore        Int?
+  matchVersion      String? // B8: "fit-v3" = scoring version of matchScore; null = v1 (before versioning)
+  matchDetail       String? // B8: JSON { version, weights, specBonus, semantic, reasons, gaps, eligible, why, minFit, at }
+  overrideReason    String? // B8: an INELIGIBLE candidate added anyway — the reason given
+  overrideAt        DateTime?
+  overrideById      String?
+  overrideByName    String?
   resumeScore       Int?
   source            String?
   firstSource       String?
@@ -484,6 +603,8 @@ model Application {
   billingStatus      String? // Not Applicable | Billing Pending | Invoiced
   hrmsEmployeeId     String? // Employee row created for a TeamLink internal hire
   interviewFeedbacks InterviewFeedback[]
+  offerVersions      OfferVersion[]
+  interviewPanelists InterviewPanelist[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -493,6 +614,23 @@ model Application {
   @@index([stage])
   @@index([createdAt])
   @@index([interviewAt])
+  @@index([overrideAt])
+  // b6_: campaign / UTM, referral, campus
+  utmSource            String?
+  utmMedium            String?
+  utmCampaign          String?
+  utmContent           String?
+  referralId           String?
+  referredByEmployeeId String?
+  referredByName       String?
+  campusDriveId        String?
+  @@index([utmCampaign])
+  @@index([referralId])
+  @@index([campusDriveId])
+  // b7_: the partner submission this application came from
+  partnerId            String?
+  partnerSubmissionId  String?
+  @@index([partnerId])
 }
 
 // Every status move a recruitment/client interview makes, kept in full — the
@@ -534,6 +672,83 @@ model InterviewFeedback {
   @@unique([applicationId, kind])
 }
 
+// B3 (2026-10-06): every offer letter sent is a VERSION. Re-issuing keeps the
+// old one (status Replaced). The candidate's e-sign link: tokenHash = sha256 of
+// an HMAC-derived token (like the agreement link), expiry, hashed email OTP,
+// signature image, IP/UA, the kept signed PDF (pdfFile + sha256).
+// status: Sent | Accepted | Declined | Expired | Replaced
+model OfferVersion {
+  id              String      @id @default(cuid())
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  version         Int
+  status          String      @default("Sent")
+  letterText      String
+  offeredCtc      Float?
+  offerDate       String?
+  joiningDate     String?
+  expiresAt       DateTime?
+  tokenHash       String?     @unique
+  linkCreatedAt   DateTime?
+  linkStoppedAt   DateTime?
+  viewedAt        DateTime?
+  otpHash         String?
+  otpExpiresAt    DateTime?
+  otpAttempts     Int         @default(0)
+  otpSends        Int         @default(0)
+  otpSentTo       String?
+  otpVerifiedAt   DateTime?
+  signMethod      String?
+  signFile        String?
+  signedName      String?
+  signedAt        DateTime?
+  signedIp        String?
+  signedUserAgent String?
+  declinedAt      DateTime?
+  declineReason   String?
+  expiredAt       DateTime?
+  pdfFile         String?
+  pdfSha256       String?
+  esignProvider   String?
+  esignTxnId      String?
+  createdById     String?
+  createdByName   String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([applicationId, version])
+  @@index([status, expiresAt])
+}
+
+// B4 (2026-10-06): an interview PANEL — several interviewers per round, each
+// with their own scorecard. userId = a staff login; null = an external person
+// (name + email typed). The overall decision stays the one Internal
+// InterviewFeedback row + POST /ats/interviews/:id/decision.
+model InterviewPanelist {
+  id             String      @id @default(cuid())
+  applicationId  String
+  application    Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  round          Int         @default(1)
+  userId         String?
+  name           String
+  email          String?
+  position       Int         @default(0)
+  technical      Int?
+  communication  Int?
+  experience     Int?
+  roleFit        Int?
+  overall        String?
+  recommendation String?
+  feedbackAt     DateTime?
+  feedbackById   String?
+  feedbackByName String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([applicationId, round])
+  @@index([userId])
+}
+
 model AuditLog {
   id             String    @id @default(cuid())
   userId         String?
@@ -567,16 +782,19 @@ model AuditLog {
 model Department {
   id        String   @id @default(cuid())
   name      String   @unique
+  active          Boolean          @default(true) // item 18: off = hidden from every dropdown, kept on old records
   createdAt DateTime @default(now())
 
   teams           Team[]
   specialisations Specialisation[]
+  qualifications  Qualification[]
 }
 
 model Team {
   id           String     @id @default(cuid())
   name         String
   departmentId String
+  active       Boolean    @default(true) // item 18
   department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   createdAt    DateTime   @default(now())
 
@@ -642,13 +860,57 @@ model PositionAssignment {
 // from the same set and "Medical -> Dermatology -> Candidates" is a real
 // filter rather than a string match that mostly works.
 model Specialisation {
+  id              String     @id @default(cuid())
+  name            String
+  departmentId    String
+  department      Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  createdAt       DateTime   @default(now())
+  // spec_ (2026-10-03): Department -> Qualification -> Specialisation master.
+  qualificationId String? // plain scalar -> Qualification.id
+  isMaster        Boolean    @default(false) // true = curated master (Admin -> Specialisations); false = legacy imported value
+  active          Boolean    @default(true) // deactivate instead of delete
+  aliases         String? // JSON array of alternate spellings
+  sortOrder       Int        @default(0)
+  updatedAt       DateTime?
+
+  @@unique([departmentId, name])
+  @@index([qualificationId])
+}
+
+model Qualification {
   id           String     @id @default(cuid())
   name         String
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  active       Boolean    @default(true)
+  aliases      String? // JSON array, e.g. ["M.D.","Doctor of Medicine"]
+  sortOrder    Int        @default(0)
   createdAt    DateTime   @default(now())
+  updatedAt    DateTime?
 
   @@unique([departmentId, name])
+}
+
+// spec_: back-fill review queue — suggestions only, never writes real records by itself.
+model SpecialisationSuggestion {
+  id               String    @id @default(cuid())
+  entityType       String // REQUIREMENT | CANDIDATE
+  entityId         String
+  departmentId     String?
+  qualificationId  String?
+  specialisationId String?
+  confidence       Int       @default(0) // 0-100
+  reason           String?
+  sourceText       String?
+  status           String    @default("PENDING") // PENDING | ACCEPTED | SKIPPED
+  decidedById      String?
+  decidedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([entityType, entityId])
+  @@index([status])
+  @@index([specialisationId])
 }
 
 model Employee {
@@ -1152,6 +1414,10 @@ model Payslip {
   tds              Float?   @default(0)
   otherDeductions  Float?   @default(0)
   payrollEntryId   String?
+  incentive        Float?   @default(0) // Recruiter joinings incentive line (in gross)
+  conveyance       Float?   @default(0) // Payroll import: Conveyance line
+  arrears          Float?   @default(0) // Payroll import: Arrears line
+  importedBreakup  String? // Payroll import: JSON of every sheet cell
 
   @@unique([employeeId, month])
 }
@@ -1194,6 +1460,7 @@ model SalaryStructure {
   hra              Float    @default(0)
   bonus            Float    @default(0)
   specialAllowance Float    @default(0)
+  conveyance       Float    @default(0) // mirror of the current version
   employerPf       Float    @default(0)
   employeePf       Float    @default(0)
   professionalTax  Float    @default(0)
@@ -1231,6 +1498,7 @@ model SalaryStructureVersion {
   hra              Float    @default(0)
   bonus            Float    @default(0)
   specialAllowance Float    @default(0)
+  conveyance       Float    @default(0) // Payroll import (2026-10-06): the registers' Conveyance earning
   employerPf       Float    @default(0)
   employeePf       Float    @default(0)
   professionalTax  Float    @default(0)
@@ -1310,6 +1578,16 @@ model EmployeePayrollRun {
   pfEmployer            Float       @default(0)
   esiEmployer           Float       @default(0)
   gratuity              Float       @default(0) // informational, not booked
+  // Recruiter joinings (2026-10-05): Super Admin's incentive for the previous
+  // month's joinings, a separate earning line. 0 = none.
+  incentive             Float       @default(0)
+  // Payroll import (2026-10-06): the registers' Conveyance (an earning in the
+  // structure) and one-off Arrears, the full imported breakup (JSON of every
+  // sheet cell) and the import note. 0 / null on entries the app computed.
+  conveyance            Float       @default(0)
+  arrears               Float       @default(0)
+  importedBreakup       String?
+  importNote            String?
   status                String      @default("DRAFT")
   payslipId             String?
   calculatedBy          String?
@@ -1412,12 +1690,27 @@ model Invoice {
   tdsCertDate     String?
   gstPercent      Float?
   tdsPercent      Float?
+  gstType         String? // CGST_SGST | IGST | NONE
+  tdsBase         String? // base | gross — what the TDS % was applied to
+  tdsSection      String? // e.g. 194J
+  tdsDeductedOn   String? // YYYY-MM-DD
   // The Form 16A file itself (utils/attachments.js stored name), when uploaded.
   tdsCertFile     String?
   tdsCertName     String?
   tdsCertMime     String?
 
+  // S8 Accounts Dashboard — the proof behind a receipt recorded on the invoice itself (imports carry no InvoicePayment rows).
+  proofFile       String?
+  proofName       String?
+  proofMime       String?
+  proofRef        String?
+  proofAt         String?
+  proofBy         String?
   payments InvoicePayment[]
+  // B2 — credit / debit notes. creditedAmount = issued credit notes set against this invoice's balance (rest = CreditNote.refundDue); debitedAmount = issued debit notes. Both 0 on existing invoices.
+  creditedAmount Float @default(0)
+  debitedAmount  Float @default(0)
+  creditNotes    CreditNote[]
 }
 
 // A receipt against an invoice. An invoice can be settled by several of these,
@@ -1437,6 +1730,51 @@ model InvoicePayment {
   // A hand-recorded receipt a bank line was later linked to as proof — undoing
   // the link clears bankTxnId but never deletes or reverses the receipt.
   bankLinked Boolean  @default(false)
+}
+
+// B2 — a credit note (kind "credit": replacement / refund / wrong amount / left within the guarantee) or a debit note (kind "debit": an extra charge) against ONE client invoice. Same GST type / rates and TDS base as the invoice. Number CN-YYYY-#### / DN-YYYY-#### given on issue. Draft -> Issued (maker-checker) -> Cancelled.
+model CreditNote {
+  id              String    @id @default(cuid())
+  kind            String    @default("credit") // credit | debit
+  number          String?   @unique
+  invoiceId       String
+  invoice         Invoice   @relation(fields: [invoiceId], references: [id])
+  clientId        String
+  applicationId   String?
+  noteDate        String
+  reason          String
+  reasonText      String?
+  amount          Float
+  gstType         String    @default("NONE")
+  gstPercent      Float     @default(0)
+  cgst            Float     @default(0)
+  sgst            Float     @default(0)
+  igst            Float     @default(0)
+  gst             Float     @default(0)
+  tdsPercent      Float     @default(0)
+  tdsBase         String    @default("base")
+  tds             Float     @default(0)
+  net             Float
+  applied         Float     @default(0)
+  refundDue       Float     @default(0)
+  refundPaidOn    String?
+  refundRef       String?
+  refundPaidBy    String?
+  status          String    @default("Draft") // Draft | Issued | Cancelled
+  createdById     String?
+  createdByName   String?
+  approvedById    String?
+  approvedByName  String?
+  issuedAt        DateTime?
+  cancelledAt     DateTime?
+  cancelledByName String?
+  cancelReason    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([invoiceId])
+  @@index([status])
+  @@index([applicationId])
 }
 
 model BankTransaction {
@@ -1476,6 +1814,9 @@ model BankTransaction {
   // the existing bills it settled (JSON [{id, approvalStatus, paidStatus}]).
   createdBillId String?
   billLinks     String?
+
+  @@index([bankAccountId, date])
+  @@index([bankAccountId])
 }
 
 // Hand loans (Bank & Reconciliation). Money borrowed from a person; the bank
@@ -2210,6 +2551,13 @@ model OfficeVendor {
   notes         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  // Vendor portal (P3, 2026-10-05): the vendor's logins, the assets bought
+  // from / serviced by it (Asset.vendorId), and the bills it sent in.
+  vendorUsers   VendorUser[]
+  assets        Asset[]
+  billSubmissions VendorBillSubmission[]
+  // Vendor portal v2: false = switched off; its vendor logins cannot sign in.
+  isActive      Boolean  @default(true)
 }
 
 // Office & Expenses → Government portals. One row per portal (gst | traces |
@@ -2293,6 +2641,7 @@ model Asset {
   assignedToId  String?
   assignedTo    Employee? @relation(fields: [assignedToId], references: [id])
   purchaseDate  String?
+  purchaseCost  Float? // ₹, user request 2026-10-03
   warrantyUntil String?
   history       String    @default("[]") // JSON array of {at, by, text}
   // Asset report filters (hrms-24 §6). Additive, all nullable: the TYPE is the
@@ -2306,8 +2655,244 @@ model Asset {
   assignedById   String?
   assignedByName String?
   returnedAt     DateTime?
+  // Accounts spec S2 (2026-10-05): purchase / depreciation / disposal details.
+  vendor             String?
+  invoiceNo          String?
+  gstPaid            Float?
+  paidVia            String? // Bank | Cash | Payable
+  paidBankAccountId  String?
+  usefulLifeYears    Float?
+  depreciationMethod String? // SL | WDV
+  depreciationRate   Float? // % a year
+  salvageValue       Float?
+  disposalDate       String? // YYYY-MM-DD (Sold / Written off)
+  disposalAmount     Float?
+  disposalPaidVia    String? // Bank | Cash
+  disposalNote       String?
+  repairs            AssetRepair[]
+  // Vendor portal (P3, 2026-10-05). vendorId is the REAL link to the vendor
+  // master; the free-text `vendor` above stays as it is (old rows, imports).
+  // serialNumber / amcUntil / serviceRemarks are what a vendor login with
+  // "Allow editing" may change (routes/vendorPortal.js), besides warrantyUntil.
+  vendorId           String?
+  vendorMaster       OfficeVendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  serialNumber       String?
+  amcUntil           String? // YYYY-MM-DD
+  serviceRemarks     String?
+  vendorAccess       VendorAssetAccess[]
+  documents          AssetDocument[]
+  vendorBills        VendorBillSubmission[]
+
+  @@index([vendorId])
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+}
+
+// Accounts spec S2.2: one row per repair / service of an asset. HRMS owns it;
+// Accounts posts a journal per Completed repair with a cost (key per id).
+// ---------------------------------------------------------------------------
+// VENDOR PORTAL (P3, 2026-10-05) — an outside login for a vendor, isolated
+// from every staff role: its own table, its own token, its own server-side
+// session (utils/vendorAuth.js). A vendor login never becomes a User.
+// ---------------------------------------------------------------------------
+model VendorUser {
+  id                  String    @id @default(cuid())
+  vendorId            String
+  vendor              OfficeVendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  name                String // contact name
+  email               String    @unique // also the username; stored lower-case
+  passwordHash        String
+  status              String    @default("Active") // Active | Inactive
+  canEdit             Boolean   @default(false)
+  canViewCost         Boolean   @default(false)
+  mustChangePassword  Boolean   @default(true)
+  passwordChangedAt   DateTime?
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  // v2 (2026-10-06): an unused temporary password expires (7 days); the IP of
+  // the last sign-in; soft delete; the last 3 password hashes (no reuse).
+  tempPasswordExpiresAt DateTime?
+  lastLoginIp         String?
+  deletedAt           DateTime?
+  passwordHistory     String    @default("[]") // JSON [bcrypt hash, ...] newest first
+  createdById         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  access              VendorAssetAccess[]
+  sessions            VendorSession[]
+  bills               VendorBillSubmission[]
+
+  @@index([vendorId])
+}
+
+// Which assets one vendor login sees: a specific asset (assetId) OR a whole
+// asset category (category, the Asset.category name). Never both on one row.
+model VendorAssetAccess {
+  id           String     @id @default(cuid())
+  vendorUserId String
+  vendorUser   VendorUser @relation(fields: [vendorUserId], references: [id], onDelete: Cascade)
+  assetId      String?
+  asset        Asset?     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  category     String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([vendorUserId, assetId])
+  @@unique([vendorUserId, category])
+  @@index([assetId])
+}
+
+// One row per vendor sign-in; its id is the token's jti. Idle timeout reads
+// lastSeenAt, logout / deactivate / password reset set revokedAt.
+model VendorSession {
+  id            String     @id @default(cuid())
+  vendorUserId  String
+  vendorUser    VendorUser @relation(fields: [vendorUserId], references: [id], onDelete: Cascade)
+  createdAt     DateTime   @default(now())
+  lastSeenAt    DateTime   @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+  ip            String?
+  userAgent     String?
+
+  @@index([vendorUserId])
+}
+
+// Field-level asset audit (spec 13): vendor edits, bill uploads / reviews,
+// document uploads. No foreign keys: the trail outlives what it describes.
+model AssetAuditLog {
+  id           String   @id @default(cuid())
+  assetId      String?
+  vendorId     String?
+  vendorUserId String?
+  changedById  String? // a staff User id when staff acted
+  actorName    String?
+  role         String // Vendor | Admin | Accounts
+  action       String // Asset edited | Bill uploaded | Bill approved | ...
+  field        String?
+  oldValue     String?
+  newValue     String?
+  billId       String?
+  documentName String?
+  status       String?
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  @@index([assetId])
+  @@index([vendorUserId])
+  @@index([createdAt])
+  @@index([action])
+}
+
+// A file kept on an asset (warranty card, AMC contract, service report …),
+// stored by utils/attachments.js. Uploaded by staff or a vendor login.
+model AssetDocument {
+  id             String   @id @default(cuid())
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  docType        String   @default("Other")
+  name           String
+  mime           String
+  size           Int
+  file           String
+  vendorId       String?
+  vendorUserId   String?
+  uploadedById   String?
+  uploadedByName String?
+  // v2: only documents with this flag (or uploaded by the vendor) reach the portal.
+  visibleToVendor Boolean @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([assetId])
+}
+
+// A bill a vendor sent in through the portal. NOT an accounting record: it
+// waits here (PENDING_REVIEW -> VERIFIED -> APPROVED | REJECTED) and only on
+// APPROVED does Accounts book it as an OfficeExpense (expenseId), which then
+// follows the existing Pending -> Paid workflow.
+model VendorBillSubmission {
+  id              String       @id @default(cuid())
+  billCode        String       @unique // VB-00001
+  vendorId        String
+  vendor          OfficeVendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  vendorUserId    String
+  vendorUser      VendorUser   @relation(fields: [vendorUserId], references: [id], onDelete: Restrict)
+  assetId         String
+  asset           Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  assetCode       String?
+  assetName       String?
+  billNumber      String
+  billDate        String // YYYY-MM-DD
+  amount          Float // before GST
+  gst             Float        @default(0)
+  tds             Float        @default(0)
+  total           Float // amount + gst
+  remarks         String?
+  documentFile    String?
+  documentName    String?
+  documentMime    String?
+  documentSize    Int?
+  supportingDocs  String       @default("[]") // JSON [{file,name,mime,size,at}]
+  status          String       @default("PENDING_REVIEW") // PENDING_REVIEW | VERIFIED | APPROVED | REJECTED
+  rejectionReason String?
+  reviewRemarks   String?
+  submittedByName String?
+  submittedAt     DateTime     @default(now())
+  verifiedById    String?
+  verifiedAt      DateTime?
+  reviewedById    String?
+  reviewedByName  String?
+  reviewedAt      DateTime?
+  expenseId       String?      @unique // = the Accounts bill (OfficeExpense) id, at most one
+  updatedAt       DateTime     @updatedAt
+  // v2 (2026-10-06). total = amount + GST − TDS (computed on the server).
+  // status also WITHDRAWN (by the vendor, while Pending Review; never deleted).
+  source             String    @default("Vendor Portal")
+  parentSubmissionId String? // a resubmission after rejection points at the rejected one
+  version            Int       @default(1)
+  idempotencyKey     String?
+  withdrawnAt        DateTime?
+  billNumberKey      String? // lower(trim(billNumber)) — the duplicate check
+  originalValues     String? // JSON: the vendor's own amount / gst / tds / billNumber / billDate before any Accounts edit
+
+  @@index([vendorId])
+  @@index([assetId])
+  @@index([status])
+  @@unique([vendorUserId, idempotencyKey])
+  @@index([vendorId, billNumberKey])
+  @@index([parentSubmissionId])
+}
+
+model AssetRepair {
+  id                String   @id @default(cuid())
+  repairNo          String   @unique // RP-00001
+  assetId           String
+  asset             Asset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  dateReported      String?
+  issue             String?
+  repairType        String   @default("Repair") // Repair | Service | AMC | Replacement of part
+  vendor            String?
+  repairDate        String?
+  cost              Float    @default(0)
+  gstPaid           Float    @default(0)
+  invoiceNo         String?
+  paidVia           String? // Bank | Cash | Payable
+  paidBankAccountId String?
+  underWarranty     Boolean  @default(false)
+  capitalise        Boolean  @default(false)
+  status            String   @default("Reported") // Reported | In Repair | Completed | Cancelled
+  reportedById      String?
+  reportedByName    String?
+  notes             String?
+  slip              String? // JSON
+  legacyEntryId     String?  @unique
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([assetId])
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------
@@ -2640,6 +3225,41 @@ model CandidateNote {
   @@index([candidateId])
 }
 
+// RESUME FILES + VERSIONS (resume_, migration 20261003120000_candidate_resume).
+// ONE NEW TABLE, nothing else altered. Every upload is a new ORIGINAL row whose
+// bytes are never overwritten (the newest original is the current one); every
+// "Edit resume" save is a new EDITED row (v1, v2 …, numbered by createdAt per
+// kind) with its structured sections and a generated TeamLink-format PDF/DOCX.
+// `file` / `docxFile` are names utils/resumeStore.js generated inside
+// <UPLOAD_DIR>/resumes — never a client path. Clients are served EDITED rows
+// only (contact details stripped); originals stay internal.
+model CandidateResume {
+  id            String    @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  kind          String // ORIGINAL | EDITED
+  baseResumeId  String? // EDITED: the original it was edited from
+  file          String? // ORIGINAL: the uploaded file; EDITED: the generated PDF
+  fileName      String? // sanitised display name
+  mime          String?
+  size          Int?
+  sha256        String?
+  docxFile      String? // EDITED: the generated DOCX
+  text          String? // extracted text (ORIGINAL) / edited plain text (EDITED)
+  sections      String? // EDITED: JSON { summary, skills, experience, education, other }
+  parsed        String? // JSON: skills, totalExperienceYears, education, location, emails, phones
+  parser        String? // free | claude | none
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+  hiddenAt      DateTime? // resume_: "wrong file — hide it"; row + file are kept for audit
+  hiddenById    String?
+  hiddenByName  String?
+  hiddenReason  String?
+
+  @@index([candidateId, kind])
+}
+
 // Resume / ID / Certificates / Offer / Joining documents.
 model CandidateDocument {
   id               String    @id @default(cuid())
@@ -2656,6 +3276,16 @@ model CandidateDocument {
   createdAt        DateTime  @default(now())
 
   @@index([candidateId])
+  // b5_: the real file (utils/candidateDocStore.js); NULL on old name-only rows
+  file          String?
+  fileName      String?
+  mime          String?
+  size          Int?
+  sha256        String?
+  deletedAt     DateTime? // delete-with-reason: row + file kept for audit, hidden from the tab
+  deletedById   String?
+  deletedByName String?
+  deleteReason  String?
 }
 
 // =============================================================================
@@ -2734,6 +3364,35 @@ model TaskComment {
 // The one-time code Add Employee sends to verify an address before the account
 // exists. The code itself is NEVER stored — only a SHA-256 hash of it — and a
 // row dies on expiry, on `attempts` reaching the cap, or once consumed.
+// Portal login requests and privacy requests (spec B1/B2, 2026-10-03).
+//   CLIENT_LOGIN       the owner BDE asks for a client login; Admin/SA/Manager approves + creates
+//   CLIENT_DISABLE     the owner BDE asks to disable a client login; Admin disables
+//   CANDIDATE_PRIVACY  a candidate's "delete my data" request; Admin handles it (no auto-delete)
+model PortalRequest {
+  id              String    @id @default(cuid())
+  kind            String // CLIENT_LOGIN | CLIENT_DISABLE | CANDIDATE_PRIVACY
+  status          String    @default("Pending") // Pending | Approved | Rejected | Done | Cancelled
+  clientId        String?
+  candidateId     String?
+  userId          String?
+  name            String?
+  email           String?
+  portalType      String?
+  reason          String?
+  requestedById   String?
+  requestedByName String?
+  decidedById     String?
+  decidedByName   String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([kind, status])
+  @@index([clientId])
+  @@index([candidateId])
+}
+
 model EmailVerification {
   id            String    @id @default(cuid())
   email         String
@@ -2967,4 +3626,493 @@ model ClientMerge {
   createdAt     DateTime @default(now())
 
   @@index([primaryId])
+}
+
+// Small key/value settings store. key "fit" = { weights, defaultMinFit } (fit_).
+model AppSetting {
+  key           String   @id
+  value         String // JSON
+  updatedById   String?
+  updatedByName String?
+  updatedAt     DateTime @default(now()) @updatedAt
+}
+
+// Employee Management -> Manage Fields (HRMS item 15). Admin-defined extra
+// fields on the employee form. Plain scalars, no relations (additive tables).
+model EmployeeField {
+  id          String   @id @default(cuid())
+  key         String   @unique // slug, stable even if the label changes
+  label       String
+  type        String // TEXT | NUMBER | DATE | DROPDOWN | MULTISELECT | CHECKBOX | FILE
+  options     String? // JSON array of choices (DROPDOWN / MULTISELECT)
+  required    Boolean  @default(false)
+  minValue    Float?
+  maxValue    Float?
+  maxLength   Int?
+  helpText    String?
+  active      Boolean  @default(true) // removed fields that hold values are switched off, not deleted
+  position    Int      @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model EmployeeFieldValue {
+  id          String   @id @default(cuid())
+  fieldId     String
+  employeeId  String
+  value       String? // text / number / YYYY-MM-DD / JSON array / "true"|"false"
+  fileStored  String? // utils/attachments.js stored name (FILE fields)
+  fileName    String?
+  fileMime    String?
+  fileSize    Int?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([fieldId, employeeId])
+  @@index([employeeId])
+}
+
+// STATIONERY / CONSUMABLES (Employee Services -> Stationery, user 2026-10-05):
+// counted things (notepads, pens ...), not unique assets — no code per pen.
+// Balance of an item = SUM(StationeryStock.quantity)
+//                    - SUM(StationeryIssue.quantity WHERE kind = 'ISSUE')
+//                    + SUM(StationeryIssue.quantity WHERE kind = 'RETURN').
+// Additive tables only. employeeId is a plain scalar (no relation), so the
+// Employee model and every existing delete path are untouched.
+model StationeryItem {
+  id           String            @id @default(cuid())
+  name         String            @unique // Notepad, Pen, Pencil, Marker ...
+  unit         String            @default("pcs")
+  reorderLevel Int? // warn when "left" is at or below this
+  active       Boolean           @default(true) // hidden from pickers, history kept
+  createdById  String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  stock        StationeryStock[]
+  issues       StationeryIssue[]
+}
+
+// One row per stock-in (HR "adds" a quantity).
+model StationeryStock {
+  id          String         @id @default(cuid())
+  itemId      String
+  item        StationeryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  quantity    Int // > 0
+  date        String // YYYY-MM-DD
+  vendor      String?
+  costPerUnit Float? // Rs
+  billNo      String?
+  note        String?
+  addedById   String?
+  addedByName String?
+  createdAt   DateTime       @default(now())
+
+  @@index([itemId])
+  @@index([date])
+}
+
+// One row per hand-out (kind ISSUE) or take-back (kind RETURN), quantity > 0.
+// batchId groups the rows of one "Give to many".
+model StationeryIssue {
+  id           String         @id @default(cuid())
+  itemId       String
+  item         StationeryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  employeeId   String
+  quantity     Int
+  kind         String         @default("ISSUE") // ISSUE | RETURN
+  date         String // YYYY-MM-DD
+  note         String?
+  batchId      String?
+  issuedById   String?
+  issuedByName String?
+  createdAt    DateTime       @default(now())
+
+  @@index([employeeId])
+  @@index([itemId])
+  @@index([date])
+  @@index([batchId])
+}
+
+// ---------------------------------------------------------------------------
+// RECRUITER JOININGS (2026-10-05) — "4 joinings a month" per recruiter, the
+// joinings counted from ATS (utils/recruiterJoinings.js), and Super Admin's
+// decision per recruiter per month. Plain scalars (no relations), so the
+// migration is ADD TABLE only.
+// ---------------------------------------------------------------------------
+// The joinings target: scope ALL (everyone, scopeKey ''), DEPARTMENT (scopeKey
+// = department name) or EMPLOYEE (scopeKey = Employee.id), from fromMonth
+// (YYYY-MM) onward. The most specific, latest-starting rule wins; with none,
+// the target is 4.
+model RecruiterJoiningTarget {
+  id        String   @id @default(cuid())
+  scope     String // ALL | DEPARTMENT | EMPLOYEE
+  scopeKey  String   @default("")
+  fromMonth String // YYYY-MM
+  target    Int
+  note      String?
+  setById   String?
+  setByName String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, scopeKey, fromMonth])
+}
+
+// One decision per recruiter (Employee) per month of joinings.
+model RecruiterJoiningDecision {
+  id              String   @id @default(cuid())
+  employeeId      String
+  month           String // YYYY-MM the joinings were made in
+  joinings        Int      @default(0) // snapshot at decision time
+  target          Int      @default(0) // snapshot at decision time
+  decision        String // INCENTIVE | RAISE | NONE
+  amount          Float? // INCENTIVE: rupees
+  payMonth        String? // INCENTIVE: the payroll month it is paid in (YYYY-MM)
+  payrollEntryId  String? // INCENTIVE: the EmployeePayrollRun that carries it
+  salaryVersionId String? // RAISE: the SalaryStructureVersion it created
+  raiseFrom       String? // RAISE: effective month (YYYY-MM)
+  note            String?
+  decidedById     String?
+  decidedByName   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([employeeId, month])
+  @@index([month])
+  @@index([payMonth, decision])
+}
+
+// B8 semantic matching: cached AI embedding vectors (Float32 bytes) per candidate / job.
+model SemanticVector {
+  id        String   @id @default(cuid())
+  kind      String // CANDIDATE | REQUIREMENT
+  refId     String
+  model     String // e.g. nomic-embed-text
+  hash      String // sha1 of the (PII-stripped) text that was embedded
+  dims      Int
+  vector    Bytes
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([kind, refId, model])
+}
+
+// B5 + B6 (2026-10-06): candidate consent / certifications / referrals / campus / campaigns
+model CandidateCertification {
+  id            String    @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  name          String
+  issuer        String?
+  issuedOn      String? // YYYY-MM-DD
+  expiresOn     String? // YYYY-MM-DD
+  credentialId  String?
+  file          String?
+  fileName      String?
+  mime          String?
+  size          Int?
+  sha256        String?
+  source        String    @default("Manual") // Manual | Resume
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+
+  @@index([candidateId])
+}
+
+model ReferralCode {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  userId     String   @unique
+  employeeId String?
+  name       String
+  createdAt  DateTime @default(now())
+}
+
+model CandidateReferral {
+  id                  String    @id @default(cuid())
+  referrerUserId      String?
+  referrerEmployeeId  String?
+  referrerName        String
+  via                 String // FORM | LINK | RECRUITER
+  code                String?
+  candidateId         String
+  applicationId       String?
+  requirementId       String?
+  note                String?
+  bonusAmount         Float?
+  bonusStatus         String? // PROPOSED | APPROVED | REJECTED
+  bonusNote           String?
+  bonusProposedById   String?
+  bonusProposedByName String?
+  bonusProposedAt     DateTime?
+  bonusDecidedById    String?
+  bonusDecidedByName  String?
+  bonusDecidedAt      DateTime?
+  createdById         String?
+  createdByName       String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([referrerUserId])
+  @@index([candidateId])
+  @@index([applicationId])
+}
+
+model CampusDrive {
+  id            String   @id @default(cuid())
+  collegeName   String
+  driveDate     String // YYYY-MM-DD
+  location      String?
+  requirementId String?
+  department    String?
+  cost          Float?
+  note          String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+
+  @@index([driveDate])
+}
+
+model SourcingCampaign {
+  id            String   @id @default(cuid())
+  key           String   @unique // lower-case utm_campaign
+  name          String
+  source        String?
+  medium        String?
+  cost          Float?
+  startDate     String?
+  endDate       String?
+  note          String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// The partner master (Administration -> Company Setup -> Partners).
+model Partner {
+  id               String    @id @default(cuid())
+  code             String?   @unique // PRT-0001
+  type             String    @default("Agency") // Agency | Freelancer
+  name             String
+  contactName      String?
+  email            String?
+  phone            String?
+  gstin            String?
+  pan              String?
+  gstRegistered    Boolean   @default(false) // true = GST (18%) is added to the fee
+  tdsSection       String?   @default("194J")
+  tdsPercent       Float     @default(10)
+  feeType          String    @default("PERCENT") // PERCENT (of annual CTC) | FIXED (per joining)
+  feePercent       Float?
+  feeFixed         Float?
+  paymentTermsDays Int       @default(30)
+  guaranteeDays    Int       @default(90)
+  ownershipDays    Int       @default(365)
+  departments      String? // comma list of departments they may submit to; empty = any
+  specialisations  String? // comma list (free text / master names)
+  showClientName   Boolean   @default(false) // may the partner see the client name on shared jobs
+  agreementFile    String?
+  agreementName    String?
+  agreementMime    String?
+  agreementSize    Int?
+  agreementFrom    String? // YYYY-MM-DD
+  agreementTo      String? // YYYY-MM-DD
+  status           String    @default("Active") // Active | Paused
+  notes            String?
+  createdById      String?
+  createdByName    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  users            PartnerUser[]
+  shares           PartnerJobShare[]
+  submissions      PartnerSubmission[]
+  payouts          PartnerPayout[]
+
+  @@index([status])
+}
+
+// A partner login — never a User; its token uses its own secret (utils/partnerAuth.js).
+model PartnerUser {
+  id                    String    @id @default(cuid())
+  partnerId             String
+  partner               Partner   @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  name                  String
+  email                 String    @unique // lower-case; the username
+  passwordHash          String
+  status                String    @default("Active") // Active | Inactive
+  mustChangePassword    Boolean   @default(true)
+  passwordChangedAt     DateTime?
+  lastLoginAt           DateTime?
+  lastLoginIp           String?
+  failedLoginAttempts   Int       @default(0)
+  lockedUntil           DateTime?
+  tempPasswordExpiresAt DateTime?
+  deletedAt             DateTime?
+  passwordHistory       String    @default("[]")
+  createdById           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  sessions              PartnerSession[]
+  submissions           PartnerSubmission[]
+
+  @@index([partnerId])
+}
+
+// One row per partner sign-in; its id is the token's jti (30-min idle, 12 h max).
+model PartnerSession {
+  id            String      @id @default(cuid())
+  partnerUserId String
+  partnerUser   PartnerUser @relation(fields: [partnerUserId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+  lastSeenAt    DateTime    @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+  ip            String?
+  userAgent     String?
+
+  @@index([partnerUserId])
+}
+
+// "Share with partners" on a job: which partner may see / submit to which requirement.
+model PartnerJobShare {
+  id             String    @id @default(cuid())
+  partnerId      String
+  partner        Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  requirementId  String
+  sharedById     String?
+  sharedByName   String?
+  sharedAt       DateTime  @default(now())
+  revokedAt      DateTime?
+  revokedByName  String?
+  showClientName Boolean   @default(false) // per share; the partner master flag is the default
+  note           String?
+
+  @@unique([partnerId, requirementId])
+  @@index([requirementId])
+}
+
+// A candidate a partner sent for one shared job. Duplicate rows keep the reason and never own the person.
+model PartnerSubmission {
+  id                     String      @id @default(cuid())
+  code                   String?     @unique // PS-00001
+  partnerId              String
+  partner                Partner     @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  partnerUserId          String
+  partnerUser            PartnerUser @relation(fields: [partnerUserId], references: [id], onDelete: Restrict)
+  requirementId          String
+  candidateId            String?
+  applicationId          String?     @unique
+  name                   String
+  phone                  String?
+  email                  String?
+  currentCtc             Float?
+  expectedCtc            Float?
+  noticePeriod           String?
+  location               String?
+  skills                 String?
+  note                   String?
+  resumeFile             String?
+  resumeName             String?
+  resumeMime             String?
+  resumeSize             Int?
+  consentTicked          Boolean     @default(false)
+  status                 String      @default("Submitted") // Submitted | Duplicate | Screening | Interview | Selected | Joined | Rejected | Dropped
+  duplicateReason        String?
+  duplicateOfCandidateId String?
+  statusAt               DateTime?
+  statusNote             String?
+  submittedAt            DateTime    @default(now())
+  ip                     String?
+  updatedAt              DateTime    @updatedAt
+
+  @@index([partnerId])
+  @@index([requirementId])
+  @@index([candidateId])
+  @@index([status])
+}
+
+// Money owed to a partner for one joining (Draft -> Approved -> Paid, or Cancelled);
+// kind CLAWBACK = a negative payout recorded when a paid placement leaves inside the guarantee.
+model PartnerPayout {
+  id                   String    @id @default(cuid())
+  number               String?   @unique // PP-2026-0001
+  kind                 String    @default("PAYOUT") // PAYOUT | CLAWBACK
+  parentPayoutId       String?
+  partnerId            String
+  partner              Partner   @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  submissionId         String?
+  applicationId        String
+  invoiceId            String?
+  candidateName        String?
+  requirementTitle     String?
+  clientName           String?
+  joinedOn             String?
+  ctc                  Float?
+  feeType              String?
+  feePercent           Float?
+  feeFixed             Float?
+  fee                  Float // before GST (negative on a clawback)
+  gstPercent           Float     @default(0)
+  gst                  Float     @default(0)
+  tdsSection           String?
+  tdsPercent           Float     @default(0)
+  tds                  Float     @default(0)
+  net                  Float // fee + gst - tds
+  holdUntil            String? // guarantee end (YYYY-MM-DD): cannot be paid before it
+  status               String    @default("Draft") // Draft | Approved | Paid | Cancelled
+  preparedById         String?
+  preparedByName       String?
+  approvedById         String?
+  approvedByName       String?
+  approvedAt           DateTime?
+  paidOn               String?
+  paidRef              String?
+  paidMode             String?
+  paidById             String?
+  paidByName           String?
+  paidAt               DateTime?
+  bankTxnId            String?
+  expenseId            String?   @unique // the Office & Expenses row booked on approval
+  cancelledAt          DateTime?
+  cancelledByName      String?
+  cancelReason         String?
+  partnerInvoiceNumber String?
+  partnerInvoiceDate   String?
+  partnerInvoiceFile   String?
+  partnerInvoiceName   String?
+  partnerInvoiceMime   String?
+  partnerInvoiceSize   Int?
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([partnerId])
+  @@index([applicationId])
+  @@index([invoiceId])
+  @@index([status])
+}
+
+// Fill from a file (2026-10-06): the uploaded JD / company profile a job or
+// client was filled from. Plain scalars, no relations (additive table).
+model SourceDocument {
+  id             String   @id @default(cuid())
+  target         String // job | client
+  entityId       String // Requirement.id / Client.id
+  file           String // stored name in <UPLOAD_DIR>/source-docs (utils/docFill.js)
+  fileName       String?
+  mime           String?
+  size           Int?
+  sha256         String?
+  engine         String? // rule | rule+ai
+  fieldsFound    String? // JSON: the field names filled from it
+  uploadedById   String?
+  uploadedByName String?
+  createdAt      DateTime @default(now())
+
+  @@index([target, entityId])
 }

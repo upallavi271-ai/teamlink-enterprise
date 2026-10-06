@@ -27,3 +27,40 @@ TeamLink-DATA-NEEDED.xlsx
 TeamLink-BATCH3-converted.xlsx
 omnichannel-web/node_modules/
 omnichannel-web/dist/
+
+# TEST SANDBOX copy of dev.db (backend/scripts/sandbox.js) + its state/log files.
+backend/prisma/sandbox.db*
+
+# SAFETY (spec 21, 2026-10-03). Ignoring does NOT remove files git already
+# tracks — TeamLink-BATCH3/PULSEHRM-converted.xlsx, backend/integration-key.tmp,
+# backend/integration-sync.json and backend/vps-* are still tracked until the
+# owner decides on the history clean-up. These lines stop NEW copies.
+.env.*
+!.env.example
+**/.env
+*.env.local
+# Converted company data and exports with real people in them.
+*-converted.xlsx
+TeamLink-*-converted*.xlsx
+backend/integration-key.tmp
+backend/integration-sync.json
+backend/vps-*.json
+backend/vps-*.txt
+*.key.tmp
+*key*.tmp
+# Databases and their copies, anywhere.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+dev.db.*
+# Backups and uploaded files (normally under %USERPROFILE%, never the repo).
+.teamlink-backups/
+.teamlink-data/
+.teamlink-message-jobs/
+.teamlink-sandbox/
+
+# The embedded Job Portal's runtime files (heartbeat, pid, log) - backend/src/utils/jobPortalEmbed.js
+job-portal-app/run/

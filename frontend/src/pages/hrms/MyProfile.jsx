@@ -12,6 +12,7 @@ import EmployeePhoto from '../../components/EmployeePhoto.jsx';
 import ExportMenu from '../../components/ExportMenu.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
+import ReferPanel from '../../components/referrals/ReferPanel.jsx'; // ATS-100 B6.1
 
 // Only STL/TL are restricted to their own department — Manager/Assistant
 // Manager have cross-department oversight (matches backend/src/routes/employees.js).
@@ -454,6 +455,9 @@ export default function MyProfile() {
           )}
         </div>
       )}
+
+      {/* ATS-100 B6.1: every employee can refer people and share a personal link. */}
+      <ReferPanel />
 
       {isTeamLead && (
         <div className="card section">

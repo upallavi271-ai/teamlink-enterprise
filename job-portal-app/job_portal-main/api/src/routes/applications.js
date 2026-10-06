@@ -16,11 +16,12 @@ import { withUser } from '../db.js';
 import { wrap, badRequest, notFound, forbidden, ApiError, CODES } from '../errors.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { toApplication, toNotification, toJob, toCandidate } from '../shapes.js';
-import { dispatchInterviewNotifications } from '../notify/dispatch.js';
 import { dispatchEvent } from '../notify/events.js';
+import { sendApplyMessages } from '../notify/apply-messages.js';
+import { holdSeconds, scheduleHold } from '../notify/apply-hold.js';
 import { matchCandidate } from '../ai/match.js';
 import { screenApplication } from '../ai/screening.js';
-import { pushApplicationToTeamLink } from '../integrations/teamlink.js';
+import { applyScreeningAnswers, storeApplyScreening } from '../screening/apply.js';
 
 const newId = (p) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
@@ -98,6 +99,9 @@ export default function applicationRoutes() {
         .transform((v) => (v === undefined ? undefined : normaliseSource(v))),
       resumePath: z.string().trim().max(400).optional(),
       matchScore: z.number().min(0).max(100).optional(),
+      // Screening questions (0097): [{questionId, answer}], checked against the job's questions.
+      answers: z.array(z.object({ questionId: z.string().trim().min(1).max(64), answer: z.any() })).max(12).optional(),
+      saveScreeningDefaults: z.boolean().optional(),
     }), req.body);
 
     // A candidate may only apply as themselves. A recruiter may add a
@@ -110,6 +114,9 @@ export default function applicationRoutes() {
     }
     if (!candidateId) throw badRequest('No candidate specified.');
 
+    // Validated BEFORE anything is written: a refused answer leaves no application behind.
+    const screeningAnswers = await applyScreeningAnswers(body.jobId, body.answers);
+
     const out = await withUser(req.session, async (c) => {
       const job = await c.query(
         `select id, title, company_id, employment_type, posting_kind, status, paused, archived
@@ -121,9 +128,22 @@ export default function applicationRoutes() {
       }
 
       const dupe = await c.query(
-        `select id from applications where candidate_id=$1 and job_id=$2`, [candidateId, body.jobId]);
+        `select id, reference from applications where candidate_id=$1 and job_id=$2`, [candidateId, body.jobId]);
       if (dupe.rowCount) {
-        throw new ApiError(409, CODES.DUPLICATE_APPLICATION, 'You have already applied to this role.');
+        // 0106: the existing Application ID, so the candidate can quote it.
+        throw new ApiError(409, CODES.DUPLICATE_APPLICATION, 'You have already applied for this position.',
+          { applicationId: dupe.rows[0].reference || dupe.rows[0].id, jobId: body.jobId });
+      }
+
+      // 0106: a walk-in that has ended, or whose seats are taken, is decided
+      // here - at save time, under a lock on the job row - so two people
+      // pressing Submit for the last seat cannot both get it.
+      const walkin = (await c.query(`select walkin_apply_check($1) as v`, [body.jobId])).rows[0].v;
+      if (walkin === 'closed') {
+        throw new ApiError(409, CODES.JOB_UNAVAILABLE, 'This walk-in is closed - its date and time have passed.', { reason: 'walkin_closed' });
+      }
+      if (walkin === 'full') {
+        throw new ApiError(409, 'WALKIN_FULL', 'Registrations full - every seat for this walk-in is taken.', { reason: 'walkin_full' });
       }
 
       const id = newId('app');
@@ -160,6 +180,21 @@ export default function applicationRoutes() {
         [id, body.jobId, candidateId, matchScore,
          body.source || 'portal', postingType, body.resumePath || null]);
 
+      // Same transaction: the application and its answers exist together or not at all.
+      if (screeningAnswers) {
+        await storeApplyScreening(c, id, screeningAnswers, req.session, candidateId, body.saveScreeningDefaults);
+      }
+
+      // One-click apply can be undone for 10 s: its candidate messages are
+      // held (0104) until that has passed, written in this same transaction
+      // so a restart cannot lose them. Set by the one-click route, never by
+      // the request body.
+      let heldUntil = null;
+      if (req.oneClickApply === true && req.session.role === 'candidate') {
+        heldUntil = (await c.query(`select application_outbound_hold($1,$2) as due`,
+          [id, holdSeconds()])).rows[0].due;
+      }
+
       // Same transaction — see the header note.
       const company = await c.query(`select name from companies where id=$1`, [j.company_id]);
       const coName = company.rows[0]?.name || 'the company';
@@ -184,46 +219,29 @@ export default function applicationRoutes() {
         application: toApplication(ins.rows[0]),
         notification,
         applicants: Number(counts.rows[0]?.applicants || 0),
+        heldUntil,
       };
     });
+    const heldUntil = out.heldUntil;
+    delete out.heldUntil;
 
-    // ---- multi-channel interview notification -------------------------
+    // ---- the candidate's messages -----------------------------------
     //
-    // Fired here because "application confirmed" is the trigger. It runs
-    // AFTER the application transaction has committed, deliberately: an
-    // SMS gateway being down must never roll back a candidate's
-    // application. Every channel is attempted independently inside.
-    let notify = null;
-    try {
-      notify = await dispatchInterviewNotifications(req.session, {
+    // The interview invitation / confirmation and the AI interview
+    // invitation (notify/apply-messages.js). Sent now, after the commit,
+    // unless this is a one-click application inside its Undo window: then
+    // they go when the hold falls due, and only if it was not undone.
+    let messages = null;
+    if (heldUntil) {
+      scheduleHold(out.application.id, heldUntil);
+      const held = { held: true, sendsAt: new Date(heldUntil).toISOString(), reason: 'undo_window' };
+      messages = { notify: held, aiInterview: held };
+    } else {
+      messages = await sendApplyMessages(req.session, {
         applicationId: out.application.id,
         candidateId: out.application.candidateId,
         jobId: out.application.jobId,
       });
-
-      /*
-       * Confirm the application itself, when nothing else already has.
-       *
-       * The interview invitation above doubles as a confirmation - it
-       * names the role and says what happens next - so sending
-       * "Application Received" beside it is two emails saying the same
-       * thing a second apart. It goes out only when the invitation did
-       * not, which is the case for a requirement with no AI interview.
-       */
-      const sent = Object.values((notify && notify.delivery_status) || {})
-        .some((st) => st === 'sent' || st === 'delivered');
-      if (!sent) {
-        await dispatchEvent(req.session, 'APPLICATION_SUBMITTED', {
-          applicationId: out.application.id,
-          candidateId: out.application.candidateId,
-          jobId: out.application.jobId,
-        }).catch(() => null);
-      }
-    } catch (err) {
-      // The application stands regardless. The failure is logged, and the
-      // delivery rows (or their absence) are visible on the record.
-      console.error('[notify] interview notification dispatch failed:', err.message);
-      notify = { error: 'dispatch_failed' };
     }
 
     // ---- AI screening, for everybody, straight away -----------------
@@ -254,40 +272,7 @@ export default function applicationRoutes() {
       console.error('[alerts] could not mark the match applied:', err.message);
     }
 
-    // ---- the AI interview and its two-day window ----------------------
-    //
-    // The clock starts here, not when the candidate happens to open the
-    // interview screen, so this message is the one that states the
-    // deadline. It is marked sent so the sweep never repeats it.
-    let aiInvite = null;
-    try {
-      const due = await withUser(req.session, async (c) => {
-        const row = (await c.query(
-          `select ai_interview_due_at from applications where id=$1`, [out.application.id])).rows[0];
-        return row ? row.ai_interview_due_at : null;
-      });
-      aiInvite = await dispatchEvent(req.session, 'AI_INTERVIEW_INVITED', {
-        applicationId: out.application.id,
-        candidateId: out.application.candidateId,
-        jobId: out.application.jobId,
-        dueAt: due,
-      });
-      await withUser(req.session, (c) =>
-        c.query(`select ai_interview_reminder_sent($1,'invited')`, [out.application.id]));
-    } catch (err) {
-      console.error('[notify] the AI interview invitation failed:', err.message);
-      aiInvite = { error: 'dispatch_failed' };
-    }
-
-    // ---- TeamLink.Enterprise ATS ------------------------------------
-    //
-    // An application to a TeamLink requirement (job id tl_...) becomes a
-    // candidate + application at stage NEW in TeamLink. Not awaited and
-    // never fails the apply: TeamLink's hourly pull catches up anything
-    // this push misses.
-    pushApplicationToTeamLink(out.application.id).catch(() => {});
-
-    res.status(201).json({ ...out, notify, aiInterview: aiInvite, screening });
+    res.status(201).json({ ...out, notify: messages.notify, aiInterview: messages.aiInterview, screening });
   }));
 
   /**
@@ -296,14 +281,20 @@ export default function applicationRoutes() {
    */
   r.put('/applications/:id/status', requireAuth(),
     requireRole('recruiter', 'client', 'admin'), wrap(async (req, res) => {
-      const { stage, note } = parse(z.object({
+      const { stage, note, reason, expectedVersion } = parse(z.object({
         stage: z.string().trim().min(1).max(40),
         note: z.string().trim().max(2000).optional(),
+        /* 0107: an override's reason (walk-in jobs) and the version the
+           screen was showing, so a second recruiter cannot overwrite the
+           first one's move unseen (23.8). Both optional: every existing
+           caller keeps working exactly as before. */
+        reason: z.string().trim().max(1000).optional(),
+        expectedVersion: z.number().int().min(1).optional(),
       }), req.body);
 
       const out = await withUser(req.session, async (c) => {
         const valid = await c.query(
-          `select id, label, notify_candidate from stages where id=$1`, [stage]);
+          `select id, label, candidate_label, notify_candidate from stages where id=$1`, [stage]);
         if (!valid.rowCount) throw badRequest(`"${stage}" is not a valid pipeline stage.`);
 
         // The note travels with the move, not after it. The trigger on
@@ -316,6 +307,17 @@ export default function applicationRoutes() {
         // failed with 25P02 and the move itself 500'd - and the
         // `.catch(() => {})` around it hid the cause.
         await c.query(`select set_config('app.stage_note', $1, true)`, [note || '']);
+        // 0107: a recruiter's explicit move - walk-in jobs check it against their transition table
+        await c.query(`select set_config('app.stage_explicit', '1', true), set_config('app.stage_reason', $1, true)`,
+          [reason || '']);
+        if (expectedVersion != null) {
+          const cur = await c.query(`select version from applications where id=$1 for update`, [req.params.id]);
+          if (cur.rowCount && cur.rows[0].version !== expectedVersion) {
+            throw new ApiError(409, 'STALE_VERSION',
+              'This applicant was updated by someone else. Refresh to see the latest.',
+              { currentVersion: cur.rows[0].version });
+          }
+        }
 
         const upd = await c.query(
           `update applications set stage=$1 where id=$2 returning *`, [stage, req.params.id]);
@@ -326,12 +328,26 @@ export default function applicationRoutes() {
             : notFound('That application no longer exists.');
         }
         const app = upd.rows[0];
-        const tellThem = valid.rows[0].notify_candidate !== false;
+        // 0107: a walk-in move never messages the candidate by itself (23.18)
+        const tellThem = valid.rows[0].notify_candidate !== false && app.posting_type !== 'walkin';
 
         const job = await c.query(
           `select j.title, co.name as company from jobs j
              left join companies co on co.id=j.company_id where j.id=$1`, [app.job_id]);
         const label = valid.rows[0].label;
+        /*
+         * WHAT THE CANDIDATE IS TOLD IT IS CALLED.
+         *
+         * The notification below, and the email and SMS that follow it,
+         * quoted the INTERNAL label - so a move to client_review sent the
+         * candidate "Your application is now Client Review". That is the
+         * one word they must never see: it tells them we are an agency
+         * placing them elsewhere and invites the question we cannot
+         * answer. The stages table carries their wording (0051), and it
+         * is used for everything they read. The recruiter's own screens
+         * still use `label`.
+         */
+        const candidateLabel = valid.rows[0].candidate_label || label;
 
         /*
          * Some stages are ours, not the candidate's.
@@ -347,13 +363,13 @@ export default function applicationRoutes() {
           await c.query(
             `select notify_create($1,$2,'candidate','APPLICATION_STATUS',$3,$4,$5,$6,$7,null,$8)`,
             [newId('ntf'), app.candidate_id,
-             `Application ${label}`,
-             `Your application for ${job.rows[0]?.title || 'a role'} at ${job.rows[0]?.company || 'the company'} is now ${label}.`,
+             `Application ${candidateLabel}`,
+             `Your application for ${job.rows[0]?.title || 'a role'} at ${job.rows[0]?.company || 'the company'} is now ${candidateLabel}.`,
              app.job_id, app.id, app.candidate_id,
-             JSON.stringify({ stage, label })]);
+             JSON.stringify({ stage, label: candidateLabel })]);
         }
 
-        return { application: toApplication(app), label, tellThem };
+        return { application: toApplication(app), label, candidateLabel, tellThem };
       });
 
       // The stage move now reaches the candidate on every channel they
@@ -364,7 +380,8 @@ export default function applicationRoutes() {
         ? await dispatchEvent(req.session, 'STAGE_CHANGED', {
             applicationId: req.params.id,
             stage: out.application.stage,
-            stageLabel: out.label,
+            // Their wording, not ours — this reaches email and SMS.
+            stageLabel: out.candidateLabel,
             note: note || null,
           })
         // Said plainly rather than left as an empty result, so a
@@ -381,6 +398,38 @@ export default function applicationRoutes() {
    * were attempted, what happened on each, and the shared expiry. Built
    * from a view so the summary cannot drift from the rows it derives from.
    */
+  /**
+   * POST /applications/:id/screen — screen this one again, now.
+   *
+   * SCREENING IS AUTOMATIC and this is not how it normally happens: every
+   * application is scored when it is created, when its resume arrives,
+   * and by a sweep every ten minutes. This is the manual retry for the
+   * ones that could not be done - an unreadable CV, or a failure while
+   * the scorer was down - and for a requirement whose skills have since
+   * been filled in.
+   *
+   * IT EXISTS BECAUSE THE BUTTON HAD NOTHING TO CALL. "Run AI Screening"
+   * ran a setTimeout in the browser that moved the application to
+   * Shortlisted using the score already on the row, and announced "AI
+   * screening passed (34% match)". Nothing was screened and no score was
+   * recomputed; it was the prototype's stand-in, still wired up.
+   *
+   * `force` because the point of pressing it is to redo work.
+   */
+  r.post('/applications/:id/screen', requireAuth(),
+    requireRole('recruiter', 'bde', 'admin'), wrap(async (req, res) => {
+      // RLS decides whether this application is theirs to touch; asking
+      // for it as the caller is what enforces that.
+      const mine = await withUser(req.session, async (c) => (await c.query(
+        `select id from applications where id=$1`, [req.params.id])).rows[0]);
+      if (!mine) throw notFound('That application does not exist.');
+
+      const out = await screenApplication(req.params.id,
+        { actor: req.session.userId || 'recruiter', force: true });
+      if (!out) throw badRequest('That application could not be screened.');
+      res.json(out);
+    }));
+
   r.get('/applications/:id/notifications', requireAuth(), wrap(async (req, res) => {
     const out = await withUser(req.session, async (c) => {
       const s = await c.query(

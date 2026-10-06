@@ -131,11 +131,15 @@ async function mayBulkSend(user, audience) {
 async function resolveEntities(user, audience, ids) {
   // eslint-disable-next-line global-require
   const scope = require('./scope');
-  const s = scope.scopeOf(user);
+  const s = scope.atsScopeOf(user);
   if (audience === 'candidates') {
     const where = s.global ? { id: { in: ids } } : { AND: [{ id: { in: ids } }, { applications: { some: scope.applicationWhere(user) } }] };
-    const rows = await prisma.candidate.findMany({ where, select: { id: true, name: true, email: true, phone: true } });
-    return rows.map((c) => ({ id: c.id, name: c.name, email: c.email, mobile: c.phone, whatsapp: c.phone }));
+    // b5_: consent withdrawn = do not contact (utils/candidateRecord.js) — skipped below with the reason.
+    const dnc = require('./candidateRecord').supported(); // eslint-disable-line global-require
+    const rows = await prisma.candidate.findMany({ where, select: { id: true, name: true, email: true, phone: true, ...(dnc ? { doNotContact: true, consentStatus: true } : {}) } });
+    return rows.map((c) => ({
+      id: c.id, name: c.name, email: c.email, mobile: c.phone, whatsapp: c.phone, doNotContact: !!(c.doNotContact || c.consentStatus === 'WITHDRAWN'),
+    }));
   }
   if (audience === 'clients') {
     const rows = await prisma.client.findMany({
@@ -189,6 +193,7 @@ async function createJob(user, input) {
       const raw = channel === 'Email' ? e.email : (channel === 'WhatsApp' ? e.whatsapp : e.mobile);
       const r = { n, entityId: e.id, name: e.name, greet: e.greet || e.name, channel, address: String(raw || '').trim(), status: 'queued', attempts: 0 };
       let key = null;
+      if (e.doNotContact) { r.status = 'skipped'; r.reason = 'Asked not to be contacted (consent withdrawn)'; recipients.push(r); return; }
       if (channel === 'Email') {
         if (!r.address) { r.status = 'skipped'; r.reason = 'No email address on record'; } else if (!core.validEmail(r.address)) { r.status = 'skipped'; r.reason = `"${r.address}" is not a valid email address`; } else key = r.address.toLowerCase();
         if (key && require('./mailer').isReservedTestAddress(r.address)) { r.status = 'skipped'; r.reason = 'Reserved test domain — never transmitted'; key = null; }
@@ -365,6 +370,7 @@ function recoverInterrupted() {
 
 function start() {
   if (timer || process.env.BULK_WORKER_INTERVAL_MS === '0') return;
+  if (require('./sandbox').isSandbox()) return; // TEST SANDBOX: no interval runner
   try { recoverInterrupted(); } catch (e) { console.error('[bulk-worker] recover:', e.message); }
   timer = setInterval(() => { runOnce().catch(() => {}); }, Number(process.env.BULK_WORKER_INTERVAL_MS || 1000));
   if (timer.unref) timer.unref();

@@ -418,12 +418,23 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
   const invoices = allInvoices.filter((i) => inReportRange(range, i.invoiceDate));
   const expenses = allExpenses.filter((e) => inReportRange(range, e.expenseDate || e.createdAt));
   const transactions = allTransactions.filter((t) => inReportRange(range, t.date));
-  const rows = invoices.map((i) => ({
-    ...i,
-    derived: deriveInvoiceStatus(i),
-    total: invoiceTotal(i),
-    outstanding: invoiceOutstanding(i),
-  }));
+  // B2 — issued credit / debit notes (utils/invoiceTax.js withNotes): the
+  // receivable, income and GST below are after them; an invoice without a
+  // note reads exactly as before.
+  const notesOf = await require('../utils/creditNotes').notesByInvoice(invoices.map((i) => i.id), { issuedOnly: true }); // eslint-disable-line global-require
+  const NT = require('../utils/invoiceTax'); // eslint-disable-line global-require
+  const rows = invoices.map((i) => {
+    const wn = NT.withNotes(i, notesOf.get(i.id) || []);
+    return {
+      ...i,
+      derived: deriveInvoiceStatus(i),
+      total: wn.hasNotes ? wn.receivable : invoiceTotal(i),
+      outstanding: invoiceOutstanding(i),
+      netAmount: wn.hasNotes ? wn.billing : Number(i.amount || 0),
+      netGst: wn.hasNotes ? wn.gst : Number(i.gst || 0),
+      refundDue: wn.refundDue,
+    };
+  });
 
   // Totals use amount + GST - TDS, so they match what the client actually pays.
   const byStatus = ['Pending', 'Partially Paid', 'Overdue', 'Paid', 'Cancelled'].map((status) => {
@@ -459,9 +470,9 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
     byClientMap.set(k, cur);
   });
 
-  const gstCharged = ROUND(rows.filter((i) => i.derived !== 'Cancelled').reduce((s, i) => s + Number(i.gst || 0), 0));
+  const gstCharged = ROUND(rows.filter((i) => i.derived !== 'Cancelled').reduce((s, i) => s + Number(i.netGst || 0), 0));
   const gstPaid = ROUND(expenses.reduce((s, e) => s + Number(e.gstAmount || 0), 0));
-  const incomeNet = ROUND(rows.filter((i) => i.derived !== 'Cancelled').reduce((s, i) => s + Number(i.amount || 0), 0));
+  const incomeNet = ROUND(rows.filter((i) => i.derived !== 'Cancelled').reduce((s, i) => s + Number(i.netAmount || 0), 0));
   const spendNet = ROUND(expenses.reduce((s, e) => s + (Number(e.monthlyAmount || 0) - Number(e.gstAmount || 0)), 0));
 
   // The prototype's own Accounts Reports table: one row per client that has
@@ -475,7 +486,8 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
     const cur = receivableMap.get(k) || { client: k, invoiced: 0, paid: 0, pending: 0 };
     cur.invoiced = ROUND(cur.invoiced + i.total);
     cur.paid = ROUND(cur.paid + Number(i.receivedAmount || 0));
-    cur.pending = ROUND(cur.invoiced - cur.paid);
+    cur.refundDue = ROUND((cur.refundDue || 0) + Number(i.refundDue || 0));
+    cur.pending = ROUND(cur.invoiced - cur.paid + cur.refundDue);
     receivableMap.set(k, cur);
   });
 

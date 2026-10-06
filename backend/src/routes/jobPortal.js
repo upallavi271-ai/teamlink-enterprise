@@ -35,7 +35,7 @@ const prisma = require('../db');
 const { requireAuth, requirePerm, can, requireProduct } = require('../middleware/auth');
 const {
   requirementWhere, portalRequirementWhere, applicationWhere, matches,
-  scopeOf, isAssignedTo, CLIENT_SHARED_STAGES, OUT_OF_SCOPE,
+  atsScopeOf: scopeOf, isAssignedTo, CLIENT_SHARED_STAGES, OUT_OF_SCOPE,
 } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
@@ -583,11 +583,19 @@ router.post('/applications/:id/score', perm(APPLICATIONS, 'create'), wrap(async 
   if (!screeningOf(application, events).duplicateChecked) {
     return res.status(409).json({ error: 'Run the duplicate check first.' });
   }
+  // B8: the Fit settings (and so the scoring version) are fresh before scoring.
+  const rmB8 = require('../utils/resumeMatch'); // eslint-disable-line global-require
+  await rmB8.loadFitSettings().catch(() => null);
   const match = computeMatch(application.candidate, application.requirement);
   const resumeScore = application.candidate.resumeScore != null ? application.candidate.resumeScore : match.overall;
   await prisma.application.update({
     where: { id: application.id },
-    data: { matchScore: match.overall, resumeScore },
+    data: {
+      matchScore: match.overall,
+      resumeScore,
+      // B8: every stored Fit records its scoring version + the explanation.
+      ...(rmB8.versionFields() ? { matchVersion: match.fitVersion, matchDetail: JSON.stringify(rmB8.scoreSnapshot(match, { engine: 'off' })) } : {}),
+    },
   });
   await screenEvent(req.user, application, `${RESUME_SCORE_ACTION} — ${resumeScore}% (match ${match.overall}%)`, null);
   await logAudit({
@@ -903,6 +911,42 @@ router.post('/client/applications/:id/decision', perm(CLIENT_VIEW, 'edit'), wrap
       reasonDetail: decision.stage === 'REJECTED' ? reasonDetail : null,
     },
   });
+  if (decision.stage && decision.stage !== application.stage) {
+    // e2e gap 3: the same-client warning reads the rejection index — a
+    // client's own reject must reach it at once, like a pipeline reject.
+    if (decision.stage === 'REJECTED') {
+      // eslint-disable-next-line global-require
+      try { require('../utils/rejections').invalidate(); } catch { /* next read refreshes it */ }
+    }
+    // e2e gap 8: the client answered, so the "Chase the client" task closes
+    // and the next one is raised — the same bookkeeping as a pipeline move.
+    try {
+      // eslint-disable-next-line global-require
+      const FU = require('../utils/followups');
+      if (decision.stage === 'REJECTED') {
+        await prisma.applicationFollowUp.updateMany({
+          where: { applicationId: application.id, completedAt: null },
+          data: { completedAt: new Date(), completedById: req.user.id, completedNote: `Closed automatically — the client rejected (${stageLabel('REJECTED')}).` },
+        });
+      } else {
+        await FU.closeClientChaseOnLeave({
+          applicationId: application.id, fromStage: application.stage, toStage: decision.stage, user: req.user,
+        });
+        const full = await prisma.application.findUnique({
+          where: { id: application.id },
+          include: { requirement: { include: { client: true, recruiter: true, bde: true } } },
+        });
+        if (full) {
+          await FU.raiseAutoFollowUp({
+            application: full, requirement: full.requirement, user: req.user, stage: decision.stage,
+          });
+        }
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[portal decision] follow-up bookkeeping failed:', err.message);
+    }
+  }
   // The recruiter, BDE and lead named on the requirement are told. Scheduling
   // stays theirs; the client asked, they act.
   await notifyUsers(

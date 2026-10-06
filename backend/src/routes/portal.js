@@ -25,14 +25,14 @@ const express = require('express');
 const fs = require('fs');
 const prisma = require('../db');
 const { requireAuth, can } = require('../middleware/auth');
-const { CLIENT_SHARED_STAGES, clientWhere, candidateWhere, invoiceWhere } = require('../utils/scope');
+const { CLIENT_SHARED_STAGES, candidateWhere, invoiceWhere } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const {
   REQUIREMENT_LIVE_STATUSES, requirementIsLive, normalizeAgreementStatus, PORTAL_APPLICATION_SOURCE,
 } = require('../utils/atsVocab');
 const attachments = require('../utils/attachments');
-const { portalLoginFor, loginSummary, inviteToPortal, claimCandidateLogin } = require('../utils/portalAccess');
+const { portalLoginFor, loginSummary, inviteToPortal } = require('../utils/portalAccess');
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
@@ -132,6 +132,20 @@ function interviewOf(a, { forCandidate } = {}) {
 // ===========================================================================
 router.get('/client', requireAuth, wrap(async (req, res) => {
   const u = req.user;
+  // BILLING client login (spec B1): invoices only — no jobs, no candidates,
+  // no interviews. utils/clientPortalTypes.js refuses every other feature.
+  if (isClientLogin(u) && u.portalType === 'BILLING') {
+    if (!(await can(u, 'accounts', 'accounts', 'Invoices', 'view'))) return res.status(403).json({ error: 'Invoices are not part of your access yet — ask TeamLink.' });
+    const c = await prisma.client.findUnique({ where: { id: u.clientId }, select: { name: true, legalName: true, clientCode: true, gst: true } });
+    if (!c) return res.status(404).json({ error: 'Your company record was not found — contact TeamLink.' });
+    const rows = await prisma.invoice.findMany({
+      where: { AND: [invoiceWhere(u), { clientId: u.clientId }] },
+      select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, amount: true, gst: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    }).catch(() => []);
+    return res.json({ billingOnly: true, portalType: 'BILLING', company: { name: c.name, legalName: c.legalName, clientCode: c.clientCode, gst: c.gst }, invoices: rows });
+  }
   if (!isClientLogin(u) || !(await can(u, 'ats', 'requirements', 'Client Job Portal', 'view'))) {
     return res.status(403).json({ error: 'The client portal is for client logins.' });
   }
@@ -209,6 +223,15 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
   }) : [];
   const resumeOf = new Map();
   resumeDocs.forEach((d) => { if (!resumeOf.has(d.candidateId)) resumeOf.set(d.candidateId, d); });
+  // resume_ (user decision 2026-10-03): a client sees ONLY the EDITED resume
+  // (TeamLink format, contact details removed) — never the original upload.
+  const editedResumes = shared.length ? await prisma.candidateResume.findMany({
+    where: { candidateId: { in: [...new Set(shared.map((a) => a.candidateId))] }, kind: 'EDITED', file: { not: null }, hiddenAt: null },
+    select: { candidateId: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  }) : [];
+  const editedOf = new Map();
+  editedResumes.forEach((r) => { if (!editedOf.has(r.candidateId)) editedOf.set(r.candidateId, r); });
 
   // Their OWN feedback records (kind Client, this client) — never the panel's.
   const feedback = shared.length ? await prisma.interviewFeedback.findMany({
@@ -222,7 +245,6 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
     const mine = clientEvents.get(a.id) || [];
     const lastDecision = mine.length ? decisionCode(mine[mine.length - 1].action) : null;
     const st = clientStatus(a.stage, lastDecision);
-    const doc = resumeOf.get(a.candidateId);
     const fb = feedbackOf.get(a.id);
     return {
       applicationId: a.id,
@@ -244,7 +266,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       canShortlist: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage),
       sharedAt: sharedAt.get(a.id) || a.createdAt,
       interview: interviewOf(a),
-      resume: doc ? { name: doc.name, downloadable: !!storedOf(doc) } : (a.candidate.resumeName ? { name: a.candidate.resumeName, downloadable: false } : null),
+      resume: editedOf.has(a.candidateId) ? { name: `${a.candidate.name} - Resume (TeamLink).pdf`, downloadable: true } : null,
       yourDecisions: mine.map((e) => ({ decision: decisionCode(e.action), label: e.action, note: e.comment || e.reasonCategory || null, at: e.createdAt })),
       yourFeedback: fb ? { recommendation: fb.recommendation, comment: fb.overall, at: fb.updatedAt } : null,
     };
@@ -334,7 +356,11 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       end: client.agreementEnd,
       signedAt: client.agreementSignedAt,
       activatedAt: client.agreementActivatedAt,
-      viewPath: `/clients/${client.id}?tab=agreement`,
+      // 2026-10-05: the client's own agreement screen (view + PDF; a client
+      // login cannot open /clients). signPath = the link page while it waits.
+      viewPath: `/agreements/${client.id}`,
+      // eslint-disable-next-line global-require
+      signPath: ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(agStatus) ? (await (async () => { const full = await prisma.client.findUnique({ where: { id: client.id } }); const sg = require('../utils/agreementSigning'); return sg.linkState(full).ok ? sg.pathFor(full) : null; })()) : null,
     } : null,
     invoices,
     totals: {
@@ -346,7 +372,42 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       joined: hires.filter((h) => h.status === 'Joined').length,
     },
     permissions: { decide: await can(u, 'ats', 'requirements', 'Client Job Portal', 'edit') },
+    // Reviewer / Viewer (spec B1), null for an older login; drives the first-login guide.
+    portalType: u.portalType || null,
   });
+}));
+
+// CLIENT REPORTS (per-role spec 2026-10-03): the client's own company
+// numbers — open requirements, candidates sent, decisions waiting,
+// interviews, selected, joined. Only what was shared with them.
+router.get('/client/reports', requireAuth, wrap(async (req, res) => {
+  const u = req.user;
+  if (!isClientLogin(u) || !(await can(u, null, 'reports', 'Client Reports', 'view'))) {
+    return res.status(403).json({ error: 'Reports are not part of your access.' });
+  }
+  // eslint-disable-next-line global-require
+  const own = require('../utils/ownResults');
+  const report = await own.clientReport(u, req.query || {});
+  if (String((req.query || {}).format || '') === 'csv') {
+    if (!(await can(u, null, 'reports', 'Client Reports', 'export'))) return res.status(403).json({ error: 'Download is not part of your access.' });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="company-report.csv"');
+    return res.send(own.toCsvRows(report));
+  }
+  return res.json(report);
+}));
+
+// NEW REQUIREMENT REQUEST (per-role spec 2026-10-03): the client asks for a
+// new hire from the portal. Saved as a DRAFT TeamLink reviews and opens
+// (utils/requirementRequest.js) — never live by itself.
+router.post('/client/requirement-requests', requireAuth, wrap(async (req, res) => {
+  const u = req.user;
+  if (!isClientLogin(u) || !u.clientId || !(await can(u, 'ats', 'requirements', 'Requirement Request', 'create'))) {
+    return res.status(403).json({ error: 'Requesting a new requirement is not part of your access.' });
+  }
+  // eslint-disable-next-line global-require
+  const out = await require('../utils/requirementRequest').createRequirementRequest({ ...(req.body || {}), clientId: u.clientId }, { user: u, via: 'Client portal' });
+  return res.status(out.status).json(out.body);
 }));
 
 router.get('/client/resume/:applicationId', requireAuth, wrap(async (req, res) => {
@@ -362,14 +423,19 @@ router.get('/client/resume/:applicationId', requireAuth, wrap(async (req, res) =
     shared = !!(await prisma.applicationStageEvent.findFirst({ where: { applicationId: app.id, toStage: { in: CLIENT_SHARED_STAGES } }, select: { id: true } }));
   }
   if (!shared) return res.status(404).json({ error: 'Candidate not found' });
-  const doc = await prisma.candidateDocument.findFirst({
-    where: { candidateId: app.candidateId, docType: 'Resume', internalOnly: false, note: { startsWith: FILE_PREFIX } },
+  // resume_: the latest EDITED version (TeamLink-format PDF, contact details
+  // removed) — a client never receives an original upload.
+  const edited = await prisma.candidateResume.findFirst({
+    where: { candidateId: app.candidateId, kind: 'EDITED', file: { not: null }, hiddenAt: null }, // resume_: a version hidden as a wrong file is never sent
     orderBy: { createdAt: 'desc' },
+    select: { file: true, candidate: { select: { name: true } } },
   });
-  const full = doc && attachments.resolveStored(storedOf(doc));
+  const full = edited && require('../utils/resumeStore').resolveResumeFile(edited.file); // eslint-disable-line global-require
   if (!full) return res.status(404).json({ error: 'No resume file has been shared for this candidate yet.' });
-  res.setHeader('Content-Disposition', `inline; filename="${String(doc.name).replace(/[^\w.\- ]/g, '_')}"`);
-  res.setHeader('Content-Type', full.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Resume viewed by client (latest edited, PDF)', entity: 'Candidate', entityId: app.candidateId });
+  res.setHeader('Content-Disposition', `inline; filename="${`${edited.candidate.name} - Resume (TeamLink).pdf`.replace(/[^\w.\- ()]/g, '_')}"`);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Cache-Control', 'private, no-store');
   fs.createReadStream(full).pipe(res);
   return undefined;
 }));
@@ -429,6 +495,8 @@ router.get('/candidate', requireAuth, wrap(async (req, res) => {
       joiningStatus: a.joiningStatus || null,
       documents: a.documentsStatus || null,
       joinedAt: a.joinedAt || null,
+      // The offer is waiting for the candidate's answer (spec B2: offer accept).
+      canRespond: a.offerStatus === 'Offer Released',
     } : null;
     return {
       id: a.id,
@@ -445,6 +513,7 @@ router.get('/candidate', requireAuth, wrap(async (req, res) => {
       interview: interviewOf(a, { forCandidate: true }),
       aiInterview: aiPending ? { pending: true, deadline: a.aiInterviewDeadline || null, link: null } : null,
       offer,
+      canWithdraw: !['REJECTED', 'JOINED', 'HIRED'].includes(a.stage),
     };
   });
   const doc = await prisma.candidateDocument.findFirst({
@@ -508,6 +577,8 @@ router.post('/candidate/resume', requireAuth, wrap(async (req, res) => {
   });
   await prisma.candidate.update({ where: { id: req.user.candidateId }, data: { resumeName: stored.billName } });
   await logAudit({ userId: req.user.id, action: 'Candidate uploaded resume (portal)', entity: 'Candidate', entityId: req.user.candidateId, toValue: stored.billName });
+  // resume_: also kept as an ORIGINAL resume version (Resume tab + extraction).
+  try { await require('../utils/resumeStore').saveOriginalResume({ candidateId: req.user.candidateId, file, user: req.user, note: 'candidate portal' }); } catch { /* the portal copy above stands */ } // eslint-disable-line global-require
   return res.status(201).json({ ok: true, name: doc.name, uploadedAt: doc.createdAt, storedName: stored.billFile });
 }));
 
@@ -526,8 +597,13 @@ router.get('/candidate/resume', requireAuth, wrap(async (req, res) => {
 
 router.post('/candidate/apply/:requirementId', requireAuth, wrap(async (req, res) => {
   if (!candidateOnly(req, res)) return undefined;
-  const job = await prisma.requirement.findUnique({ where: { id: req.params.requirementId }, select: { id: true, title: true, status: true, portalPublished: true, recruiterId: true, tlId: true } });
+  const job = await prisma.requirement.findUnique({ where: { id: req.params.requirementId }, select: { id: true, title: true, status: true, portalPublished: true, recruiterId: true, tlId: true, clientId: true, internal: true } });
   if (!job || !requirementIsLive(job.status) || !job.portalPublished) return res.status(404).json({ error: 'This job is not open any more.' });
+  // A paused / archived client takes no new applications (spec 2026-10-03 §A).
+  // eslint-disable-next-line global-require
+  if (!job.internal && await require('../utils/clientLifecycle').newWorkRefusalFor(job.clientId)) {
+    return res.status(409).json({ error: 'This job is not accepting applications right now.' });
+  }
   const exists = await prisma.application.findUnique({ where: { candidateId_requirementId: { candidateId: req.user.candidateId, requirementId: job.id } } });
   if (exists) return res.status(409).json({ error: 'You have already applied to this job.' });
   const app = await prisma.application.create({
@@ -541,41 +617,195 @@ router.post('/candidate/apply/:requirementId', requireAuth, wrap(async (req, res
   return res.status(201).json({ ok: true, applicationId: app.id, message: 'Application sent. You can follow it under My Applications.' });
 }));
 
+// ---- Candidate self-service (spec B2, 2026-10-03) --------------------------
+//   GET  /candidate/extras                    documents, open requests, password set?
+//   POST /candidate/documents                 upload a joining document (PDF / photo)
+//   POST /candidate/applications/:id/offer    { decision: 'accept' | 'decline', reason }
+//   POST /candidate/applications/:id/withdraw { reason }  -> the recruiter closes it
+//   POST /candidate/privacy-request           { reason }  "delete my data" -> Admin queue
+//   POST /candidate/password                  { password } optional; codes keep working
+// Every one is pinned to the signed-in candidate's OWN record / applications.
+const CANDIDATE_DOC_TYPES = ['ID proof', 'Address proof', 'Education certificate', 'Experience letter', 'Payslip', 'Photo', 'Other'];
+const CLOSED_STAGES = ['REJECTED', 'JOINED', 'HIRED'];
+
+async function ownApplication(req, res) {
+  const app = await prisma.application.findFirst({
+    where: { id: req.params.id, candidateId: req.user.candidateId },
+    include: { requirement: { select: { id: true, title: true, recruiterId: true, tlId: true, client: { select: { name: true } } } } },
+  });
+  if (!app) { res.status(404).json({ error: 'Application not found.' }); return null; }
+  return app;
+}
+const recruiterAndTl = (app) => [app.requirement && app.requirement.recruiterId, app.requirement && app.requirement.tlId].filter(Boolean);
+
+router.get('/candidate/extras', requireAuth, wrap(async (req, res) => {
+  if (!candidateOnly(req, res)) return undefined;
+  const cid = req.user.candidateId;
+  const [docs, requests, me] = await Promise.all([
+    prisma.candidateDocument.findMany({
+      where: { candidateId: cid, internalOnly: false, uploadedByUserId: req.user.id, docType: { not: 'Resume' } },
+      select: { id: true, docType: true, name: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 50,
+    }),
+    prisma.portalRequest.findMany({ where: { candidateId: cid, kind: { startsWith: 'CANDIDATE_' } }, orderBy: { createdAt: 'desc' }, take: 20 }),
+    prisma.user.findUnique({ where: { id: req.user.id }, select: { passwordChangedAt: true } }),
+  ]);
+  return res.json({
+    documentTypes: CANDIDATE_DOC_TYPES,
+    documents: docs,
+    requests: requests.map((r) => ({
+      // (a withdraw request keeps its application id in `email` — no schema change)
+      id: r.id, kind: r.kind, status: r.status, applicationId: r.kind === 'CANDIDATE_WITHDRAW' ? r.email : null, reason: r.reason, createdAt: r.createdAt,
+      label: r.kind === 'CANDIDATE_WITHDRAW' ? `Withdraw — ${r.name || 'application'}` : 'Delete my data',
+      words: r.status === 'Pending' ? 'Waiting' : (r.status === 'Done' ? 'Done' : r.status),
+    })),
+    passwordSet: !!(me && me.passwordChangedAt),
+  });
+}));
+
+router.post('/candidate/documents', requireAuth, wrap(async (req, res) => {
+  if (!candidateOnly(req, res)) return undefined;
+  let parsed;
+  try { parsed = await attachments.parseMultipart(req); } catch (e) { return res.status(400).json({ error: attachments.MESSAGE[e.code] || 'Upload failed.' }); }
+  const file = parsed.file;
+  if (!file) return res.status(400).json({ error: attachments.MESSAGE.NO_FILE });
+  const docType = CANDIDATE_DOC_TYPES.includes((parsed.fields || {}).docType) ? parsed.fields.docType : 'Other';
+  let stored;
+  try { stored = attachments.store(file); } catch (e) { return res.status(400).json({ error: attachments.MESSAGE[e.code] || 'Upload a PDF, JPG or PNG file.' }); }
+  const doc = await prisma.candidateDocument.create({
+    data: {
+      candidateId: req.user.candidateId, docType, name: stored.billName, note: `${FILE_PREFIX}${stored.billFile}`,
+      internalOnly: false, uploadedByUserId: req.user.id, uploadedByName: `${req.user.name} (candidate)`,
+    },
+  });
+  await logAudit({ userId: req.user.id, action: `Candidate uploaded a document (portal): ${docType}`, entity: 'Candidate', entityId: req.user.candidateId, toValue: stored.billName });
+  const apps = await prisma.application.findMany({ where: { candidateId: req.user.candidateId, stage: { notIn: CLOSED_STAGES } }, select: { requirement: { select: { recruiterId: true, tlId: true } } } });
+  await notifyUsers(apps.flatMap((a) => [a.requirement && a.requirement.recruiterId]).filter(Boolean), { title: 'Candidate uploaded a document', message: `${req.user.name}: ${docType}` });
+  return res.status(201).json({ ok: true, id: doc.id, message: `${docType} uploaded. Your recruiter can see it now.` });
+}));
+
+router.post('/candidate/applications/:id/offer', requireAuth, wrap(async (req, res) => {
+  if (!candidateOnly(req, res)) return undefined;
+  const app = await ownApplication(req, res);
+  if (!app) return undefined;
+  const decision = String((req.body && req.body.decision) || '');
+  if (app.offerStatus !== 'Offer Released') return res.status(409).json({ error: 'There is no offer waiting for your answer on this job.' });
+  // B3 (2026-10-06): an expired offer cannot be accepted; the answer marks the offer version too.
+  // eslint-disable-next-line global-require
+  const offerLink = require('../utils/offerLink');
+  if (await offerLink.isExpired(app.id)) return res.status(409).json({ error: 'This offer has expired. Ask your recruiter about a new offer.' });
+  if (['accept', 'decline'].includes(decision) && (decision === 'accept' || String((req.body && req.body.reason) || '').trim())) {
+    await offerLink.markCurrent(app.id, decision === 'accept' ? 'Accepted' : 'Declined', { via: 'answered on the candidate portal', reason: String((req.body && req.body.reason) || '').trim().slice(0, 500) || null });
+  }
+  if (decision === 'accept') {
+    await prisma.application.update({
+      where: { id: app.id },
+      data: { stage: 'OFFER_ACCEPTED', offerStatus: 'Offer Accepted', offerAcceptedAt: new Date(), documentsStatus: app.documentsStatus === 'Verified' ? 'Verified' : (app.documentsStatus || 'Pending') },
+    });
+    await logAudit({ userId: req.user.id, action: 'Offer accepted by the candidate (portal)', entity: 'Application', entityId: app.id, fromValue: 'Offer Released', toValue: 'Offer Accepted' });
+    // eslint-disable-next-line global-require
+    await require('../utils/stageEvents').recordWorkflowMove({ user: req.user, existing: app, toStage: 'OFFER_ACCEPTED', action: 'Offer accepted by the candidate (portal)' });
+    await notifyUsers(recruiterAndTl(app), { title: 'Offer accepted', message: `${req.user.name} accepted the offer for ${app.requirement.title}.` });
+    return res.json({ ok: true, message: 'Offer accepted. Your recruiter will share the joining steps.' });
+  }
+  if (decision === 'decline') {
+    const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ error: 'Tell us why, in a few words.' });
+    await prisma.application.update({ where: { id: app.id }, data: { offerStatus: 'Offer Declined', offerNotes: `Candidate (portal): ${reason}` } });
+    await logAudit({ userId: req.user.id, action: `Offer declined by the candidate (portal) — ${reason}`, entity: 'Application', entityId: app.id, fromValue: 'Offer Released', toValue: 'Offer Declined' });
+    await notifyUsers(recruiterAndTl(app), { title: 'Offer declined', message: `${req.user.name} declined the offer for ${app.requirement.title}: ${reason}` });
+    return res.json({ ok: true, message: 'Your answer is recorded. Your recruiter has been told.' });
+  }
+  return res.status(400).json({ error: 'Choose Accept or Decline.' });
+}));
+
+router.post('/candidate/applications/:id/withdraw', requireAuth, wrap(async (req, res) => {
+  if (!candidateOnly(req, res)) return undefined;
+  const app = await ownApplication(req, res);
+  if (!app) return undefined;
+  if (CLOSED_STAGES.includes(app.stage)) return res.status(409).json({ error: 'This application is already closed.' });
+  const dupe = await prisma.portalRequest.findFirst({ where: { kind: 'CANDIDATE_WITHDRAW', status: 'Pending', candidateId: req.user.candidateId, email: app.id } });
+  if (dupe) return res.status(409).json({ error: 'You have already asked to withdraw this application.' });
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500) || null;
+  // The recruiter closes it with the normal Reject step ("Candidate
+  // declined"), so the reason and side are recorded the usual way.
+  await prisma.portalRequest.create({
+    data: { kind: 'CANDIDATE_WITHDRAW', status: 'Pending', candidateId: req.user.candidateId, userId: req.user.id, name: app.requirement.title, email: app.id, reason, requestedById: req.user.id, requestedByName: req.user.name },
+  });
+  await logAudit({ userId: req.user.id, action: 'Candidate asked to withdraw (portal)', entity: 'Application', entityId: app.id, toValue: reason || '—' });
+  await notifyUsers(recruiterAndTl(app), { title: 'Candidate wants to withdraw', message: `${req.user.name} asked to withdraw from ${app.requirement.title}${reason ? `: ${reason}` : ''}. Close it with Reject → "Candidate declined".` });
+  return res.status(201).json({ ok: true, message: 'Done — your recruiter has been told and will close this application.' });
+}));
+
+router.post('/candidate/privacy-request', requireAuth, wrap(async (req, res) => {
+  if (!candidateOnly(req, res)) return undefined;
+  const dupe = await prisma.portalRequest.findFirst({ where: { kind: 'CANDIDATE_PRIVACY', status: 'Pending', candidateId: req.user.candidateId } });
+  if (dupe) return res.status(409).json({ error: 'Your request is already with our team.' });
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500) || null;
+  // NEVER deletes anything by itself: the request waits in the Admin queue
+  // (Clients -> Client logins review -> Candidate requests).
+  await prisma.portalRequest.create({
+    data: { kind: 'CANDIDATE_PRIVACY', status: 'Pending', candidateId: req.user.candidateId, userId: req.user.id, name: req.user.name, reason, requestedById: req.user.id, requestedByName: req.user.name },
+  });
+  await logAudit({ userId: req.user.id, action: 'Candidate asked to delete their data (portal) — waiting for Admin', entity: 'Candidate', entityId: req.user.candidateId, toValue: reason || '—' });
+  return res.status(201).json({ ok: true, message: 'Request sent. Our team will contact you before anything is removed.' });
+}));
+
+router.post('/candidate/password', requireAuth, wrap(async (req, res) => {
+  if (!candidateOnly(req, res)) return undefined;
+  const pw = String((req.body && req.body.password) || '');
+  // eslint-disable-next-line global-require
+  const out = await require('../utils/candidatePortalAuth').setOwnPassword(req.user, pw);
+  if (out.error) return res.status(400).json({ error: out.error });
+  await logAudit({ userId: req.user.id, action: 'Candidate set a portal password', entity: 'User', entityId: req.user.id });
+  return res.json({ ok: true, message: 'Password saved. You can sign in with it, or keep using a code.' });
+}));
+
 // ===========================================================================
 // PORTAL LOGINS — who has one, and "Invite to portal"
 // ===========================================================================
-// Client: SA / Admin / the client's BDE (clients / Client Detail / assign —
-// a Manager's view-only rule refuses it in can()). Candidate: whoever edits
-// the candidate (candidates / Candidate Master / edit), in their own scope.
+// CLIENT logins are no longer made here: they go through the request /
+// approval flow on Client 360 -> Portal access (routes/portalLogins.js, spec
+// B1 — agreement Active, BDE requests, Admin approves, 3 per company).
+//
+// CANDIDATE "Invite to portal" (spec B2): the owner Recruiter, the TL or the
+// Admin ('Candidate Portal Invite' create — never a BDE, Client or HR), only
+// for a candidate whose application IN THEIR AREA is at Interview, Offer or
+// Joining, and only to the email already on the candidate's record. The link
+// opens nothing by itself: the candidate proves that email with a one-time
+// code first (routes/portalPublic.js), so a forwarded link cannot hijack the
+// record.
+const INVITE_STAGES = ['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED'];
 async function loadForInvite(req, res) {
   const kind = req.params.kind;
-  if (!['client', 'candidate'].includes(kind)) { res.status(404).json({ error: 'Unknown portal' }); return null; }
+  if (kind === 'client') { res.status(410).json({ error: 'Client logins are added on the client page → Portal access.' }); return null; }
+  if (kind !== 'candidate') { res.status(404).json({ error: 'Unknown portal' }); return null; }
   const u = req.user;
-  const allowed = kind === 'client'
-    ? await can(u, 'ats', 'clients', 'Client Detail', 'assign')
-    : await can(u, 'ats', 'candidates', 'Candidate Master', 'edit');
-  if (!allowed) { res.status(403).json({ error: 'Your role cannot invite people to the portal.' }); return null; }
-  const record = kind === 'client'
-    ? await prisma.client.findFirst({ where: { AND: [{ id: req.params.id }, clientWhere(u)] }, select: { id: true, name: true, contactName: true, contactEmail: true, recruitmentContactEmail: true, recruitmentContactName: true, agreementStatus: true, clientType: true } })
-    : await prisma.candidate.findFirst({ where: { AND: [{ id: req.params.id }, candidateWhere(u)] }, select: { id: true, name: true, email: true } });
-  if (!record) { res.status(404).json({ error: `${kind === 'client' ? 'Client' : 'Candidate'} not found, or outside your access scope` }); return null; }
-  if (kind === 'client' && record.clientType === 'Internal') { res.status(400).json({ error: 'TeamLink\'s own internal client has no portal.' }); return null; }
-  return { kind, record };
+  if (!(await can(u, 'ats', 'candidates', 'Candidate Portal Invite', 'create'))) {
+    res.status(403).json({ error: 'Only the candidate\'s recruiter, their team lead or the Admin can invite them to the portal.' });
+    return null;
+  }
+  const record = await prisma.candidate.findFirst({ where: { AND: [{ id: req.params.id }, candidateWhere(u)] }, select: { id: true, name: true, email: true } });
+  if (!record) { res.status(404).json({ error: 'Candidate not found, or not in your area.' }); return null; }
+  // eslint-disable-next-line global-require
+  const { applicationWhere } = require('../utils/scope');
+  const app = await prisma.application.findFirst({
+    where: { AND: [{ candidateId: record.id }, { stage: { in: INVITE_STAGES } }, applicationWhere(u)] },
+    select: { id: true, stage: true },
+  });
+  return { kind, record, eligible: !!app };
 }
 
 router.get('/access/:kind/:id', requireAuth, wrap(async (req, res) => {
   const got = await loadForInvite(req, res);
   if (!got) return undefined;
   const login = await portalLoginFor(got.kind, got.record.id);
-  const r = got.record;
-  const agreement = got.kind === 'client' ? normalizeAgreementStatus(r.agreementStatus) : null;
   return res.json({
     login: loginSummary(login),
-    suggestedEmail: got.kind === 'client' ? (r.contactEmail || r.recruitmentContactEmail || '') : (r.email || ''),
-    suggestedName: got.kind === 'client' ? (r.contactName || r.recruitmentContactName || r.name) : r.name,
-    // The rule: a client is invited once the agreement is out (Sent) or Active.
-    recommended: got.kind === 'client' ? ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING', 'CONFIRMED', 'SIGNED', 'ACTIVE'].includes(agreement) && !login : !login,
-    agreementStatus: agreement,
+    email: got.record.email || '',
+    eligible: got.eligible,
+    // Shown only when an invite makes sense: Interview / Offer / Joining, an
+    // email on file, and no working login yet.
+    recommended: got.eligible && !!got.record.email && !(login && login.status === 'Active' && login.lastLoginAt),
   });
 }));
 
@@ -583,42 +813,40 @@ router.post('/invite/:kind/:id', requireAuth, wrap(async (req, res) => {
   const got = await loadForInvite(req, res);
   if (!got) return undefined;
   const r = got.record;
-  // Re-sending to an existing login goes to THAT login's address.
-  const existing = await portalLoginFor(got.kind, r.id);
-  const email = (req.body && req.body.email) || (existing && existing.email) || (got.kind === 'client' ? (r.contactEmail || r.recruitmentContactEmail) : r.email);
-  const name = (req.body && req.body.name) || (got.kind === 'client' ? (r.contactName || r.recruitmentContactName || r.name) : r.name);
-  // Mail goes out only when the inviter asks for it (send: true).
-  const out = await inviteToPortal({ kind: got.kind, record: r, email, name, req, actingUser: req.user, send: !!(req.body && req.body.send) });
+  if (!got.eligible) return res.status(409).json({ error: 'Invite to portal opens when the candidate reaches Interview, Offer or Joining.' });
+  if (!r.email) return res.status(400).json({ error: 'Add the candidate\'s email first — the invite goes only to their own email.' });
+  const existing = await portalLoginFor('candidate', r.id);
+  if (existing && ['Inactive', 'Suspended', 'Disabled'].includes(existing.status)) return res.status(409).json({ error: 'This candidate\'s portal login was switched off by the Admin.' });
+  // Always the email on the record (an inviter cannot point it elsewhere),
+  // always by email.
+  const out = await inviteToPortal({ kind: 'candidate', record: r, email: (existing && existing.email) || r.email, name: r.name, req, actingUser: req.user, send: true });
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
   await logAudit({
     userId: req.user.id,
-    action: `${out.created ? 'Portal login created' : 'Portal invite re-issued'} (${got.kind})`,
-    entity: got.kind === 'client' ? 'Client' : 'Candidate',
+    action: `${out.created ? 'Candidate portal invite sent (login waiting for email code)' : 'Candidate portal invite re-sent'}`,
+    entity: 'Candidate',
     entityId: r.id,
-    toValue: `${out.user.email} · ${out.sent ? 'mailed' : 'link handed to inviter'}`,
+    toValue: `${out.user.email} · ${out.sent ? 'mailed' : 'not mailed'}`,
   });
   return res.status(out.created ? 201 : 200).json({
     created: out.created, email: out.user.email, sent: out.sent, status: out.status, link: out.link, expiresAt: out.expiresAt,
-    login: loginSummary(await portalLoginFor(got.kind, r.id)),
+    login: loginSummary(await portalLoginFor('candidate', r.id)),
   });
 }));
 
-// PUBLIC — "Get my sign-in link". Same answer whether or not the email is
-// known (no account enumeration), and the link only ever goes BY MAIL.
-const claimHits = new Map();
+// PUBLIC — the old 'Get my sign-in link' (it mailed a set-password link and
+// created a login with no code). Kept as an alias so an old page still works:
+// it now starts the ONE-TIME CODE flow (routes/portalPublic.js). Same answer
+// whether or not the email is known.
 router.post('/public/claim', wrap(async (req, res) => {
-  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
-  const key = `${req.ip}|${email}`;
-  const now = Date.now();
-  const hits = (claimHits.get(key) || []).filter((t) => now - t < 3600000);
-  if (hits.length >= 3) return res.status(429).json({ error: 'Too many requests — try again in an hour.' });
-  hits.push(now); claimHits.set(key, hits);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter the email address you applied with.' });
-  const out = await claimCandidateLogin({ email, req });
-  if (out.matched) {
-    await logAudit({ userId: out.userId || null, action: `Candidate portal sign-in link requested${out.created ? ' (login created)' : ''}`, entity: 'User', entityId: out.userId || null, toValue: out.sent ? 'Mailed' : 'Not mailed' });
-  }
-  return res.json({ message: 'If you have applied with this email, a sign-in link has been sent to it. The link works once and expires in 48 hours.' });
+  const out = await require('../utils/candidatePortalAuth').requestCode({ email: req.body && req.body.email, req, purposeNote: 'claim' }); // eslint-disable-line global-require
+  return res.status(out.status).json(out.body);
 }));
+
+// Candidate OTP sign-in / self-registration / invite links (spec B2).
+router.use('/public', require('./portalPublic'));
+
+// Client portal logins: Client 360 -> Portal access, quarterly review (spec B1).
+router.use('/logins', require('./portalLogins'));
 
 module.exports = router;

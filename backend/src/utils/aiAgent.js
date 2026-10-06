@@ -80,9 +80,62 @@ async function agentConfig() {
 let cachedClient = null; // { key, client }
 
 function clientFor(apiKey) {
+  // TEST SANDBOX: no Anthropic call unless TEST_ALLOW_AI=1 (utils/sandbox.js).
+  const sb = require('./sandbox');
+  if (sb.isSandbox() && !sb.allowAi()) {
+    return { messages: { create: async () => { throw new Error(sb.aiRefusal()); } } };
+  }
   if (cachedClient && cachedClient.key === apiKey) return cachedClient.client;
-  cachedClient = { key: apiKey, client: new Anthropic({ apiKey, maxRetries: 1, timeout: 120000 }) };
+  cachedClient = { key: apiKey, client: withCreditHold(apiKey, new Anthropic({ apiKey, maxRetries: 1, timeout: 120000 })) };
   return cachedClient.client;
+}
+
+// --- Out of credits ----------------------------------------------------------
+// Anthropic answers 400 "Your credit balance is too low…" when the ACCOUNT has
+// no prepaid credits — the key itself is fine. Once that answer comes back,
+// further calls with the same key fail at once with the same plain message for
+// CREDIT_HOLD_MS instead of each one making another doomed round trip (every
+// weekly idea, every assistant question). The Integrations "Test" button
+// always clears the hold first, so it is the live check after buying credits.
+// Only a hash of the key is kept here.
+const CREDIT_HOLD_MS = 10 * 60 * 1000;
+const NO_CREDITS = 'The Anthropic account has no API credits left (Anthropic: "credit balance is too low"). The API key is fine — buy credits at console.anthropic.com → Plans & Billing, then press Test on Administration → Integrations → AI Assistant.';
+let creditHold = null; // { keyHash, until }
+const holdHash = (key) => require('crypto').createHash('sha256').update(String(key)).digest('hex');
+
+function isCreditError(err) {
+  if (!err || (err.status !== 400 && err.status !== 402)) return false;
+  const msg = String((err.error && err.error.error && err.error.error.message) || err.message || '');
+  return /credit balance is too low|purchase credits/i.test(msg);
+}
+
+function creditHeld(apiKey) {
+  return !!(creditHold && creditHold.keyHash === holdHash(apiKey) && Date.now() < creditHold.until);
+}
+
+function clearCreditHold() { creditHold = null; }
+
+function withCreditHold(apiKey, client) {
+  return {
+    messages: {
+      create: async (...args) => {
+        if (creditHeld(apiKey)) {
+          const err = new Error(NO_CREDITS);
+          err.status = 400;
+          err.creditHold = true;
+          throw err;
+        }
+        try {
+          const r = await client.messages.create(...args);
+          creditHold = null;
+          return r;
+        } catch (err) {
+          if (isCreditError(err)) creditHold = { keyHash: holdHash(apiKey), until: Date.now() + CREDIT_HOLD_MS };
+          throw err;
+        }
+      },
+    },
+  };
 }
 
 function resetClient() { cachedClient = null; }
@@ -117,6 +170,7 @@ function apiError(err) {
   // Each error class is checked for existence first: `instanceof undefined`
   // would THROW from inside the error handler.
   const is = (Klass) => typeof Klass === 'function' && err instanceof Klass;
+  if (err.creditHold || isCreditError(err)) return NO_CREDITS;
   if (is(Anthropic.AuthenticationError) || err.status === 401) return 'Anthropic rejected the API key (401). Check the key in Administration → Integrations.';
   if (is(Anthropic.PermissionDeniedError) || err.status === 403) return 'Anthropic refused this request (403). The key may not have access to that model.';
   if (is(Anthropic.RateLimitError) || err.status === 429) return 'Anthropic is rate-limiting this API key (429). Try again shortly.';
@@ -133,6 +187,8 @@ function apiError(err) {
 async function testConnection() {
   const cfg = await agentConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, error: cfg.reason };
+  // Test is the live check after buying credits — never answered from the hold.
+  clearCreditHold();
   try {
     const r = await clientFor(cfg.apiKey).messages.create({
       model: cfg.model,
@@ -152,4 +208,6 @@ module.exports = {
   // utils/ideaAi.js, so every AI feature uses the same key handling, the same
   // cached client and the SAME per-user hourly budget.
   clientFor, rateCheck, resetRateLimits, apiError,
+  // Out-of-credits hold (additive): utils/ai.js greys the status dot with it.
+  creditHeld, clearCreditHold, NO_CREDITS,
 };

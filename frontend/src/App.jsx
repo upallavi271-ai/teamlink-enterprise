@@ -10,6 +10,7 @@ import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
 import ClientDuplicates from './pages/ClientDuplicates.jsx';
+import ClientLoginsReview from './pages/ClientLoginsReview.jsx';
 import Agreements from './pages/Agreements.jsx';
 import Candidates from './pages/Candidates.jsx';
 import CandidateDetail from './pages/CandidateDetail.jsx';
@@ -17,7 +18,7 @@ import CandidateDuplicates from './pages/CandidateDuplicates.jsx';
 import CandidateHome from './pages/CandidateHome.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
-import FollowUps from './pages/ats/FollowUps.jsx';
+import { FollowUpsRoute } from './pages/ats/FollowUps.jsx';
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
 import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
 import Offers from './pages/ats/Offers.jsx';
@@ -46,6 +47,7 @@ import JournalLedger from './pages/accounts/JournalLedger.jsx';
 
 import AtsReports, { AtsReportsRedirect } from './pages/reports/AtsReports.jsx';
 import JobPortalReports from './pages/reports/JobPortalReports.jsx';
+import MyResults from './pages/reports/MyResults.jsx';
 import AccountsReports from './pages/reports/AccountsReports.jsx';
 
 import CompanySetup from './pages/admin/CompanySetup.jsx';
@@ -56,26 +58,61 @@ import RoleCatalog from './pages/admin/RoleCatalog.jsx';
 import Integrations from './pages/admin/Integrations.jsx';
 import Notifications from './pages/admin/Notifications.jsx';
 import AuditLogs from './pages/admin/AuditLogs.jsx';
+import SystemSafety from './pages/admin/SystemSafety.jsx';
+import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin → Fit settings
+import AtsAlertSettings from './pages/admin/AtsAlertSettings.jsx'; // Admin → Step timing (dashboards)
+import DataCleanup from './pages/admin/DataCleanup.jsx'; // Admin → Company Setup → Data cleanup (dashboards)
 import Profile from './pages/admin/Profile.jsx';
 
-import Careers from './pages/Careers.jsx';
+// THE JOB PORTAL (2026-10-05): the customer's own portal, embedded at /jobs
+// (backend utils/jobPortalEmbed.js). The morning's built-in /careers pages
+// (pages/careers/) are no longer routed: /careers* forwards to /jobs.
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
-import JobDetail from './pages/JobDetail.jsx';
-import MyApplications from './pages/MyApplications.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
+import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
 import AgreementView from './pages/AgreementView.jsx';
 import SetPassword from './pages/SetPassword.jsx';
+import PortalInvite from './pages/PortalInvite.jsx';
 import HomeRoute from './pages/home/HomeRoute.jsx';
 // Super Admin "View as" (read-only): the picker and the banner on every page.
 import ViewAsPicker from './pages/admin/ViewAsPicker.jsx';
 import { ViewAsBanner } from './components/ViewAs.jsx';
+import ListMastersLoader from './components/ListMastersLoader.jsx'; // spec D / §18: Admin master lists -> dropdowns
+import MasterLists from './pages/admin/MasterLists.jsx'; // spec D / §18: Admin → Master lists
+// VENDOR PORTAL (P3): its own sign-in and its only page, outside the staff Shell.
+import VendorLogin from './pages/vendor/VendorLogin.jsx';
+import VendorAssets from './pages/vendor/VendorAssets.jsx';
+import VendorLogins from './pages/admin/VendorLogins.jsx'; // Admin → Company Setup → Vendor logins
+import { useVendorRedirect } from './pages/vendor/vendorGate.js';
+// PARTNER PORTAL (B7): agencies / freelancers — own sign-in, one page, outside the staff Shell.
+import PartnerLogin from './pages/partner/PartnerLogin.jsx';
+import PartnerJobs from './pages/partner/PartnerJobs.jsx';
+import Partners from './pages/admin/Partners.jsx'; // Admin → Company Setup → Partners
+import { usePartnerRedirect } from './pages/partner/partnerGate.js';
 
 export default function App() {
+  // A vendor signed in on this browser is kept inside the Vendor Portal: any
+  // other address lands on /vendor/assets (the server refuses the APIs anyway).
+  const vendorRedirect = useVendorRedirect();
+  const partnerRedirect = usePartnerRedirect();
+  if (vendorRedirect) return <Navigate to={vendorRedirect} replace />;
+  if (partnerRedirect) return <Navigate to={partnerRedirect} replace />;
   return (
     <>
     <ViewAsBanner />
+    <ListMastersLoader />
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Vendor Portal — separate login, own top bar, no sidebar. */}
+      {/* Partner Portal (B7) — separate login, own top bar, no sidebar. */}
+      <Route path="/partner-login" element={<PartnerLogin />} />
+      <Route path="/partner/jobs" element={<PartnerJobs />} />
+      <Route path="/partner/*" element={<Navigate to="/partner/jobs" replace />} />
+      <Route path="/partner" element={<Navigate to="/partner/jobs" replace />} />
+      <Route path="/vendor-login" element={<VendorLogin />} />
+      <Route path="/vendor/assets" element={<VendorAssets />} />
+      <Route path="/vendor/*" element={<Navigate to="/vendor/assets" replace />} />
+      <Route path="/vendor" element={<Navigate to="/vendor/assets" replace />} />
 
       {/* Public home page. A logged-out "/" shows it too (ProtectedRoute). */}
       <Route path="/home" element={<HomeRoute />} />
@@ -88,17 +125,24 @@ export default function App() {
           existing "Job Portal (public)" links land on the real portal, while the
           database-backed careers list still lives at /careers/classic and its
           deep links (/careers/:id, /careers/my-applications) are untouched. */}
+      {/* BUILT IN (2026-10-05): /careers IS the TeamLink Job Portal now — on this
+          site, on this database (pages/careers/, backend routes/careersPublic.js).
+          /job-portal and /careers/classic are old links and land on it. */}
+      {/* EMBEDDED (2026-10-05): the job portal is /jobs (the customer's own
+          portal, served by the backend). Every old link forwards there. */}
       <Route path="/job-portal" element={<JobPortalRedirect />} />
       <Route path="/careers" element={<JobPortalRedirect />} />
-      <Route path="/careers/classic" element={<Careers />} />
-      <Route path="/careers/my-applications" element={<MyApplications />} />
-      <Route path="/careers/:id" element={<JobDetail />} />
+      <Route path="/careers/classic" element={<JobPortalRedirect />} />
+      <Route path="/careers/:id" element={<JobPortalRedirect />} />
 
       {/* Client-facing agreement signing link — no login, token is the key */}
       <Route path="/agreement/:token" element={<AgreementSigning />} />
+      <Route path="/offer/:token" element={<OfferSigning />} />
 
       {/* New employee sign-in link — single-use, expiring, no login required */}
       <Route path="/set-password/:token" element={<SetPassword />} />
+      {/* Candidate "Invite to portal" link — email confirmed by a code first (spec B2) */}
+      <Route path="/portal-invite/:token" element={<PortalInvite />} />
 
       <Route
         path="/"
@@ -147,6 +191,8 @@ export default function App() {
             is another agent's screen — see components/ClientModuleTabs.jsx. */}
         <Route path="clients" element={<Clients />} />
         <Route path="clients/duplicates" element={<ClientDuplicates />} />
+        {/* Client portal logins: quarterly review + Admin queue (spec B1/B2) */}
+        <Route path="clients/portal-logins" element={<ClientLoginsReview />} />
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="agreements" element={<Agreements />} />
         {/* One agreement: client login, its BDE, Accounts, Admin (routes/agreementSeal.js decides). */}
@@ -158,10 +204,12 @@ export default function App() {
             The route did not exist, so logging in as one hit a dead page. */}
         <Route path="my-applications" element={<CandidateHome />} />
         <Route path="ats/team" element={<Team />} />
+        {/* ATS → Reports & Team → Settings: links to Administration only (layout v3). */}
+        <Route path="ats/settings" element={<Navigate to="/admin/company" replace />} />
         {/* NOT a seventh sidebar module (§1) — Follow-ups is reached from the
             ATS Dashboard and from Recruiter & BDE, which is where §31/§32 put
             it. Routed so those links have somewhere to go. */}
-        <Route path="ats/followups" element={<FollowUps />} />
+        <Route path="ats/followups" element={<FollowUpsRoute />} />
         <Route path="ats/calendar" element={<InterviewCalendar />} />
         {/* Interviews & Joining: Interview Calendar (above) - Interview Feedback
             - Offers - Joining - Internal Hiring */}
@@ -200,6 +248,7 @@ export default function App() {
         {/* ATS Reports: every ATS report is a tab inside this one page. */}
         <Route path="reports/ats" element={<AtsReports />} />
         <Route path="reports/job-portal" element={<JobPortalReports />} />
+        <Route path="reports/my-results" element={<MyResults />} />
         <Route path="reports/accounts" element={<AccountsReports />} />
 
         {/* Administration */}
@@ -215,6 +264,14 @@ export default function App() {
         <Route path="admin/org-structure" element={<OrgStructure />} />
         <Route path="admin/notifications" element={<Notifications />} />
         <Route path="admin/audit" element={<AuditLogs />} />
+        <Route path="admin/system" element={<SystemSafety />} />
+        <Route path="admin/fit" element={<FitSettings />} />
+        <Route path="admin/master-lists" element={<MasterLists />} />
+        <Route path="admin/step-timing" element={<AtsAlertSettings />} />
+        <Route path="admin/data-cleanup" element={<DataCleanup />} />
+        <Route path="admin/vendor-logins" element={<VendorLogins />} />
+        <Route path="admin/partners" element={<Partners />} />
+        <Route path="admin/alerts" element={<Navigate to="/admin/step-timing" replace />} />
         <Route path="admin/profile" element={<Profile />} />
         {/* A section's bare address opens its dashboard, and an address that
             matches nothing goes home instead of drawing an empty page. */}

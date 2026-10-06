@@ -31,7 +31,7 @@
  * for a test run and catastrophic for real data entry, which is why the
  * mode is now explicit and printed at boot.
  */
-import { readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyPendingMigrations } from './lib/migrate-core.mjs';
@@ -156,23 +156,6 @@ if (REAL_DB) {
   console.log(`database: embedded PostgreSQL, persisted at ${DEV_DB}`);
   console.log(firstRun ? '  (new database — creating schema)' : '  (existing database — data preserved)');
 
-  // A process killed mid-write (Task Manager, a closed terminal) can leave
-  // pg_logical/replorigin_checkpoint full of NUL bytes. Postgres then PANICs
-  // on start ("replication checkpoint has wrong magic 0") and PGlite dies
-  // with a bare "Aborted()" — the portal never comes up. The file only
-  // records replication-origin progress, which this embedded database never
-  // uses, and Postgres writes a fresh one at the next checkpoint, so an
-  // all-zero copy is removed rather than left to block the boot.
-  try {
-    const rc = join(DEV_DB, 'pg_logical', 'replorigin_checkpoint');
-    if (existsSync(rc) && readFileSync(rc).every((b) => b === 0)) {
-      unlinkSync(rc);
-      console.log('  removed a zeroed pg_logical/replorigin_checkpoint left by an unclean shutdown');
-    }
-  } catch (err) {
-    console.warn('  could not check replorigin_checkpoint:', err.message);
-  }
-
   const db = await new PGlite(DEV_DB);
 
   const res = await applyPendingMigrations({
@@ -247,6 +230,24 @@ if (REAL_DB) {
         `insert into bde_users (id, name, email, company_id, title, initials)
          values ('bde1', 'Priya Nair', 'bde@teamlink.com', $1,
                  'Business Development Executive', 'PN')`,
+        [co.rows[0] ? co.rows[0].id : null]);
+    }
+
+    // ...and the same for a RECRUITER. The demo recruiters the prototype
+    // seed carried were removed on purpose (this portal holds real
+    // people and no demo accounts), which left the recruiter screens -
+    // Talent Pool, Applications, Jobs, Reports - with nobody who can
+    // open them, because the route guard compares the role exactly.
+    // This runs only on a database that has no users at all, so it can
+    // never add an account to a portal that is already in use.
+    const anyRecruiter = await db.query(`select count(*)::int n from recruiters`)
+      .catch(() => ({ rows: [{ n: 0 }] }));
+    if (anyRecruiter.rows[0].n === 0) {
+      const co = await db.query(`select id from companies order by name limit 1`);
+      await db.query(
+        `insert into recruiters (id, name, email, company_id, title, initials)
+         values ('rec1', 'Dev Recruiter', 'recruiter@teamlink.com', $1,
+                 'Recruiter', 'DR')`,
         [co.rows[0] ? co.rows[0].id : null]);
     }
 

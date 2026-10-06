@@ -1,0 +1,51 @@
+/* Interview Calendar — ATS layout v3 (2026-10-03). Scoped: .ivv3-*.
+   Colours: the kit's tokens (--st-* status, --tlk-s* categorical). */
+
+/* Charts row: two charts side by side, one column on a phone. */
+.ivv3-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin:0 0 16px}
+.ivv3-chart{background:var(--paper-raised,#fff);border:1px solid var(--line);border-radius:var(--radius,10px);padding:12px 14px;min-width:0}
+.ivv3-chart h3{margin:0;font-size:14px;font-weight:700;color:var(--ink)}
+.ivv3-chart .ivv3-sub{margin:2px 0 8px;font-size:12px;color:var(--ink-soft)}
+
+/* The card that is open is outlined, so the list below reads as "this one". */
+.ivv3-cards .sc-card.ivv3-on{border-color:var(--st-blue,#2563eb);box-shadow:0 0 0 1px var(--st-blue,#2563eb) inset}
+
+/* Calendar events coloured by department (--dc = the department's slot). */
+.ivx-cal-ev.ivv3-ev{background:color-mix(in srgb,var(--dc) 15%,var(--paper-raised,#fff));color:var(--ink);
+  border-left:3px solid var(--dc);border-radius:5px;padding-left:5px}
+.ivx-cal-ev.ivv3-ev.is-off{opacity:.55;text-decoration:line-through}
+.ivx-cal-ev.ivv3-ev.is-late{box-shadow:0 0 0 1px var(--st-red,#d03b3b) inset;font-weight:700}
+.ivv3-late{display:inline-block;min-width:14px;height:14px;line-height:14px;margin-right:4px;border-radius:50%;
+  background:var(--st-red,#d03b3b);color:#fff;font-size:10px;font-weight:800;text-align:center;vertical-align:1px}
+.ivv3-legend .ivv3-sw::before{background:var(--dc)}
+.ivv3-legend .ivv3-sw-late::before,.ivv3-legend .ivv3-sw-off::before{display:none}
+.ivv3-legend .ivv3-sw-off{text-decoration:line-through}
+
+/* List: round pill, second lines. */
+.ivv3-round{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;
+  background:var(--st-blue-tint,#e8f0fe);color:var(--st-blue-ink,#1d4ed8);white-space:nowrap}
+.ivv3-sub2{font-size:11.5px;color:var(--ink-soft);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ivv3-th{all:unset;cursor:pointer;font-weight:inherit}
+.ivv3-th:focus-visible{outline:2px solid var(--brand-ring,rgba(94,139,126,.34))}
+
+/* Feedback "Next round" (blue) and five choices fitting on one or two rows. */
+.ivx-outs.ivv3-outs{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
+.ivx-out.is-on.blue{background:var(--st-blue-tint,#e8f0fe);border-color:var(--st-blue,#2563eb);color:var(--st-blue-ink,#1d4ed8)}
+
+/* Schedule popup: round picker + the "send on WhatsApp" step. */
+.ivv3-rounds{display:flex;flex-wrap:wrap;gap:6px}
+.ivv3-rounds button{min-width:44px;border:1px solid var(--line);border-radius:999px;background:var(--paper-raised,#fff);
+  padding:7px 12px;font:inherit;font-weight:600;cursor:pointer;color:var(--ink)}
+.ivv3-rounds button.is-on{border-color:var(--st-blue,#2563eb);background:var(--st-blue-tint,#e8f0fe);color:var(--st-blue-ink,#1d4ed8)}
+.ivv3-done{display:flex;flex-direction:column;gap:10px}
+.ivv3-ok{padding:10px 12px;border-radius:10px;background:var(--st-green-tint,#e7f6ec);color:var(--st-green-ink,#166534);font-weight:600}
+.ivv3-mailoff{font-size:12.5px;color:var(--ink-soft)}
+.ivv3-wa{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.ivv3-wa .ivv3-wa-who{flex:1 1 180px;min-width:0}
+.ivv3-wa .ivv3-wa-who b{display:block}
+.ivv3-wa .ivv3-wa-who span{font-size:12px;color:var(--ink-soft)}
+.ivv3-wa a.btn{white-space:nowrap}
+.ivv3-wa .ivv3-logged{font-size:12px;color:var(--st-green-ink,#166534);font-weight:600}
+.ivv3-wa pre{flex:1 1 100%;margin:0;white-space:pre-wrap;font:inherit;font-size:12px;color:var(--ink-soft);
+  background:var(--line-soft,#f3f4f6);border-radius:8px;padding:8px}
+@media(max-width:560px){.ivv3-charts{grid-template-columns:1fr}}

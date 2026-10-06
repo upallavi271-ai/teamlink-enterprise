@@ -1,0 +1,81 @@
+/* ATS layout v3 dashboard widgets (AtsHomeV3.jsx). Scoped under .ahv3-* / .ahome. */
+/* The three charts: one row of three on a wide screen, two + one below, stacked on a phone. */
+.ahome .ah-w-third{grid-column:span 3}
+@media (min-width: 1300px){
+  .ahome.is-v3 .ah-widgets{grid-template-columns:repeat(12,minmax(0,1fr))}
+  .ahome.is-v3 .ah-w-full{grid-column:span 12}
+  .ahome.is-v3 .ah-w-half{grid-column:span 6}
+  .ahome.is-v3 .ah-w-third{grid-column:span 4}
+}
+@media (max-width: 1100px){ .ahome .ah-w-third{grid-column:span 6} }
+
+.ahv3-box{height:100%;margin:0;display:flex;flex-direction:column;gap:8px;min-width:0}
+.ahv3-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ahv3-head h3{margin:0;font-size:15px}
+.ahv3-note{font-size:12px;color:var(--ink-soft);margin-top:-4px}
+.ahv3-empty{padding:14px 4px;color:var(--ink-soft);font-weight:500}
+.ahv3-cards{margin-bottom:12px}
+
+/* Needs attention: four cards in a row (two on a phone). */
+.ahv3-alert-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.ahv3-alert-row .sc-value{font-size:26px}
+@media (max-width: 900px){ .ahv3-alert-row{grid-template-columns:repeat(2,minmax(0,1fr))} }
+
+/* The two-chart row: joinings + rejections side by side in the wide cell. */
+.ahv3-defs{font-size:12px;color:var(--ink-soft)}
+.ahv3-defs summary{cursor:pointer;color:var(--brand,#1f5fbf)}
+.ahv3-defs ul{margin:6px 0 0;padding-left:18px}
+.ahv3-defs li{margin:2px 0}
+
+/* Tables (Department overview, Team snapshot). */
+.ahv3-scroll{overflow-x:auto}
+.ahv3-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.ahv3-tbl th{font-size:12px;font-weight:600;color:var(--ink-soft);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ahv3-tbl td{padding:6px 8px;border-bottom:1px solid var(--line-soft,var(--line));vertical-align:middle}
+.ahv3-tbl .num{text-align:right}
+.ahv3-tbl tr.is-picked td{background:var(--st-blue-tint,#e8effb)}
+.ahv3-mcell{min-width:84px}
+.ahv3-mcell .tlk-mini{display:block;margin-top:3px}
+.ahv3-dept{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--ink);cursor:pointer;text-align:left}
+.ahv3-dept:hover{color:var(--brand,#1f5fbf);text-decoration:underline}
+.ahv3-n{background:none;border:0;padding:0;font:inherit;font-weight:700;cursor:pointer;color:var(--st-blue-ink,#1f4f9a);font-variant-numeric:tabular-nums}
+.ahv3-n:hover{text-decoration:underline}
+.ahv3-n.t-red{color:var(--st-red-ink,#a12a2a)}
+.ahv3-n.t-green{color:var(--st-green-ink,#0F6B4F)}
+.ahv3-n.t-yellow{color:var(--st-yellow-ink,#8a5a00)}
+.ahv3-pcol{width:34%;min-width:110px}
+.ahv3-ellip{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ahv3-group + .ahv3-group{margin-top:10px}
+.ahv3-gtitle{font-size:12.5px;font-weight:600;margin:2px 0 4px}
+
+/* Today's interviews. */
+.ahv3-list{list-style:none;margin:0;padding:0}
+.ahv3-list li{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft,var(--line))}
+.ahv3-list li:last-child{border-bottom:0}
+.ahv3-time{font-weight:700;font-variant-numeric:tabular-nums;min-width:64px}
+.ahv3-main{display:flex;flex-direction:column;flex:1;min-width:0}
+.ahv3-main b,.ahv3-main span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Recent activity timeline. */
+.ahv3-feed{list-style:none;margin:0;padding:0 0 0 4px}
+.ahv3-feed li{position:relative;display:flex;align-items:baseline;gap:10px;padding:6px 0 6px 18px;border-left:2px solid var(--line)}
+.ahv3-dot{position:absolute;left:-6px;top:11px;width:10px;height:10px;border-radius:50%;background:var(--st-blue)}
+.ahv3-feed li.t-green .ahv3-dot{background:var(--st-green)}
+.ahv3-feed li.t-red .ahv3-dot{background:var(--st-red)}
+.ahv3-feed li.t-grey .ahv3-dot{background:var(--st-grey)}
+.ahv3-feed li.t-yellow .ahv3-dot{background:var(--st-yellow)}
+.ahv3-feed-t{flex:1;min-width:0;color:var(--ink);text-decoration:none}
+.ahv3-feed-t:hover{text-decoration:underline}
+.ahv3-ago{white-space:nowrap}
+
+/* The greeting with its real numbers. */
+.ahv3-hello-n{background:none;border:0;padding:0;font:inherit;font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.ahv3-hello-n.t-red{color:var(--st-red-ink,#a12a2a)}
+.ahv3-hello-n.t-yellow{color:var(--st-yellow-ink,#8a5a00)}
+.ahome .pfb{margin:0 0 12px}
+.ahv3-legacy{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;margin:-4px 0 10px}
+
+@media (max-width: 640px){
+  .ahv3-list li{flex-wrap:wrap}
+  .ahv3-time{min-width:auto}
+}

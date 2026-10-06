@@ -152,7 +152,10 @@ export default function PeopleFilterBar({
             {departments && (
               <Combo value={filters.department || ''} title="Department" onChange={(e) => set('department', e.target.value)}>
                 <option value="">All departments</option>
-                {departments.map((d) => <option key={d}>{d}</option>)}
+                {/* A plain name, or { value, label } when the page shows a count ("HR (3)"). */}
+                {departments.map((d) => (typeof d === 'string'
+                  ? <option key={d}>{d}</option>
+                  : <option key={d.value} value={d.value}>{d.label}</option>))}
               </Combo>
             )}
             {statuses && (

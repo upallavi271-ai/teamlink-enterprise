@@ -1,14 +1,14 @@
-// Section 1 of the one-page Office & Accounts — Business & Tax Details, with
-// the Government portals launcher as a compact collapsible block inside it.
-// (The statutory due dates it used to carry are on the Dashboard's Reminders
-// card now.)
+// Office & Accounts — what sits under the expense table (Office spec P2):
+// the due dates strip, the Government portals row and the Business details
+// (collapsed). The same due dates are also on the Dashboard's Reminders card.
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
+import InfoTip from './InfoTip.jsx';
+import { dueDates, fmtD } from './officeUtil';
 import {
   checkGstin, isPan, isTan, isIfsc, isUpi,
 } from '../../utils/gstin';
-import { money, fmtD } from './officeUtil';
 
 // ---------------------------------------------------------------------------
 // Business Details
@@ -58,7 +58,7 @@ function ProfileModal({ profile, onClose, onSaved }) {
           <input value={f.pan} maxLength={10} onChange={up('pan')} placeholder={gc?.ok ? `blank = ${gc.pan} from the GSTIN` : '10 characters'} />
           <Hint bad={panBad} />
         </label>
-        <label className="field"><span>TAN (TRACES login)</span>
+        <label className="field"><span>TAN</span>
           <input value={f.tan} maxLength={10} onChange={up('tan')} placeholder="e.g. HYDT12345A" />
           <Hint bad={tanBad} />
         </label>
@@ -85,10 +85,139 @@ function ProfileModal({ profile, onClose, onSaved }) {
   );
 }
 
-// v2 §1: the compact grid — Company Name, GSTIN, PAN, TAN, Bank Account, IFSC,
-// UPI / VPA and the GST registration status (the checksum badge), with Edit.
-function BusinessGrid({ profile, canManage, onSaved }) {
-  const [editing, setEditing] = useState(false);
+// ---------------------------------------------------------------------------
+// BELOW THE EXPENSE TABLE (Office spec P2, 2026-10-05), in this order:
+//   1 DueStrip         — 4 small cards: TDS challan, GSTR-1, GSTR-3B, TDS return
+//   2 GovPortals       — GST portal, TRACES, Income Tax e-filing: name, ID, Open;
+//                        the page / address behind an Admin-only Edit popup
+//   3 BusinessDetails  — collapsed by default, a "Show" toggle (default export)
+// The explanations are "i" tooltips (InfoTip); Office.jsx adds the audit line.
+// ---------------------------------------------------------------------------
+
+// 1 — Due dates. The same four statutory dates the Dashboard's Reminders card
+// shows (officeUtil.dueDates()). Red when due within 2 days, amber within a
+// week, grey otherwise.
+const dueTone = (days) => (days <= 2 ? 'red' : days <= 7 ? 'amber' : 'grey');
+const DUE_NAMES = {
+  tds: 'TDS payment challan', gstr1: 'GSTR-1', gstr3b: 'GSTR-3B', tdsret: 'TDS return 24Q/26Q',
+};
+export function DueStrip() {
+  const list = dueDates(new Date());
+  return (
+    <section className="ofp-blk" aria-labelledby="ofp-due-t">
+      <div className="ofp-hd">
+        <h3 id="ofp-due-t">Due dates</h3>
+        <InfoTip text="The next government due date of each kind. Red: due within 2 days. Amber: within a week. Grey: later." />
+      </div>
+      <div className="ofp-grid4" role="list">
+        {list.map((d) => (
+          <div key={d.key} role="listitem" className={`ofp-due ${dueTone(d.days)}`} title={`${d.title} · ${d.for}`}>
+            <span className="ofp-due-n">{DUE_NAMES[d.key] || d.title}</span>
+            <span className="ofp-due-d">{fmtD(d.date)}</span>
+            <span className="ofp-due-w">{d.days === 0 ? 'Today' : `in ${d.days} day${d.days === 1 ? '' : 's'}`}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// 2 — Government portals. One Open button each (a plain link: it opens the
+// address in a new tab and never signs in). Which page / the address it opens
+// is set in the Edit popup, Admin only (the API refuses everyone else).
+function PortalEditModal({ portal, onClose, onSaved }) {
+  const [pageKey, setPageKey] = useState(portal.selectedPage);
+  const page = portal.pages.find((pg) => pg.key === pageKey) || portal.pages[0];
+  const [addr, setAddr] = useState(page.url);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setAddr(page.url); }, [page.url]);
+  const put = async (body) => {
+    setBusy(true); setErr('');
+    try { const r = await api.put(`/office-expenses/portal-links/${portal.key}`, body); onSaved(r.data); } catch (e) { setErr(e.response?.data?.error || 'Could not save. Try again.'); setBusy(false); }
+  };
+  const save = (e) => {
+    e.preventDefault();
+    const v = addr.trim();
+    put(v && v !== page.url ? { selectedPage: page.key, url: v } : { selectedPage: page.key });
+  };
+  return (
+    <Modal
+      title={`Edit · ${portal.name}`}
+      note="Admin only"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" form="ofp-portal-form" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+        </>
+      )}
+    >
+      <form id="ofp-portal-form" onSubmit={save}>
+        {portal.pages.length > 1 && (
+          <label className="field"><span>Open which page</span>
+            <select value={pageKey} onChange={(e) => setPageKey(e.target.value)}>
+              {portal.pages.map((pg) => <option key={pg.key} value={pg.key}>{pg.label}</option>)}
+            </select>
+          </label>
+        )}
+        <label className="field"><span>Address it opens</span>
+          <input value={addr} onChange={(e) => setAddr(e.target.value)} inputMode="url" aria-label={`Address the ${portal.name} button opens`} />
+        </label>
+        {page.edited && (
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            Changed{portal.lastEditedBy ? ` by ${portal.lastEditedBy}` : ''}{portal.lastEditedAt ? ` on ${fmtD(String(portal.lastEditedAt).slice(0, 10))}` : ''}.{' '}
+            <button type="button" className="link-btn" disabled={busy} onClick={() => put({ selectedPage: page.key, reset: true })}>Back to the default address</button>
+          </div>
+        )}
+        {err && <div className="notice red" style={{ marginBottom: 0 }}><span>{err}</span></div>}
+      </form>
+    </Modal>
+  );
+}
+
+export function GovPortals({ portals, canEdit, onUpdated }) {
+  const [editing, setEditing] = useState(null);
+  return (
+    <section className="ofp-blk" aria-labelledby="ofp-gov-t">
+      <div className="ofp-hd">
+        <h3 id="ofp-gov-t">Government portals</h3>
+        <InfoTip text="Open takes you to the portal in a new tab. It never signs in for you: if the portal's login page comes up, sign in there (the GST portal also asks for a CAPTCHA). Nothing is fetched from the portals." />
+      </div>
+      {!portals && <div className="small-muted"><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Loading…</div>}
+      {portals && (
+        <div className="ofp-grid3" role="list">
+          {portals.map((p) => (
+            <div key={p.key} role="listitem" className="ofp-portal">
+              <div className="ofp-portal-t">
+                <b>{p.name}</b>
+                {canEdit && (
+                  <button type="button" className="ofp-gear" onClick={() => setEditing(p)} aria-label={`Edit the ${p.name} button`} title="Edit (Admin only)">
+                    <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path d="M10 6.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4Zm7 3.2-.1-1.1 1.6-1.3-1.6-2.8-2 .6a6.6 6.6 0 0 0-1.9-1.1L12.6 2H9.4l-.4 2.1c-.7.3-1.3.6-1.9 1.1l-2-.6-1.6 2.8 1.6 1.3L5 10l.1 1.1-1.6 1.3 1.6 2.8 2-.6c.6.5 1.2.8 1.9 1.1l.4 2.1h3.2l.4-2.1c.7-.3 1.3-.6 1.9-1.1l2 .6 1.6-2.8-1.6-1.3.1-1.1Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" /></svg>
+                  </button>
+                )}
+              </div>
+              <div className="ofp-portal-id">
+                <span>{p.idLabel}</span>
+                {p.idValue ? <b className="num">{p.idValue}</b> : <span className="status priority-high">not set</span>}
+              </div>
+              <a className="btn btn-sm btn-primary ofp-open" href={p.url} target="_blank" rel="noopener noreferrer" title={`Opens ${p.url} in a new tab`}>Open ↗</a>
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && (
+        <PortalEditModal portal={editing} onClose={() => setEditing(null)}
+          onSaved={(np) => { setEditing(null); onUpdated(np); }} />
+      )}
+    </section>
+  );
+}
+
+// 3 — Business details: GSTIN, PAN, Bank account, IFSC, UPI / VPA in two
+// columns; Edit and the GSTIN check badge on the title row. Collapsed until
+// "Show" is pressed (an old ?tab=business link opens it).
+function BusinessGrid({ profile }) {
   const p = profile;
   const gc = p.gstinCheck;
   const Item = ({ k, v, s }) => (
@@ -98,182 +227,51 @@ function BusinessGrid({ profile, canManage, onSaved }) {
       {s && <div className="oe-btx-s">{s}</div>}
     </div>
   );
-  const reg = !p.gstin ? <span className="status priority-medium">Not registered here</span>
-    : (gc?.ok ? <span className="status priority-low">GSTIN valid</span> : <span className="status priority-high" title={gc?.error}>GSTIN check failed</span>);
   return (
-    <>
-      <div className="oe-btx">
-        <Item k="Company name" v={p.name} s="From the company settings" />
-        <Item k="GSTIN" v={p.gstin && <span className="num">{p.gstin}</span>} s={p.gstin ? `State code ${gc?.stateCode || p.gstin.slice(0, 2)}${gc?.stateName ? ` · ${gc.stateName}` : ''}` : 'Add the GSTIN printed on your invoices'} />
-        <Item k="GST registration status" v={reg} s={p.gstin ? (gc?.ok ? 'The GSTIN passes the checksum' : gc?.error) : null} />
-        <Item k="PAN" v={p.panShown && <><span className="num">{p.panShown}</span>{!p.panSet && <span className="status priority-medium" title="No PAN entered on its own — this is the PAN inside the GSTIN">from GSTIN</span>}</>} />
-        <Item k="TAN" v={p.tan && <span className="num">{p.tan}</span>} s="TRACES login" />
-        <Item k="Bank account" v={p.accountNumber && <span className="num">{p.accountNumber}</span>} s={[p.bankName, p.branch, p.accountType].filter(Boolean).join(' · ') || null} />
-        <Item k="IFSC" v={p.ifsc && <span className="num">{p.ifsc}</span>} />
-        <Item k="UPI / VPA" v={p.upi} s="Printed on the invoice for payment" />
-      </div>
-      <div className="oe-btx-foot">
-        {canManage && <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing(true)}>Edit</button>}
-        <span>Admin and Accounts only — the server sends these details to nobody else — and every change is written to the Audit Log with the name, the date, the old value and the new one.</span>
-      </div>
-      {editing && <ProfileModal profile={p} onClose={() => setEditing(false)} onSaved={(np) => { setEditing(false); onSaved(np); }} />}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Government portals
-// ---------------------------------------------------------------------------
-const openUrl = (url) => window.open(url, '_blank', 'noopener,noreferrer');
-
-function PortalRow({ portal, canManage, onUpdated, onError }) {
-  const [addr, setAddr] = useState(portal.url);
-  useEffect(() => { setAddr(portal.url); }, [portal.url]);
-  const page = portal.pages.find((pg) => pg.key === portal.selectedPage) || portal.pages[0];
-
-  const put = async (body) => {
-    try { const r = await api.put(`/office-expenses/portal-links/${portal.key}`, body); onUpdated(r.data); return true; } catch (e) { onError(e.response?.data?.error || 'Could not save the address'); return false; }
-  };
-  const saveAddr = async () => {
-    const v = addr.trim();
-    if (!v || v === portal.url) { setAddr(portal.url); return; }
-    if (!(await put({ selectedPage: page.key, url: v }))) setAddr(portal.url);
-  };
-  return (
-    <div className="oe-portal">
-      <div className="oe-portal-main">
-        <div className="oe-portal-name"><b>{portal.name}</b><div className="small-muted">{portal.sub}</div></div>
-        <div className="oe-portal-id"><span>{portal.idLabel}</span><b className="num">{portal.idValue || <span className="status priority-high">not set</span>}</b></div>
-        <label className="oe-f oe-portal-page"><span>Open which page</span>
-          <select className="oe-sel" value={page.key} onChange={(e) => (canManage ? put({ selectedPage: e.target.value }) : onUpdated({ ...portal, selectedPage: e.target.value, url: portal.pages.find((pg) => pg.key === e.target.value).url }))}>
-            {portal.pages.map((pg) => <option key={pg.key} value={pg.key}>{pg.label}</option>)}
-          </select>
-        </label>
-        <button type="button" className="btn btn-primary btn-sm oe-portal-open" onClick={() => openUrl(portal.url)} title={`Opens ${portal.url} in a new tab`}>↗ Open</button>
-      </div>
-      <div className="oe-portal-addr">
-        <span>Address it opens</span>
-        <input
-          value={addr}
-          readOnly={!canManage}
-          onChange={(e) => setAddr(e.target.value)}
-          onBlur={saveAddr}
-          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setAddr(portal.url); } }}
-          aria-label={`Address the ${portal.name} button opens`}
-        />
-        {page.edited && canManage && (
-          <button type="button" className="link-btn" onClick={() => put({ selectedPage: page.key, reset: true })} title={`Back to ${page.defaultUrl}`}>Reset to default</button>
-        )}
-        {page.edited && <span className="small-muted">edited{portal.lastEditedAt ? ` ${fmtD(String(portal.lastEditedAt).slice(0, 10))}` : ''}</span>}
-      </div>
+    <div className="oe-btx ofp-btx2">
+      <Item k="GSTIN" v={p.gstin && <span className="num">{p.gstin}</span>} s={p.gstin ? `State code ${gc?.stateCode || p.gstin.slice(0, 2)}${gc?.stateName ? ` · ${gc.stateName}` : ''}` : 'Add the GSTIN printed on your invoices'} />
+      <Item k="PAN" v={p.panShown && <><span className="num">{p.panShown}</span>{!p.panSet && <span className="status priority-medium" title="No PAN entered on its own — this is the PAN inside the GSTIN">from GSTIN</span>}</>} />
+      <Item k="Bank account" v={p.accountNumber && <span className="num">{p.accountNumber}</span>} s={[p.bankName, p.branch, p.accountType].filter(Boolean).join(' · ') || null} />
+      <Item k="IFSC" v={p.ifsc && <span className="num">{p.ifsc}</span>} />
+      <Item k="UPI / VPA" v={p.upi} s={p.upi ? 'Printed on the invoice for payment' : null} />
     </div>
   );
 }
 
-function BalancesModal({ balances, period, onClose, onSaved }) {
-  const [gst, setGst] = useState(balances.gst == null ? '' : String(balances.gst));
-  const [traces, setTraces] = useState(balances.traces == null ? '' : String(balances.traces));
-  const [err, setErr] = useState('');
-  const save = async (e) => {
-    e.preventDefault();
-    try { const r = await api.put('/office-expenses/portal-balances', { period, gst, traces }); onSaved(r.data); } catch (e2) { setErr(e2.response?.data?.error || 'Could not save'); }
-  };
-  return (
-    <Modal
-      title="Enter the portal balances"
-      onClose={onClose}
-      footer={(<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" form="oe-bal-form" className="btn btn-primary">Save</button></>)}
-    >
-      <form id="oe-bal-form" onSubmit={save}>
-        <div className="small-muted" style={{ marginBottom: 10 }}>Typed by you, as the portal shows it — nothing is fetched. Leave a box blank to clear it.</div>
-        <label className="field"><span>GST portal balance (₹)</span><input type="number" step="0.01" autoFocus value={gst} onChange={(e) => setGst(e.target.value)} /></label>
-        <label className="field"><span>TRACES balance (₹)</span><input type="number" step="0.01" value={traces} onChange={(e) => setTraces(e.target.value)} /></label>
-        {err && <div className="notice red"><span>{err}</span></div>}
-      </form>
-    </Modal>
-  );
-}
-
-export default function BusinessPortals({
-  period, canManage, onError, onBalancesSaved, reloadKey,
+export default function BusinessDetails({
+  canManage, onError, reloadKey, openSignal, onSaved,
 }) {
   const [profile, setProfile] = useState(null);
-  const [portals, setPortals] = useState(null);
-  const [balances, setBalances] = useState({ gst: null, traces: null });
-  const [periodLabel, setPeriodLabel] = useState('');
-  const [balOpen, setBalOpen] = useState(false);
-
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const load = useCallback(() => {
-    api.get('/office-expenses/business-profile').then((r) => setProfile(r.data)).catch(() => onError('Business Details could not be loaded.'));
-    api.get('/office-expenses/portals', { params: { period } }).then((r) => {
-      setPortals(r.data.portals); setBalances(r.data.balances); setPeriodLabel(r.data.period.label);
-    }).catch(() => onError('The portals could not be loaded.'));
-  }, [period, onError]);
+    api.get('/office-expenses/business-profile').then((r) => setProfile(r.data)).catch(() => onError('Business details could not be loaded.'));
+  }, [onError]);
   useEffect(load, [load, reloadKey]);
-
-  const none = balances.gst == null && balances.traces == null;
-  const gstPortal = portals?.find((p) => p.key === 'gst');
-
+  useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
+  const gc = profile?.gstinCheck;
+  const badge = !profile ? null : !profile.gstin ? <span className="status priority-medium">No GSTIN yet</span>
+    : (gc?.ok ? <span className="status priority-low">GSTIN valid</span> : <span className="status priority-high" title={gc?.error}>GSTIN check failed</span>);
   return (
-    <>
-      {!profile && <div className="small-muted"><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Loading…</div>}
-      {profile && <BusinessGrid profile={profile} canManage={canManage} onSaved={(np) => { setProfile(np); load(); }} />}
-
-      {/* The three government portal launchers, kept as they were — the
-          configured address, "Open which page", Open in a new tab, the
-          editable address and the portal balances — folded into one block. */}
-      <details className="oe-portals-d">
-        <summary>
-          <span className="oe-sec-car" aria-hidden="true" />
-          <b>Government portals</b>
-          <span className="small-muted">
-            {portals ? portals.map((p) => p.name).join(' · ') : 'GST · TRACES · Income Tax'} — each opens its configured address in a new tab
-          </span>
-        </summary>
-        <div className="oe-portals-in">
-          {!portals && <div className="small-muted">Loading…</div>}
-          {portals && portals.map((p) => (
-            <PortalRow key={p.key} portal={p} canManage={canManage} onError={onError}
-              onUpdated={(np) => setPortals(portals.map((x) => (x.key === np.key ? np : x)))} />
-          ))}
-
-          <div className="oe-note">
-            <div>
-              {none ? <b>The portal balance is not on file. </b> : (
-                <b>On file for {periodLabel}: GST portal {balances.gst == null ? 'not entered' : money(balances.gst)} · TRACES {balances.traces == null ? 'not entered' : money(balances.traces)}. </b>
-              )}
-              Nothing is fetched — this app has no connection to the portals. Open the GST portal, read {gstPortal?.ledgerPath || 'Services → Ledgers'}, and TRACES for
-              the TDS side, then type the two balances here, and compare them with the Net GST in the Financial Overview.
-            </div>
-            {canManage && <button type="button" className="btn btn-sm" onClick={() => setBalOpen(true)}>Enter the portal balances</button>}
-          </div>
-
-          <details className="oe-portals-more">
-            <summary>About the portal login</summary>
-            <div className="notice amber oe-callout">
-              <span>
-                If the login page comes up, that is the portal, not this app. The GST portal signs you in with a username, a password and a
-                CAPTCHA that has to be typed by a person — it is built that way on purpose, and no website or app can get past it for you.
-                What the button controls is where you land: while your browser still holds a live GST session, Returns dashboard opens
-                straight on the returns screen; once that session has expired the portal sends you to Login first, and after you sign in it
-                carries you on.
-              </span>
-            </div>
-            <div className="notice oe-callout">
-              <span>
-                These buttons only open the address shown, in a new tab — they never sign in for you. The GST and TRACES logins, if you keep
-                them here, are in GST &amp; TDS Portals further down: encrypted on the server and masked until you press Show. Changed the
-                address? It is remembered for that portal, so a page that moves is a one-time fix.
-              </span>
-            </div>
-          </details>
+    <section id="oe-sec-business" className="ofp-blk ofp-biz" aria-labelledby="ofp-biz-t">
+      <div className="ofp-hd">
+        <h3 id="ofp-biz-t">Business details</h3>
+        <InfoTip text="Only Admin and Accounts can see this section — the server sends these details to nobody else." />
+        {badge}
+        <span className="ofp-hd-r">
+          {canManage && profile && <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
+          <button type="button" className="btn btn-sm" onClick={() => setOpen(!open)} aria-expanded={open} aria-controls="ofp-biz-b">{open ? 'Hide' : 'Show'}</button>
+        </span>
+      </div>
+      {open && (
+        <div id="ofp-biz-b">
+          {!profile ? <div className="small-muted"><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Loading…</div> : <BusinessGrid profile={profile} />}
         </div>
-      </details>
-
-      {balOpen && (
-        <BalancesModal balances={balances} period={period} onClose={() => setBalOpen(false)}
-          onSaved={(b) => { setBalances(b); setBalOpen(false); onBalancesSaved(); }} />
       )}
-    </>
+      {editing && profile && (
+        <ProfileModal profile={profile} onClose={() => setEditing(false)}
+          onSaved={(np) => { setEditing(false); setProfile(np); load(); if (onSaved) onSaved(); }} />
+      )}
+    </section>
   );
 }

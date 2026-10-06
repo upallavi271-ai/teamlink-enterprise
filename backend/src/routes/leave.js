@@ -11,6 +11,9 @@ const policy = require('../utils/leavePolicy');
 const { pushNotification } = require('../utils/notify');
 const { toXlsxBook } = require('../utils/tabularExport');
 const { notifyDataIo } = require('../utils/dataIoNotify');
+const leaveCharge = require('../utils/leaveCharge');
+const attendancePolicy = require('../utils/attendancePolicy');
+const hrmsNotify = require('../utils/hrmsNotify');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -135,10 +138,14 @@ router.get('/', async (req, res, next) => {
     // The reason, the employee's comments and the half-day session come apart
     // for the list and its tooltip (utils/leaveText.js), and every row says
     // who approved / decided it — or whom it is waiting on.
+    let charged = new Map();
+    try { charged = await leaveCharge.chargedMap(leave.filter((l) => l.status !== 'Pending').map((l) => l.id)); } catch { charged = new Map(); }
     res.json(leave.map((l) => {
       const t = leaveText.parse(l.reason);
       return {
         ...l,
+        // Days really taken from the balance (items 4/6), when the ledger has it.
+        chargedDays: charged.has(l.id) ? charged.get(l.id) : null,
         reasonText: t.reasonText,
         employeeComments: t.employeeComments || null,
         halfDay: t.halfDay,
@@ -476,7 +483,18 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   if (status === 'Approved' && existing.status !== 'Approved') {
     await ensureBalances([existing.employeeId]);
     const balance = await prisma.leaveBalance.findUnique({ where: { employeeId_type: { employeeId: existing.employeeId, type: existing.type } } });
-    if (balance && !preCounted) await prisma.leaveBalance.update({ where: { id: balance.id }, data: { taken: balance.taken + days } });
+    // HRMS items 4/6: take what the leave really uses (utils/leaveCharge.js) —
+    // e.g. 0.5 when a full-day leave was approved but the morning was worked —
+    // not blindly `days`. Falls back to `days` if that read fails.
+    if (balance && !preCounted) {
+      try { await leaveCharge.onApprove(leave, req.user.id); } catch (e) {
+        console.error('[leave] charge failed, taking the applied days', e.message);
+        await prisma.leaveBalance.update({ where: { id: balance.id }, data: { taken: balance.taken + days } });
+      }
+    }
+  } else if (status === 'Cancelled' && ['Approved', 'Cancellation Requested'].includes(existing.status) && !preCounted && await leaveCharge.lastCharge(existing.id) != null) {
+    // Charged by the ledger: give back exactly what was taken.
+    await leaveCharge.onCancel(existing, req.user.id);
   } else if ((status === 'Rejected' || status === 'Cancelled') && preCounted) {
     const balance = await prisma.leaveBalance.findUnique({ where: { employeeId_type: { employeeId: existing.employeeId, type: existing.type } } });
     if (balance) await prisma.leaveBalance.update({ where: { id: balance.id }, data: { taken: Math.max(0, balance.taken - days) } });
@@ -486,6 +504,8 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   }
 
   await logAudit({ userId: req.user.id, action: 'Leave ' + status.toLowerCase(), entity: 'LeaveRequest', entityId: leave.id, fromValue: existing.status, toValue: status });
+  // Item 14: tell the employee (in-app, and email per the Admin setting).
+  if (status === 'Approved' || status === 'Rejected') hrmsNotify.leaveDecided({ leave, employee: existing.employee, by: req.user }).catch((e) => console.error('[leave] notify failed', e.message));
   let view = null;
   try { view = await workflow.view(WF, leave.id, req.user, { canAct: false }); } catch { view = null; }
   return res.json({ ...leave, workflow: view });
@@ -623,9 +643,13 @@ async function monthlyData(employees, year) {
     prisma.leaveBalance.findMany({ where: { employeeId: { in: ids } } }),
     prisma.leaveRequest.findMany({
       where: { employeeId: { in: ids }, status: { in: ['Approved', 'Pending'] }, fromDate: { lte: `${year}-12-31` }, toDate: { gte: `${year}-01-01` } },
-      select: { employeeId: true, type: true, fromDate: true, toDate: true, days: true, status: true },
+      select: { id: true, employeeId: true, type: true, fromDate: true, toDate: true, days: true, status: true },
     }),
   ]);
+  // Items 4/6: an approved request charged through the ledger counts what it
+  // really took (e.g. 0.5 of a full day worked in the morning).
+  const charged = await leaveCharge.chargedMap(requests.filter((r) => r.status === 'Approved').map((r) => r.id));
+  requests.forEach((r) => { if (r.status === 'Approved' && charged.has(r.id)) r.days = charged.get(r.id); });
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
@@ -874,7 +898,22 @@ router.get('/concurrency-policy', async (req, res) => {
     // The approval escalation order, which the Leave Approval Chain panel
     // prints as its first three links.
     escalationOrder: String(cfg.escalationOrder || '').split(',').map((r) => r.trim()).filter(Boolean),
+    // Item 6: the sandwich rule (utils/attendancePolicy.js).
+    sandwichLeave: (await attendancePolicy.readExtras()).sandwichLeave !== false,
   });
+});
+
+// Item 6 — the SANDWICH RULE on / off (Leave Policy). On: a holiday or weekly
+// off between two leave days counts as leave. Stored beside the attendance
+// policy (utils/attendancePolicy.js), so the day rule reads the same switch.
+router.put('/sandwich-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+  if (typeof (req.body || {}).sandwichLeave !== 'boolean') return res.status(400).json({ error: 'Say on or off (sandwichLeave: true / false).' });
+  const r = await attendancePolicy.saveExtras({ sandwichLeave: req.body.sandwichLeave });
+  if (r.error) return res.status(400).json({ error: r.error });
+  if (r.changed.length) {
+    await logAudit({ userId: req.user.id, action: 'Leave sandwich rule updated', entity: 'Integration', entityId: attendancePolicy.STORE_ID, toValue: req.body.sandwichLeave ? 'on' : 'off' });
+  }
+  res.json({ sandwichLeave: r.extras.sandwichLeave });
 });
 
 router.put('/concurrency-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {

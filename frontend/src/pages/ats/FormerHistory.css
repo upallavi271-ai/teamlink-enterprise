@@ -1,0 +1,42 @@
+/* Former people (2026-10-05): the work-history drawer (.fh) and the
+   Active / Former / All switch on Team → People (.fh-seg). Grey = left. */
+.cdw.fh { width: 560px; }
+.fh .fh-left { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--st-grey-tint, #f1f5f9); color: var(--st-grey-ink, #475569); font-size: 11.5px; font-weight: 600; line-height: 20px; }
+.fh .fh-note { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--st-grey-tint, #f1f5f9); color: var(--st-grey-ink, #475569); font-size: 12.5px; }
+.fh .fh-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fh .fh-all { font-size: 11.5px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.fh .fh-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.fh .fh-tile { border: 1px solid var(--line, #e3e8f0); border-radius: 8px; padding: 6px 9px; display: flex; flex-direction: column; gap: 2px; }
+.fh .fh-tile b { font-size: 18px; }
+.fh .fh-tile b.is-zero { font-size: 13px; color: var(--ink-soft, #5b6478); font-weight: 500; }
+.fh .fh-roles { margin-top: 8px; }
+.fh .fh-list { display: flex; flex-direction: column; }
+.fh .fh-list + .fh-list { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line, #e3e8f0); }
+.fh .fh-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line-soft, #f1f4f9); }
+.fh .fh-row:last-child { border-bottom: 0; }
+.fh .fh-row-main { display: flex; flex-direction: column; min-width: 0; }
+.fh .fh-row > .small-muted { white-space: nowrap; text-align: right; }
+.fh .fh-strong { font-weight: 600; }
+.fh .fh-pad { padding: 6px 0 2px; }
+.fh .fh-table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+.fh .fh-table th, .fh .fh-table td { padding: 4px 6px; border-bottom: 1px solid var(--line-soft, #f1f4f9); text-align: left; }
+.fh .fh-table .num { text-align: right; }
+.fh .fh-table tfoot td { font-weight: 700; border-top: 1px solid var(--line, #e3e8f0); }
+@media (max-width: 560px) {
+  .cdw.fh { width: 100vw; }
+  .fh .fh-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fh .fh-row { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .fh .fh-row > .small-muted { white-space: normal; text-align: left; }
+}
+
+/* Team → People: Active / Former / All, one click each. */
+.pw-page .fh-seg { display: inline-flex; border: 1px solid var(--line, #e3e8f0); border-radius: 8px; overflow: hidden; background: var(--paper-raised, #fff); }
+.pw-page .fh-seg button { border: 0; background: transparent; padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft, #5b6478); cursor: pointer; }
+.pw-page .fh-seg button + button { border-left: 1px solid var(--line, #e3e8f0); }
+.pw-page .fh-seg button.on { background: var(--brand, #1d4ed8); color: #fff; }
+.pw-page .fh-seg .n { margin-left: 5px; font-weight: 500; opacity: .85; }
+.pw-page .fh-leftline { display: inline-block; margin-top: 2px; padding: 0 7px; border-radius: 999px; background: var(--st-grey-tint, #f1f5f9); color: var(--st-grey-ink, #475569); font-size: 11px; font-weight: 600; line-height: 18px; }
+.pw-page .fh-stint { display: block; white-space: nowrap; }
+.pw-page .fh-stint.is-picked { font-weight: 600; }
+.pw-page tr.pw-former.pw-click { cursor: pointer; }
+.pw-page tr.pw-former .pw-person { color: var(--st-grey-ink, #475569); }

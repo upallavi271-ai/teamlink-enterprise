@@ -49,6 +49,18 @@ export default defineConfig({
     // running the API somewhere else (e.g. a second checkout on another port).
     proxy: {
       '/api': process.env.API_PROXY || 'http://localhost:4010',
+      // THE TEAMLINK JOB PORTAL (job-portal-app/, served by the backend at
+      // /jobs — backend utils/jobPortalEmbed.js). The same backend, the same
+      // way as /api. The other four are paths the portal uses at the root of
+      // the site and this app does not use.
+      '^/jobs(/|$)': process.env.API_PROXY || 'http://localhost:4010',
+      '/reset-password': process.env.API_PROXY || 'http://localhost:4010',
+      '/teamlink-sw.js': process.env.API_PROXY || 'http://localhost:4010',
+      '/manifest.webmanifest': process.env.API_PROXY || 'http://localhost:4010',
+      // B9.6: the public jobs sitemap + robots.txt are served by the backend.
+      '/sitemap.xml': process.env.API_PROXY || 'http://localhost:4010',
+      '/robots.txt': process.env.API_PROXY || 'http://localhost:4010',
+      '/icons/': process.env.API_PROXY || 'http://localhost:4010',
     },
   },
 });

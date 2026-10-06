@@ -44,7 +44,7 @@ export default function TodayTasks() {
   const go = (to) => { setOpen(false); navigate(to); };
   const Section = ({ title, items, render, none }) => (
     <>
-      <div className="tt-sec">{title} · {items.length}</div>
+      <div className="tt-sec">{title}{items.length ? ` · ${items.length}` : ''}</div>
       {items.length === 0 ? <div className="tt-none">{none}</div> : items.map((x) => (
         <button key={x.id} type="button" className="tt-item" onClick={() => go(x.to)}>
           <span className={`st-chip st-${x.tone}`} style={{ minWidth: 54, justifyContent: 'center' }}>{render.badge(x)}</span>
@@ -56,7 +56,7 @@ export default function TodayTasks() {
   return (
     <div className="tt" ref={ref}>
       <button type="button" className="tt-btn" onClick={() => setOpen((v) => !v)} aria-expanded={open} title="Today's tasks">
-        <span aria-hidden="true">🗓️</span> Today <b className={tone ? `t-${tone}` : ''}>{data.total}</b>
+        <span aria-hidden="true">🗓️</span> Today{data.total ? <> <b className={tone ? `t-${tone}` : ''}>{data.total}</b></> : null}
       </button>
       {open && (
         <div className="tt-pop" role="dialog" aria-label="Today's tasks">
@@ -65,7 +65,7 @@ export default function TodayTasks() {
             title="My follow-ups due"
             items={data.followUps || []}
             none="No follow-up due today."
-            render={{ badge: (x) => (x.tone === 'red' ? 'Overdue' : (x.time || 'Today')), title: (x) => x.candidate, sub: (x) => `${x.what}${x.requirement ? ` · ${x.requirement}` : ''}` }}
+            render={{ badge: (x) => (x.tone === 'red' ? 'Late' :(x.time || 'Today')), title: (x) => x.candidate, sub: (x) => `${x.what}${x.requirement ? ` · ${x.requirement}` : ''}` }}
           />
           <Section
             title="My interviews today"
@@ -74,9 +74,9 @@ export default function TodayTasks() {
             render={{ badge: (x) => timeOf(x.at), title: (x) => x.candidate, sub: (x) => `${x.requirement || ''}${x.round ? ` · round ${x.round}` : ''}` }}
           />
           <Section
-            title="My pending actions due today"
+            title="My tasks due today"
             items={data.actions || []}
-            none="No action falls due today."
+            none="No task due today."
             render={{ badge: () => 'Today', title: (x) => x.candidate, sub: (x) => `${x.what} · ${x.stage}` }}
           />
           {(data.invoices || []).length > 0 && (

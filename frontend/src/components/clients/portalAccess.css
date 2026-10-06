@@ -1,0 +1,36 @@
+/* Client 360 -> Portal access, and the client-logins review page (spec B1). Scoped under .tlpa. */
+.tlpa { max-width: 920px; }
+.tlpa .notice.green { background: var(--green-tint, #e8f6ee); border-color: #bfe3cd; color: #1d6b3d; flex-direction: column; }
+.tlpa-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.tlpa-head h3 { margin: 0 0 4px; font-size: 16px; }
+.tlpa-main { min-height: 40px; padding: 0 18px; font-size: 14px; }
+.tlpa-section { margin-top: 14px; }
+.tlpa-label { font-size: 12px; font-weight: 600; color: var(--muted, #5b6b82); text-transform: uppercase; letter-spacing: .04em; margin: 8px 0; cursor: default; }
+details.tlpa-section > summary.tlpa-label { cursor: pointer; }
+.tlpa-row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line, #e3e8ef); border-radius: 10px; background: #fff; margin-bottom: 8px; }
+.tlpa-who { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tlpa-who b { font-size: 14px; }
+.tlpa-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.tlpa-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.tlpa-type { display: flex; align-items: center; gap: 6px; }
+.tlpa-type select { min-height: 30px; }
+.tlpa-empty { padding: 18px; border: 1px dashed var(--line, #d6dde7); border-radius: 10px; color: var(--muted, #5b6b82); background: #fafcff; }
+.tlpa-hist { padding: 4px 0; }
+.tlpa-link { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; color: #7a4a06; }
+.tlpa-link code { word-break: break-all; background: #fff; border: 1px solid #f0dcb8; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.tlpa-link .btn { align-self: flex-start; }
+.tlpa-form { display: flex; flex-direction: column; gap: 10px; }
+.tlpa-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.tlpa-form input { min-height: 36px; }
+.tlpa-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tlpa-typecard { text-align: left; border: 1.5px solid var(--line, #d6dde7); border-radius: 10px; background: #fff; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; font: inherit; }
+.tlpa-typecard span { font-size: 12px; color: var(--muted, #5b6b82); }
+.tlpa-typecard.on { border-color: var(--brand, #1f5eff); background: var(--brand-tint, #eef3ff); }
+.tlpa-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.tlpa-filter { border: 1px solid var(--line, #d6dde7); background: #fff; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.tlpa-filter.on { border-color: var(--brand, #1f5eff); background: var(--brand-tint, #eef3ff); color: var(--brand-ink, #163d9c); font-weight: 600; }
+@media (max-width: 640px) {
+  .tlpa-types { grid-template-columns: 1fr; }
+  .tlpa-row { flex-direction: column; }
+  .tlpa-main { width: 100%; }
+}

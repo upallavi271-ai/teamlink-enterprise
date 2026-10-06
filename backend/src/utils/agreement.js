@@ -34,7 +34,18 @@ async function consultantParty() {
   const parts = c ? [c.address, c.city, c.state, c.pin].map((p) => String(p || '').trim()).filter(Boolean) : [];
   // Don't repeat a city / state the address line already contains.
   const address = parts.filter((p, i) => i === 0 || !parts[0].toLowerCase().includes(p.toLowerCase())).join(', ');
-  return { name: (c && String(c.legalName || '').trim()) || CONSULTANT, address: address || null };
+  // Who signs for TeamLink (Agreement settings). The "[… to be confirmed]"
+  // placeholder is never printed — the line stays blank until it is set.
+  let signatoryName = null;
+  let signatoryTitle = null;
+  try {
+    // eslint-disable-next-line global-require
+    const s = await require('./agreementSettings').agreementSettings();
+    const real = (v) => (String(v || '').trim() && !/^\[.*\]$/.test(String(v).trim()) ? String(v).trim() : null);
+    signatoryName = real(s.signatoryName);
+    signatoryTitle = real(s.signatoryTitle);
+  } catch { /* settings unreadable: blank lines */ }
+  return { name: (c && String(c.legalName || '').trim()) || CONSULTANT, address: address || null, signatoryName, signatoryTitle };
 }
 
 // The payment terms every client record starts with (schema default). A
@@ -43,6 +54,8 @@ const DEFAULT_PAYMENT_TERMS = 'Invoice 6 days after joining; payment due within 
 
 // A blank to be completed by hand, rather than a value nobody supplied.
 const blank = (n = 40) => '_'.repeat(n);
+// A known value padded to the blank's width (the two signature columns line up).
+const fill = (value, width) => (String(value || '').trim() ? String(value).trim().slice(0, width).padEnd(width) : blank(width));
 const or = (value, width) => (String(value || '').trim() ? String(value).trim() : blank(width));
 
 function addressOf(client) {
@@ -53,7 +66,57 @@ function addressOf(client) {
   return parts.length ? parts.join(', ') : blank(70);
 }
 
+// THE KEY TERMS, read from the same client fields the document merges — so the
+// Add-client preview, the signing page and the saved draft can never disagree.
+function keyTermsOf(client = {}, consultant = null) {
+  const c = client || {};
+  const us = consultant || { name: CONSULTANT, address: null };
+  const terms = String(c.paymentTerms || '').trim() || DEFAULT_PAYMENT_TERMS;
+  const days = (terms.match(/within (\d+) days/i) || [])[1];
+  const addr = addressOf(c);
+  // eslint-disable-next-line global-require
+  const vendor = require('./vendorAgreement');
+  const gDays = vendor.guaranteeDaysOf(c);
+  return {
+    template: vendor.templateIdOf(c.agreementTemplate) === 'STAFFING' ? vendor.STAFFING_TEMPLATE : vendor.VENDOR_TEMPLATE,
+    feeType: String(c.feeType || '').trim() || 'PERCENT_CTC',
+    feeAmount: c.feeAmount != null ? Number(c.feeAmount) : null,
+    feeText: vendor.feeCell(c),
+    gstApplicable: !/^no$/i.test(String(c.gstApplicable || '').trim()),
+    guaranteeDays: gDays,
+    guaranteeWords: gDays === 0 ? 'No replacement' : vendor.guaranteeWords(gDays),
+    invoiceDays: vendor.invoiceDaysOf(c),
+    endDate: c.agreementEnd || null,
+    specialTerms: String(c.specialTerms || '').trim() || null,
+    clientName: String(c.legalName || c.name || '').trim() || null,
+    address: addr.startsWith('___') ? (String(c.billingAddress || '').trim() || null) : addr,
+    department: String(c.ownerDepartment || '').trim() || null,
+    feePercent: c.agreementFeePercent != null ? c.agreementFeePercent : 8.33,
+    gstPercent: c.gstPercent != null ? c.gstPercent : 18,
+    guarantee: String(c.guaranteePeriod || '30 Days').trim(),
+    paymentDays: days != null ? Number(days) : null,
+    paymentTerms: terms,
+    startDate: c.agreementStart || null,
+    consultantName: us.name,
+    signatoryName: us.signatoryName || null,
+    signatoryTitle: us.signatoryTitle || null,
+  };
+}
+
+// THE TEMPLATE (2026-10-05): the user's "Vendor Services Agreement"
+// (utils/vendorAgreement.js) for every client, unless the client's
+// agreementTemplate names the older 16-clause text below — kept only as a
+// fallback option. ONE function every caller uses: Add-client preview, the
+// saved draft, Make a new draft, the signing page and the PDF.
 function buildAgreementDocument(client = {}, consultant = null) {
+  // eslint-disable-next-line global-require
+  const vendor = require('./vendorAgreement');
+  if (vendor.templateIdOf(client && client.agreementTemplate) === 'STAFFING') return buildStaffingAgreement(client, consultant);
+  return vendor.buildVendorServicesAgreement(client, consultant);
+}
+
+// The older 16-clause "Permanent Staffing / Recruitment Services Agreement".
+function buildStaffingAgreement(client = {}, consultant = null) {
   const c = client || {};
   const us = consultant || { name: CONSULTANT, address: null };
   const terms = String(c.paymentTerms || '').trim();
@@ -271,8 +334,8 @@ function buildAgreementDocument(client = {}, consultant = null) {
     '',
     `For ${us.name}                          For Client`,
     '',
-    `Name: ${blank(28)}                Name: ${blank(28)}`,
-    `Designation: ${blank(21)}                Designation: ${blank(21)}`,
+    `Name: ${fill(us.signatoryName, 28)}                Name: ${blank(28)}`,
+    `Designation: ${fill(us.signatoryTitle, 21)}                Designation: ${blank(21)}`,
     `Signature: ${blank(23)}                Signature: ${blank(23)}`,
     `Date: ${blank(28)}                Date: ${blank(28)}`,
     '',
@@ -293,5 +356,5 @@ function newEsignToken() {
 }
 
 module.exports = {
-  buildAgreementDocument, nextAgreementId, newEsignToken, consultantParty, CONSULTANT, DEFAULT_PAYMENT_TERMS,
+  buildAgreementDocument, buildStaffingAgreement, nextAgreementId, newEsignToken, consultantParty, CONSULTANT, DEFAULT_PAYMENT_TERMS, keyTermsOf,
 };

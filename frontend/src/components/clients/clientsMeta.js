@@ -29,7 +29,7 @@ export function useClientsMeta(user, enabled = true) {
     let live = true;
     loadClientsMeta(user.id)
       .then((m) => { if (live) setMeta(m); })
-      .catch((err) => { if (live) setError(err.response?.data?.error || 'Could not load the Clients settings'); });
+      .catch((err) => { if (live) setError(err.response?.data?.error || 'Could not load this page. Please try again.'); });
     return () => { live = false; };
   }, [user?.id, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   return { meta, error, refresh: () => loadClientsMeta(user?.id, { fresh: true }).then(setMeta) };
@@ -38,7 +38,7 @@ export function useClientsMeta(user, enabled = true) {
 // §8.1 — the health badge colours (green / yellow / red).
 export const HEALTH_TONE = { active: 'green', quiet: 'amber', dormant: 'red' };
 export const HEALTH_HINT = {
-  active: 'Activity on this client in the last 30 days',
-  quiet: 'No activity for more than 30 days — follow up',
-  dormant: 'No activity for more than 90 days (or 60+ days with no live requirement)',
+  active: 'Worked on in the last 30 days',
+  quiet: 'Quiet for 30+ days. Follow up.',
+  dormant: 'Quiet for 90+ days.',
 };

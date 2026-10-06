@@ -45,7 +45,7 @@ const XLSX = require('xlsx');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const {
-  applicationWhere, requirementWhere, scopeLabel, scopeOf, CLIENT_SHARED_STAGES,
+  applicationWhere, requirementWhere, scopeLabel, atsScopeOf: scopeOf, CLIENT_SHARED_STAGES, candidateWhere,
 } = require('../utils/scope');
 const {
   stageLabel, STAGE_OWNER_ACTION, REQUIREMENT_LIVE_STATUSES, requirementStatusLabel,
@@ -54,6 +54,7 @@ const {
 } = require('../utils/atsVocab');
 const { STAGE_GROUPS, stageIndex } = require('../utils/pipelineView');
 const dateRange = require('../utils/dateRange');
+const { didNotJoin } = require('../utils/joining'); // B9.8: one "Did not join" rule
 const { toCsv } = require('../utils/tabularExport');
 // Who a record is attributed to — the ATS-wide rule, shared with every
 // screen's person filter (Candidates, Interviews, Recruiter & BDE …).
@@ -230,6 +231,8 @@ class BadRequest extends Error {
 const FILTER_KEYS = [
   'department', 'clientId', 'requirementId', 'recruiter', 'tl', 'stl', 'bde', 'location', 'source',
   'status', 'stage', 'interviewStatus', 'aiStatus', 'joiningStatus', 'positionCode',
+  // Recruiter Performance: people=active | former (left in HRMS) | '' (all).
+  'people',
 ];
 // The person filters take the ATS-wide values ("id:<userId>" / "name:<name>",
 // utils/workers.js) as well as this report's own keys ("u:…" / "n:…").
@@ -329,7 +332,6 @@ function channelOf(source) {
 router.channelOf = (raw) => channelOf(sourceOf({ source: raw }));
 
 // --- Joining outcome: one per selected candidate, so they add up ------------
-const NOT_JOINING_TEXT = /not\s*join|won'?t\s*join|wont|dropp/i;
 const JOIN_OUTCOMES = {
   pending: 'Joining date not set',
   scheduled: 'Joining scheduled',
@@ -341,11 +343,14 @@ const JOIN_OUTCOMES = {
 };
 function joiningOutcome(x, today) {
   if (x.joined) return 'joined';
+  // B9.8: marked "Did not join" at ANY step (Selected / Offer accepted /
+  // Interview done too), one rule with the dashboard (utils/joining.js didNotJoin).
+  if (didNotJoin(x.a)) return 'noshow';
   if (x.stage === 'HOLD') return 'hold';
   if (x.stage === 'REJECTED') {
     // They had a date, or had accepted: they did not turn up. Otherwise the
     // selection fell through before a joining was ever fixed.
-    return x.a.joiningDate || x.a.offerStatus === 'Offer Accepted' || NOT_JOINING_TEXT.test(x.a.joiningStatus || '')
+    return x.a.joiningDate || x.a.offerStatus === 'Offer Accepted'
       ? 'noshow' : 'cancelled';
   }
   if (x.a.joiningDate || x.a.joiningStatus === 'Joining Scheduled') {
@@ -361,6 +366,8 @@ const APP_SELECT = {
   interviewer: true, interviewMode: true, interviewType: true,
   aiInterviewStatus: true, aiInterviewScore: true,
   offerStatus: true, joiningStatus: true, joiningDate: true,
+  joinedAt: true, // spec D: the one joined date (joiningDate, then joinedAt, then the move)
+  joinedAt: true, // Time to fill / Results vs target: the dashboard's join date (utils/reportsPlus.js)
   source: true, firstSource: true,
 };
 const REQ_SELECT = {
@@ -368,6 +375,8 @@ const REQ_SELECT = {
   location: true, status: true, openings: true, createdAt: true, recruiterId: true,
   bdeId: true, tlId: true, tl: true, stlId: true, stl: true, positionCode: true,
   client: { select: { name: true } },
+  // spec D: the master Qualification / Specialisation (Specialization report).
+  qualificationId: true, specialisationId: true,
 };
 const FU_SELECT = {
   id: true, applicationId: true, ownerUserId: true, ownerName: true, ownerPositionCode: true,
@@ -412,6 +421,8 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
       select: {
         applicationId: true, fromStage: true, toStage: true, createdAt: true, actorSide: true,
         actorUserId: true, actorName: true, actorRole: true, actorPositionCode: true,
+        // Rejection reasons report (spec 2026-10-03 §A3).
+        reasonCategory: true, reasonDetail: true,
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -430,6 +441,13 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     }),
   ]);
   const candSource = new Map(candSources.map((c) => [c.id, c]));
+  // Test / demo people (ZZTEST, @example.test) are never counted — the
+  // dashboard's own rule (utils/atsHome.js isTest, on the candidate's name).
+  const { isTest } = require('../utils/atsHome'); // eslint-disable-line global-require
+  const testCands = new Set((await prisma.candidate.findMany({
+    where: { OR: [{ name: { contains: 'zztest' } }, { name: { contains: 'example.test' } }] },
+    select: { id: true, name: true },
+  })).filter((c) => isTest(c.name)).map((c) => c.id));
 
   // People. A follow-up imported from a tracker names its recruiter as text
   // (some have left and have no login); a name that matches a login IS that
@@ -477,6 +495,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   appRows.forEach((a) => {
     const r = reqMap.get(a.requirementId);
     if (!r) return;
+    if (testCands.has(a.candidateId)) return;
     a.candidate = candSource.get(a.candidateId) || null;
     const evs = evBy.get(a.id) || [];
     const fus = fuBy.get(a.id) || [];
@@ -527,6 +546,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
 
     const x = {
       id: a.id, a, req: r, stage: a.stage, pipe: PIPE_OF[a.stage] || PIPE[0], reach,
+      lastReject: a.stage === 'REJECTED' ? (lastReject || null) : null,
       reached: (k) => (k === 'joined' ? joined : reach >= M[k]),
       screened: a.stage !== 'NEW' || reach > 0,
       joined,
@@ -536,6 +556,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
       source: sourceOf(a),
       recruiter: recruiter || { key: '—', label: 'Unassigned', team: null },
       seat, tl, stl: r.stl, bde,
+      evs, // the stage history — Results vs target counts moves in the period (utils/reportsPlus.js)
       recommendation: normalizeRecommendation(clientFb && clientFb.recommendation)
         || normalizeRecommendation(a.interviewResult),
       waitingOnRecruiter: (STAGE_OWNER_ACTION[a.stage] || {}).ownerRole === 'Recruiter' && !closed,
@@ -732,7 +753,7 @@ const FUNNEL_STEPS = [
   { key: 'screened', label: 'Screening / Review', test: (x) => x.joined || x.screened },
   { key: 'shortlisted', label: 'Shortlisted', test: (x) => x.joined || x.reached('shortlisted') },
   { key: 'interview', label: 'Interview', test: (x) => x.joined || x.reached('interview') },
-  { key: 'selected', label: 'Selected', test: (x) => x.joined || x.reached('selected') },
+  { key: 'selected', label: 'Selected (incl. joined later)', test: (x) => x.joined || x.reached('selected') },
   { key: 'joined', label: 'Joined', test: (x) => x.joined },
 ];
 
@@ -790,6 +811,8 @@ function buildDepartments(ctx) {
     { key: 'applications', label: 'Applications', drill: 'app' },
     { key: 'people', label: 'Candidates', drill: 'cand' },
     { key: 'pipeline', label: 'In pipeline', drill: 'app' },
+    // v3 §5: Open, Submitted, Interviews, Selected, Joined per department.
+    { key: 'shared', label: 'Client shared', drill: 'app' },
     { key: 'interviews', label: 'Interviews', drill: 'app' },
     { key: 'selected', label: 'Selected', drill: 'app' },
     { key: 'joined', label: 'Joined', drill: 'app' },
@@ -809,6 +832,7 @@ function buildDepartments(ctx) {
     c.applications.add(x.id);
     c.people.add(x.a.candidateId);
     if (x.inPipeline) c.pipeline.add(x.id);
+    if (x.joined || x.reached('shared')) c.shared.add(x.id);
     if (x.joined || x.reached('interview')) c.interviews.add(x.id);
     if (x.joined || x.reached('selected')) c.selected.add(x.id);
     if (x.joined) c.joined.add(x.id);
@@ -1036,9 +1060,18 @@ function buildRecruiters(ctx) {
   const tls = new Map();
   const clientsOf = new Map();
   const note = (m, key, v) => { if (!v) return; if (!m.has(key)) m.set(key, new Set()); m.get(key).add(v); };
+  // FORMER PEOPLE (user, 2026-10-05): their old work stays theirs. A person
+  // who has left HRMS carries "· Former"; ?people=active / former keeps one
+  // side only (utils/formerPeople.js formerKeys, set by prepare below).
+  const fk = ctx.formerKeys || new Set();
+  const wantPeople = (ctx.f && ctx.f.people) || '';
+  const isFormerP = (p) => !!p && fk.has(p.key);
+  const keepP = (p) => !wantPeople || (wantPeople === 'former' ? isFormerP(p) : !isFormerP(p));
+  const tagged = (p, label) => (isFormerP(p) ? `${label} · Former` : label);
   ctx.apps.forEach((x) => {
+    if (!keepP(x.recruiter)) return;
     const c = sec.row(x.recruiter.key).cells;
-    c.recruiter = x.recruiter.label;
+    c.recruiter = tagged(x.recruiter, x.recruiter.label);
     note(seats, x.recruiter.key, x.seat);
     note(tls, x.recruiter.key, x.tl && x.tl.label);
     c.requirements.add(x.req.id);
@@ -1056,9 +1089,9 @@ function buildRecruiters(ctx) {
   });
   // A recruiter's assigned requirements count even before anyone is on them.
   ctx.reqs.forEach((r) => {
-    if (!r.recruiter) return;
+    if (!r.recruiter || !keepP(r.recruiter)) return;
     const row = sec.row(r.recruiter.key);
-    row.cells.recruiter = r.recruiter.label;
+    row.cells.recruiter = tagged(r.recruiter, r.recruiter.label);
     note(seats, r.recruiter.key, r.positionCode);
     note(tls, r.recruiter.key, r.tl && r.tl.label);
     row.cells.requirements.add(r.id);
@@ -1076,6 +1109,43 @@ function buildRecruiters(ctx) {
   sec.sort = (a, b) => (a.key === '—') - (b.key === '—') || b.cells.candidates.n - a.cells.candidates.n;
   addTotal(sec, derive);
 
+  // ATS layout v3 §5 (2026-10-03) — Recruiter & BDE performance: the same
+  // applications by their client manager (BDE), with the same "reached"
+  // rule as the recruiter rows above (the Recruitment report's BDE grouping
+  // attributes the same way), so a BDE's Joined and the recruiters' Joined
+  // count the same people.
+  const bdes = section('bdes', 'Client manager (BDE)-wise', [
+    { key: 'bde', label: 'Client manager (BDE)' },
+    { key: 'requirements', label: 'Requirements', drill: 'req' },
+    { key: 'candidates', label: 'Candidates', drill: 'app' },
+    { key: 'shared', label: 'Client shared', drill: 'app' },
+    { key: 'interviews', label: 'Interviews', drill: 'app' },
+    { key: 'selected', label: 'Selected', drill: 'app' },
+    { key: 'joined', label: 'Joined', drill: 'app' },
+    { key: 'conv', label: 'Conversion', type: 'pct' },
+  ], { sub: 'Attributed to the client manager (BDE) of the job.', paged: true });
+  ctx.apps.forEach((x) => {
+    if (!keepP(x.bde)) return;
+    const b = x.bde || { key: '—', label: 'No BDE' };
+    const c = bdes.row(b.key).cells;
+    c.bde = tagged(x.bde, b.label);
+    c.requirements.add(x.req.id);
+    c.candidates.add(x.id);
+    if (x.reached('shared')) c.shared.add(x.id);
+    if (x.reached('interview')) c.interviews.add(x.id);
+    if (x.reached('selected')) c.selected.add(x.id);
+    if (x.joined) c.joined.add(x.id);
+  });
+  ctx.reqs.forEach((r) => {
+    if (!r.bde || !keepP(r.bde)) return;
+    const c = bdes.row(r.bde.key).cells;
+    c.bde = tagged(r.bde, r.bde.label);
+    c.requirements.add(r.id);
+  });
+  bdes.rows.forEach((r) => derive(r.cells));
+  bdes.sort = (a, b) => (a.key === '—') - (b.key === '—') || b.cells.candidates.n - a.cells.candidates.n;
+  addTotal(bdes, derive);
+
   const t = tileSet();
   const tot = sec.total.cells;
   t.value('recruiters', 'Recruiters', [...sec.rows.keys()].filter((k) => k !== '—').length);
@@ -1086,7 +1156,7 @@ function buildRecruiters(ctx) {
   t.push('joined', 'Joined', tot.joined);
   t.push('pending', 'Pending Actions', tot.pending, 'waiting on the recruiter');
   t.push('overdue', 'Overdue Actions', tot.overdue, 'past SLA');
-  return { tiles: t.tiles, sections: [sec] };
+  return { tiles: t.tiles, sections: [sec, bdes] };
 }
 
 // ===========================================================================
@@ -1659,8 +1729,357 @@ function buildSla(ctx) {
     else Object.assign(row.cells, { avg: null, median: null, min: null, max: null, status: `Not enough data (${vals.length} measured)` });
   });
 
-  return { tiles: t.tiles, sections: [sla, stageAgingSection(ctx, 'stageAging'), reqAging, tr] };
+  // B9.2 — CLIENT PROMISES: each client's own "Feedback within N days" and
+  // "Send first profiles within N days" (utils/clientSla.js; blank = the
+  // Step-timing default), and how the open jobs stand against them.
+  const CS = require('../utils/clientSla'); // eslint-disable-line global-require
+  const promises = section('clientSla', 'Client promises (per-client SLA)', [
+    { key: 'client', label: 'Client', ref: 'client' },
+    { key: 'feedbackDays', label: 'Feedback within (days)', type: 'num' },
+    { key: 'firstDays', label: 'First profiles within (days)', type: 'num' },
+    { key: 'openJobs', label: 'Open jobs', drill: 'req' },
+    { key: 'firstOk', label: 'First profiles sent in time', drill: 'req' },
+    { key: 'firstLate', label: 'First profiles late', drill: 'req' },
+    { key: 'feedbackWaiting', label: 'Waiting for client feedback', drill: 'app' },
+    { key: 'feedbackLate', label: 'Feedback late now', drill: 'app' },
+  ], {
+    sub: 'A client\'s own numbers (Clients → client → Client promises) or the Step-timing defaults. First profiles = from the day the job was raised to the first profile sent to the client; Feedback late = profiles with the client past that client\'s days.',
+    paged: true,
+  });
+  const firstSharedOf = new Map();
+  ctx.apps.forEach((x) => {
+    const at = x.crossedAt.shared ? new Date(x.crossedAt.shared).getTime() : null;
+    if (at && (!firstSharedOf.has(x.req.id) || at < firstSharedOf.get(x.req.id))) firstSharedOf.set(x.req.id, at);
+  });
+  const nowMs = Date.now();
+  ctx.reqs.filter((r) => r.live && !r.internal && r.clientId).forEach((r) => {
+    const row = promises.row(r.clientId, { refs: { client: r.clientId } });
+    const c = row.cells;
+    if (c.client == null) {
+      c.client = r.clientName;
+      c.feedbackDays = CS.feedbackDaysNow(r.clientId) ?? CS.defaults().feedbackDays;
+      c.firstDays = CS.firstProfilesDaysNow(r.clientId);
+    }
+    c.openJobs.add(r.id, r.ageDays);
+    const limitMs = c.firstDays * DAY;
+    const first = firstSharedOf.get(r.id);
+    const raised = new Date(r.createdAt).getTime();
+    if (first) { if (first - raised <= limitMs) c.firstOk.add(r.id, Math.round((first - raised) / DAY)); else c.firstLate.add(r.id, Math.round((first - raised) / DAY)); } else if (nowMs - raised > limitMs) c.firstLate.add(r.id, r.ageDays);
+  });
+  ctx.apps.forEach((x) => {
+    if (!x.inPipeline || slaRowOf(x.stage) !== 'client' || !x.req.clientId || x.req.internal) return;
+    const row = promises.rows.get(x.req.clientId);
+    if (!row) return;
+    row.cells.feedbackWaiting.add(x.id, x.daysInStage);
+    if (x.overdue) row.cells.feedbackLate.add(x.id, x.daysOverdue);
+  });
+  promises.sort = (a, b) => b.cells.feedbackLate.n - a.cells.feedbackLate.n || b.cells.firstLate.n - a.cells.firstLate.n || b.cells.openJobs.n - a.cells.openJobs.n;
+  addTotal(promises);
+  promises.total.cells.feedbackDays = null; promises.total.cells.firstDays = null;
+
+  return { tiles: t.tiles, sections: [sla, promises, stageAgingSection(ctx, 'stageAging'), reqAging, tr] };
 }
+
+// ===========================================================================
+// REJECTION REASONS (spec 2026-10-03 §A3) — why people are rejected, by
+// reason, by side (Client / TeamLink / Candidate), by client and by recruiter,
+// plus plain-language insights. The record is the existing one: each
+// rejected application's latest stage event into REJECTED (reasonCategory,
+// actorSide). Date range = the day of the rejection.
+// ===========================================================================
+const REJ_SIDES = [['Client', 'Client'], ['Internal', 'TeamLink'], ['Candidate', 'Candidate'], ['', 'Not recorded']];
+const rejReasonOf = (e) => {
+  if (!e) return 'Not recorded';
+  if (e.reasonCategory) return clean(e.reasonCategory);
+  const d = clean(e.reasonDetail);
+  return d && d !== 'Rejected' ? 'Other (free text)' : 'Not recorded';
+};
+function buildRejections(ctx) {
+  let list = ctx.apps.filter((x) => x.stage === 'REJECTED');
+  if (ctx.f.period) {
+    const within = dateRange.dateTimeIn(ctx.f.period);
+    list = list.filter((x) => {
+      const at = x.lastReject ? x.lastReject.createdAt : x.a.updatedAt;
+      return at >= within.gte && at < within.lt;
+    });
+  }
+  const sideOf = (x) => {
+    const s = (x.lastReject && x.lastReject.actorSide) || '';
+    return REJ_SIDES.some(([k]) => k === s) ? s : '';
+  };
+  const t = tileSet();
+  const all = t.add('rejected', 'Rejected', 'app', 'Applications rejected in this scope');
+  const sideTiles = {};
+  REJ_SIDES.forEach(([k, l]) => { sideTiles[k] = t.add(`side_${k || 'none'}`, `By ${l}`, 'app'); });
+  list.forEach((x) => { all.add(x.id); sideTiles[sideOf(x)].add(x.id); });
+
+  const sideCols = REJ_SIDES.map(([k, l]) => ({ key: `s_${k || 'none'}`, label: l, drill: 'app' }));
+  const share = (c) => { c.share = pct(c.count.n, list.length); };
+
+  const reasons = section('reasons', 'By reason', [
+    { key: 'reason', label: 'Reason' },
+    { key: 'count', label: 'Rejections', drill: 'app' },
+    { key: 'share', label: '% of rejections', type: 'pct' },
+    ...sideCols,
+  ], { sort: (a, b) => b.cells.count.n - a.cells.count.n });
+  const sides = section('sides', 'By side', [
+    { key: 'side', label: 'Whose decision' },
+    { key: 'count', label: 'Rejections', drill: 'app' },
+    { key: 'share', label: '% of rejections', type: 'pct' },
+  ], { sort: (a, b) => b.cells.count.n - a.cells.count.n });
+  const clients = section('clients', 'By client', [
+    { key: 'client', label: 'Client', ref: 'client' },
+    { key: 'count', label: 'Rejections', drill: 'app' },
+    { key: 'clientSide', label: 'By the client', drill: 'app' },
+    { key: 'top', label: 'Client\'s top reason' },
+    { key: 'topShare', label: 'Top reason %', type: 'pct' },
+  ], { sort: (a, b) => b.cells.count.n - a.cells.count.n, sub: '"Client\'s top reason" counts the client\'s OWN rejections (side = Client).' });
+  const depts = section('rjDepartments', 'By department', [
+    { key: 'department', label: 'Department' },
+    { key: 'count', label: 'Rejections', drill: 'app' },
+    { key: 'share', label: '% of rejections', type: 'pct' },
+    { key: 'clientSide', label: 'By the client', drill: 'app' },
+    { key: 'internal', label: 'By our team', drill: 'app' },
+    { key: 'top', label: 'Top reason' },
+  ], { sort: (a, b) => b.cells.count.n - a.cells.count.n });
+  const recruiters = section('recruiters', 'By recruiter', [
+    { key: 'recruiter', label: 'Recruiter' },
+    { key: 'count', label: 'Rejections', drill: 'app' },
+    { key: 'internal', label: 'Screened out by TeamLink', drill: 'app' },
+    { key: 'clientSide', label: 'Rejected by the client', drill: 'app' },
+    { key: 'top', label: 'Top reason' },
+  ], { sort: (a, b) => b.cells.count.n - a.cells.count.n });
+
+  const tops = new Map(); // row -> Map(reason -> n)
+  const bump = (row, reason) => {
+    if (!tops.has(row)) tops.set(row, new Map());
+    const m = tops.get(row);
+    m.set(reason, (m.get(reason) || 0) + 1);
+  };
+  list.forEach((x) => {
+    const reason = rejReasonOf(x.lastReject);
+    const side = sideOf(x);
+    const rr = reasons.row(reason);
+    rr.cells.reason = reason;
+    rr.cells.count.add(x.id);
+    rr.cells[`s_${side || 'none'}`].add(x.id);
+    const sl = REJ_SIDES.find(([k]) => k === side)[1];
+    const sr = sides.row(sl);
+    sr.cells.side = sl;
+    sr.cells.count.add(x.id);
+    const cr = clients.row(x.req.clientKey, { refs: x.req.internal ? {} : { client: x.req.clientId } });
+    cr.cells.client = x.req.clientName;
+    cr.cells.count.add(x.id);
+    if (side === 'Client') { cr.cells.clientSide.add(x.id); bump(cr, reason); }
+    const dept = x.req.department || '—';
+    const dr = depts.row(dept);
+    dr.cells.department = dept;
+    dr.cells.count.add(x.id);
+    if (side === 'Client') dr.cells.clientSide.add(x.id);
+    if (side === 'Internal') dr.cells.internal.add(x.id);
+    bump(dr, reason);
+    const pr = recruiters.row(x.recruiter.key);
+    pr.cells.recruiter = x.recruiter.label;
+    pr.cells.count.add(x.id);
+    if (side === 'Internal') pr.cells.internal.add(x.id);
+    if (side === 'Client') pr.cells.clientSide.add(x.id);
+    bump(pr, reason);
+  });
+  const topOf = (row) => {
+    const m = tops.get(row);
+    if (!m || !m.size) return null;
+    return [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+  };
+  reasons.rows.forEach((r) => share(r.cells));
+  sides.rows.forEach((r) => share(r.cells));
+  clients.rows.forEach((r) => {
+    const top = topOf(r);
+    r.cells.top = top ? top[0] : '—';
+    r.cells.topShare = top ? pct(top[1], r.cells.clientSide.n) : null;
+  });
+  recruiters.rows.forEach((r) => { const top = topOf(r); r.cells.top = top ? top[0] : '—'; });
+  depts.rows.forEach((r) => { const top = topOf(r); r.cells.top = top ? top[0] : '—'; share(r.cells); });
+  addTotal(reasons, share);
+  addTotal(sides, share);
+  addTotal(clients);
+  addTotal(recruiters);
+  addTotal(depts, share);
+
+  // INSIGHTS — plain language, only where the numbers are big enough to mean it.
+  const notes = [];
+  const n = list.length;
+  if (!n) notes.push('No rejections in this scope and date range.');
+  const recorded = [...reasons.rows.values()].filter((r) => r.cells.reason !== 'Not recorded');
+  const recordedN = recorded.reduce((s, r) => s + r.cells.count.n, 0);
+  [...clients.rows.values()]
+    .filter((r) => r.cells.clientSide.n >= 5 && r.cells.top && r.cells.top !== 'Not recorded' && r.cells.topShare >= 40)
+    .sort((a, b) => b.cells.clientSide.n - a.cells.clientSide.n)
+    .slice(0, 5)
+    .forEach((r) => {
+      const why = r.cells.top;
+      let advice = 'review what this client keeps saying no to before the next submission.';
+      if (/salary|budget|ctc/i.test(why)) advice = 'the BDE should talk budget with the client before more profiles are sent.';
+      else if (/skill|experience|profile/i.test(why)) advice = 'the TL and BDE should re-check the job brief with the client — the profiles do not fit what they want.';
+      else if (/interview|communication/i.test(why)) advice = 'prepare candidates better before the client interview.';
+      else if (/position (closed|filled)|not shortlisted|not selected/i.test(why)) advice = 'check with the client that the opening is still live before sharing more.';
+      notes.push(`${r.cells.client} rejects ${r.cells.topShare}% on "${why}" (${r.cells.clientSide.n} client rejections) — ${advice}`);
+    });
+  const skills = recorded.filter((r) => /skill|profile not matching|insufficient experience|not eligible|failed screening/i.test(r.cells.reason))
+    .reduce((s, r) => s + r.cells.count.n, 0);
+  if (recordedN >= 10 && skills / recordedN >= 0.25) {
+    notes.push(`Skills / profile mismatch is high (${pct(skills, recordedN)}% of rejections with a reason) — recruiters should screen against the job's mandatory skills before submitting.`);
+  }
+  const dropOut = recorded.filter((r) => /did not attend|offer declined|did not join|not reachable|not interested|withdrew/i.test(r.cells.reason))
+    .reduce((s, r) => s + r.cells.count.n, 0);
+  if (recordedN >= 10 && dropOut / recordedN >= 0.25) {
+    notes.push(`Candidates drop out often (${pct(dropOut, recordedN)}% of rejections with a reason: no-shows, declined offers, did not join) — confirm interviews and offers with the candidate the day before.`);
+  }
+  const missing = n - recordedN;
+  if (n >= 10 && missing / n >= 0.3) {
+    notes.push(`${pct(missing, n)}% of these rejections have no reason recorded (mostly imported from the old trackers). Every new reject now asks for one.`);
+  }
+  return { tiles: t.tiles, sections: [reasons, sides, clients, depts, recruiters], notes };
+}
+
+// ===========================================================================
+// SPECIALIZATION (spec D, 2026-10-03) — demand vs supply per Department ->
+// Specialization: "Dermatology: 12 jobs, only 4 candidates — sourcing needed".
+//   Open jobs     live requirements mapped to it (Requirement.specialisationId)
+//   Candidates    people whose PROFILE says it (Candidate.specialisationId),
+//                 within what this login may see (utils/scope.js candidateWhere)
+//   Submitted / Interview / Selected / Joined   applications on its jobs,
+//                 cumulative (reached), as on every other report
+//   Avg days to fill   job raised -> person joined, over the joins measured
+// Jobs and people not mapped yet sit in each department's "Not mapped yet" row.
+// ===========================================================================
+async function prepareSpecialisations(ctx, user) {
+  if (ctx.specPrep) return;
+  // eslint-disable-next-line global-require
+  const sp = require('../utils/specialisations');
+  const [master, cands] = await Promise.all([
+    sp.loadMaster(),
+    prisma.candidate.findMany({
+      where: { AND: [candidateWhere(user), { specialisationId: { not: null } }] },
+      select: { id: true, specialisationId: true, name: true, email: true },
+    }),
+  ]);
+  // Test / demo rows never count (the dashboard's rule).
+  ctx.specPrep = { master, cands: cands.filter((c) => !SPEC_TEST_RE.test(`${c.name || ''} ${c.email || ''}`)) };
+}
+const SPEC_TEST_RE = /zztest|example\.test/i;
+const specIsTest = (r) => SPEC_TEST_RE.test(`${r.department || ''} ${r.title || ''} ${r.clientName || ''}`);
+const SOURCING_RATIO = 3; // fewer than 3 people per open job = sourcing needed
+function buildSpecialisations(ctx) {
+  const { master, cands } = ctx.specPrep || { master: { specById: new Map() }, cands: [] };
+  const wantDept = ctx.f.department ? ctx.f.department.toLowerCase() : '';
+  const derive = (c) => {
+    const vals = c.joined && c.joined.vals ? [...c.joined.vals.values()] : [];
+    c.avgFill = avgOf(vals);
+    const jobs = c.openJobs ? c.openJobs.n : 0;
+    const people = c.people ? c.people.n : 0;
+    if (c.specialisation === 'Not mapped yet') c.hint = 'Map these jobs (Admin → Master lists)';
+    else if (jobs && people < jobs * SOURCING_RATIO) c.hint = `Sourcing needed — ${jobs} open job${jobs === 1 ? '' : 's'}, only ${people} ${people === 1 ? 'person' : 'people'}`;
+    else if (jobs) c.hint = 'Enough people';
+    else c.hint = people ? 'No open jobs' : '';
+  };
+  const sec = section('specialisations', 'Department → Specialization', [
+    { key: 'department', label: 'Department' },
+    { key: 'specialisation', label: 'Specialization' },
+    { key: 'openJobs', label: 'Open jobs', drill: 'req' },
+    { key: 'people', label: 'Candidates', drill: 'cand' },
+    { key: 'submitted', label: 'Submitted', drill: 'app' },
+    { key: 'interview', label: 'Interview', drill: 'app' },
+    { key: 'selected', label: 'Selected', drill: 'app' },
+    { key: 'joined', label: 'Joined', drill: 'app' },
+    { key: 'avgFill', label: 'Avg days to fill', type: 'num' },
+    { key: 'hint', label: 'Supply vs demand' },
+  ], {
+    sub: `Open jobs = live jobs with this specialization. Candidates = people whose profile says it (your area only). Submitted / Interview / Selected / Joined = people on these jobs who reached that step. Avg days to fill = job raised to person joined. "Sourcing needed" = fewer than ${SOURCING_RATIO} people per open job.`,
+  });
+  const rowOf = (specId, deptName) => {
+    const spec = specId ? master.specById.get(specId) : null;
+    const dept = (spec && spec.department) || deptName || '—';
+    const key = `${dept}|${spec ? spec.id : 'none'}`;
+    const r = sec.row(key);
+    r.cells.department = dept;
+    r.cells.specialisation = spec ? spec.name : 'Not mapped yet';
+    if (spec) r.refs.specialisationId = spec.id;
+    return r.cells;
+  };
+  ctx.reqs.forEach((r) => {
+    if (specIsTest(r)) return;
+    const c = rowOf(r.specialisationId, r.department);
+    if (r.live) c.openJobs.add(r.id);
+  });
+  cands.forEach((p) => {
+    const spec = master.specById.get(p.specialisationId);
+    if (!spec || (wantDept && String(spec.department || '').toLowerCase() !== wantDept)) return;
+    rowOf(spec.id).people.add(p.id);
+  });
+  ctx.apps.forEach((x) => {
+    if (specIsTest(x.req)) return;
+    const c = rowOf(x.req.specialisationId, x.req.department);
+    if (x.joined || x.reached('shared')) c.submitted.add(x.id);
+    if (x.joined || x.reached('interview')) c.interview.add(x.id);
+    if (x.joined || x.reached('selected')) c.selected.add(x.id);
+    if (x.joined) {
+      // ONE joined date everywhere: joiningDate, then joinedAt, then the first move into Joined.
+      let at = null;
+      const jd = String(x.a.joiningDate || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(jd)) {
+        const d = new Date(`${jd}T00:00:00.000Z`);
+        // Imported sheets carry odd dates (typos): only a real year counts.
+        if (!Number.isNaN(d.getTime()) && d.getUTCFullYear() >= 2015 && d.getUTCFullYear() <= 2100) at = d;
+      }
+      if (!at && x.a.joinedAt) at = x.a.joinedAt;
+      if (!at && x.crossedAt.joined) at = x.crossedAt.joined;
+      const days = at && x.req.createdAt ? Math.round((at - x.req.createdAt) / DAY) : null;
+      // A fill measured as negative or over two years is a data slip, not a fill time.
+      c.joined.add(x.id, days !== null && days >= 0 && days <= 730 ? days : undefined);
+    }
+  });
+  // A row with nothing in it (a mapped specialization nobody uses yet) is not drawn.
+  [...sec.rows.entries()].forEach(([key, r]) => {
+    const c = r.cells;
+    if (!c.openJobs.n && !c.people.n && !c.submitted.n && !c.joined.n && !c.interview.n) sec.rows.delete(key);
+  });
+  sec.rows.forEach((r) => derive(r.cells));
+  sec.sort = (a, b) => String(a.cells.department).localeCompare(String(b.cells.department))
+    || (a.cells.specialisation === 'Not mapped yet') - (b.cells.specialisation === 'Not mapped yet')
+    || b.cells.openJobs.n - a.cells.openJobs.n || b.cells.people.n - a.cells.people.n;
+  addTotal(sec, (c) => { const v = c.joined.vals ? [...c.joined.vals.values()] : []; c.avgFill = avgOf(v); c.hint = null; });
+
+  const t = tileSet();
+  const mapped = [...sec.rows.values()].filter((r) => r.cells.specialisation !== 'Not mapped yet');
+  const needs = mapped.filter((r) => /^Sourcing needed/.test(r.cells.hint || ''));
+  const openMapped = new Cell('req');
+  const openNone = new Cell('req');
+  sec.rows.forEach((r) => r.cells.openJobs.ids.forEach((id) => (r.cells.specialisation === 'Not mapped yet' ? openNone : openMapped).add(id)));
+  t.value('specs', 'Specializations in use', mapped.length);
+  t.push('openMapped', 'Open jobs with a specialization', openMapped);
+  t.push('openNone', 'Open jobs not mapped yet', openNone);
+  t.push('people', 'Candidates with a specialization', sec.total.cells.people);
+  t.value('needs', 'Need sourcing', needs.length, `fewer than ${SOURCING_RATIO} people per open job`);
+  const notes = needs
+    .sort((a, b) => b.cells.openJobs.n - a.cells.openJobs.n)
+    .slice(0, 5)
+    .map((r) => `${r.cells.specialisation} (${r.cells.department}): ${r.cells.openJobs.n} open job${r.cells.openJobs.n === 1 ? '' : 's'}, only ${r.cells.people.n} ${r.cells.people.n === 1 ? 'candidate' : 'candidates'} — sourcing needed.`);
+  if (!mapped.length) notes.push('No job or candidate has a specialization yet. Admin → Master lists → Suggestions finds them; nothing changes until someone clicks Accept.');
+  else if (openNone.n) notes.push(`${openNone.n.toLocaleString('en-IN')} open job${openNone.n === 1 ? ' has' : 's have'} no specialization yet, so they are not counted above. Admin → Master lists → Suggestions can map them.`);
+  return { tiles: t.tiles, sections: [sec], notes };
+}
+
+// Section 17 (2026-10-03) — Time to fill, Source quality, Results vs target,
+// Client revenue, compare periods, filter counts: utils/reportsPlus.js.
+const PLUSX = require('../utils/reportsPlus');
+const PLUS = PLUSX({ Cell, section, addTotal, tileSet, pct, channelOf, CHANNELS });
+const CAMP = require('../utils/campaignReport')({ Cell, section, addTotal, tileSet, pct }); // ATS-100 B6.3
+// B8: "Added by override" (utils/fitReports.js).
+const FITR = require('../utils/fitReports')({ Cell, section, addTotal, tileSet, pct });
+// ATS-100 B9.3: cost per hire (campaign costs + partner payouts + incentives ÷ joinings).
+const CPH = require('../utils/costPerHire')({ Cell, section, addTotal, tileSet });
+// ATS-100 B9.7: recruiter revenue (invoices net of credit notes, per recruiter) — its own routes below.
+const RR = require('../utils/recruiterRevenue');
 
 // ---------------------------------------------------------------------------
 const REPORTS = {
@@ -1669,7 +2088,12 @@ const REPORTS = {
   recruitment: { title: 'Recruitment', build: buildRecruitment },
   requirements: { title: 'Requirements Report', build: buildRequirements },
   candidates: { title: 'Candidate Pipeline', build: buildCandidates },
-  recruiters: { title: 'Recruiter Performance', build: buildRecruiters },
+  recruiters: {
+    title: 'Recruiter Performance',
+    // Who has left HRMS — for the "· Former" tag and the people filter.
+    prepare: async (ctx) => { ctx.formerKeys = await require('../utils/formerPeople').formerKeys(); }, // eslint-disable-line global-require
+    build: buildRecruiters,
+  },
   sources: { title: 'Source Performance', build: buildSources },
   clients: { title: 'Client Performance', build: buildClients },
   interviews: { title: 'Interviews', build: buildInterviews, appDate: 'interviewAt' },
@@ -1677,8 +2101,29 @@ const REPORTS = {
   followups: { title: 'Follow-ups', build: buildFollowUps, appDate: null },
   joining: { title: 'Joining Report', build: buildJoining },
   sla: { title: 'SLA & Aging', build: buildSla },
+  rejections: { title: 'Rejection Reasons', build: buildRejections, appDate: null },
+  // spec D: demand (open jobs) vs supply (candidates) by specialization.
+  specialisations: { title: 'Specialization Report', build: buildSpecialisations, prepare: prepareSpecialisations },
+  // Section 17 (utils/reportsPlus.js).
+  timetofill: { title: 'Time to fill', build: PLUS.buildTimeToFill, appDate: null },
+  quality: { title: 'Source quality', build: PLUS.buildSourceQuality },
+  targets: { title: 'Results vs target', build: PLUS.buildTargets, appDate: null, prepare: PLUS.prepareTargets },
+  // B8: people added to a job although they did not meet its rules.
+  overrides: { title: 'Added by override', build: FITR.buildOverrides, appDate: null, prepare: FITR.prepareOverrides },
+  // ATS-100 B6.3: campaign / campus drive / referral -> joined, with cost (utils/campaignReport.js).
+  campaigns: { title: 'Campaign performance', build: CAMP.build, prepare: CAMP.prepare },
+  // ATS-100 B9.3 (utils/costPerHire.js): the period's counted joinings and what they cost.
+  costperhire: { title: 'Cost per hire', build: CPH.build, prepare: CPH.prepare, appDate: null },
 };
 const DATE_BASIS = {
+  costperhire: 'Date range: the month(s) of the joining (this month when no range is set). Costs sit in the month of the joining they produced.',
+  // Section 17 (utils/reportsPlus.js).
+  timetofill: 'Date range: the day the person joined.',
+  targets: 'Date range: the day the work was done (this month when no range is set).',
+  quality: 'Date range: the day the person was added to the job.',
+  campaigns: 'Date range: the day the person applied (was added to the job).',
+  rejections: 'Date range: the day the candidate was rejected.',
+  overrides: 'Date range: the day the person was added by override.',
   interviews: 'Date range: the interview date.',
   followups: 'Date range: the day the follow-up was raised.',
   sla: 'Date range: candidates by the day they were added, requirements by the day they were raised. The dashboard\'s Past SLA is all time — use All Time to match it.',
@@ -1717,8 +2162,10 @@ async function contextFor(user, f, appDate, fresh) {
 async function build(req, reportId, { fresh = false } = {}) {
   const spec = Object.prototype.hasOwnProperty.call(REPORTS, reportId) ? REPORTS[reportId] : null;
   if (!spec) return null;
-  const f = parseFilters(req.query);
+  // A compare (?compare=month) and a Team are turned into the plain filters first.
+  const f = parseFilters(await PLUSX.expandQuery(req.query));
   const ctx = await contextFor(req.user, f, spec.appDate === undefined ? 'createdAt' : spec.appDate, fresh);
+  if (spec.prepare) await spec.prepare(ctx, req.user);
   const out = spec.build(ctx);
   out.sections.forEach((s) => {
     s.list = [...s.rows.values()];
@@ -1731,6 +2178,8 @@ async function build(req, reportId, { fresh = false } = {}) {
 // array in column order: the requirement table is four thousand rows, and
 // repeating a dozen key names on every one of them doubled the payload.
 function serialize(reportId, { spec, f, ctx, out }, user) {
+  // Everyday words on every label (spec §2: Job, Step, Late, People in process).
+  const W = PLUSX.plainWords;
   const val = (v) => (v instanceof Cell ? v.n : v);
   const cellsOf = (row, columns) => columns.map((c) => val(row.cells[c.key]));
   // The Clients rule: outside the client desk a client is a NAME only — no
@@ -1745,20 +2194,21 @@ function serialize(reportId, { spec, f, ctx, out }, user) {
     report: reportId,
     title: spec.title,
     scope: scopeLabel(user, 'ats'),
-    period: f.period ? { key: f.period.key, label: f.period.label, from: f.period.from, to: f.period.to } : { key: 'all', label: 'All time' },
+    period: out.period || (f.period ? { key: f.period.key, label: f.period.label, from: f.period.from, to: f.period.to } : { key: 'all', label: 'All time' }),
     dateBasis: DATE_BASIS[reportId] || 'Date range: candidates by the day they were added to the requirement; requirements by the day they were raised.',
     tiles: out.tiles.map((tl) => ({
-      key: tl.key, label: tl.label, sub: tl.sub || null, type: tl.type || 'num',
-      value: tl.cell ? tl.cell.n : tl.value, drill: !!tl.cell,
+      key: tl.key, label: W(tl.label), sub: W(tl.sub) || null, type: tl.type || 'num',
+      value: tl.cell ? tl.cell.n : tl.value, drill: !!tl.cell, target: tl.target ?? null,
     })),
     sections: out.sections.map((s) => ({
-      id: s.id, title: s.title, sub: s.sub || null, paged: !!s.paged,
+      id: s.id, title: W(s.title), sub: W(s.sub) || null, paged: !!s.paged,
       groupBy: s.groupBy || null, groupings: s.groupings || null,
-      columns: s.columns.map((c) => ({ key: c.key, label: c.label, type: c.type || (c.drill ? 'num' : 'text'), drill: !!c.drill, ref: c.ref === 'client' && !clientDesk ? null : (c.ref || null) })),
+      columns: s.columns.map((c) => ({ key: c.key, label: W(c.label), type: c.type || (c.drill ? 'num' : 'text'), drill: !!c.drill, ref: c.ref === 'client' && !clientDesk ? null : (c.ref || null), of: c.of || null, hidden: !!c.hidden })),
       rows: s.list.map((r) => ({ key: r.key, refs: refsOf(r.refs), c: cellsOf(r, s.columns) })),
       total: s.total ? cellsOf(s.total, s.columns) : null,
     })),
-    notes: out.notes || [],
+    notes: (out.notes || []).map(W),
+    plain: !!out.plain,
     counts: { applications: ctx.apps.length, requirements: ctx.reqs.length },
   };
 }
@@ -1890,11 +2340,194 @@ router.get('/options', VIEW, guarded(async (req, res) => {
 // ---------------------------------------------------------------------------
 // THE REPORT
 // ---------------------------------------------------------------------------
+// MY RESULTS (per-role spec 2026-10-03) — a recruiter's own numbers:
+// submitted, interviews, selected, joined. Own scope only
+// (utils/ownResults.js -> applicationWhere). ?format=csv needs export.
+router.get('/my-results', requirePerm(null, 'reports', 'My Results', 'view'), guarded(async (req, res) => {
+  // eslint-disable-next-line global-require
+  const own = require('../utils/ownResults');
+  const report = await own.myResults(req.user, req.query || {});
+  if (String((req.query || {}).format || '') === 'csv') {
+    if (!(await can(req.user, null, 'reports', 'My Results', 'export'))) return res.status(403).json({ error: "This action isn't included in your role's permissions" });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="my-results.csv"');
+    return res.send(own.toCsvRows(report));
+  }
+  return res.json(report);
+}));
+
+// ---------------------------------------------------------------------------
+// SECTION 17 (2026-10-03, utils/reportsPlus.js) — the report cards a login may
+// open, the filter counts, and CLIENT REVENUE: Super Admin / Admin / Accounts
+// only, refused HERE for everyone else whatever a screen shows. Registered
+// before '/:report' so these names are never read as a report id.
+// ---------------------------------------------------------------------------
+router.get('/catalog', guarded(async (req, res) => {
+  const [view, exp, mine, portal, accounts] = await Promise.all([
+    can(req.user, null, 'reports', 'ATS Reports', 'view'),
+    can(req.user, null, 'reports', 'ATS Reports', 'export'),
+    can(req.user, null, 'reports', 'My Results', 'view'),
+    can(req.user, null, 'reports', 'Job Portal Reports', 'view'),
+    can(req.user, null, 'reports', 'Accounts Reports', 'view'),
+  ]);
+  res.json({
+    view, export: exp, revenue: PLUSX.mayRevenue(req.user), myResults: mine, jobPortal: portal, accounts,
+    recruiterRevenue: PLUSX.mayRevenue(req.user), // B9.7: the same gate as Client revenue
+    scope: view ? scopeLabel(req.user, 'ats') : null,
+  });
+}));
+
+// The filter options with counts (utils/atsFacets.js module 'reports' calls
+// this): counted over the report's own rows with every OTHER filter applied.
+async function reportFacets(user, q0) {
+  const q = q0 || {};
+  if (String(q.report || '') === 'revenue') {
+    if (!PLUSX.mayRevenue(user)) return { facets: {}, total: null };
+    const b = await PLUS.revenueBuild(user, await PLUSX.expandQuery({ ...q, clientId: '', department: '' }));
+    return { facets: PLUS.revenueFacets(b, q), total: b.options.invs.length };
+  }
+  if (String(q.report || '') === 'recruiter-revenue') { // B9.7
+    if (!PLUSX.mayRevenue(user)) return { facets: {}, total: null };
+    const b = await RR.build(user, await PLUSX.expandQuery({ ...q, clientId: '', department: '', recruiter: '' }));
+    return { facets: RR.facets(b, q), total: b.options.invs.length };
+  }
+  if (!(await can(user, null, 'reports', 'ATS Reports', 'view'))) return { facets: {}, total: null };
+  const spec = Object.prototype.hasOwnProperty.call(REPORTS, q.report) ? REPORTS[q.report] : REPORTS.funnel;
+  const base = { ...q };
+  [...PLUS.FACET_KEYS, 'positionCode', 'section', 'report'].forEach((k) => { delete base[k]; });
+  const f = parseFilters(await PLUSX.expandQuery(base));
+  const ctx = await contextFor(user, f, spec.appDate === undefined ? 'createdAt' : spec.appDate, false);
+  return PLUS.facetCounts(ctx, q, await PLUSX.positions());
+}
+router.reportFacets = reportFacets;
+
+const REVENUE_DENIED = 'Client revenue is only for Super Admin, Admin and Accounts.';
+async function revenueFor(req, extra = {}) {
+  return PLUS.revenueBuild(req.user, await PLUSX.expandQuery({ ...req.query, ...extra }));
+}
+router.get('/revenue', guarded(async (req, res) => {
+  if (!PLUSX.mayRevenue(req.user)) return res.status(403).json({ error: REVENUE_DENIED });
+  const payload = PLUS.revenuePayload(req.user, await revenueFor(req));
+  const kind = PLUSX.compareKind(req.query);
+  if (kind) {
+    const prev = PLUS.revenuePayload(req.user, await revenueFor(req, { comparePrev: '1' }));
+    PLUSX.mergeCompare(payload, prev, kind, PLUSX.compareRanges(kind));
+  }
+  return res.json(payload);
+}));
+router.get('/revenue/drill', guarded(async (req, res) => {
+  if (!PLUSX.mayRevenue(req.user)) return res.status(403).json({ error: REVENUE_DENIED });
+  const data = await PLUS.revenueDrill(await revenueFor(req), req.query || {});
+  if (!data) return res.status(404).json({ error: 'That figure is not on this report any more — refresh the report.' });
+  if (req.query.format === 'csv') {
+    const csv = toCsv(data.columns.map((c) => c.label), data.rows.map((r) => data.columns.map((c) => r.cells[c.key])));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="client-revenue-${fileBase(data.title)}.csv"`);
+    return res.send(`﻿${csv}`);
+  }
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+  return res.json({ ...data, report: 'Client revenue', section: null, offset, limit, rows: data.rows.slice(offset, offset + limit) });
+}));
+router.get('/revenue/export', guarded(async (req, res) => {
+  if (!PLUSX.mayRevenue(req.user)) return res.status(403).json({ error: REVENUE_DENIED });
+  const b = await revenueFor(req);
+  const payload = PLUS.revenuePayload(req.user, b);
+  const q = req.query || {};
+  const parts = [];
+  if (b.P) parts.push(`Date: ${b.P.label}`);
+  if (q.department) parts.push(`Department: ${q.department}`);
+  if (q.clientId) parts.push(`Client: ${(payload.sections[0].rows[0] || { c: ['—'] }).c[0]}`);
+  const meta = { filters: parts.length ? parts.join(' · ') : 'No filters', generated: new Date().toISOString().slice(0, 16).replace('T', ' ') };
+  const base = `teamlink-client-revenue-${new Date().toISOString().slice(0, 10)}`;
+  const format = String(q.format || 'xlsx');
+  if (format === 'pdf') {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${base}.pdf"`);
+    return exportPdf(payload, meta, res);
+  }
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${base}.csv"`);
+    return res.send(exportCsv(payload, meta));
+  }
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
+  return res.send(exportXlsx(payload, meta));
+}));
+
+// ATS-100 B9.7 — RECRUITER REVENUE (utils/recruiterRevenue.js): invoices net
+// of credit notes, per recruiter / month / client. Same gate as Client revenue.
+async function recruiterRevenueFor(req, extra = {}) {
+  return RR.build(req.user, await PLUSX.expandQuery({ ...req.query, ...extra }));
+}
+router.get('/recruiter-revenue', guarded(async (req, res) => {
+  if (!PLUSX.mayRevenue(req.user)) return res.status(403).json({ error: REVENUE_DENIED });
+  const payload = RR.payload(req.user, await recruiterRevenueFor(req));
+  const kind = PLUSX.compareKind(req.query);
+  if (kind) {
+    const prev = RR.payload(req.user, await recruiterRevenueFor(req, { comparePrev: '1' }));
+    PLUSX.mergeCompare(payload, prev, kind, PLUSX.compareRanges(kind));
+  }
+  return res.json(payload);
+}));
+router.get('/recruiter-revenue/drill', guarded(async (req, res) => {
+  if (!PLUSX.mayRevenue(req.user)) return res.status(403).json({ error: REVENUE_DENIED });
+  const data = RR.drill(await recruiterRevenueFor(req), req.query || {});
+  if (!data) return res.status(404).json({ error: 'That figure is not on this report any more — refresh the report.' });
+  if (req.query.format === 'csv') {
+    const csv = toCsv(data.columns.map((c) => c.label), data.rows.map((r) => data.columns.map((c) => r.cells[c.key])));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="recruiter-revenue-${fileBase(data.title)}.csv"`);
+    return res.send(`﻿${csv}`);
+  }
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+  return res.json({ ...data, report: 'Recruiter revenue', section: null, offset, limit, rows: data.rows.slice(offset, offset + limit) });
+}));
+router.get('/recruiter-revenue/export', guarded(async (req, res) => {
+  if (!PLUSX.mayRevenue(req.user)) return res.status(403).json({ error: REVENUE_DENIED });
+  const payload = RR.payload(req.user, await recruiterRevenueFor(req));
+  const q = req.query || {};
+  const only = typeof q.section === 'string' ? q.section : '';
+  if (only) {
+    const sec = payload.sections.find((s) => s.id === only);
+    if (!sec) return res.status(404).json({ error: 'That table is not on this report.' });
+    payload.sections = [sec]; payload.tiles = []; payload.title = `${payload.title} — ${sec.title}`;
+  }
+  const parts = [];
+  if (payload.period && payload.period.key !== 'all') parts.push(`Date: ${payload.period.label}`);
+  ['department', 'clientId', 'recruiter'].forEach((k) => { if (q[k]) parts.push(`${k}: ${q[k]}`); });
+  const meta = { filters: parts.length ? parts.join(' · ') : 'No filters', generated: new Date().toISOString().slice(0, 16).replace('T', ' ') };
+  const base = `teamlink-recruiter-revenue-${new Date().toISOString().slice(0, 10)}`;
+  const format = String(q.format || 'xlsx');
+  if (format === 'pdf') {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${base}.pdf"`);
+    return exportPdf(payload, meta, res);
+  }
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${base}.csv"`);
+    return res.send(exportCsv(payload, meta));
+  }
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
+  return res.send(exportXlsx(payload, meta));
+}));
+
 router.get('/:report', VIEW, guarded(async (req, res) => {
   const built = await build(req, req.params.report, { fresh: true });
   if (!built) return res.status(404).json({ error: 'No such report' });
   const payload = serialize(req.params.report, built, req.user);
   await fillNames(payload);
+  // Compare periods (section 17): the same report for the previous span, so
+  // every number can show its change.
+  const kind = PLUSX.compareKind(req.query);
+  if (kind) {
+    const prevBuilt = await build({ user: req.user, query: { ...req.query, comparePrev: '1' } }, req.params.report, { fresh: true });
+    PLUSX.mergeCompare(payload, serialize(req.params.report, prevBuilt, req.user), kind, PLUSX.compareRanges(kind));
+  }
   return res.json(payload);
 }));
 
@@ -2101,7 +2734,11 @@ router.get('/:report/drill', VIEW, guarded(async (req, res) => {
   const ordered = await orderIds(found.cell, built.ctx);
   // Only the page is hydrated — unless the whole list is being exported.
   const ids = asCsv ? ordered : ordered.slice(offset, offset + limit);
-  const { columns, rows } = await drillRows(ids, found.cell, built.ctx, reportId);
+  const drilled = await drillRows(ids, found.cell, built.ctx, reportId);
+  const { rows } = drilled;
+  // Everyday words on the list's headings too (Job, Step, Late).
+  const columns = drilled.columns.map((c) => ({ ...c, label: PLUSX.plainWords(c.label) }));
+  found.title = PLUSX.plainWords(found.title);
 
   if (asCsv) {
     const csv = toCsv(columns.map((c) => c.label), rows.map((r) => columns.map((c) => r.cells[c.key])));

@@ -5,8 +5,47 @@ const { logAudit } = require('../utils/audit');
 const { employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const attachments = require('../utils/attachments');
 const {
-  parseAudience, parseChannels, resolveAudience, deliver, describeDelivery,
+  list, parseAudience, parseChannels, resolveAudience, deliver, describeDelivery,
 } = require('../utils/audience');
+
+// DISCIPLINARY FOR MANY PEOPLE AT ONCE (2026-10-03). The Log Case form lets
+// HR tick one or MORE departments AND/OR pick one or MORE people; the case is
+// recorded once per person in the union of the two — de-duplicated, held to
+// the caller's scope by the same resolveAudience() every Send-to form uses
+// (an out-of-scope department or person is a 403, never silently dropped).
+// Exited / relieved people never get a case; test fixtures (ZZTEST /
+// example.test, rule 35 of the shared agent rules) are never picked up by a
+// real fan-out. The person logging it is left out of a DEPARTMENT expansion
+// (HR warning their own department does not warn HR), but can still be named.
+const TEST_PERSON = /zztest|example\.test/i;
+const isTestPerson = (e) => TEST_PERSON.test(`${e.name || ''} ${e.email || ''}`);
+
+async function resolveCasePick(user, body) {
+  const departments = list(body.departments);
+  const employeeIds = list(body.employeeIds);
+  if (!departments.length && !employeeIds.length) {
+    return { ok: false, status: 400, error: 'Pick at least one department or one person.' };
+  }
+  const picked = new Map();
+  let left = 0;
+  if (departments.length) {
+    const out = await resolveAudience(user, { mode: 'departments', departments, employeeIds: [] });
+    if (!out.ok) return out;
+    out.employees.forEach((e) => { if (e.id !== user.employeeId) picked.set(e.id, e); });
+  }
+  if (employeeIds.length) {
+    const out = await resolveAudience(user, { mode: 'individuals', departments: [], employeeIds });
+    // 400 here only means "every person you named has left" — with
+    // departments also ticked that is a skip, not a failure.
+    if (!out.ok && out.status !== 400) return out;
+    const got = out.ok ? out.employees : [];
+    left = employeeIds.length - got.length;
+    got.forEach((e) => picked.set(e.id, e));
+  }
+  const people = [...picked.values()].filter((e) => !isTestPerson(e))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  return { ok: true, people, departments, left };
+}
 
 // The record types that go TO people and so take the shared Send-to picker
 // (one or many departments / one or many employees). Everything else here is
@@ -108,6 +147,42 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
       return res.status(403).json({ error: "This isn't included in your role's permissions" });
     }
     const { title } = req.body;
+
+    // DISCIPLINARY, MANY PEOPLE (see resolveCasePick above). A body carrying
+    // `departments` and/or `employeeIds` arrays takes this path; a plain
+    // `employeeId` is the old one-person create below, untouched.
+    // `preview: true` answers "who would this be recorded for" and writes
+    // nothing — the form shows that list before the Save button.
+    if (type === 'DISCIPLINARY' && (Array.isArray(req.body.departments) || Array.isArray(req.body.employeeIds))) {
+      if (req.user.caps.hrmsSelfOnly || !await mayWriteForOthers(req.user, true)) {
+        return res.status(403).json({ error: "This isn't included in your role's permissions" });
+      }
+      const pick = await resolveCasePick(req.user, req.body);
+      if (!pick.ok) return res.status(pick.status).json({ error: pick.error });
+      const people = pick.people.map((e) => ({ id: e.id, name: e.name, employeeCode: e.employeeCode, department: e.department }));
+      if (req.body.preview) return res.json({ count: people.length, people, left: pick.left });
+      if (!title) return res.status(400).json({ error: 'Pick what kind of action this is.' });
+      if (!people.length) return res.status(400).json({ error: 'Nobody in that choice can get this — they may have left the company.' });
+      // One shared reference so the group can be found again later.
+      const batch = `DISC-${Date.now().toString(36).toUpperCase()}`;
+      const where = [pick.departments.length ? pick.departments.join(', ') : null, `${people.length} people`].filter(Boolean).join(' · ');
+      const base = recordData(req.body, req.user);
+      const notes = JSON.stringify([{
+        author: req.user.name || req.user.email, internal: true, batch,
+        text: `Group case ${batch}: recorded for ${where}`,
+      }]);
+      const created = await prisma.$transaction(pick.people.map((e) => prisma.employeeRecord.create({
+        data: { ...base, notes, employeeId: e.id },
+      })));
+      for (const r of created) {
+        // eslint-disable-next-line no-await-in-loop
+        await logAudit({ userId: req.user.id, action: `${type} created`, entity: 'EmployeeRecord', entityId: r.id, toValue: batch });
+      }
+      return res.status(201).json({
+        created: created.length, batch, ids: created.map((r) => r.id), left: pick.left,
+        message: `Saved for ${created.length} ${created.length === 1 ? 'person' : 'people'}`,
+      });
+    }
 
     // AUDIENCE FAN-OUT (utils/audience.js). The record types that are sent to
     // or assigned to people — targets, recognition, KT sessions, shift roster,

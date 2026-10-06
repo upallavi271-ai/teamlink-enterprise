@@ -13,6 +13,10 @@ import {
   HOLD_REASON_CATEGORIES, REJECTED_BY_OPTIONS, REJECTION_REASONS_BY_SIDE, REJECTION_REASON_CATEGORIES,
 } from '../atsVocab';
 import { STAGE_GROUPS } from '../pipelineView';
+import {
+  RejectFields, rejectReady, rejectPayload, EMPTY_REJECT, sendWithSameClientCheck,
+} from './rejections/rejectionUi.jsx';
+import StepPopup from './candidate/StepPopups.jsx';
 import './CandidateDrawer.css';
 
 // ---------------------------------------------------------------------------
@@ -113,28 +117,63 @@ export function nextActionsFor(user, stage, app = null) {
   // INTERNAL HIRING: HR Review → Dept Head / TL → Interview (no BDE / client).
   if (app && isInternalApp(app)) {
     if (RECRUITER_STEP.includes(stage) || ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(stage)) {
-      if (is('hr', 'recruiter') && canMoveToStage(user, 'TL_REVIEW')) out.push({ id: 'send_to_dept', label: 'Send to Dept Head / TL', kind: 'move', to: 'TL_REVIEW' });
+      if (is('hr', 'recruiter') && canMoveToStage(user, 'TL_REVIEW')) out.push({ id: 'send_to_dept', label: 'Send to dept head / team lead', kind: 'move', to: 'TL_REVIEW' });
     } else if (stage === 'TL_REVIEW') {
-      if (is('tl') && maySchedule(user)) out.push({ id: 'approve_interview', label: 'Approve → Schedule Interview', kind: 'schedule' });
-      if (is('tl') && mayReturn(user)) out.push({ id: 'return', label: 'Return to HR', kind: 'return' });
+      if (is('tl') && maySchedule(user)) out.push({ id: 'approve_interview', label: 'Approve and book interview', kind: 'schedule' });
+      if (is('tl') && mayReturn(user)) out.push({ id: 'return', label: 'Send back to HR', kind: 'return' });
     } else if (stage === 'JOINED') {
-      if (is('hr') && can(user, 'ats', 'interviews', 'Internal Hiring', 'approve')) out.push({ id: 'hrms', label: 'Create HRMS Employee', kind: 'hrms' });
+      if (is('hr') && can(user, 'ats', 'interviews', 'Internal Hiring', 'approve')) out.push({ id: 'hrms', label: 'Add as employee', kind: 'hrms' });
     }
     return out;
   }
   if (RECRUITER_STEP.includes(stage)) {
-    if (is('recruiter') && canMoveToStage(user, 'RECRUITER_REVIEW')) out.push({ id: 'review', label: 'Review Candidate', kind: 'move', to: 'RECRUITER_REVIEW' });
+    if (is('recruiter') && canMoveToStage(user, 'RECRUITER_REVIEW')) out.push({ id: 'review', label: 'Check candidate', kind: 'move', to: 'RECRUITER_REVIEW' });
   } else if (['RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(stage)) {
-    if (is('recruiter') && canMoveToStage(user, 'TL_REVIEW')) out.push({ id: 'send_to_tl', label: 'Send to TL', kind: 'move', to: 'TL_REVIEW' });
+    // ATS layout v3: the Verify checklist → Send to team lead.
+    if (is('recruiter') && canMoveToStage(user, 'TL_REVIEW')) out.push({ id: 'send_to_tl', label: 'Verify', kind: 'popup', popup: 'verify', to: 'TL_REVIEW' });
   } else if (stage === 'TL_REVIEW') {
-    if (is('tl') && canMoveToStage(user, 'WITH_BDE')) out.push({ id: 'approve', label: 'Approve', kind: 'move', to: 'WITH_BDE' });
-    if (is('tl') && mayReturn(user)) out.push({ id: 'return', label: 'Return', kind: 'return' });
+    // v3: one TL check window — Approve (→ BDE) / Send back (reason).
+    if (is('tl') && (canMoveToStage(user, 'WITH_BDE') || mayReturn(user))) out.push({ id: 'tl_check', label: 'TL check', kind: 'popup', popup: 'tl', to: 'WITH_BDE' });
   } else if (['WITH_BDE', 'BDE_APPROVED'].includes(stage)) {
-    if (is('bde') && canMoveToStage(user, 'SHARED_WITH_CLIENT')) out.push({ id: 'share', label: 'Submit to Client', kind: 'move', to: 'SHARED_WITH_CLIENT' });
+    // v3: BDE Review — Approve (→ Shared with client) / Send back (reason).
+    if (is('bde') && canMoveToStage(user, 'SHARED_WITH_CLIENT')) out.push({ id: 'bde_review', label: 'BDE review', kind: 'popup', popup: 'bde', to: 'SHARED_WITH_CLIENT' });
+  } else if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)) {
+    // e2e gap 10: two plain buttons for the client's answer (BDE, TL, Admin).
+    // Yes → Client shortlisted; No → the shared Reject window, side = Client.
+    if (is('bde', 'tl') && canMoveToStage(user, 'CLIENT_SHORTLISTED')) out.push({ id: 'client_yes', label: 'Client said yes', kind: 'move', to: 'CLIENT_SHORTLISTED' });
+    if (is('bde', 'tl') && canMoveToStage(user, 'REJECTED')) out.push({ id: 'client_no', label: 'Client said no', kind: 'popup', popup: 'reject_client' });
   } else if (stage === 'CLIENT_SHORTLISTED') {
-    if (is('bde') && maySchedule(user)) out.push({ id: 'schedule', label: 'Schedule', kind: 'schedule' });
+    if (is('bde') && maySchedule(user)) out.push({ id: 'schedule', label: 'Book interview', kind: 'schedule' });
+  } else if (stage === 'SELECTED') {
+    // e2e gap 2: the offer is made here (TL approves, then it is sent) —
+    // "Move step" no longer jumps to Offer.
+    if (is('recruiter', 'tl', 'bde') && can(user, 'ats', 'interviews', 'Offers', 'edit') && !(app && app.offerStatus === OFFER_PREPARED)) {
+      out.push({ id: 'prepare_offer', label: 'Prepare offer', kind: 'prepare_offer' });
+    }
+  } else if (stage === 'OFFER') {
+    if (is('recruiter', 'tl', 'bde') && can(user, 'ats', 'interviews', 'Offers', 'view')) out.push({ id: 'offers', label: 'Offer answer (Offers screen)', kind: 'link', href: '/ats/offers' });
+  } else if (stage === 'OFFER_ACCEPTED') {
+    // v3: Joined — joining date, final CTC, commission % → Accounts, through
+    // the Joining checklist. Not for someone marked "Did not join".
+    if (is('recruiter', 'tl') && can(user, 'ats', 'interviews', 'Joining', 'edit') && !(app && app.joiningStatus === 'Dropped')) out.push({ id: 'joined', label: 'Mark joined', kind: 'popup', popup: 'joined', to: 'JOINED' });
   }
   return out;
+}
+const OFFER_PREPARED = 'Offer being prepared';
+// Offer / Offer accepted / Joined / Hired come from their own flows (Prepare
+// offer → TL approves → the candidate's answer; the Joining checklist). "Move
+// step" offers them only to Super Admin / Admin (data correction), and only a
+// step BACK to them for everyone else (e2e gap 2).
+const FLOW_RANK = {
+  OFFER: 1, OFFER_ACCEPTED: 2, JOINED: 3, HIRED: 4,
+};
+export function moveStepAllowed(user, fromStage, toStage) {
+  if (!FLOW_RANK[toStage]) return true;
+  const r = viewerAtsRole(user);
+  if (GLOBAL_ROLES.includes(user && user.role) || GLOBAL_ROLES.includes(r)) return true;
+  // From Hold / Rejected the server knows where they were parked; it decides.
+  if (['HOLD', 'REJECTED'].includes(fromStage)) return true;
+  return FLOW_RANK[toStage] <= (FLOW_RANK[fromStage] || 0);
 }
 
 // --- Pipeline steps -----------------------------------------------------------
@@ -149,28 +188,28 @@ export function nextActionsFor(user, stage, app = null) {
 const SCREENING_STEP = { id: 'screening', label: 'Screening', stages: ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'], groups: ['new', 'ai_interview'] };
 export const PIPELINE_STEPS = [
   SCREENING_STEP,
-  { id: 'recruiter_review', label: 'Recruiter Review', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
-  { id: 'tl_review', label: 'TL Review', stages: ['TL_REVIEW'] },
-  { id: 'bde_review', label: 'BDE Review', stages: ['WITH_BDE', 'BDE_APPROVED'] },
-  { id: 'client_submission', label: 'Client Submission', stages: ['SHARED_WITH_CLIENT'], groups: ['client_review'] },
-  { id: 'client_decision', label: 'Client Decision', stages: ['CLIENT_REVIEW', 'CLIENT_SHORTLISTED'], groups: ['client_review'] },
+  { id: 'recruiter_review', label: 'Check by recruiter', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  { id: 'tl_review', label: 'Check by team lead', stages: ['TL_REVIEW'] },
+  { id: 'bde_review', label: 'Check by client manager', stages: ['WITH_BDE', 'BDE_APPROVED'] },
+  { id: 'client_submission', label: 'Sent to client', stages: ['SHARED_WITH_CLIENT'], groups: ['client_review'] },
+  { id: 'client_decision', label: 'Client decides', stages: ['CLIENT_REVIEW', 'CLIENT_SHORTLISTED'], groups: ['client_review'] },
   { id: 'interview', label: 'Interview', stages: ['INTERVIEW_SCHEDULED'], groups: ['interview'] },
   { id: 'feedback', label: 'Feedback', stages: ['INTERVIEW_COMPLETED'], groups: ['interview'] },
   { id: 'selected', label: 'Selected', stages: ['SELECTED'] },
   { id: 'offer', label: 'Offer', stages: ['OFFER'], groups: ['offer'] },
-  { id: 'offer_accepted', label: 'Offer Accepted', stages: ['OFFER_ACCEPTED'], groups: ['joining'] },
+  { id: 'offer_accepted', label: 'Offer accepted', stages: ['OFFER_ACCEPTED'], groups: ['joining'] },
   { id: 'joined', label: 'Joining', stages: ['JOINED', 'HIRED'], groups: ['joined'] },
 ];
 export const INTERNAL_PIPELINE_STEPS = [
   SCREENING_STEP,
-  { id: 'recruiter_review', label: 'HR Review', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
-  { id: 'tl_review', label: 'Dept Head / TL', stages: ['TL_REVIEW'] },
+  { id: 'recruiter_review', label: 'Check by HR', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  { id: 'tl_review', label: 'Dept head / team lead', stages: ['TL_REVIEW'] },
   { id: 'interview', label: 'Interview', stages: ['INTERVIEW_SCHEDULED'], groups: ['interview'] },
   { id: 'feedback', label: 'Feedback', stages: ['INTERVIEW_COMPLETED'], groups: ['interview'] },
   { id: 'selected', label: 'Selected', stages: ['SELECTED'] },
   { id: 'offer', label: 'Offer', stages: ['OFFER', 'OFFER_ACCEPTED'], groups: ['offer', 'joining'] },
   { id: 'joined', label: 'Joining', stages: ['JOINED'], groups: ['joined'] },
-  { id: 'hrms', label: 'HRMS', stages: ['HIRED'], groups: ['joined'] },
+  { id: 'hrms', label: 'Employee', stages: ['HIRED'], groups: ['joined'] },
 ];
 export function stepsFor(app) {
   return isInternalApp(app) ? INTERNAL_PIPELINE_STEPS : PIPELINE_STEPS;
@@ -225,10 +264,10 @@ export function PipelineSteps({
     </span>
   );
   return (
-    <div className="c360-steps" role="list" aria-label={internalApp ? 'Internal hiring pipeline' : 'Client hiring pipeline'}>
+    <div className="c360-steps" role="list" aria-label={internalApp ? 'Internal hiring progress' : 'Client hiring progress'}>
       {app && (
         <span className="c360-step-kind small-muted" style={{ fontSize: 11, marginRight: 6 }}>
-          {`${internalApp ? 'Internal hiring' : 'Client hiring'}${isPreAtsApplication(app) ? ' · in Job Portal screening' : ''}`}
+          {`${internalApp ? 'Internal hiring' : 'Client hiring'}${isPreAtsApplication(app) ? ' · new from job portal' : ''}`}
         </span>
       )}
       {before && chip}
@@ -262,9 +301,9 @@ export function OwnershipGrid({ o, compact }) {
   const rows = [
     ['Department', o.department],
     ['Section', o.section],
-    ['TL', o.tl],
+    ['Team lead', o.tl],
     ['Recruiter', o.recruiter ? `${o.recruiter}${o.positionCode ? ` · ${o.positionCode}` : ''}` : (o.positionCode || null)],
-    ['BDE', o.bde],
+    ['Client manager (BDE)', o.bde],
   ];
   return (
     <div className={`c360-own${compact ? ' is-compact' : ''}`}>
@@ -308,7 +347,7 @@ export function ActivityList({ items, limit }) {
             <div className="small-muted">
               {`${protoDate(h.when)} ${h.when ? new Date(h.when).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}`}
               {h.requirement ? ` · ${h.requirement}` : ''}
-              {h.derived ? ' · derived from the record' : ''}
+              {h.derived ? ' · from the record' : ''}
             </div>
             {h.why && <div className="small-muted c360-why">{`Why: ${h.why}`}</div>}
           </div>
@@ -338,7 +377,7 @@ export function aiHeadline(app, completedAt) {
       `Completed${completedAt ? ` ${shortDate(completedAt)}` : ''}`].filter(Boolean).join(' · ');
   }
   if (!usedAiInterview(app) && !PIPELINE_STEPS.slice(0, 2).some((s) => s.stages.includes(app.stage))) {
-    return 'AI Interview · Not taken — screened by the recruiter';
+    return 'AI Interview · Skipped — the recruiter checked them';
   }
   return `AI Interview · ${app.aiInterviewStatus || 'Required'}`;
 }
@@ -354,7 +393,7 @@ export function AiInterviewSection({ app, history, bare }) {
         <StatusChip status={status} tone={AI_TONE[status]} />
       </div>
       {app.aiInterviewFeedback && <div className="cdw-text">{app.aiInterviewFeedback}</div>}
-      <div className="small-muted c360-fb-foot">Machine screening only — never mixed with client feedback.</div>
+      <div className="small-muted c360-fb-foot">AI check only. Kept apart from client feedback.</div>
     </>
   );
   if (bare) return <div className="c360-fb-card">{body}</div>;
@@ -450,19 +489,19 @@ export function ReturnDialog({
       if (onDone) await onDone();
       onClose();
     } catch (err) {
-      setError(err.response?.data?.error || 'The candidate could not be returned.');
+      setError(err.response?.data?.error || 'Could not send back. Please try again.');
     } finally {
       setBusy(false);
     }
   }
   return (
     <Modal
-      title={`Return to recruiter — ${candidateName || 'candidate'}`}
+      title={`Send back to recruiter — ${candidateName || 'candidate'}`}
       onClose={onClose}
       footer={(
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" form="c360ReturnForm" className="btn btn-primary" disabled={busy || reason.trim().length < 3}>Return →</button>
+          <button type="submit" form="c360ReturnForm" className="btn btn-primary" disabled={busy || reason.trim().length < 3}>Send back</button>
         </>
       )}
     >
@@ -471,7 +510,7 @@ export function ReturnDialog({
           <span>Why is this candidate going back? *</span>
           <textarea autoFocus rows="3" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. CTC details missing, re-check notice period" />
         </label>
-        <div className="small-muted">The candidate goes back to Recruiter Review. The reason is recorded in the pipeline history and the audit trail, and the recruiter is notified.</div>
+        <div className="small-muted">The recruiter gets your reason and a message.</div>
         {error && <div className="error-text" style={{ marginTop: 6 }}>{error}</div>}
       </form>
     </Modal>
@@ -500,6 +539,9 @@ export function CandidateActions({
   const [contact, setContact] = useState(false);
   const [schedule, setSchedule] = useState(false);
   const [returning, setReturning] = useState(false);
+  // ATS layout v3: Verify · TL check · BDE Review · Client response · Joined · Reject.
+  const [stepPop, setStepPop] = useState(null);
+  const [offerOpen, setOfferOpen] = useState(false);
   const moreRef = useRef(null);
   useEffect(() => {
     if (!moreOpen) return undefined;
@@ -515,7 +557,7 @@ export function CandidateActions({
   const mayHold = !!stage && !['HOLD', ...CLOSED].includes(stage) && canMoveToStage(user, 'HOLD');
   const mayReject = !!stage && stage !== 'REJECTED' && canMoveToStage(user, 'REJECTED');
   const otherStages = stage
-    ? workflowStages(user).filter((s) => s !== stage && !['HOLD', 'REJECTED'].includes(s) && !next.some((f) => f.to === s))
+    ? workflowStages(user).filter((s) => s !== stage && !['HOLD', 'REJECTED'].includes(s) && !next.some((f) => f.to === s) && moveStepAllowed(user, stage, s))
     : [];
   const editMaster = can(user, 'ats', 'candidates', 'Candidate Master', 'edit');
   // An interview is scheduled from BDE / Client Review, or for a further round
@@ -531,14 +573,20 @@ export function CandidateActions({
     setBusy(true);
     setError('');
     try {
-      await api.patch(`/applications/${app.id}/stage`, { stage: toStage, ...extra });
+      // Same client again (rejections): the server warns, we ask, then resend.
+      const sent = await sendWithSameClientCheck((more) => api.patch(`/applications/${app.id}/stage`, { stage: toStage, ...extra, ...more }));
+      if (!sent) return;
       setDecision(null);
       setMoveTo('');
       setMoveOpen(false);
-      if (onFlash) onFlash(`Moved to ${stageLabelFor(toStage, { internal: isInternalApp(app) })}.`);
+      if (onFlash) {
+        onFlash(toStage === 'REJECTED'
+          ? (extra.rejectKind === 'do_not_use' ? 'Rejected. "Do not use" sent to the team lead to approve.' : 'Rejected for this job. Saved.')
+          : `Moved to ${stageLabelFor(toStage, { internal: isInternalApp(app) })}.`);
+      }
       if (onChanged) await onChanged();
     } catch (err) {
-      setError(err.response?.data?.error || 'That move was refused.');
+      setError(err.response?.data?.error || 'Could not move to that step. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -553,18 +601,21 @@ export function CandidateActions({
       if (onFlash) onFlash(said(r));
       if (onChanged) await onChanged();
     } catch (err) {
-      setError(err.response?.data?.error || 'That action was refused.');
+      setError(err.response?.data?.error || 'That did not work. Please try again.');
     } finally {
       setBusy(false);
     }
   }
   function runNext(a) {
-    if (a.kind === 'move') move(a.to);
+    if (a.kind === 'popup') setStepPop(a.popup);
+    else if (a.kind === 'move') move(a.to);
     else if (a.kind === 'return') setReturning(true);
     else if (a.kind === 'schedule') setSchedule(true);
     else if (a.kind === 'send_to_ats') post(`/job-portal/applications/${app.id}/send-to-ats`, (r) => `Sent to the ATS — now at ${r.data.stageLabel}.`);
-    else if (a.kind === 'hrms') post(`/ats/internal-hiring/${app.id}/create-employee`, (r) => r.data.message || 'HRMS employee created.');
+    else if (a.kind === 'hrms') post(`/ats/internal-hiring/${app.id}/create-employee`, (r) => r.data.message || 'Saved. Added as an employee.');
     else if (a.kind === 'screening') window.location.assign('/requirements/job-portal?view=apps');
+    else if (a.kind === 'link') window.location.assign(a.href);
+    else if (a.kind === 'prepare_offer') setOfferOpen(true);
   }
 
   async function saveNote(e) {
@@ -579,7 +630,7 @@ export function CandidateActions({
       if (onFlash) onFlash('Note saved.');
       if (onChanged) await onChanged();
     } catch (err) {
-      setError(err.response?.data?.error || 'The note could not be saved.');
+      setError(err.response?.data?.error || 'Could not save the note. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -587,10 +638,11 @@ export function CandidateActions({
 
   const clientName = app ? (app.requirement?.internal ? 'TeamLink Internal' : app.requirement?.client?.name) : null;
   const secondary = [
-    editMaster && ['note', '📝 Add Note', () => setNoteOpen((x) => !x)],
-    editMaster && ['contact', '📞 Follow Up', () => setContact(true)],
-    app && mayHold && ['hold', 'Put on Hold', () => setDecision({ stage: 'HOLD', reasonCategory: '', reasonDetail: '' })],
-    app && mayReject && ['reject', 'Reject', () => setDecision({ stage: 'REJECTED', rejectedBy: '', reasonCategory: '', reasonDetail: '' })],
+    editMaster && ['note', '📝 Add note', () => setNoteOpen((x) => !x)],
+    editMaster && ['contact', '📞 Follow up', () => setContact(true)],
+    app && mayHold && ['hold', 'Put on hold', () => setDecision({ stage: 'HOLD', reasonCategory: '', reasonDetail: '' })],
+    // v3: the one Reject window (then "other matching jobs").
+    app && mayReject && ['reject', 'Reject', () => setStepPop('reject')],
   ].filter(Boolean);
   return (
     <section className={`c360-actions${compact ? ' is-compact' : ''}`}>
@@ -609,26 +661,18 @@ export function CandidateActions({
         ))}
         {app && otherStages.length > 0 && (
           <button type="button" className={`btn btn-sm${moveOpen ? ' is-on' : ''}`} disabled={busy} aria-expanded={moveOpen} onClick={() => setMoveOpen((x) => !x)}>
-            Move Stage ▾
+            Move step
           </button>
         )}
         {app && mayInterview && (
-          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setSchedule(true)}>📅 Schedule Interview</button>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setSchedule(true)}>📅 Schedule interview</button>
         )}
-        {secondary.length > 0 && (
-          <span className="c360-more" ref={moreRef}>
-            <button type="button" className="btn btn-sm" aria-label="More actions" aria-expanded={moreOpen} onClick={() => setMoreOpen((x) => !x)}>⋯</button>
-            {moreOpen && (
-              <span className="c360-more-pop" role="menu">
-                {secondary.map(([id, label, fn]) => (
-                  <button key={id} type="button" role="menuitem" className={`c360-more-item${id === 'reject' ? ' is-danger' : ''}`} onClick={() => { setMoreOpen(false); fn(); }}>
-                    {label}
-                  </button>
-                ))}
-              </span>
-            )}
-          </span>
-        )}
+        {/* cand7_: separate plain buttons, not a ⋯ menu (user rule: no dropdown actions). */}
+        {secondary.map(([id, label, fn]) => (
+          <button key={id} type="button" className={`btn btn-sm${id === 'reject' ? ' btn-danger' : ''}`} disabled={busy} onClick={fn}>
+            {label}
+          </button>
+        ))}
       </div>
 
       {moveOpen && app && otherStages.length > 0 && (
@@ -648,58 +692,69 @@ export function CandidateActions({
         </form>
       )}
 
-      {decision && (
+      {decision && decision.stage === 'REJECTED' && (
         <div className="cdw-card cdw-decision" style={{ marginTop: 8 }}>
-          <div className="cdw-label">{decision.stage === 'REJECTED' ? 'Reject — whose decision and why' : 'Put on hold — why'}</div>
-          {decision.stage === 'REJECTED' && (
-            <div className="contact-methods" style={{ marginBottom: 8 }}>
-              {REJECTED_BY_OPTIONS.map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  title={o.hint}
-                  className={`contact-method${decision.rejectedBy === o.value ? ' is-on' : ''}`}
-                  onClick={() => setDecision({ ...decision, rejectedBy: o.value, reasonCategory: '' })}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="cdw-label">Reject — whose decision and why</div>
+          {/* Rejections (spec 2026-10-03 §A1): kind · whose decision · reason · note · what the client said. */}
+          <RejectFields value={decision} onChange={(v) => setDecision({ ...v, stage: 'REJECTED' })} />
+          <div className="cdw-row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => setDecision(null)}>Cancel</button>
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              disabled={busy || !rejectReady(decision)}
+              onClick={() => { const { stage: s, ...rest } = rejectPayload(decision); move(s, rest); }}
+            >
+              {decision.rejectKind === 'do_not_use' ? 'Reject and ask team lead' : 'Reject for this job'}
+            </button>
+          </div>
+          <div className="small-muted" style={{ marginTop: 4 }}>Nothing is deleted. The person stays in People.</div>
+        </div>
+      )}
+      {decision && decision.stage !== 'REJECTED' && (
+        <div className="cdw-card cdw-decision" style={{ marginTop: 8 }}>
+          <div className="cdw-label">Put on hold — why</div>
           <Combo
             creatable
-            disabled={decision.stage === 'REJECTED' && !decision.rejectedBy}
             value={decision.reasonCategory}
             onChange={(e) => setDecision({ ...decision, reasonCategory: e.target.value })}
           >
-            <option value="">{decision.stage === 'REJECTED' && !decision.rejectedBy ? 'Choose who rejected first' : 'Reason…'}</option>
-            {(decision.stage === 'REJECTED'
-              ? (REJECTION_REASONS_BY_SIDE[decision.rejectedBy] || REJECTION_REASON_CATEGORIES)
-              : HOLD_REASON_CATEGORIES).map((x) => <option key={x} value={x}>{x}</option>)}
+            <option value="">Reason…</option>
+            {HOLD_REASON_CATEGORIES.map((x) => <option key={x} value={x}>{x}</option>)}
           </Combo>
           <textarea
             rows="2"
             style={{ marginTop: 6, width: '100%' }}
-            placeholder="Detailed reason (optional)"
+            placeholder="More detail (optional)"
             value={decision.reasonDetail}
             onChange={(e) => setDecision({ ...decision, reasonDetail: e.target.value })}
           />
+          {/* cand7_ (§10): Hold comes back as a task on this day. */}
+          <label className="field" style={{ marginTop: 6 }}>
+            <span>Review again on *</span>
+            <input
+              type="date"
+              min={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)}
+              value={decision.reviewOn || new Date(Date.now() + 330 * 60000 + 7 * 86400000).toISOString().slice(0, 10)}
+              onChange={(e) => setDecision({ ...decision, reviewOn: e.target.value })}
+            />
+            <span className="small-muted">On this day it comes back to you as a task.</span>
+          </label>
           <div className="cdw-row" style={{ marginTop: 6 }}>
             <button type="button" className="btn btn-sm" onClick={() => setDecision(null)}>Cancel</button>
             <button
               type="button"
-              className={`btn btn-sm ${decision.stage === 'REJECTED' ? 'btn-danger' : 'btn-primary'}`}
-              disabled={busy || !decision.reasonCategory || (decision.stage === 'REJECTED' && !decision.rejectedBy)}
+              className="btn btn-sm btn-primary"
+              disabled={busy || !decision.reasonCategory}
               onClick={() => move(decision.stage, {
-                rejectedBy: decision.stage === 'REJECTED' ? decision.rejectedBy : undefined,
                 reasonCategory: decision.reasonCategory,
                 reasonDetail: decision.reasonDetail,
+                reviewOn: decision.reviewOn || new Date(Date.now() + 330 * 60000 + 7 * 86400000).toISOString().slice(0, 10),
               })}
             >
-              {decision.stage === 'REJECTED' ? 'Record rejection' : 'Record hold'}
+              Put on hold
             </button>
           </div>
-          {decision.stage === 'REJECTED' && <div className="small-muted" style={{ marginTop: 4 }}>The candidate stays in the Candidate Master — nothing is deleted.</div>}
         </div>
       )}
       {error && <div className="error-text" style={{ marginTop: 6 }}>{error}</div>}
@@ -709,7 +764,35 @@ export function CandidateActions({
           applicationId={app.id}
           candidateName={c.name}
           onClose={() => setReturning(false)}
-          onDone={async () => { if (onFlash) onFlash('Returned to the recruiter (Recruiter Review).'); if (onChanged) await onChanged(); }}
+          onDone={async () => { if (onFlash) onFlash('Sent back to the recruiter.'); if (onChanged) await onChanged(); }}
+        />
+      )}
+      {stepPop && app && (
+        <StepPopup
+          kind={stepPop === 'reject_client' ? 'reject' : stepPop}
+          presetBy={stepPop === 'reject_client' ? 'Client' : ''}
+          app={{
+            id: app.id,
+            candidateId: c.id,
+            name: c.name,
+            stage: app.stage,
+            internal: isInternalApp(app),
+            facts: {
+              skills: c.skills, experienceYears: c.experienceYears, noticePeriod: c.noticePeriod, currentSalary: c.currentSalary, expectedSalary: c.expectedSalary,
+            },
+          }}
+          user={user}
+          onClose={() => setStepPop(null)}
+          onNeedInterview={() => setSchedule(true)}
+          onDone={async (x) => { if (onFlash) onFlash(x.text || 'Saved.'); if (onChanged) await onChanged(); }}
+        />
+      )}
+      {offerOpen && app && (
+        <PrepareOfferDialog
+          app={app}
+          name={c.name}
+          onClose={() => setOfferOpen(false)}
+          onDone={async (text) => { setOfferOpen(false); if (onFlash) onFlash(text); if (onChanged) await onChanged(); }}
         />
       )}
       {schedule && app && (
@@ -718,7 +801,7 @@ export function CandidateActions({
           items={[{ id: c.id, latestApplicationId: app.id, name: c.name }]}
           user={user}
           onClose={() => setSchedule(false)}
-          onDone={() => { if (onFlash) onFlash('Interview scheduled.'); if (onChanged) onChanged(); }}
+          onDone={() => { if (onFlash) onFlash('Saved. Interview booked.'); if (onChanged) onChanged(); }}
         />
       )}
       {contact && (
@@ -738,18 +821,68 @@ export function CandidateActions({
   );
 }
 
+// PREPARE OFFER from the profile (e2e gap 2): CTC + joining date → the TL is
+// asked to approve (POST /ats/offers/:id/prepare). Approve & send stays on
+// the Offers screen, with the TL.
+function PrepareOfferDialog({
+  app, name, onClose, onDone,
+}) {
+  const [ctc, setCtc] = useState(app.offeredCtc ? String(app.offeredCtc) : '');
+  const [joiningDate, setJoiningDate] = useState(app.joiningDate ? String(app.joiningDate).slice(0, 10) : '');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function save() {
+    setBusy(true); setError('');
+    try {
+      const r = await api.post(`/ats/offers/${app.id}/prepare`, { offeredCtc: Number(ctc), joiningDate: joiningDate || undefined, offerNotes: notes });
+      await onDone((r.data && r.data.message) || `Saved. The offer for ${name} is waiting for the team lead.`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not save the offer. Please try again.');
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      title={`Prepare offer — ${name}`}
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !(Number(ctc) > 0)} onClick={save}>{busy ? 'Saving…' : 'Send for approval'}</button>
+        </>
+      )}
+    >
+      <label className="field">
+        <span>Yearly CTC (₹) *</span>
+        <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => setCtc(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Joining date</span>
+        <input type="date" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Note in the letter (optional)</span>
+        <textarea rows="2" maxLength={2000} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
+      <div className="small-muted">The team lead checks it on the Offers screen, then the letter goes to the candidate.</div>
+      {error && <div className="error-text" style={{ marginTop: 6 }}>{error}</div>}
+    </Modal>
+  );
+}
+
 // "Current application" facts, shared by both views.
 export function CurrentApplication({
   app, ownership, clientName, linkTo,
 }) {
-  if (!app) return <div className="small-muted">No application yet — this candidate is in the Candidate Master only.</div>;
+  if (!app) return <div className="small-muted">Not on any job yet. Add them to a job to start.</div>;
   const fu = app.followUp;
   return (
     <>
-      <div className="cdw-kv"><span>Requirement</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
+      <div className="cdw-kv"><span>Job</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
       <div className="cdw-kv"><span>Client</span><b>{clientName || '—'}</b></div>
       <div className="cdw-kv"><span>Applied</span><b>{dt(app.createdAt)}</b></div>
-      <div className="cdw-kv"><span>In this stage since</span><b>{dt(app.stageSince)}</b></div>
+      <div className="cdw-kv"><span>At this step since</span><b>{dt(app.stageSince)}</b></div>
       <div className="cdw-kv"><span>Whose move</span><b>{(fu && !fu.completedAt && fu.ownerName) || app.owner || '—'}</b></div>
       {ownership && <OwnershipGrid o={ownership} compact />}
       {app.interviewStatus && (

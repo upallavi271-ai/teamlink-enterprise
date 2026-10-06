@@ -1,0 +1,211 @@
+/* ATS home — one view per role (dashboard review 2026-10-03). Scoped under .ahome.
+   Colours follow StatusChip: red = overdue / problem, amber = waiting, blue = active, grey = closed / stale. */
+.ahome .ah-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 10px}
+.ahome .ah-dept{font-size:12.5px;background:var(--brand-tint);border-radius:12px;padding:3px 10px}
+.ahome .ah-basis{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--ink-soft);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:0 6px;line-height:16px;vertical-align:middle;white-space:nowrap}
+.ahome .ah-basis-range{color:var(--navy);background:var(--brand-tint);border-color:transparent}
+
+/* five numbers */
+.ahome .ah-top{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--paper-raised);border:1px solid var(--line);
+  border-radius:var(--radius);box-shadow:var(--shadow-sm,none);overflow:hidden;margin-bottom:12px}
+.ahome .ah-tile{display:flex;flex-direction:column;gap:3px;padding:12px 16px;border-right:1px solid var(--line-soft);min-width:0}
+.ahome .ah-tile:last-child{border-right:0}
+.ahome .ah-tile.t-red{box-shadow:inset 0 3px 0 var(--red)}
+.ahome .ah-tile.t-amber{box-shadow:inset 0 3px 0 var(--amber)}
+.ahome .ah-tile-l{font-size:12px;font-weight:600;color:var(--ink-soft);display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.ahome .ah-tile-n{font:inherit;font-size:24px;font-weight:700;color:var(--navy);line-height:1.15;text-decoration:none;background:none;border:0;padding:0;cursor:pointer;text-align:left;align-self:flex-start}
+.ahome .ah-tile-n:hover{text-decoration:underline}
+.ahome .ah-tile.t-red .ah-tile-n{color:var(--red)}
+.ahome .ah-tile-s{font-size:12px;color:var(--ink-soft)}
+
+/* layout */
+.ahome .ah-grid,.ahome .ah-grid-c{display:grid;gap:12px;margin-bottom:12px}
+.ahome .ah-grid-c{grid-template-columns:minmax(0,2fr) minmax(260px,1fr)}
+.ahome .ah-main,.ahome .ah-side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.ahome .ah-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.ahome .ah-panel{margin:0 0 12px;min-width:0}
+.ahome .ah-main .ah-panel,.ahome .ah-side .ah-panel,.ahome .ah-two .ah-panel{margin:0}
+.ahome .panel-head h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ahome .ah-flat{border:0;border-radius:0}
+.ahome .ah-pad{padding:6px 18px}
+.ahome .ah-empty{padding:16px 18px;color:var(--ink-soft);font-size:13px}
+.ahome .ah-empty b{color:var(--ink)}
+.ahome .ah-red{color:var(--red);font-weight:600}
+.ahome .ah-name{font-weight:600;color:var(--ink);text-decoration:none}
+.ahome a.ah-name:hover{color:var(--navy);text-decoration:underline}
+.ahome .ah-ellip{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.ahome .ah-row-btns{display:flex;gap:6px;flex-wrap:wrap}
+
+/* tables */
+.ahome .ah-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.ahome .ah-tbl th{font-size:11.5px;font-weight:600;color:var(--ink-soft);text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ahome .ah-tbl td{padding:7px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+.ahome .ah-tbl .num{text-align:right;white-space:nowrap}
+.ahome .ah-tbl td.ah-act{text-align:right;white-space:nowrap}
+.ahome .ah-click tbody tr{cursor:pointer}
+.ahome .ah-click tbody tr:hover td{background:var(--brand-tint)}
+
+/* exception lines — one button each */
+.ahome .ah-lines{list-style:none;margin:0;padding:0}
+.ahome .ah-line{display:flex;align-items:center;gap:12px;padding:9px 18px;border-bottom:1px solid var(--line-soft)}
+.ahome .ah-line:last-child{border-bottom:0}
+.ahome .ah-line-n{min-width:58px;text-align:right;font-size:18px;font-weight:700;color:var(--amber)}
+.ahome .ah-line.t-red .ah-line-n{color:var(--red)}
+.ahome .ah-line.t-blue .ah-line-n{color:var(--blue)}
+.ahome .ah-line-t{flex:1;min-width:0;font-weight:600;color:var(--ink);display:flex;flex-direction:column}
+.ahome .ah-line-s{font-weight:400;font-size:12px;color:var(--ink-soft)}
+
+/* stale */
+.ahome .ah-stale-body{display:flex;align-items:baseline;gap:10px;padding:8px 18px 4px}
+.ahome .ah-stale-n{font-size:22px;font-weight:700;color:var(--ink-soft)}
+.ahome .ah-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 18px 12px}
+.ahome .ah-chip{font-size:12px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:1px 9px;color:var(--ink-soft)}
+.ahome .ah-chip b{color:var(--ink)}
+
+/* extras (recruiter / HR) */
+.ahome .ah-extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.ahome .ah-extra{display:inline-flex;align-items:center;gap:6px;font-size:13px;background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius);padding:6px 12px}
+.ahome .ah-extra-n{font:inherit;font-weight:700;color:var(--navy);background:none;border:0;padding:0;cursor:pointer}
+.ahome .ah-extra-n:hover{text-decoration:underline}
+
+/* side panels */
+.ahome .ah-kv{display:flex;flex-direction:column}
+.ahome .ah-kv-r{display:grid;grid-template-columns:1fr auto;gap:0 10px;padding:8px 18px;border-bottom:1px solid var(--line-soft)}
+.ahome .ah-kv-r:last-child{border-bottom:0}
+.ahome .ah-kv-l{font-size:13px;color:var(--ink-soft);display:flex;align-items:center;gap:6px}
+.ahome .ah-kv-n{font-size:17px;font-weight:700;color:var(--navy);text-decoration:none;text-align:right}
+.ahome a.ah-kv-n:hover{text-decoration:underline}
+.ahome .ah-kv-r.t-red .ah-kv-n{color:var(--red)}
+.ahome .ah-kv-s{grid-column:1 / -1;font-size:11.5px;color:var(--ink-faint)}
+
+/* funnel bars */
+.ahome .ah-bars{display:flex;flex-direction:column;gap:6px;padding:6px 18px 14px}
+.ahome .ah-bar-r{display:grid;grid-template-columns:80px 1fr auto;align-items:center;gap:10px;font-size:13px}
+.ahome .ah-bar{height:12px;background:var(--paper);border-radius:6px;overflow:hidden}
+.ahome .ah-bar span{display:block;height:100%;background:var(--brand);border-radius:6px}
+.ahome .ah-bar-n{font-weight:600;white-space:nowrap}
+
+/* activity warning */
+.ahome .ah-warn{margin:8px 18px;font-size:12.5px;color:var(--ink)}
+
+/* trend */
+.ahome .ah-trend{display:flex;align-items:flex-end;gap:10px;padding:10px 18px 12px;height:110px}
+.ahome .ah-trend-c{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;min-width:0}
+.ahome .ah-trend-b{width:100%;max-width:34px;background:var(--brand);border-radius:4px 4px 0 0}
+.ahome .ah-trend-n{font-size:11px;font-weight:600;color:var(--ink-soft)}
+.ahome .ah-trend-l{font-size:10.5px;color:var(--ink-faint);white-space:nowrap}
+
+/* close-stale dialog */
+.ah-dialog{display:flex;flex-direction:column;gap:12px}
+.ah-dialog .ah-field{display:flex;flex-direction:column;gap:4px}
+.ah-dialog .ah-field-l{font-size:12px;font-weight:600;color:var(--ink-soft)}
+.ah-dialog .ah-check{display:flex;align-items:center;gap:6px;font-size:13px}
+.ah-dialog textarea{width:100%}
+
+@media (max-width: 1100px){
+  .ahome .ah-top{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ahome .ah-grid-c,.ahome .ah-two{grid-template-columns:1fr}
+}
+@media (max-width: 640px){
+  .ahome .ah-top{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ahome .ah-tile{border-bottom:1px solid var(--line-soft)}
+  .ahome .ah-line{flex-wrap:wrap}
+}
+
+/* in-place drills (feedback 2026-10-03 #2): a number is a button that opens its list here */
+.ahome .ah-cell{font:inherit;font-weight:600;color:var(--navy);background:none;border:0;padding:0;cursor:pointer}
+.ahome .ah-cell:hover{text-decoration:underline}
+.ahome .ah-cell.ah-red{color:var(--red)}
+.ahome .ah-cell.cell-muted{color:var(--ink-soft);font-weight:500}
+.ahome .ah-tbl tr.is-picked td{background:var(--brand-tint)}
+.ahome .ah-tbl tr.is-picked td:first-child{box-shadow:inset 3px 0 0 var(--brand)}
+.ahome .ah-picked{margin-left:8px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--navy)}
+
+/* greeting "Good morning, Ravi. You have 6 tasks, 2 are late." (spec §3) */
+.ahome .ah-hello{font-size:15px;font-weight:600;color:var(--ink);margin:2px 0 2px}
+.ahome .ah-hello-t{color:var(--navy)}
+.ahome .ah-hello-t.t-red{color:var(--red)}
+/* a line's number opens its list */
+.ahome .ah-line-nb{font:inherit;font-size:18px;font-weight:700;background:none;border:0;padding:0;cursor:pointer;color:inherit}
+.ahome .ah-line .ah-line-nb{color:var(--amber)}
+.ahome .ah-line.t-red .ah-line-nb{color:var(--red)}
+.ahome .ah-line-nb:hover{text-decoration:underline}
+.ahome .ah-extra.t-amber{border-color:var(--amber)}
+.ahome .ah-extra.t-green{color:var(--green, #1e7e46)}
+.ahome .ah-stale-n.ah-cell{font-size:22px;color:var(--ink-soft)}
+/* trend bars are buttons */
+.ahome button.ah-trend-c{font:inherit;background:none;border:0;padding:0;cursor:pointer}
+.ahome button.ah-trend-c:disabled{cursor:default}
+.ahome button.ah-trend-c:not(:disabled):hover .ah-trend-b{opacity:.8}
+@media (max-width: 640px){
+  .ahome .page-head{flex-wrap:wrap;gap:8px}
+  .ahome .ah-tbl th,.ahome .ah-tbl td{padding:6px 8px}
+  .ahome .ah-trend{gap:4px;padding:10px 8px}
+}
+.ahome .ah-none{color:var(--ink-faint, #9aa3b2);font-weight:600}
+.ahome .ah-tile-n.ah-none{font-size:18px}
+
+/* ---- review #2: one date filter, widget grid, colour discipline ---- */
+.ahome .ah-bar-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;margin-bottom:10px}
+.ahome .ah-bar-row .lph-bar{flex:1;min-width:260px;margin:0}
+.ahome .ah-periods{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper-raised)}
+.ahome .ah-period{font:inherit;font-size:13px;padding:6px 12px;border:0;background:none;cursor:pointer;color:var(--ink-soft)}
+.ahome .ah-period+.ah-period{border-left:1px solid var(--line)}
+.ahome .ah-period.on{background:var(--navy);color:#fff;font-weight:600}
+.ahome .ah-scope{display:inline-flex;align-items:center;gap:10px}
+.ahome .ah-scope-chip{font-size:12px;font-weight:700;color:var(--navy);background:var(--brand-tint);border-radius:12px;padding:2px 10px}
+.ahome .ah-delta{font-size:11.5px;color:var(--ink-soft)}
+.ahome .ah-delta.d-up{color:var(--green, #1e7e46)}
+.ahome .ah-widgets{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.ahome .ah-w{min-width:0}
+.ahome .ah-w .ah-panel{margin:0;height:100%}
+.ahome .ah-w-full{grid-column:span 6}
+.ahome .ah-w-wide{grid-column:span 4}
+.ahome .ah-w-narrow{grid-column:span 2}
+.ahome .ah-w-half{grid-column:span 3}
+.ahome svg.ah-linechart{width:100%;height:auto;display:block;padding:6px 12px 10px}
+.ahome .ah-list,.ahome .ah-todo{list-style:none;margin:0;padding:0}
+.ahome .ah-list li,.ahome .ah-todo li{display:flex;align-items:center;gap:10px;padding:8px 18px;border-bottom:1px solid var(--line-soft)}
+.ahome .ah-list li:last-child,.ahome .ah-todo li:last-child{border-bottom:0}
+.ahome .ah-list-m{flex:1;min-width:0;display:flex;flex-direction:column}
+.ahome .ah-list-m b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ahome .ah-list-t{font-weight:700;color:var(--navy);min-width:56px;font-size:13px;line-height:1.2}
+.ahome .ah-list-n{white-space:nowrap}
+.ahome .ah-todo-box{width:24px;height:24px;border-radius:6px;border:2px solid var(--line);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--ink-soft);flex:none}
+.ahome .ah-todo li.is-late .ah-todo-box{border-color:var(--red);color:var(--red)}
+.ahome .ah-target{padding:14px 18px}
+.ahome .ah-target-n{font:inherit;font-size:28px;font-weight:700;color:var(--navy);background:none;border:0;padding:0;cursor:pointer}
+.ahome .ah-progress{height:10px;background:var(--paper);border-radius:6px;overflow:hidden;margin-top:10px}
+.ahome .ah-progress span{display:block;height:100%;background:var(--brand)}
+.ahome .ah-progress span.done{background:var(--green, #1e7e46)}
+.ahome .ah-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius);padding:9px 14px}
+.ahome .ah-avatar{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--brand-tint);color:var(--navy);font-size:10.5px;font-weight:700;margin-right:8px;vertical-align:middle}
+.ahome .ah-line.t-blue .ah-line-nb{color:var(--navy)}
+.ahome .ah-extras{margin-bottom:12px}
+@media (max-width: 1100px){
+  .ahome .ah-w-wide,.ahome .ah-w-narrow,.ahome .ah-w-half{grid-column:span 6}
+}
+
+/* Simpler dashboard (user, 2026-10-05): row 1 = department chooser, row 2 = filters, "More" collapsed. */
+.ahome .ah-h1-dept{color:var(--navy)}
+.ahome .ah-deptbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:4px 0 10px}
+.ahome .ah-deptbar .ah-scope-chip{margin-left:auto}
+.ahome .ah-deptpick{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:700;color:var(--ink)}
+.ahome .ah-deptpick select{font:inherit;font-size:15px;font-weight:600;color:var(--navy);min-width:220px;max-width:100%;padding:7px 10px;border:2px solid var(--brand,#1f5fbf);border-radius:var(--radius);background:var(--paper-raised,#fff);cursor:pointer}
+.ahome .ah-deptbar.is-picked .ah-deptpick select{background:var(--brand-tint)}
+.ahome .ah-row2{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-bottom:12px}
+.ahome .ah-row2 .pfb{margin:0;flex:1 1 auto}
+.ahome .ah-dept-pick{font:inherit;font-weight:600;background:none;border:0;padding:0;cursor:pointer;color:var(--ink);text-align:left}
+.ahome .ah-dept-pick:hover{color:var(--navy);text-decoration:underline}
+.ahome .ah-extras-below{margin-top:12px}
+.ahome .ah-more{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.ahome .ah-more-btn{font-weight:600}
+.ahome .ah-more-names{margin-left:10px}
+.ahome .ah-more-body{margin-top:12px}
+@media (max-width: 640px){
+  .ahome .ah-deptpick{flex-wrap:wrap;width:100%}
+  .ahome .ah-deptpick select{width:100%;min-width:0}
+  .ahome .ah-deptbar .ah-scope-chip{margin-left:0}
+}
+.ahome .ah-about{font-size:13.5px;color:var(--ink-soft);margin:2px 0 4px}

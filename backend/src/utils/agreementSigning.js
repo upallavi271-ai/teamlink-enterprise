@@ -34,6 +34,77 @@ const OTP_MAX_SENDS = 8;
 const LINK_DAYS = Number(process.env.AGREEMENT_LINK_DAYS) > 0 ? Number(process.env.AGREEMENT_LINK_DAYS) : 14;
 const OUT_FOR_SIGNATURE = ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'];
 const SIGN_METHODS = { typed: 'Typed name (signature font)', drawn: 'Drawn on screen', uploaded: 'Uploaded signature image' };
+// The one-page "type your name and press I agree and sign" signature (2026-10-05).
+const AGREE_METHOD = 'Typed name - "I agree and sign" (email code)';
+
+// ---------------------------------------------------------------------------
+// THE LINK TOKEN IS STORED HASHED (2026-10-05). Client.esignToken holds
+// sha256 of the token, never the token. The token itself is an HMAC of the
+// client id and the moment the link was made, keyed by the server secret, so
+// a copy of the database alone opens nothing — yet SA / Admin can still press
+// "Copy link" after a reload (the server re-derives it). A 48-hex token from
+// before this change is still honoured as it was (legacy plaintext).
+//
+// THE LINK'S OWN SETTINGS ride in Client.agreementEsignTxnId (unused until
+// now; "the e-sign transaction" — our own link is that transaction), so no
+// column is added:  "LINK;d=14"  -> valid 14 days from agreementSentAt
+//                   "LINK;d=14;r=1759650000000" -> stopped (revoked) then.
+// ---------------------------------------------------------------------------
+const linkSecret = () => process.env.AGREEMENT_LINK_SECRET || process.env.JWT_SECRET || 'teamlink-agreement-link';
+function tokenHash(token) {
+  return crypto.createHash('sha256').update(`agreement-link:${String(token || '')}`).digest('hex');
+}
+function deriveToken(clientId, sentAt) {
+  return crypto.createHmac('sha256', linkSecret()).update(`${clientId}:${new Date(sentAt).getTime()}`).digest('hex');
+}
+// What a NEW link writes on the client record (merge into the update).
+// manual: made with "Create agreement link" — shared by the user (Copy /
+// WhatsApp / Email button), so no automatic reminder goes to the client.
+// WHERE THE LINK SETTINGS LIVE (2026-10-05): Client.agreementLinkMeta once
+// migration 20261005190000 is applied (agreementEsignTxnId then holds only an
+// eSign provider's transaction id, e.g. eMudhra's); until then the old place.
+function linkMetaField() {
+  // eslint-disable-next-line global-require
+  return require('./clientProfile').hasColumn('agreementLinkMeta') ? 'agreementLinkMeta' : 'agreementEsignTxnId';
+}
+function newLinkData(clientId, { days, manual = false } = {}) {
+  const sentAt = new Date();
+  const d = Math.round(Number(days));
+  const token = deriveToken(clientId, sentAt);
+  return {
+    token,
+    data: {
+      agreementSentAt: sentAt,
+      esignToken: tokenHash(token),
+      [linkMetaField()]: `LINK;d=${Number.isFinite(d) && d >= 1 && d <= 90 ? d : LINK_DAYS}${manual ? ';m=1' : ''}`,
+    },
+  };
+}
+function linkMeta(client) {
+  const a = String((client && client.agreementLinkMeta) || '');
+  const raw = a.startsWith('LINK;') ? a : String((client && client.agreementEsignTxnId) || '');
+  if (!raw.startsWith('LINK;')) return { days: LINK_DAYS, revokedAt: null, manual: false };
+  const kv = Object.fromEntries(raw.split(';').slice(1).map((p) => p.split('=')));
+  const days = Math.round(Number(kv.d));
+  return { days: Number.isFinite(days) && days >= 1 ? days : LINK_DAYS, revokedAt: kv.r ? new Date(Number(kv.r)) : null, manual: kv.m === '1' };
+}
+// The token for a client's CURRENT link, or null (none / stopped / unknown).
+function tokenFor(client) {
+  if (!client || !client.esignToken) return null;
+  if (/^[a-f0-9]{48}$/.test(client.esignToken)) return client.esignToken; // legacy plaintext link
+  if (!client.agreementSentAt || linkMeta(client).revokedAt) return null;
+  const t = deriveToken(client.id, client.agreementSentAt);
+  return tokenHash(t) === client.esignToken ? t : null;
+}
+const pathFor = (client) => { const t = tokenFor(client); return t ? `/agreement/${t}` : null; };
+// The client a link token opens (hashed lookup; legacy 48-hex as stored).
+async function findByToken(token) {
+  const t = String(token || '');
+  if (!/^[a-f0-9]{48}$|^[a-f0-9]{64}$/.test(t)) return null;
+  const hit = await prisma.client.findUnique({ where: { esignToken: tokenHash(t) } });
+  if (hit || t.length !== 48) return hit;
+  return prisma.client.findUnique({ where: { esignToken: t } });
+}
 
 // Audit actions the flow writes and reads back. One vocabulary.
 const ACTION = {
@@ -81,12 +152,16 @@ const RESET_OTP = { agreementOtpHash: null, agreementOtpExpiresAt: null, agreeme
 // --- The link ----------------------------------------------------------------
 function linkExpiresAt(client) {
   if (!client || !client.agreementSentAt) return null;
-  return new Date(new Date(client.agreementSentAt).getTime() + LINK_DAYS * 86400000);
+  return new Date(new Date(client.agreementSentAt).getTime() + linkMeta(client).days * 86400000);
 }
 // { ok, code, error, expiresAt } — code: 404 unknown, 410 expired.
 function linkState(client) {
   if (!client || !client.agreementDocument || !client.esignToken) {
     return { ok: false, code: 404, error: 'This signing link is not valid — ask TeamLink to send it again.' };
+  }
+  const { revokedAt } = linkMeta(client);
+  if (revokedAt) {
+    return { ok: false, code: 410, revoked: true, error: 'This link was stopped by TeamLink. Ask your TeamLink contact for a new link.' };
   }
   const expiresAt = linkExpiresAt(client);
   if (expiresAt && expiresAt < new Date()) {
@@ -187,7 +262,7 @@ async function agreementAccess(user, client) {
   if (!user || !client) return { view: false, edit: false, as: null };
   // eslint-disable-next-line global-require
   const scope = require('./scope');
-  const s = scope.scopeOf(user);
+  const s = scope.atsScopeOf(user);
   if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') {
     const own = !!user.clientId && user.clientId === client.id;
     return { view: own, edit: false, as: own ? 'client' : null };
@@ -197,6 +272,12 @@ async function agreementAccess(user, client) {
   const held = [user.role, s.atsRole, s.hrmsRole, s.accountsRole].filter(Boolean);
   if (held.some((r) => ['MANAGER', 'ASSISTANT_MANAGER'].includes(r))) return { view: true, edit: false, as: 'manager' };
   if (held.includes('ACCOUNTANT')) return { view: true, edit: false, as: 'accounts' };
+  // A TL / STL VIEWS the agreements of the clients in their own team's scope
+  // (clients rule, 2026-10-05 — read only, like Accounts).
+  if (['TL', 'STL'].includes(s.atsRole)) {
+    const inScope = !!(await prisma.client.findFirst({ where: { AND: [{ id: client.id }, scope.clientWhere(user)] }, select: { id: true } }));
+    return { view: inScope, edit: false, as: inScope ? 'tl' : null };
+  }
   if (s.atsRole === 'BDE') {
     const byName = client.bdeOwner && user.name && String(client.bdeOwner).trim().toLowerCase() === String(user.name).trim().toLowerCase();
     const inScope = byName || !!(await prisma.client.findFirst({ where: { AND: [{ id: client.id }, scope.clientWhere(user)] }, select: { id: true } }));
@@ -209,13 +290,14 @@ async function agreementAccess(user, client) {
 async function visibleClientWhere(user) {
   // eslint-disable-next-line global-require
   const scope = require('./scope');
-  const s = scope.scopeOf(user);
+  const s = scope.atsScopeOf(user);
   if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') return user.clientId ? { id: user.clientId } : null;
   if (user.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return null;
   if (s.global) return {};
   const held = [user.role, s.atsRole, s.hrmsRole, s.accountsRole].filter(Boolean);
   if (held.some((r) => ['MANAGER', 'ASSISTANT_MANAGER', 'ACCOUNTANT'].includes(r))) return {};
   if (s.atsRole === 'BDE') return { OR: [scope.clientWhere(user), ...(user.name ? [{ bdeOwner: user.name }] : [])] };
+  if (['TL', 'STL'].includes(s.atsRole)) return scope.clientWhere(user);
   return null;
 }
 
@@ -243,10 +325,13 @@ function executedSummary(client) {
       signMethod: client.agreementClientSignName || null,
       hasStamp: !!client.agreementClientStampFile,
       hasSignature: !!client.agreementClientSignFile,
+      // Aadhaar eSign at eMudhra (verified with eMudhra's own status API).
+      esign: client.agreementEsignProvider === 'eMudhra' && client.agreementEsignTxnId ? 'eMudhra' : null,
+      esignTxnId: client.agreementEsignProvider === 'eMudhra' ? client.agreementEsignTxnId || null : null,
     },
     verification: client.agreementVerifiedAt
       ? {
-        method: client.agreementVerifyMethod === 'MOBILE_OTP' ? 'OTP to registered contact' : client.agreementVerifyMethod,
+        method: { MOBILE_OTP: 'OTP to registered contact', EMAIL_OTP: 'Code emailed to the client contact' }[client.agreementVerifyMethod] || client.agreementVerifyMethod,
         sentTo: client.agreementVerifyMobile,
         mobile: client.agreementVerifyMobile,
         verifiedAt: client.agreementVerifiedAt,
@@ -255,8 +340,12 @@ function executedSummary(client) {
       : null,
     signedAt: client.agreementSignedAt || null,
     activatedAt: client.agreementActivatedAt || null,
-    awaitingCountersign: statusOf(client) === 'SIGNED' && !client.agreementCompanySealedAt,
-    executed: !!(client.agreementCompanySealedAt && client.agreementClientSealedAt && client.agreementVerifiedAt),
+    awaitingCountersign: statusOf(client) === 'SIGNED' && !(client.agreementCompanySignFile && client.agreementCompanyStampFile),
+    // What each side still has to add (signature / stamp / code) — the card shows it.
+    // eslint-disable-next-line global-require
+    missing: require('./agreementLifecycle').missingSeals(client),
+    // eslint-disable-next-line global-require
+    executed: require('./agreementLifecycle').isExecuted(client),
     pdfAvailable: ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(statusOf(client)),
   };
 }
@@ -269,14 +358,23 @@ async function publicView(client) {
   const st = statusOf(client);
   const steps = await stepsOf(client);
   const otp = otpState(client);
+  // eslint-disable-next-line global-require
+  const { consultantParty, keyTermsOf } = require('./agreement');
+  // eslint-disable-next-line global-require
+  const emudhraReady = await require('./emudhra').isAvailable().catch(() => false);
   return {
+    // The 4th signing choice: Aadhaar eSign at eMudhra (only when set up).
+    emudhra: { available: emudhraReady, signed: client.agreementEsignProvider === 'eMudhra' && !!client.agreementEsignTxnId },
+    keyTerms: keyTermsOf(client, await consultantParty()),
+    // Where the email code goes: the contact email on the client record, masked.
+    contactEmail: core.maskEmail(String(client.contactEmail || client.recruitmentContactEmail || '').trim()) || null,
     clientName: client.name,
     agreementId: client.agreementId,
     document: client.agreementDocument,
     status: st,
     open: OUT_FOR_SIGNATURE.includes(st),
     linkExpiresAt: linkExpiresAt(client),
-    consultant: { countersigned: !!client.agreementCompanySealedAt, signedBy: client.agreementCompanySignedBy || null, hasSignature: !!client.agreementCompanySignFile, hasStamp: !!client.agreementCompanyStampFile },
+    consultant: { countersigned: !!client.agreementCompanySealedAt, sealedAt: client.agreementCompanySealedAt || null, signedBy: client.agreementCompanySignedBy || null, hasSignature: !!client.agreementCompanySignFile, hasStamp: !!client.agreementCompanyStampFile },
     proceededAt: steps.proceededAt,
     signature: client.agreementClientSignFile
       ? { captured: true, method: client.agreementClientSignName, signedBy: client.agreementSignedBy, signedByTitle: client.agreementSignedByTitle, at: client.agreementClientSealedAt }
@@ -299,7 +397,8 @@ async function publicView(client) {
 
 module.exports = {
   OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_S, OTP_MAX_SENDS, LINK_DAYS,
-  OUT_FOR_SIGNATURE, SIGN_METHODS, ACTION, RESET_EXECUTION, RESET_OTP,
+  OUT_FOR_SIGNATURE, SIGN_METHODS, AGREE_METHOD, ACTION, RESET_EXECUTION, RESET_OTP,
+  tokenHash, newLinkData, linkMeta, linkMetaField, tokenFor, pathFor, findByToken,
   statusOf, linkExpiresAt, linkState, stepsOf,
   otpState, issueOtp, checkOtp, hashOtp,
   agreementAccess, visibleClientWhere, executedSummary, publicView,

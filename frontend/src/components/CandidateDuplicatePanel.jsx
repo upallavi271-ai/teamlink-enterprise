@@ -46,9 +46,9 @@ export default function CandidateDuplicatePanel({
     <div className="cdup-exists">
       {matches.length > 0 && (
         <>
-          <div className="cdup-exists-title">Candidate already exists</div>
+          <div className="cdup-exists-title">This person is already on file</div>
           <div className="small-muted" style={{ marginBottom: 8 }}>
-            One person keeps one profile — add them to the requirement instead of creating a second record.
+            One person keeps one profile. Open it, or add them to a job — no second profile is made.
           </div>
           {matches.map((m) => (
             <div key={m.id} className="cdup-exists-card">
@@ -60,6 +60,12 @@ export default function CandidateDuplicatePanel({
                     {m.reasons.map((r) => <span key={r} className={`cdup-why cdup-why-${r}`}>{WHY[r] || r}</span>)}
                     <span className="small-muted">{`on file since ${protoDate(m.createdAt)}`}</span>
                   </div>
+                  {m.heldBy && (
+                    <div className="cdup-heldby">
+                      {`Already with ${m.heldBy.name || 'a team'}${m.heldBy.department ? ` (${m.heldBy.department})` : ''}`}
+                      {m.archived ? ' · archived' : ''}
+                    </div>
+                  )}
                 </div>
               </div>
               {m.inScope ? (
@@ -80,11 +86,11 @@ export default function CandidateDuplicatePanel({
                 </div>
               )}
               <div className="cdup-exists-actions">
-                {m.inScope && <button type="button" className="btn btn-sm" onClick={() => onOpen(m)}>Open Candidate</button>}
+                {m.inScope && <button type="button" className="btn btn-sm" onClick={() => onOpen(m)}>Open profile</button>}
                 {canApply && !done[m.id] && (
                   <>
                     <Combo value={reqFor[m.id] || defaultRequirementId || ''} onChange={(e) => setReqFor((x) => ({ ...x, [m.id]: e.target.value }))}>
-                      <option value="">Choose requirement…</option>
+                      <option value="">Choose a job…</option>
                       {open.map((r) => (
                         <option key={r.id} value={r.id} disabled={m.applications.some((a) => a.requirementId === r.id)}>
                           {`${r.title} — ${r.internal ? 'TeamLink Internal' : r.client?.name || '—'}`}
@@ -92,18 +98,20 @@ export default function CandidateDuplicatePanel({
                       ))}
                     </Combo>
                     <button type="button" className="btn btn-sm btn-primary" disabled={busy === m.id} onClick={() => addTo(m)}>
-                      {busy === m.id ? 'Adding…' : 'Add to Requirement'}
+                      {busy === m.id ? 'Adding…' : 'Add an application'}
                     </button>
                   </>
                 )}
-                {done[m.id] && <span className="status active">Added to the requirement</span>}
+                {done[m.id] && <span className="status active">Added to the job</span>}
               </div>
             </div>
           ))}
-          <div className="cdup-exists-foot">
-            <span className="small-muted">A genuinely different person with the same phone or email?</span>
-            <button type="button" className="btn btn-sm btn-danger" onClick={onCreateNew}>Create New Profile</button>
-          </div>
+          {onCreateNew && (
+            <div className="cdup-exists-foot">
+              <span className="small-muted">Admin only: a really different person with the same phone or email?</span>
+              <button type="button" className="btn btn-sm btn-danger" onClick={onCreateNew}>Create a second profile</button>
+            </div>
+          )}
         </>
       )}
       {possible && possible.length > 0 && (

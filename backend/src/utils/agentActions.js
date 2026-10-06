@@ -36,7 +36,7 @@
 const prisma = require('../db');
 const { can, allowedStagesFor } = require('./permissions');
 const {
-  applicationWhere, requirementWhere, scopeOf, isAssignedTo,
+  applicationWhere, requirementWhere, atsScopeOf: scopeOf, isAssignedTo,
 } = require('./scope');
 const workflow = require('./approvalWorkflow');
 const {
@@ -176,6 +176,8 @@ function toStage(value) {
   if (STAGE_LABELS[key]) return key;
   if (key === 'REJECT') return 'REJECTED';
   if (key === 'ON_HOLD') return 'HOLD';
+  // The old screen words still resolve after the 2026-10-03 relabel.
+  if (key === 'BDE_REVIEW') return 'WITH_BDE';
   const byLabel = Object.entries(STAGE_LABELS)
     .find(([, label]) => label.toUpperCase().replace(/[^A-Z]+/g, '_') === key);
   return byLabel ? byLabel[0] : null;

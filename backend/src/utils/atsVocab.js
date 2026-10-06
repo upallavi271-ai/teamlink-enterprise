@@ -56,25 +56,27 @@ const EXTRA_STAGE_CODES = ['REJECTED', 'HOLD'];
 const ALL_STAGE_CODES = [...STAGE_CODES, ...EXTRA_STAGE_CODES];
 
 const STAGE_LABELS = {
+  // Everyday words (simplicity pass 2026-10-03) — LABELS ONLY; the codes
+  // (keys) are what the DB, imports and facets use. Mirrors frontend/src/atsVocab.js.
   NEW: 'New',
-  AI_INTERVIEW_REQUIRED: 'AI Interview Required',
-  AI_INTERVIEW_SCHEDULED: 'AI Interview Scheduled',
-  AI_INTERVIEW_COMPLETED: 'AI Interview Completed',
-  RECRUITER_REVIEW: 'Recruiter Review',
-  RECRUITER_APPROVED: 'Recruiter Approved',
-  TL_REVIEW: 'TL Review',
+  AI_INTERVIEW_REQUIRED: 'AI interview needed',
+  AI_INTERVIEW_SCHEDULED: 'AI interview booked',
+  AI_INTERVIEW_COMPLETED: 'AI interview done',
+  RECRUITER_REVIEW: 'Check by recruiter',
+  RECRUITER_APPROVED: 'Approved by recruiter',
+  TL_REVIEW: 'Check by team lead',
   // §31 one terminology: the stage a BDE acts on reads "BDE Review" on every
   // screen (the code stays WITH_BDE in the database).
-  WITH_BDE: 'BDE Review',
-  BDE_APPROVED: 'BDE Approved',
-  SHARED_WITH_CLIENT: 'Shared with Client',
-  CLIENT_REVIEW: 'Client Review',
-  CLIENT_SHORTLISTED: 'Client Shortlisted',
-  INTERVIEW_SCHEDULED: 'Interview Scheduled',
-  INTERVIEW_COMPLETED: 'Interview Completed',
+  WITH_BDE: 'Check by client manager',
+  BDE_APPROVED: 'Ready to send to client',
+  SHARED_WITH_CLIENT: 'Sent to client',
+  CLIENT_REVIEW: 'Client checking',
+  CLIENT_SHORTLISTED: 'Client shortlisted',
+  INTERVIEW_SCHEDULED: 'Interview booked',
+  INTERVIEW_COMPLETED: 'Interview done',
   SELECTED: 'Selected',
   OFFER: 'Offer',
-  OFFER_ACCEPTED: 'Offer Accepted',
+  OFFER_ACCEPTED: 'Offer accepted',
   JOINED: 'Joined',
   HIRED: 'Hired',
   REJECTED: 'Rejected',
@@ -92,12 +94,12 @@ function stageLabel(code) {
 // "Feedback pending" or "With BDE".
 // ---------------------------------------------------------------------------
 const WORKFLOW_TERMS = {
-  RECRUITER_REVIEW: 'Recruiter Review',
-  TL_REVIEW: 'TL Review',
-  BDE_REVIEW: 'BDE Review',
-  CLIENT_REVIEW: 'Client Review',
-  INTERVIEW_FEEDBACK: 'Interview Feedback',
-  JOINING_CONFIRMATION: 'Joining Confirmation',
+  RECRUITER_REVIEW: 'Check by recruiter',
+  TL_REVIEW: 'Check by team lead',
+  BDE_REVIEW: 'Check by client manager',
+  CLIENT_REVIEW: 'Client checking',
+  INTERVIEW_FEEDBACK: 'Interview feedback',
+  JOINING_CONFIRMATION: 'Waiting to join',
 };
 const PENDING_TERM_OF_STAGE = {
   NEW: WORKFLOW_TERMS.RECRUITER_REVIEW,
@@ -178,8 +180,11 @@ function stageMoveProblem(fromStage, toStage, { internal = false, resumeFrom = n
   if (EXTRA_STAGE_CODES.includes(toStage)) return null; // Hold / Reject: always
   let base = fromStage;
   if (EXTRA_STAGE_CODES.includes(fromStage)) {
-    if (!resumeFrom || STAGE_PHASE[resumeFrom] == null) return null; // no history: legacy row
-    base = resumeFrom;
+    // No history (an imported / legacy Hold or Rejected row): we don't know
+    // where it stood, so treat it as at "Check by recruiter" (phase 0) and the
+    // normal one-phase-at-a-time rule applies (e2e gap 1, 2026-10-03). Before,
+    // such a row could jump straight to Joined and raise an invoice.
+    base = (resumeFrom && STAGE_PHASE[resumeFrom] != null) ? resumeFrom : 'RECRUITER_REVIEW';
   }
   const from = STAGE_PHASE[base];
   const to = STAGE_PHASE[toStage];
@@ -325,38 +330,38 @@ function applicationWaitingOn(application, requirement) {
 // above stays the long "what to do" sentence (follow-up defaults).
 // ---------------------------------------------------------------------------
 const NEXT_ACTION_BY_STAGE = {
-  NEW: 'Review Candidate',
-  AI_INTERVIEW_REQUIRED: 'Send AI Interview',
-  AI_INTERVIEW_SCHEDULED: 'Await AI Interview',
-  AI_INTERVIEW_COMPLETED: 'Review Candidate',
-  RECRUITER_REVIEW: 'Send to TL',
-  RECRUITER_APPROVED: 'Send to TL',
+  NEW: 'Check candidate',
+  AI_INTERVIEW_REQUIRED: 'Send AI interview',
+  AI_INTERVIEW_SCHEDULED: 'Wait for AI interview',
+  AI_INTERVIEW_COMPLETED: 'Check candidate',
+  RECRUITER_REVIEW: 'Send to team lead',
+  RECRUITER_APPROVED: 'Send to team lead',
   TL_REVIEW: 'Approve / Reject / Hold',
   // 2026-09-29 workflow: BDE Review → Client Submission → Client Decision.
-  WITH_BDE: 'Submit to Client',
-  BDE_APPROVED: 'Submit to Client',
-  SHARED_WITH_CLIENT: 'Follow up for Client Decision',
-  CLIENT_REVIEW: 'Follow up for Client Decision',
-  CLIENT_SHORTLISTED: 'Schedule Client Interview',
-  INTERVIEW_SCHEDULED: 'Confirm Interview',
-  INTERVIEW_COMPLETED: 'Record Feedback',
-  SELECTED: 'Prepare / Send Offer',
-  OFFER: 'Follow Up Offer',
-  OFFER_ACCEPTED: 'Confirm Joining',
-  JOINED: 'Raise Invoice / Track Guarantee',
+  WITH_BDE: 'Send to client',
+  BDE_APPROVED: 'Send to client',
+  SHARED_WITH_CLIENT: 'Ask client for a decision',
+  CLIENT_REVIEW: 'Ask client for a decision',
+  CLIENT_SHORTLISTED: 'Book client interview',
+  INTERVIEW_SCHEDULED: 'Confirm interview',
+  INTERVIEW_COMPLETED: 'Add feedback',
+  SELECTED: 'Send offer',
+  OFFER: 'Follow up offer',
+  OFFER_ACCEPTED: 'Confirm joining',
+  JOINED: 'Raise invoice / watch guarantee',
   HIRED: 'No Action',
-  HOLD: 'Review Hold',
+  HOLD: 'Check the hold',
   REJECTED: 'No Action',
 };
 // The internal chain's own words where they differ (HR Review → Dept Head /
 // TL → Interview → … → Offer → Joining → HRMS).
 const NEXT_ACTION_INTERNAL = {
-  NEW: 'HR Review',
-  RECRUITER_REVIEW: 'Send to Dept Head / TL',
-  RECRUITER_APPROVED: 'Send to Dept Head / TL',
-  TL_REVIEW: 'Approve → Interview / Reject',
-  SELECTED: 'Prepare / Send Offer',
-  JOINED: 'Create HRMS Employee',
+  NEW: 'Check by HR',
+  RECRUITER_REVIEW: 'Send to dept head / team lead',
+  RECRUITER_APPROVED: 'Send to dept head / team lead',
+  TL_REVIEW: 'Approve for interview / Reject',
+  SELECTED: 'Send offer',
+  JOINED: 'Add as employee',
 };
 function nextActionForStage(stage, { internal = false } = {}) {
   if (internal && NEXT_ACTION_INTERNAL[stage]) return NEXT_ACTION_INTERNAL[stage];
@@ -373,7 +378,8 @@ function applicationNextAction(application) {
 // from updatedAt) only runs before that module is loaded.
 let DUE_RESOLVER = null;
 let TODAY_FN = null;
-function setDueDateResolver(fn, todayFn) { DUE_RESOLVER = fn || null; TODAY_FN = todayFn || null; }
+let OVERDUE_FN = null; // utils/nextAction.js: a Stale row (past due, idle 30+ days) is not Overdue
+function setDueDateResolver(fn, todayFn, overdueFn) { DUE_RESOLVER = fn || null; TODAY_FN = todayFn || null; OVERDUE_FN = overdueFn || null; }
 // The prototype's appDueDate(): SLA days added to the last stage movement.
 function applicationDueDate(application) {
   if (DUE_RESOLVER) return DUE_RESOLVER(application);
@@ -388,6 +394,7 @@ function applicationDueDate(application) {
 function applicationIsOverdue(application) {
   const due = applicationDueDate(application);
   if (!due) return false;
+  if (OVERDUE_FN) return !!OVERDUE_FN(application);
   if (TODAY_FN) return due < TODAY_FN();
   return new Date(due) < new Date(new Date().toISOString().slice(0, 10));
 }
@@ -640,8 +647,8 @@ const INTERVIEW_STATUS_LABELS = {
   CONFIRMED: 'Confirmed',
   STARTED: 'Started',
   COMPLETED: 'Completed',
-  PENDING_FEEDBACK: 'Pending Feedback',
-  FEEDBACK_SUBMITTED: 'Feedback Submitted',
+  PENDING_FEEDBACK: 'Waiting for feedback',
+  FEEDBACK_SUBMITTED: 'Feedback in',
   CANCELLED: 'Cancelled',
   NO_SHOW: 'No Show',
   RESCHEDULED: 'Rescheduled',
@@ -945,10 +952,10 @@ const WORKFLOW_FLOW = {
 // Stage names on an INTERNAL hire read the internal chain's words: the
 // recruiter's review is HR's, the TL's approval is the Dept Head / TL's.
 const INTERNAL_STAGE_LABELS = {
-  RECRUITER_REVIEW: 'HR Review',
-  RECRUITER_APPROVED: 'HR Review',
-  TL_REVIEW: 'Dept Head / TL Review',
-  HIRED: 'HRMS Employee Created',
+  RECRUITER_REVIEW: 'Check by HR',
+  RECRUITER_APPROVED: 'Check by HR',
+  TL_REVIEW: 'Check by dept head / team lead',
+  HIRED: 'Employee record made',
 };
 function stageLabelFor(code, { internal = false } = {}) {
   if (internal && INTERNAL_STAGE_LABELS[code]) return INTERNAL_STAGE_LABELS[code];

@@ -35,7 +35,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requireProduct, can } = require('../middleware/auth');
-const { requirementWhere, scopeOf } = require('../utils/scope');
+const { requirementWhere, atsScopeOf: scopeOf } = require('../utils/scope');
 const { listWorkers } = require('../utils/workers');
 
 const router = express.Router();

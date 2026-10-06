@@ -1,69 +1,40 @@
-// EXPENSES & BILLS — the main table of the one-page Office & Accounts (v2 §3,
-// with the v1 details: EXP-#### IDs, Paid / Pending / Reimbursed badges, the
-// right-side details drawer, the filtered totals, the bill preview and the
-// delete confirmation). Read from GET /office-expenses/ledger; the filters
-// live in the page so the header's Excel button exports exactly them.
+// EXPENSES & BILLS — the main table of the one-page Office & Accounts, with
+// the EXP-#### IDs, the right-side details drawer, the bill preview and the
+// delete confirmation. Read from GET /office-expenses/ledger.
 //
-// INFINITE SCROLL (no Previous / Next): the same GET /ledger, 10 rows a
-// request; the next page is asked for when the end of the table scrolls into
-// view and appended. A new filter or sort starts again from page 1. The
-// filtered totals are the API's, over the WHOLE filtered set — never a sum of
-// the rows loaded so far.
+// The filters are the PAGE's (OfficeFilters.jsx — period, search, category,
+// vendor, GST on the bill, status, payment mode); `params` is what they send.
+//
+// Accounts spec S1 (2026-10-05):
+//   * columns Before GST · GST % · GST amount · After GST · TDS · Total ·
+//     Paid · Pending (Total = after GST − TDS; Paid + Pending = Total);
+//   * a TOTAL row (tfoot) over the WHOLE filtered set — the API's totals, the
+//     same sums as the KPI chips, never a sum of the rows loaded so far;
+//   * synced top + bottom scrollbars, the navy header and the TOTAL row kept
+//     on screen (components/accounts/ScrollSync.jsx);
+//   * status: Paid / Pending; an old Approved / Rejected / Reimbursed row shows
+//     as "Other (old status)".
+//
+// INFINITE SCROLL (no Previous / Next): 10 rows a request; the next page is
+// asked for when the end of the table scrolls into view and appended. A new
+// filter or sort starts again from page 1.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import Combo from '../../components/Combo.jsx';
-import FilterChips from '../../components/FilterChips.jsx';
+import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import '../../components/ui/ui.css';
 import ExpenseDrawer from './ExpenseDrawer.jsx';
 import BillPreview from './BillPreview.jsx';
 import AddVendorModal from './AddVendorModal.jsx';
 import { ApprovalBadge, detailCache } from './approval.jsx';
-import {
-  money, money2, fmtD, saveBlob, isoOf, todayIso,
-} from './officeUtil';
+import { money, money2, fmtD, saveBlob } from './officeUtil';
+import './officefilters.css';
 
-export const LEDGER_BLANK = {
-  q: '', range: 'all', from: '', to: '', category: 'All', vendor: 'All', mode: 'All', status: 'All', gst: 'All', tds: 'All',
-};
-export const ledgerFiltersOn = (f) => !!f.q.trim() || f.range !== 'all' || f.category !== 'All' || f.vendor !== 'All'
-  || f.mode !== 'All' || f.status !== 'All' || f.gst !== 'All' || f.tds !== 'All';
-
-const RANGES = [['all', 'All dates'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month'], ['custom', 'Custom Range']];
 const PAGE_SIZE = 10;
 
-// Today / This Week (Monday to Sunday) / This Month / a custom range, as dates.
-export function rangeDates(f) {
-  const now = new Date();
-  if (f.range === 'today') { const t = todayIso(); return { from: t, to: t }; }
-  if (f.range === 'week') {
-    const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
-    const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
-    return { from: isoOf(mon), to: isoOf(sun) };
-  }
-  if (f.range === 'month') {
-    return { from: isoOf(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoOf(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
-  }
-  if (f.range === 'custom') return { from: f.from || undefined, to: f.to || undefined };
-  return {};
-}
-export function ledgerParams(f) {
-  const d = rangeDates(f);
-  return {
-    q: f.q.trim() || undefined,
-    from: d.from,
-    to: d.to,
-    category: f.category !== 'All' ? f.category : undefined,
-    vendor: f.vendor !== 'All' ? f.vendor : undefined,
-    mode: f.mode !== 'All' ? f.mode : undefined,
-    status: f.status !== 'All' ? f.status : undefined,
-    gst: f.gst !== 'All' ? f.gst : undefined,
-    tds: f.tds !== 'All' ? f.tds : undefined,
-  };
-}
-// Excel (spec 18): the filtered expenses, the spec's columns.
-export async function exportLedger(f) {
-  const res = await api.get('/office-expenses/ledger/export.xlsx', { params: ledgerParams(f), responseType: 'blob' });
+// Excel: the filtered expenses with every money column and a TOTAL row.
+export async function exportLedger(params) {
+  const res = await api.get('/office-expenses/ledger/export.xlsx', { params, responseType: 'blob' });
   saveBlob(res, 'expenses.xlsx');
 }
 
@@ -79,9 +50,12 @@ function Sortable({
     </th>
   );
 }
+const Money = ({ v, cls = '' }) => (
+  <td className={`num${cls ? ` ${cls}` : ''}`} title={money2(v)}>{v > 0.004 ? money(v) : <span className="cell-muted">₹0</span>}</td>
+);
 
 export default function ExpenseLedger({
-  f, setF, reloadKey, canManage, onNew, onImport, onEdit, onEditFull, onChanged, onError, onExportRegister, onOptions,
+  params, reloadKey, canManage, onImport, onEdit, onEditFull, onChanged, onError, onExportRegister, onOptions, onClear,
 }) {
   const [data, setData] = useState(null); // the last response: totals, options, access, total
   const [rows, setRows] = useState([]); // every row loaded so far, in order
@@ -93,20 +67,20 @@ export default function ExpenseLedger({
   rowsRef.current = rows;
   const lastKey = useRef(null);
   const sentinel = useRef(null);
-  const [qDeb, setQDeb] = useState(f.q);
   const [openId, setOpenId] = useState(null);
   const [bill, setBill] = useState(null);
   const [del, setDel] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
-  const [exporting, setExporting] = useState(false);
-  const [expMenu, setExpMenu] = useState(false);
+  const [exporting, setExporting] = useState('');
   const reqId = useRef(0);
-  const expRef = useRef(null);
 
-  useEffect(() => { const t = setTimeout(() => setQDeb(f.q), 250); return () => clearTimeout(t); }, [f.q]);
+  // Search is typed: wait a moment before asking.
+  const [qDeb, setQDeb] = useState(params.q);
+  useEffect(() => { const t = setTimeout(() => setQDeb(params.q), 250); return () => clearTimeout(t); }, [params.q]);
   const [order, setOrder] = useState({ sort: 'date', dir: 'desc' });
-  const key = JSON.stringify({ ...f, q: qDeb, ...order });
+  const sent = { ...params, q: qDeb };
+  const key = JSON.stringify({ ...sent, ...order });
 
   // One request: page `page` of `size` rows. `append` adds them under the rows
   // already shown (skipping any already there); otherwise they replace them.
@@ -114,7 +88,7 @@ export default function ExpenseLedger({
     const id = reqId.current + 1;
     reqId.current = id;
     if (append) { setMore(true); setMoreErr(false); } else setBusy(true);
-    api.get('/office-expenses/ledger', { params: { ...ledgerParams({ ...f, q: qDeb }), ...order, page, pageSize: size } })
+    api.get('/office-expenses/ledger', { params: { ...JSON.parse(key), page, pageSize: size } })
       .then((r) => {
         if (id !== reqId.current) return;
         setData(r.data);
@@ -160,52 +134,20 @@ export default function ExpenseLedger({
     io.observe(el);
     return () => io.disconnect();
   }, [hasMore, loadMore, rows.length]);
-  // The page's New Expense modal offers the same categories / vendors / modes.
+  // The page's filters and its New Expense modal read the options.
   useEffect(() => { if (data?.options && onOptions) onOptions(data.options); }, [data, onOptions]);
 
-  useEffect(() => {
-    if (!expMenu) return undefined;
-    const onDown = (e) => { if (expRef.current && !expRef.current.contains(e.target)) setExpMenu(false); };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [expMenu]);
-
-  const set = (patch) => setF({ ...f, ...patch });
-  const on = ledgerFiltersOn(f);
   const o = data?.options;
   const acc = data?.access || {};
+  const t = data?.totals;
 
-  // THE LIST FILTER STANDARD (user notes #1 / #11): Search, Date range,
-  // Category, Vendor and Status always on screen; Payment mode, GST and TDS
-  // under "More Filters ▾"; every active filter as a removable chip.
-  const [moreOpen, setMoreOpen] = useState(() => {
-    try { return window.localStorage.getItem('tl.morefilters.office-ledger') === '1'; } catch { return false; }
-  });
-  const toggleMore = () => {
-    const next = !moreOpen;
-    setMoreOpen(next);
-    try { window.localStorage.setItem('tl.morefilters.office-ledger', next ? '1' : '0'); } catch { /* private window */ }
-  };
-  const moreActive = [f.mode !== 'All', f.gst !== 'All', f.tds !== 'All'].filter(Boolean).length;
-  const rangeText = f.range === 'custom'
-    ? (f.from && f.to ? `${fmtD(f.from)} → ${fmtD(f.to)}` : f.from ? `from ${fmtD(f.from)}` : f.to ? `to ${fmtD(f.to)}` : 'Custom range')
-    : (RANGES.find(([k]) => k === f.range) || [])[1];
-  const chips = [
-    f.q.trim() && { key: 'q', label: 'Search', value: f.q.trim(), onRemove: () => set({ q: '' }) },
-    f.range !== 'all' && { key: 'range', label: 'Date range', value: rangeText, onRemove: () => set({ range: 'all', from: '', to: '' }) },
-    f.category !== 'All' && { key: 'category', label: 'Category', value: f.category, onRemove: () => set({ category: 'All' }) },
-    f.vendor !== 'All' && { key: 'vendor', label: 'Vendor', value: f.vendor, onRemove: () => set({ vendor: 'All' }) },
-    f.status !== 'All' && { key: 'status', label: 'Status', value: ((o?.statuses || []).find((s) => s.value === f.status) || {}).label || f.status, onRemove: () => set({ status: 'All' }) },
-    f.mode !== 'All' && { key: 'mode', label: 'Payment mode', value: f.mode, onRemove: () => set({ mode: 'All' }) },
-    f.gst !== 'All' && { key: 'gst', label: 'GST applicable', value: f.gst, onRemove: () => set({ gst: 'All' }) },
-    f.tds !== 'All' && { key: 'tds', label: 'TDS applicable', value: f.tds, onRemove: () => set({ tds: 'All' }) },
-  ].filter(Boolean);
-
-  const doExport = async () => {
-    setExpMenu(false);
-    setExporting(true);
-    try { await exportLedger(f); } catch { onError('The Excel file could not be made.'); }
-    setExporting(false);
+  const doExport = async (which) => {
+    setExporting(which);
+    try {
+      if (which === 'xlsx') await exportLedger(sent);
+      else await onExportRegister();
+    } catch { onError('The Excel file could not be made.'); }
+    setExporting('');
   };
   // The page bumps reloadKey, which reloads this table (and every section).
   const changed = () => { detailCache.clear(); onChanged(); };
@@ -239,92 +181,30 @@ export default function ExpenseLedger({
     if (e.target.closest('button, a, input, select, label')) return;
     setOpenId(r.id);
   };
-  const cols = 14;
+  const cols = 17;
   const summary = rows.find((r) => r.id === openId);
 
   return (
     <div className="oe-lg">
-      <div className="oe-lg-bar">
-        <label className="oe-f oe-lg-q"><span>Search</span>
-          <input type="search" value={f.q} placeholder="Expense ID, description, vendor, category" onChange={(e) => set({ q: e.target.value })} />
-        </label>
-        <label className="oe-f"><span>Date range</span>
-          <select className={`oe-sel${f.range !== 'all' ? ' set' : ''}`} value={f.range} onChange={(e) => set({ range: e.target.value })}>
-            {RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </label>
-        {f.range === 'custom' && (
-          <>
-            <label className="oe-f"><span>From</span><input type="date" value={f.from} max={f.to || undefined} onChange={(e) => set({ from: e.target.value })} /></label>
-            <label className="oe-f"><span>To</span><input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set({ to: e.target.value })} /></label>
-          </>
-        )}
-        <div className="oe-f oe-lg-combo"><span>Category</span>
-          <Combo value={f.category} onChange={(e) => set({ category: e.target.value || 'All' })} aria-label="Category">
-            <option value="All">All categories</option>
-            {(o?.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
-          </Combo>
-        </div>
-        <div className="oe-f oe-lg-combo"><span>Vendor / Paid to</span>
-          <Combo value={f.vendor} onChange={(e) => set({ vendor: e.target.value || 'All' })} aria-label="Vendor / Paid to">
-            <option value="All">All vendors</option>
-            {(o?.vendors || []).map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
-          </Combo>
-        </div>
-        <label className="oe-f"><span>Status</span>
-          <select className={`oe-sel${f.status !== 'All' ? ' set' : ''}`} value={f.status} onChange={(e) => set({ status: e.target.value })} title="Payment status">
-            <option value="All">All statuses</option>
-            {(o?.statuses || []).map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-        </label>
-        <button type="button" className={`mf-toggle${moreOpen ? ' on' : ''}`} onClick={toggleMore} aria-expanded={moreOpen}>
-          More Filters{moreActive ? ` (${moreActive})` : ''} {moreOpen ? '▴' : '▾'}
-        </button>
-        {moreOpen && (
-          <>
-            <label className="oe-f"><span>Payment mode</span>
-              <select className={`oe-sel${f.mode !== 'All' ? ' set' : ''}`} value={f.mode} onChange={(e) => set({ mode: e.target.value })}>
-                <option value="All">All payment modes</option>
-                {(o?.modes || []).map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </label>
-            <label className="oe-f"><span>GST applicable</span>
-              <select className={`oe-sel oe-sel-sm${f.gst !== 'All' ? ' set' : ''}`} value={f.gst} onChange={(e) => set({ gst: e.target.value })}>
-                <option value="All">All</option><option value="Yes">Yes</option><option value="No">No</option>
-              </select>
-            </label>
-            <label className="oe-f"><span>TDS applicable</span>
-              <select className={`oe-sel oe-sel-sm${f.tds !== 'All' ? ' set' : ''}`} value={f.tds} onChange={(e) => set({ tds: e.target.value })}>
-                <option value="All">All</option><option value="Yes">Yes</option><option value="No">No</option>
-              </select>
-            </label>
-          </>
-        )}
-        {on && <button type="button" className="mf-clear oe-lg-clear" onClick={() => setF(LEDGER_BLANK)}>Clear All</button>}
+      <div className="oe-lg-bar oe-lg-bar2">
+        <span className="small-muted oe-lg-count">
+          {data ? `${data.total} expense${data.total === 1 ? '' : 's'}${data.filtered ? ` match the filters (of ${data.all.count})` : ''}` : 'Loading…'}
+        </span>
         <div className="oe-lg-acts">
           {canManage && onImport && <button type="button" className="btn btn-sm" onClick={onImport}>⬆ Import</button>}
-          <span className="oe-lg-exp" ref={expRef}>
-            <button type="button" className="btn btn-sm" disabled={exporting || acc.export === false} onClick={() => setExpMenu(!expMenu)} aria-haspopup="menu" aria-expanded={expMenu}>
-              {exporting ? 'Preparing…' : '⬇ Export'}
+          <button type="button" className="btn btn-sm" disabled={!!exporting || acc.export === false} onClick={() => doExport('xlsx')} title="The expenses these filters show, with every money column and the TOTAL row">
+            {exporting === 'xlsx' ? 'Preparing…' : '⬇ Excel'}
+          </button>
+          {onExportRegister && (
+            <button type="button" className="btn btn-sm" disabled={!!exporting || acc.export === false} onClick={() => doExport('register')} title="Month by month, with subtotals, for the period">
+              {exporting === 'register' ? 'Preparing…' : '⬇ Month register'}
             </button>
-            {expMenu && (
-              <div className="oe-lg-menu" role="menu">
-                <button type="button" role="menuitem" onClick={doExport}>Excel — the filtered expenses</button>
-                {onExportRegister && (
-                  <button type="button" role="menuitem" onClick={() => { setExpMenu(false); onExportRegister(); }}>
-                    Excel — grouped register (period, subtotals, TDS)
-                  </button>
-                )}
-              </div>
-            )}
-          </span>
+          )}
           {canManage && <button type="button" className="btn btn-sm" onClick={() => setAddVendor(true)}>+ Add Vendor</button>}
-          {canManage && <button type="button" className="btn btn-sm btn-primary" onClick={onNew}>+ Add Expense</button>}
         </div>
       </div>
-      <FilterChips filters={chips} onClearAll={on ? () => setF(LEDGER_BLANK) : undefined} />
 
-      <div className={`tbl-wrap oe-lg-tbl${busy ? ' busy' : ''}`}>
+      <ScrollSync className={`tbl-wrap oe-lg-tbl oe-lg2${busy ? ' busy' : ''}`} deps={[rows.length, !!data]}>
         <table>
           <thead>
             <tr>
@@ -333,15 +213,18 @@ export default function ExpenseLedger({
               <th>Vendor</th>
               <th>Category</th>
               <th>Description</th>
-              <Sortable k="amount" num order={order} setOrder={setOrder}>Taxable Amount</Sortable>
+              <Sortable k="amount" num order={order} setOrder={setOrder}>Before GST</Sortable>
               <th className="num">GST %</th>
-              <th className="num">GST Amount</th>
-              <th className="num">TDS</th>
-              <Sortable k="total" num order={order} setOrder={setOrder} title="Total = Taxable Amount + GST. TDS, where there is any, is held back from what is paid to the vendor.">Total Amount</Sortable>
-              <th>Payment Status</th>
-              <th>Payment Date</th>
-              <th>Bill / Proof</th>
-              <th className="oe-lg-actions-h">Actions</th>
+              <Sortable k="gst" num order={order} setOrder={setOrder}>GST amount</Sortable>
+              <Sortable k="after" num order={order} setOrder={setOrder} title="After GST = Before GST + GST">After GST</Sortable>
+              <Sortable k="tds" num order={order} setOrder={setOrder} title="TDS we cut from the vendor and pay to Government">TDS</Sortable>
+              <Sortable k="total" num order={order} setOrder={setOrder} title="Total = After GST − TDS: what the vendor is paid">Total</Sortable>
+              <Sortable k="paid" num order={order} setOrder={setOrder}>Paid</Sortable>
+              <Sortable k="pending" num order={order} setOrder={setOrder}>Pending</Sortable>
+              <th>Status</th>
+              <th>Payment date</th>
+              <th>Proof</th>
+              <th className="oe-lg-actions-h">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -350,7 +233,7 @@ export default function ExpenseLedger({
               <tr>
                 <td colSpan={cols} className="oe-empty">
                   {data.filtered ? 'No expenses match these filters.' : 'No expenses recorded yet.'}
-                  {data.filtered && <div><button type="button" className="btn btn-sm" onClick={() => setF(LEDGER_BLANK)}>Clear filters</button></div>}
+                  {data.filtered && onClear && <div><button type="button" className="btn btn-sm" onClick={onClear}>Clear filters</button></div>}
                 </td>
               </tr>
             )}
@@ -365,15 +248,18 @@ export default function ExpenseLedger({
                 <td className="oe-lg-vendor" title={r.vendor || ''}>{r.vendor || '—'}</td>
                 <td className="oe-lg-cat">{r.category || '—'}</td>
                 <td className="oe-lg-desc" title={r.description || ''}>{r.description || <span className="cell-muted">—</span>}</td>
-                <td className="num" title={money2(r.amount)}>{money(r.amount)}</td>
+                <Money v={r.amount} />
                 <td className="num">{r.gstRate ? `${r.gstRate}%` : '0%'}</td>
-                <td className="num" title={money2(r.gst)}>{money(r.gst)}</td>
-                <td className="num">{r.tds > 0 ? <span title={money2(r.tds)}>{money(r.tds)}</span> : <span className="cell-muted">—</span>}</td>
+                <Money v={r.gst} />
+                <Money v={r.after} />
+                <Money v={r.tds} />
                 <td className="num" title={money2(r.total)}><b>{money(r.total)}</b></td>
-                <td className="oe-nowrap"><ApprovalBadge s={r.status} title={r.statusText} /></td>
+                <Money v={r.paid} cls="oe-paid" />
+                <Money v={r.pending} cls="oe-pend" />
+                <td className="oe-nowrap"><ApprovalBadge s={r.status} /></td>
                 <td className="oe-nowrap">
                   {r.paymentDate ? fmtD(r.paymentDate)
-                    : <span className="cell-muted" title={['PAID', 'REIMBURSED'].includes(r.status) ? 'Paid before payment dates were recorded' : 'Not paid yet'}>—</span>}
+                    : <span className="cell-muted" title={r.status === 'PAID' ? 'Paid before payment dates were recorded' : 'Not paid yet'}>—</span>}
                 </td>
                 <td className="oe-nowrap">
                   {r.bill && r.bill.onServer && <button type="button" className="link-btn" onClick={() => setBill(r)}>View</button>}
@@ -390,19 +276,35 @@ export default function ExpenseLedger({
                   )}
                   {canManage && (
                     <button type="button" className="link-btn oe-lg-del" disabled={!canDeleteRow(r)}
-                      title={canDeleteRow(r) ? 'Delete' : 'Only the Accounts Admin / Approver can delete an approved or paid expense'}
+                      title={canDeleteRow(r) ? 'Delete' : 'Only the Accounts Admin / Approver can delete a paid expense'}
                       onClick={() => askDelete(r)}>Delete</button>
                   )}
                 </td>
               </tr>
             ))}
           </tbody>
+          {t && t.count > 0 && (
+            <tfoot>
+              <tr>
+                <td className="oe-tot-l" colSpan={5}>Total · {t.count} expense{t.count === 1 ? '' : 's'}{data.filtered ? ' (these filters)' : ''}</td>
+                <td className="num" title={money2(t.before)}>{money(t.before)}</td>
+                <td />
+                <td className="num" title={money2(t.gst)}>{money(t.gst)}</td>
+                <td className="num" title={money2(t.after)}>{money(t.after)}</td>
+                <td className="num" title={money2(t.tds)}>{money(t.tds)}</td>
+                <td className="num" title={money2(t.total)}>{money(t.total)}</td>
+                <td className="num" title={money2(t.paid)}>{money(t.paid)}</td>
+                <td className="num" title={money2(t.pending)}>{money(t.pending)}</td>
+                <td colSpan={4} />
+              </tr>
+            </tfoot>
+          )}
         </table>
-      </div>
+      </ScrollSync>
 
       {data && data.total > 0 && (
         <div className="oe-lg-more" ref={sentinel} aria-live="polite">
-          <span className="small-muted">Showing {rows.length} of {data.total} expense{data.total === 1 ? '' : 's'}</span>
+          <span className="small-muted">Showing {rows.length} of {data.total} expense{data.total === 1 ? '' : 's'} · the TOTAL row counts all {data.total}</span>
           {more && <span className="oe-lg-more-s"><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Loading more…</span>}
           {moreErr && (
             <span className="oe-lg-more-s oe-bad">
@@ -413,24 +315,7 @@ export default function ExpenseLedger({
           {!hasMore && !busy && <span className="oe-lg-end">End of list · all {data.total} shown</span>}
         </div>
       )}
-
-      {/* v2 §3: the filtered totals — only while a filter is on, so they never
-          repeat the Financial Overview. */}
-      {data && data.filtered && (
-        <div className="oe-lg-totals" aria-live="polite">
-          <span className="oe-lg-totals-l">Filtered totals · {data.totals.count} of {data.all.count} expense{data.all.count === 1 ? '' : 's'}</span>
-          <span><em>Total Expenses</em><b>{money2(data.totals.total)}</b></span>
-          <span><em>Total GST</em><b>{money2(data.totals.gst)}</b></span>
-          <span><em>Total Paid</em><b>{money2(data.totals.paid)}</b></span>
-          <span><em>Total Pending</em><b>{money2(data.totals.pending)}</b></span>
-          <span className="oe-lg-totals-n">Total = Taxable + GST · Paid = Paid + Reimbursed · Pending = Pending + Approved</span>
-        </div>
-      )}
-      {data && !data.filtered && (
-        <div className="small-muted oe-lg-note">
-          Every expense, newest first. Rejected expenses are out of the books — pick Payment status: Rejected to list them. Totals appear here when a filter is on.
-        </div>
-      )}
+      {/* The "After GST = …" note is the "i" tooltip on the Expenses & Bills title (Office spec P2.4). */}
 
       {openId && (
         <ExpenseDrawer

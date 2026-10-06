@@ -4,16 +4,22 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
   sectionLabel, mayRenderSection, groupsForUser, flattenGroups, sectionOf, scoreMatch,
-  SECTION_ICON,
+  SECTION_ICON, SETUP_TABS, INTERVIEW_TABS, moduleTabLabel,
 } from '../nav';
+import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
 import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
+import SetupTabs from './SetupTabs.jsx';
+import InterviewTabs from './InterviewTabs.jsx';
 import NotificationBell from './NotificationBell.jsx';
+import TaskPopup from './dashboard/TaskPopup.jsx';
+import HealthDot from './dashboard/HealthDot.jsx';
 import TodayTasks from './dashboard/TodayTasks.jsx';
 import GlobalSearch from './GlobalSearch.jsx';
 import { hasAtsWork } from '../utils/useAtsAlerts';
 import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
+import './ShellPhone.css';
 
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
 // which tabs appear is decided entirely by the permission engine — see that
@@ -167,13 +173,17 @@ export default function Shell() {
             {/* No workspace switcher: the sidebar already reaches every
                 product, so the chip simply shows this login's role in the
                 product whose page is open. */}
-            <span className="rolechip">{workRoleLabel(user, ['hrms', 'ats', 'accounts'].includes(section) ? section : undefined)}</span>
+            <span className="rolechip tb-role">{workRoleLabel(user, ['hrms', 'ats', 'accounts'].includes(section) ? section : undefined)}</span>
             {/* Always-on AI status: green = model ready, amber = model not
                 pulled, grey = offline. Opens the AI panel. */}
             <AiStatusDot />
             {/* Today's tasks (dashboard spec 2026-09-29): follow-ups, interviews and actions due today. */}
             <TodayTasks />
             <NotificationBell />
+            {/* The login popup: 'You have 6 tasks, 2 are late' (spec §14). */}
+            {hasAtsWork(user) && <TaskPopup />}
+            {/* Admin health dot: system problems only (dashboard review #2). */}
+            {hasAtsWork(user) && <HealthDot />}
             <div className="avatar">{initials(user?.name)}</div>
             <button className="btn btn-ghost btn-sm" onClick={logout}>Sign Out</button>
           </div>
@@ -199,11 +209,18 @@ export default function Shell() {
                     : <Link className="bc-link" to={current.to}>{current.label}</Link>}
                 </>
               )}
-              {current && pathname !== currentPath && (
+              {current && pathname !== currentPath && moduleTabLabel(pathname) !== current.label && (
                 <>
                   <span className="bc-sep">/</span>
                   <span className="bc-current">
-                    {decodeURIComponent(pathname.slice(currentPath.length + 1))}
+                    {/* A Company Setup tab names itself (Master lists, Step timing …), not a URL piece. */}
+                    {(SETUP_TABS.find((t) => t.to === pathname) || INTERVIEW_TABS.find((t) => t.to === pathname) || {}).label
+                      || moduleTabLabel(pathname)
+                      // A v3 module tab's detail page (/requirements/:id under
+                      // Clients & Requirements): its own tab name, not a URL piece.
+                      || (pathname.startsWith(`${currentPath}/`)
+                        ? decodeURIComponent(pathname.slice(currentPath.length + 1))
+                        : moduleTabLabel(`/${pathname.split('/')[1]}`) || 'Details')}
                   </span>
                 </>
               )}
@@ -214,7 +231,7 @@ export default function Shell() {
               (utils/scope.js scopeLabel, ATS reading, via /auth/me). */}
           {section === 'ats' && user && user.scope && (user.scope.atsLabel || user.scope.label) && (
             <span className="shell-scope" title="The records you can see on ATS screens">
-              Scope: {user.scope.atsLabel || user.scope.label}
+              Your area: {user.scope.atsLabel || user.scope.label}
             </span>
           )}
         </div>
@@ -225,10 +242,15 @@ export default function Shell() {
               renders nothing once the profile is with HR or approved, and
               nothing on the profile form itself — that page says it in
               place, and saying it twice on one screen reads as a bug. */}
-          {pathname !== '/my-profile' && <ProfileStatusBanner variant="shell" />}
+          {/* HRMS pages only (user, 2026-10-03): opening ATS or Accounts must not
+              greet the person with an HR form reminder. */}
+          {section === 'hrms' && pathname !== '/my-profile' && <ProfileStatusBanner variant="shell" />}
           {/* An external login that types the URL of an internal screen gets a
               plain refusal rather than the screen's chrome — see
               mayRenderSection() in ../nav.js for why. */}
+          <SetupTabs pathname={pathname} />
+          <InterviewTabs pathname={pathname} />
+          <ModuleTabs pathname={pathname} />
           {mayRenderSection(user, pathname) ? <Outlet /> : (
             <div className="card">
               <h1>Not available</h1>

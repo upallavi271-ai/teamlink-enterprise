@@ -1,0 +1,35 @@
+/* B8 matching: override box, override badge, Fit version, Similar candidates, Fit settings additions. */
+.b8ov { max-width: 520px; }
+.b8ov-why { margin: 6px 0 12px; padding-left: 18px; color: var(--red, #c0392b); font-size: 13px; }
+.b8ov-why li { margin: 2px 0; }
+.b8ov-label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.b8ov textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; border: 1px solid var(--line, #d8deea); border-radius: 8px; }
+.b8ov-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+
+.b8-badge {
+  display: inline-block; margin: 2px 0 0 6px; padding: 1px 8px; border-radius: 10px; font-size: 11px; line-height: 18px;
+  background: #fff4e5; color: #9a5b00; border: 1px solid #f3c98b; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+}
+.b8-ver { color: var(--ink-soft, #6b7690); font-size: 11px; font-weight: 400; }
+
+.b8-sim { margin-top: 12px; }
+.b8-sim-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.b8-sim-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line, #e6eaf2); flex-wrap: wrap; }
+.b8-sim-row:last-child { border-bottom: 0; }
+.b8-sim-main { flex: 1 1 220px; min-width: 0; }
+.b8-sim-main a { font-weight: 600; }
+.b8-sim-shared { display: block; font-size: 12px; color: var(--ink-soft, #6b7690); }
+.b8-sim-pct { font-weight: 700; color: #1f5fbf; min-width: 64px; text-align: right; }
+.b8-pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 8px; }
+
+.b8-fs-section { margin-top: 14px; }
+.b8-fs-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.b8-fs-switch .btn.on { background: #1f5fbf; color: #fff; border-color: #1f5fbf; }
+.b8-fs-line { font-size: 13px; margin: 4px 0; }
+.b8-fs-ok { color: #1e7d3a; }
+.b8-fs-wait { color: #9a5b00; }
+.b8-ver-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+.b8-ver-table th, .b8-ver-table td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line, #e6eaf2); vertical-align: top; }
+@media (max-width: 640px) {
+  .b8-ver-table .b8-hide-sm { display: none; }
+}

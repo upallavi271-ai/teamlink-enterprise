@@ -1,11 +1,11 @@
 /* Shared UI pieces — StatusChip, MoreFilters, EmptyState (ATS review #3). */
 
 .st-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap;border:1px solid transparent}
-.st-blue{background:var(--blue-tint);color:var(--blue);border-color:color-mix(in srgb,var(--blue) 25%,transparent)}
-.st-amber{background:var(--amber-tint);color:var(--amber);border-color:color-mix(in srgb,var(--amber) 25%,transparent)}
-.st-green{background:var(--teal-tint);color:var(--teal);border-color:color-mix(in srgb,var(--teal) 25%,transparent)}
-.st-red{background:var(--red-tint);color:var(--red);border-color:color-mix(in srgb,var(--red) 25%,transparent)}
-.st-grey{background:var(--line-soft);color:var(--ink-soft);border-color:var(--line)}
+.st-blue{background:var(--st-blue-tint);color:var(--st-blue-ink);border-color:color-mix(in srgb,var(--st-blue) 30%,transparent)}
+.st-yellow,.st-amber,.st-orange{background:var(--st-yellow-tint);color:var(--st-yellow-ink);border-color:color-mix(in srgb,var(--st-yellow) 40%,transparent)}
+.st-green{background:var(--st-green-tint);color:var(--st-green-ink);border-color:color-mix(in srgb,var(--st-green) 30%,transparent)}
+.st-red{background:var(--st-red-tint);color:var(--st-red-ink);border-color:color-mix(in srgb,var(--st-red) 30%,transparent)}
+.st-grey{background:var(--st-grey-tint);color:var(--st-grey-ink);border-color:var(--line)}
 
 .mf{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 .mf-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}

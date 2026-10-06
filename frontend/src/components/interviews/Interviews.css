@@ -1,0 +1,94 @@
+/* Interviews / Offers / Joining — shared pieces (change list §11 §12).
+   Scoped under .ivx-*. Four colours only: green done · blue going on ·
+   orange waiting · red problem. */
+
+/* --- Book an interview (ScheduleInterview) --------------------------------- */
+.ivx-book .ivx-sec{margin:0 0 14px}
+.ivx-book .ivx-sec > b{display:block;font-size:12.5px;color:var(--ink-soft);margin:0 0 6px;font-weight:600}
+.ivx-who{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-raised,#fff)}
+.ivx-who .ivx-av{width:34px;height:34px;border-radius:50%;background:var(--blue-tint);color:var(--blue);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.ivx-who .ivx-who-t{flex:1;min-width:0}
+.ivx-who .ivx-who-t div{font-size:12px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ivx-pick{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto;margin-top:8px}
+.ivx-pick button{all:unset;cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--paper-raised,#fff)}
+.ivx-pick button:hover,.ivx-pick button:focus-visible{border-color:var(--blue);outline:none}
+.ivx-pick .ivx-who-t{flex:1;min-width:0}
+.ivx-pick .ivx-who-t div{font-size:12px;color:var(--ink-soft)}
+.ivx-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ivx-two input{width:100%}
+.ivx-modes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ivx-mode{border:1px solid var(--line);border-radius:10px;background:var(--paper-raised,#fff);padding:12px 10px;font:inherit;font-weight:600;cursor:pointer;color:var(--ink)}
+.ivx-mode.is-on{border-color:var(--blue);background:var(--blue-tint);color:var(--blue);box-shadow:0 0 0 1px var(--blue) inset}
+.ivx-book input[type=text],.ivx-book input[type=url],.ivx-book input:not([type]){width:100%}
+.ivx-hint{font-size:12px;color:var(--ink-soft);margin-top:4px}
+.ivx-done{border:1px solid color-mix(in srgb,var(--teal) 35%,transparent);background:var(--teal-tint);color:var(--teal);border-radius:10px;padding:12px 14px;font-weight:600}
+
+/* --- Pills --------------------------------------------------------------- */
+.ivx-pill{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.ivx-pill.green{background:var(--teal-tint);color:var(--teal)}
+.ivx-pill.blue{background:var(--blue-tint);color:var(--blue)}
+.ivx-pill.orange{background:var(--amber-tint);color:var(--amber)}
+.ivx-pill.red{background:var(--red-tint);color:var(--red)}
+
+/* --- Short feedback form -------------------------------------------------- */
+.ivx-fb .ivx-stars{display:flex;gap:6px}
+.ivx-fb .ivx-star{border:1px solid var(--line);background:var(--paper-raised,#fff);border-radius:8px;width:42px;height:38px;font:inherit;font-weight:700;cursor:pointer;color:var(--ink-soft)}
+.ivx-fb .ivx-star.is-on{background:var(--blue-tint);border-color:var(--blue);color:var(--blue)}
+.ivx-fb textarea{width:100%}
+.ivx-fb .ivx-sec{margin:0 0 12px}
+.ivx-fb .ivx-sec > b{display:block;font-size:12.5px;color:var(--ink-soft);margin:0 0 6px;font-weight:600}
+.ivx-outs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ivx-out{border:1px solid var(--line);border-radius:10px;background:var(--paper-raised,#fff);padding:10px 6px;font:inherit;font-weight:600;cursor:pointer;color:var(--ink)}
+.ivx-out.is-on.green{background:var(--teal-tint);border-color:var(--teal);color:var(--teal)}
+.ivx-out.is-on.red{background:var(--red-tint);border-color:var(--red);color:var(--red)}
+.ivx-out.is-on.orange{background:var(--amber-tint);border-color:var(--amber);color:var(--amber)}
+.ivx-out.is-on.grey{background:var(--line-soft);border-color:var(--ink-soft);color:var(--ink)}
+
+/* --- Calendar (Day / Week / Month) --------------------------------------- */
+.ivx-cal-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px}
+.ivx-seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.ivx-seg button{border:0;background:var(--paper-raised,#fff);padding:6px 12px;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-soft);cursor:pointer}
+.ivx-seg button + button{border-left:1px solid var(--line)}
+.ivx-seg button.is-on{background:var(--blue-tint);color:var(--blue)}
+.ivx-cal-title{font-weight:700;font-size:14px;margin:0 6px}
+.ivx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--line)}
+.ivx-cal-grid.is-day{grid-template-columns:1fr}
+.ivx-cal-head{background:var(--paper,#f7f9fc);font-size:11.5px;font-weight:700;color:var(--ink-soft);padding:6px 8px;text-align:center}
+.ivx-cal-cell{background:var(--paper-raised,#fff);min-height:96px;padding:6px;display:flex;flex-direction:column;gap:4px;margin:0 0 1px 1px}
+.ivx-cal-grid .ivx-cal-cell{margin:0}
+.ivx-cal-grid{gap:1px}
+.ivx-cal-cell.is-out{background:var(--paper,#f7f9fc);color:var(--ink-faint,#9aa3b2)}
+.ivx-cal-cell.is-today{box-shadow:inset 0 0 0 2px var(--blue)}
+.ivx-cal-day{font-size:12px;font-weight:700}
+.ivx-cal-ev{all:unset;cursor:pointer;display:block;font-size:11.5px;line-height:1.3;border-radius:6px;padding:3px 6px;background:var(--blue-tint);color:var(--blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ivx-cal-ev.green{background:var(--teal-tint);color:var(--teal)}
+.ivx-cal-ev.orange{background:var(--amber-tint);color:var(--amber)}
+.ivx-cal-ev.red{background:var(--red-tint);color:var(--red);font-weight:700}
+.ivx-cal-ev.grey{background:var(--line-soft);color:var(--ink-soft);text-decoration:line-through}
+.ivx-cal-more{font-size:11px;color:var(--ink-soft)}
+.ivx-cal-grid.is-day .ivx-cal-cell{min-height:160px}
+.ivx-cal-grid.is-day .ivx-cal-ev{white-space:normal;font-size:13px;padding:6px 8px}
+.ivx-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--ink-soft);margin-top:8px}
+.ivx-legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;background:var(--blue-tint)}
+.ivx-legend .lg-red::before{background:var(--red)}
+.ivx-legend .lg-green::before{background:var(--teal)}
+.ivx-legend .lg-orange::before{background:var(--amber)}
+
+/* --- Checklist (Joining) -------------------------------------------------- */
+.ivx-check{display:flex;flex-wrap:wrap;gap:4px}
+.ivx-check span{font-size:11.5px;border-radius:999px;padding:1px 8px;background:var(--line-soft);color:var(--ink-soft);white-space:nowrap}
+.ivx-check span.is-done{background:var(--teal-tint);color:var(--teal);font-weight:600}
+.ivx-check span.is-bad{background:var(--red-tint);color:var(--red);font-weight:600}
+.ivx-letter{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.5;border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--paper-raised,#fff);max-height:340px;overflow:auto;margin:0 0 12px}
+.ivx-success{border:1px solid color-mix(in srgb,var(--teal) 35%,transparent);background:var(--teal-tint);color:var(--teal);border-radius:10px;padding:10px 14px;font-weight:700;margin:0 0 12px}
+.ivx-actions{display:flex;flex-wrap:wrap;gap:6px}
+.ivx-admin{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12.5px;color:var(--ink-soft);margin-top:14px;padding-top:10px;border-top:1px dashed var(--line)}
+
+@media (max-width:640px){
+  .ivx-two{grid-template-columns:1fr}
+  .ivx-outs{grid-template-columns:1fr 1fr}
+  .ivx-cal-grid:not(.is-day){grid-template-columns:repeat(7,minmax(0,1fr))}
+  .ivx-cal-cell{min-height:64px;padding:3px}
+  .ivx-cal-ev{font-size:10px;padding:2px 3px}
+  .ivx-cal-head{font-size:10px;padding:4px 2px}
+}

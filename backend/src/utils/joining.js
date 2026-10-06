@@ -73,7 +73,27 @@ function offsetDate(from, days) {
 //
 // Raised exactly once, keyed on candidate + requirement.
 // ---------------------------------------------------------------------------
-async function raiseJoiningInvoice({ application, existing, userId }) {
+// ATS layout v3 — the Joined popup's commission %. Who may set it: the logins
+// that may see a client's commercial terms (Super Admin / Admin / TL / STL /
+// BDE, and an Accounts login). Anyone else → null (the agreement's fee % is
+// used). Returns the number or null.
+const FEE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'STL', 'TL', 'BDE'];
+function mayHandleFee(user) {
+  if (!user) return false;
+  // eslint-disable-next-line global-require
+  const { roleForProduct } = require('./permissions');
+  const ats = roleForProduct(user, 'ats') || user.atsRole;
+  return FEE_ROLES.includes(user.role) || FEE_ROLES.includes(ats) || !!(user.accountsRole && user.accountsRole !== 'NONE');
+}
+function feeOverrideFor(user, value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || n > 50) return null;
+  return mayHandleFee(user) ? Math.round(n * 100) / 100 : null;
+}
+
+async function raiseJoiningInvoice({
+  application, existing, userId, feePercent: feeOverride = null,
+}) {
   const requirement = existing.requirement;
   const client = requirement && requirement.client;
   if (!client) return null;
@@ -88,14 +108,21 @@ async function raiseJoiningInvoice({ application, existing, userId }) {
 
   // Fee % comes from the agreement. Falls back to the annual CTC band on the
   // requirement when no offered CTC was recorded — never to a random number.
-  const feePercent = client.agreementFeePercent != null ? client.agreementFeePercent : 8.33;
+  const agreed = client.agreementFeePercent != null ? client.agreementFeePercent : 8.33;
+  // The Joined popup may record the commission actually agreed for THIS
+  // placement; the agreement's fee % otherwise.
+  const feePercent = feeOverride != null && Number(feeOverride) > 0 ? Number(feeOverride) : agreed;
   const bandLakhs = Number(String(requirement.salary || '').match(/(\d+(?:\.\d+)?)/)?.[1]) || 12;
   const ctc = Number(application.offeredCtc) > 0 ? Number(application.offeredCtc) : bandLakhs * 100000;
-  const gstPercent = client.gstPercent != null ? client.gstPercent : 18;
-  const tdsPercent = client.tdsPercent != null ? client.tdsPercent : 10;
   const amount = Math.round((ctc * feePercent) / 100);
-  const gst = Math.round(amount * (gstPercent / 100));
-  const tds = Math.round(amount * (tdsPercent / 100));
+  // GST / TDS (P4): the client's rates (18% / 10% when it has none) and its
+  // GST / TDS Applicable flags; CGST + SGST or IGST from the two states;
+  // amounts to 2 decimals — the one calculation in utils/invoiceTax.js.
+  // eslint-disable-next-line global-require
+  const TAX = require('./invoiceTax');
+  const taxDef = TAX.defaultsFor(client, (await prisma.company.findFirst()) || {}, { gst: 18, tds: 10 });
+  const tax = TAX.calcTax({ base: amount, ...taxDef });
+  const { gst, tds, gstPercent, tdsPercent } = tax;
 
   const joiningDate = application.joiningDate || new Date().toISOString().slice(0, 10);
   const invoice = await prisma.invoice.create({
@@ -110,6 +137,7 @@ async function raiseJoiningInvoice({ application, existing, userId }) {
       // printable invoice never have to re-derive them from the client.
       gstPercent,
       tdsPercent,
+      ...TAX.writeData(tax, {}),
       status: 'Pending',
       joiningDate,
       invoiceDate: offsetDate(joiningDate, 6),
@@ -122,6 +150,7 @@ async function raiseJoiningInvoice({ application, existing, userId }) {
   await logAudit({
     userId, action: 'Invoice generated from ATS (Client Joining)', entity: 'Invoice',
     entityId: invoice.id, toValue: 'Pending',
+    ...(feePercent !== agreed ? { reason: `Commission ${feePercent}% set at joining (agreement ${agreed}%)` } : {}),
   });
   return invoice;
 }
@@ -175,6 +204,10 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
     entityId: employee.id,
     toValue: employeeCode,
   });
+  // Spec B2: the person's identity is now this employee — the candidate
+  // login retires and frees the email for the employee login.
+  // eslint-disable-next-line global-require
+  try { await require('./portalLogins').retireCandidateLogin({ candidateId: candidate.id, employeeId: employee.id, userId }); } catch { /* ignore */ }
   return employee;
 }
 
@@ -184,10 +217,13 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
 // candidate pipeline. It stamps the joining columns and then forks:
 //   Client Placement  -> Billing Pending -> invoice raised -> Invoiced
 //   Internal Hire     -> Not Applicable  -> no invoice, ever
-// HRMS employee creation is NOT done here: an internal hire reaches HRMS only
-// through the explicit "Create HRMS Employee" action on Internal Hiring.
+//   Internal Hire     -> the HRMS employee record is created (2026-10-03,
+//                        change list §12 — it used to wait for a separate
+//                        "Create HRMS Employee" click, which stays as a retry)
 // ---------------------------------------------------------------------------
-async function onApplicationJoined({ application, existing, userId }) {
+async function onApplicationJoined({
+  application, existing, userId, feePercent = null,
+}) {
   const internal = isInternalHire(application, existing.requirement);
   await prisma.application.update({
     where: { id: application.id },
@@ -198,15 +234,85 @@ async function onApplicationJoined({ application, existing, userId }) {
       billingStatus: internal ? 'Not Applicable' : 'Billing Pending',
     },
   });
-  if (internal) return null;
-  const invoice = await raiseJoiningInvoice({ application, existing, userId });
+  // Spec B2: joined -> the candidate's portal login retires (one person, one
+  // identity). Never blocks the joining.
+  // eslint-disable-next-line global-require
+  try { await require('./portalLogins').retireCandidateLogin({ candidateId: application.candidateId || existing.candidateId, userId }); } catch { /* ignore */ }
+  // Change list §12 "Joined" (2026-10-03): an internal hire's HRMS employee
+  // record is now created HERE, automatically, the moment they join — no
+  // second button to forget. createHrmsEmployee() is idempotent (it returns
+  // the existing employee when hrmsEmployeeId is set) and still refuses a
+  // client placement. "Create HRMS Employee" on Joining stays as the retry.
+  if (internal) {
+    try {
+      const candidate = existing.candidate
+        || await prisma.candidate.findUnique({ where: { id: application.candidateId || existing.candidateId } });
+      if (candidate && existing.requirement) {
+        await createHrmsEmployee({
+          application: { ...application, hrmsEmployeeId: application.hrmsEmployeeId || existing.hrmsEmployeeId },
+          candidate,
+          requirement: existing.requirement,
+          userId,
+        });
+      }
+    } catch (err) {
+      // The joining is recorded either way; the Joining screen offers the retry.
+      // eslint-disable-next-line no-console
+      console.error('[joining] could not create the HRMS employee:', err.message);
+    }
+    return null;
+  }
+  const invoice = await raiseJoiningInvoice({
+    application, existing, userId, feePercent,
+  });
   if (invoice) {
     await prisma.application.update({
       where: { id: application.id },
       data: { billingStatus: 'Invoiced' },
     });
   }
+  // B7: a partner-sourced joining drafts the partner's payout (needs the
+  // invoice) and tells the partner. Never throws; nothing for non-partner rows.
+  try {
+    const PT = require('./partners'); // eslint-disable-line global-require
+    await PT.syncSubmission(application.id, { userId });
+    await PT.onJoined({ applicationId: application.id, invoice, userId });
+  } catch { /* partners are optional */ }
   return invoice;
+}
+
+// ---------------------------------------------------------------------------
+// INTERNAL HIRE: JOINED → HIRED once the HRMS employee exists (e2e gap 9).
+// onApplicationJoined() makes the employee automatically, but the step used
+// to stay at "Joined" and still offer "Create HRMS Employee". The callers
+// (the Joining checklist's "Joined", and the pipeline move for Admins) call
+// this AFTER writing their own Joined history row, so the history reads
+// … → Joined → Hired in order. Idempotent; never throws.
+// ---------------------------------------------------------------------------
+async function finishInternalHire(applicationId, user) {
+  try {
+    const app = await prisma.application.findUnique({
+      where: { id: applicationId },
+      include: { candidate: true, requirement: { include: { client: true } } },
+    });
+    if (!app || app.stage !== 'JOINED' || !app.hrmsEmployeeId || !isInternalHire(app, app.requirement)) return null;
+    const emp = await prisma.employee.findUnique({ where: { id: app.hrmsEmployeeId }, select: { employeeCode: true } });
+    const hired = await prisma.application.update({ where: { id: app.id }, data: { stage: 'HIRED' } });
+    // eslint-disable-next-line global-require
+    await require('./stageEvents').recordWorkflowMove({
+      user, existing: app, application: hired, toStage: 'HIRED',
+      action: `Hired — HRMS employee ${emp ? emp.employeeCode : ''} created`.trim(),
+    });
+    await logAudit({
+      userId: user ? user.id : null, action: 'Internal hire moved to Hired (HRMS)', entity: 'Application',
+      entityId: app.id, fromValue: 'Joined', toValue: 'Hired',
+    });
+    return hired;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[joining] could not move the internal hire to Hired:', err.message);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +385,37 @@ function nextActionsFor(stage, application, requirement) {
     ];
 }
 
+// ---------------------------------------------------------------------------
+// B9.8 — "DID NOT JOIN", one rule for the Joining report and the dashboard.
+// A person who was marked "Did not join" (joiningStatus Dropped) is a
+// did-not-join WHATEVER step the row sits on — Selected, Offer accepted,
+// Interview done — not only when the step is Rejected. The imported free-text
+// values ("Not joined", "wont join" …) count too, as do declined offers.
+// ---------------------------------------------------------------------------
+const NOT_JOINING_TEXT = /not\s*join|won'?t\s*join|wont|dropp/i;
+function didNotJoin(a) {
+  if (!a) return false;
+  if (a.stage === 'JOINED' || a.stage === 'HIRED') return false;
+  if (a.joiningStatus === 'Dropped') return true;
+  return NOT_JOINING_TEXT.test(String(a.joiningStatus || ''));
+}
+
+// B9.10 — DATES SANITY. A joining / interview / offer date typed as 2203 or
+// 1954 is a slip, not a plan: the year must sit in 2000 .. (this year + 2).
+// Returns the problem in plain words, or null when the date is fine / empty.
+function dateYearProblem(value, label = 'date') {
+  if (value === null || value === undefined || value === '') return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return `The ${label} is not a date.`;
+  const y = d.getFullYear();
+  const max = new Date().getFullYear() + 2;
+  if (y < 2000 || y > max) return `The ${label} year ${y} looks wrong — it must be between 2000 and ${max}. Check the date and try again.`;
+  return null;
+}
+
 module.exports = {
+  didNotJoin,
+  dateYearProblem,
   OFFER_STAGES,
   CLIENT_ONLY_STAGES,
   stageAllowedForHiringType,
@@ -297,4 +433,7 @@ module.exports = {
   raiseJoiningInvoice,
   createHrmsEmployee,
   onApplicationJoined,
+  finishInternalHire,
+  feeOverrideFor,
+  mayHandleFee,
 };

@@ -1,0 +1,26 @@
+/* P4 — the invoice breakdown in the Match panel: gross, TDS, net receivable,
+   the bank amount, and "Why is this amount different?". */
+.bkp-bdrow > td { background: var(--paper-raised, #f8fafc); padding: 0 !important; }
+.bkp-bd { padding: 10px 12px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 18px; }
+.bkp-bd table, .bkp-tbl .bkp-bd table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 13px; }
+.bkp-bd td { padding: 3px 4px; border: 0 !important; }
+.bkp-bd td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bkp-bd tr.k td { font-weight: 700; }
+.bkp-bd tr.sep td { border-top: 1px solid var(--line, #dde3ec) !important; }
+.bkp-bd .bkp-ok { color: var(--teal); font-weight: 700; }
+.bkp-bd .bkp-off { color: var(--amber); font-weight: 700; }
+.bkp-why { font-size: 13px; }
+.bkp-why h5 { margin: 0 0 4px; font-size: 13px; }
+.bkp-why ul { margin: 0; padding-left: 18px; }
+.bkp-why li { margin: 2px 0; }
+.bkp-bdbtn { margin-left: 6px; }
+.bkp-pick { display: flex; flex-direction: column; gap: 6px; }
+.bkp-pick label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line, #dde3ec); border-radius: 9px; cursor: pointer; font-size: 13px; }
+.bkp-pick label.on { border-color: var(--navy, #1f3864); background: var(--brand-tint, #E7EDF7); }
+.bkp-pick input { margin-top: 3px; }
+.bkp-pick .bkp-pick-main { flex: 1; min-width: 0; }
+.bkp-pick .bkp-pick-amt { text-align: right; white-space: nowrap; }
+.bkp-pickfoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .bkp-bd { grid-template-columns: 1fr; }
+}

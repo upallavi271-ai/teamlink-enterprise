@@ -22,12 +22,12 @@ export const STAGE_GROUPS = [
     label: 'AI Interview',
     stages: ['AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'],
   },
-  { id: 'recruiter_review', label: 'Recruiter Review', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
+  { id: 'recruiter_review', label: 'Check by recruiter', stages: ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'] },
   // Mirrors backend utils/pipelineView.js: without this group a candidate at
   // TL Review had no place on the strip and fell back to the grey default.
-  { id: 'tl_review', label: 'TL Review', stages: ['TL_REVIEW'] },
-  { id: 'bde_review', label: 'BDE Review', stages: ['WITH_BDE', 'BDE_APPROVED'] },
-  { id: 'client_review', label: 'Client Submission / Decision', stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'] },
+  { id: 'tl_review', label: 'Check by team lead', stages: ['TL_REVIEW'] },
+  { id: 'bde_review', label: 'Check by client manager', stages: ['WITH_BDE', 'BDE_APPROVED'] },
+  { id: 'client_review', label: 'With client', stages: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'] },
   {
     id: 'interview',
     label: 'Interview',
@@ -37,7 +37,7 @@ export const STAGE_GROUPS = [
   },
   { id: 'selected', label: 'Selected', stages: ['SELECTED'] },
   { id: 'offer', label: 'Offer', stages: ['OFFER'] },
-  { id: 'joining', label: 'Offer Accepted', stages: ['OFFER_ACCEPTED'] }, // mirrors the backend (the actual workflow)
+  { id: 'joining', label: 'Offer accepted', stages: ['OFFER_ACCEPTED'] }, // mirrors the backend (the actual workflow)
   { id: 'joined', label: 'Joined', stages: ['JOINED', 'HIRED'] },
 ];
 

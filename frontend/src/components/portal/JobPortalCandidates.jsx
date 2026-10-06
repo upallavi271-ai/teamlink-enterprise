@@ -34,14 +34,14 @@ import AtsDataTools from '../AtsDataTools.jsx';
 // ---------------------------------------------------------------------------
 
 const TABS = [
-  ['all', 'All Applications', 'Every portal / HR-sourcing application in your scope'],
-  ['new', 'New', 'Arrived — duplicate check / resume score still to do'],
-  ['resume_reviewed', 'Resume Reviewed', 'Resume scored — AI interview not sent yet'],
-  ['ai_pending', 'AI Interview Pending', 'AI interview sent — waiting for the result'],
-  ['ai_completed', 'AI Interview Completed', 'AI score in (or a manual review requested) — recruiter review next'],
-  ['ready', 'Ready for Recruiter Review', 'At Recruiter Review — Send to ATS when ready'],
-  ['sent', 'Sent to ATS', 'Now in the ATS Pipeline'],
-  ['rejected', 'Rejected', 'Screened out in the Job Portal'],
+  ['all', 'All', 'Everyone who applied, in your area'],
+  ['new', 'New', 'Just arrived — not checked yet'],
+  ['resume_reviewed', 'Resume checked', 'Resume scored — AI interview not sent yet'],
+  ['ai_pending', 'AI interview sent', 'Waiting for the AI interview result'],
+  ['ai_completed', 'AI interview done', 'Recruiter checks next'],
+  ['ready', 'Check by recruiter', 'Send to ATS when ready'],
+  ['sent', 'Sent to ATS', 'Now on a job'],
+  ['rejected', 'Rejected', 'Not taken forward'],
 ];
 
 // The one next screening move for a row (the server re-checks every step).
@@ -52,7 +52,7 @@ function screeningAction(a) {
   if (!s.resumeScored) return { kind: 'score', label: 'Score resume' };
   if (['NEW', 'AI_INTERVIEW_REQUIRED'].includes(a.stage)) return { kind: 'ai-send', label: 'Send AI interview' };
   if (a.stage === 'AI_INTERVIEW_SCHEDULED') return { kind: 'ai-result', label: 'Record AI score' };
-  if (a.stage === 'AI_INTERVIEW_COMPLETED') return { kind: 'review', label: 'Recruiter review' };
+  if (a.stage === 'AI_INTERVIEW_COMPLETED') return { kind: 'review', label: 'Check candidate' };
   if (['RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(a.stage)) return { kind: 'send', label: 'Send to ATS' };
   return null;
 }
@@ -81,7 +81,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
       .then((r) => { setApps(r.data); })
       .catch((e) => {
         setApps({ applications: [], permissions: { import: false } });
-        setError(e.response?.data?.error || 'The Job Portal applications could not be loaded.');
+        setError(e.response?.data?.error || 'Could not load the job portal list. Please try again.');
       });
   }, [allowed]);
   useEffect(load, [load]);
@@ -94,7 +94,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
     setBusy(key); setError(''); setNotice('');
     Promise.resolve(fn())
       .then((r) => { setNotice(ok(r)); load(); if (after) after(r); })
-      .catch((e) => setError(e.response?.data?.error || 'That action was refused.'))
+      .catch((e) => setError(e.response?.data?.error || 'That did not work. Please try again.'))
       .finally(() => setBusy(''));
   }
 
@@ -113,11 +113,11 @@ export default function JobPortalCandidates({ onSentToAts }) {
     const said = {
       'duplicate-check': (r) => `${a.candidate}: duplicate check — ${r.data.screening?.duplicateResult || 'done'}.`,
       score: (r) => `${a.candidate}: resume scored ${r.data.screening?.resumeScore ?? '—'}%.`,
-      'ai-send': () => `${a.candidate}: AI interview invite recorded (no message is sent from this app).`,
+      'ai-send': () => `${a.candidate}: AI interview marked as sent.`,
       'ai-result': (r) => `${a.candidate}: AI interview score ${r.data.screening?.aiInterviewScore}% recorded.`,
-      'ai-manual': () => `${a.candidate}: manual review requested instead of an AI score.`,
-      review: () => `${a.candidate} is at Recruiter Review — send to the ATS when ready.`,
-      send: (r) => `${a.candidate} sent to the ATS — now in the ATS Pipeline at ${r.data.stageLabel}.`,
+      'ai-manual': () => `${a.candidate}: the recruiter will check them (no AI score).`,
+      review: () => `${a.candidate} is ready for your check — send to the ATS when ready.`,
+      send: (r) => `Sent. ${a.candidate} is now on the job at ${r.data.stageLabel}.`,
     }[act];
     run(a.id, call, said, act === 'send' ? onSentToAts : undefined);
   }
@@ -149,8 +149,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
   if (!allowed) {
     return (
       <div className="notice red">
-        The Job Portal isn&apos;t included in your role&apos;s permissions. It comes from an ATS working role —
-        Recruiter, BDE, TL, STL, HR, Manager or Admin.
+        The job portal list is not part of your role.
       </div>
     );
   }
@@ -160,15 +159,11 @@ export default function JobPortalCandidates({ onSentToAts }) {
       {error && <div className="notice red">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <div className="small-muted" style={{ marginBottom: 8 }}>
-        Multiple sources → Job Portal → Resume score → AI interview → AI score → Recruiter review → <b>Send to ATS</b>.
-        Only after Send to ATS does an application appear in the ATS Pipeline.
-      </div>
-
       <div className="tabs" style={{ marginBottom: 10 }}>
-        {TABS.map(([id, label, hint]) => (
+        {/* Empty tabs are hidden and no tab shows a bare 0 (simplicity checklist #7, #8). */}
+        {TABS.filter(([id]) => id === 'all' || id === tab || tabCounts[id] > 0).map(([id, label, hint]) => (
           <div key={id} title={hint} className={`tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
-            {`${label} (${(tabCounts[id] || 0).toLocaleString()})`}
+            {tabCounts[id] ? `${label} (${tabCounts[id].toLocaleString()})` : label}
           </div>
         ))}
       </div>
@@ -176,7 +171,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
       <div className="filter-row">
         <input
           type="text"
-          placeholder="Search candidate, email, phone or job…"
+          placeholder="Search name, phone, email or job…"
           value={filters.search}
           onChange={(e) => setFilter({ search: e.target.value })}
         />
@@ -186,7 +181,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
         </Combo>
         <Combo value={filters.hiring} onChange={(e) => setFilter({ hiring: e.target.value })}>
           <option value="">Client or internal</option>
-          <option value="Client">Client requirements</option>
+          <option value="Client">Client jobs</option>
           <option value="Internal">TeamLink internal</option>
         </Combo>
         <button type="button" className="btn btn-sm" disabled={!filtersOn} onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</button>
@@ -203,8 +198,8 @@ export default function JobPortalCandidates({ onSentToAts }) {
         <table>
           <thead>
             <tr>
-              <th>Candidate</th><th>Source</th><th>Requirement</th>
-              <th style={{ textAlign: 'right' }}>Resume Score</th><th style={{ textAlign: 'right' }}>AI Score</th><th>Action</th>
+              <th>Candidate</th><th>Source</th><th>Job</th>
+              <th style={{ textAlign: 'right' }}>Resume %</th><th style={{ textAlign: 'right' }}>AI interview %</th><th>Next step</th>
             </tr>
           </thead>
           <tbody>
@@ -223,12 +218,12 @@ export default function JobPortalCandidates({ onSentToAts }) {
                 <td style={{ textAlign: 'right' }} title={a.screening?.duplicateChecked ? `Duplicate check: ${a.screening.duplicateResult}` : 'Duplicate check not run yet'}>
                   <b>{pct(a.resumeScore)}</b>
                 </td>
-                <td style={{ textAlign: 'right' }} title="AI interview score — never mixed with client interview feedback">
-                  {a.aiScore != null ? <b>{pct(a.aiScore)}</b> : <span className="small-muted">{a.screening?.aiInterviewStatus === 'Manual Review Requested' ? 'Manual review' : (a.stage === 'AI_INTERVIEW_SCHEDULED' ? 'Sent' : '—')}</span>}
+                <td style={{ textAlign: 'right' }} title="AI interview score — kept apart from client feedback">
+                  {a.aiScore != null ? <b>{pct(a.aiScore)}</b> : <span className="small-muted">{a.screening?.aiInterviewStatus === 'Manual Review Requested' ? 'Recruiter will check' : (a.stage === 'AI_INTERVIEW_SCHEDULED' ? 'Sent' : '—')}</span>}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {(() => {
-                    if (a.portalTab === 'sent') return <Link className="small-muted" to={`/candidates/${a.candidateId}`}>{`In ATS pipeline${a.importedAt ? ` · ${fmt(a.importedAt)}` : ''} →`}</Link>;
+                    if (a.portalTab === 'sent') return <Link className="small-muted" to={`/candidates/${a.candidateId}`}>{`On the job${a.importedAt ? ` · ${fmt(a.importedAt)}` : ''}`}</Link>;
                     if (!canImport || !a.mayScreen) return <span className="small-muted">{`${a.stageLabelWorkflow || a.stageLabel} · view only`}</span>;
                     const next = screeningAction(a);
                     if (!next) return <span className="small-muted">{a.stageLabelWorkflow || a.stageLabel}</span>;
@@ -241,7 +236,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
                             onChange={(e) => setAiScore((m) => ({ ...m, [a.id]: e.target.value }))}
                           />
                           <button type="button" className="btn btn-sm btn-primary" disabled={busy === a.id || aiScore[a.id] === undefined || aiScore[a.id] === ''} onClick={() => screen(a, 'ai-result')}>Record</button>
-                          <button type="button" className="btn btn-sm btn-ghost" disabled={busy === a.id} title="No AI score — the recruiter reviews manually" onClick={() => screen(a, 'ai-manual')}>Manual</button>
+                          <button type="button" className="btn btn-sm btn-ghost" disabled={busy === a.id} title="No AI score — the recruiter checks them" onClick={() => screen(a, 'ai-manual')}>Skip AI</button>
                         </span>
                       );
                     }
@@ -263,21 +258,15 @@ export default function JobPortalCandidates({ onSentToAts }) {
             ))}
             {!filtered.length && (
               <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>
-                {!apps ? 'Loading…' : (applications.length ? 'No Job Portal applications in this tab / with these filters.' : 'No Job Portal applications in your scope yet.')}
+                {!apps ? 'Loading…' : (applications.length ? 'No one here. Try another tab or clear the filters.' : 'No one has applied on the job portal yet.')}
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
-      <Pager page={paged} noun="Job Portal applications" />
+      <Pager page={paged} noun="applications" />
       <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
-        <strong>Screening before the ATS.</strong> These are the same people as the Candidate Master — the portal matches
-        an applicant by phone / email before creating anyone. The duplicate check merges nothing (a merge stays with a
-        Super Admin / Admin under Candidate Master → Duplicates). Resume score is the ATS match score against the
-        requirement. The AI interview score is kept apart from any client interview feedback.{' '}<strong>Send to ATS</strong>{' '}
-        admits the application into the ATS Pipeline: a client opening lands at Recruiter Review, an internal opening at
-        HR Review. Publishing a job is done on each requirement (&ldquo;Posted on&rdquo;); portal sync status and errors are
-        under Administration → Integrations → Job Portal.
+        Check each person, then press <strong>Send to ATS</strong> to put them on the job.
       </div>
     </div>
   );

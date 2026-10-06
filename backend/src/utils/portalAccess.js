@@ -80,7 +80,9 @@ function inviteText({ kind, name, companyName, link, expiresAt }) {
     '',
     `You now have a ${companyName} portal login. There you can ${what}.`,
     '',
-    `Choose your own password using this link. It works once and expires on ${when}:`,
+    kind === 'candidate'
+      ? `Open this link, confirm your email with the 6-digit code we send to it, and (if you like) choose a password. The link works once and expires on ${when}:`
+      : `Choose your own password using this link. It works once and expires on ${when}:`,
     '',
     link,
     '',
@@ -127,7 +129,10 @@ async function inviteToPortal({ kind, record, email, name, req, actingUser, send
         accountsAccess: false,
         clientId: kind === 'client' ? record.id : null,
         candidateId: kind === 'candidate' ? record.id : null,
-        status: 'Active',
+        // A candidate's login stays 'Invited' (inert — nobody knows its
+        // password) until they prove the email with a one-time code on the
+        // invite page (routes/portalPublic.js, spec B2).
+        status: kind === 'candidate' ? 'Invited' : 'Active',
       },
     });
     user = u;
@@ -135,7 +140,7 @@ async function inviteToPortal({ kind, record, email, name, req, actingUser, send
   }
 
   const { token, expiresAt } = await issueSetPasswordToken(user.id);
-  const link = `${appBaseUrl(req)}/set-password/${token}`;
+  const link = `${appBaseUrl(req)}/${kind === 'candidate' ? 'portal-invite' : 'set-password'}/${token}`;
   const company = await companyName();
   let sent = false;
   let status = 'Not sent — the link is shown to you once so you can pass it on.';
@@ -163,19 +168,7 @@ async function inviteToPortal({ kind, record, email, name, req, actingUser, send
   };
 }
 
-// Self-service for a candidate who applied: mails a link to the address they
-// applied with, and ONLY by mail — the caller is anonymous, so nothing that
-// could open the account is ever returned to them.
-async function claimCandidateLogin({ email, req }) {
-  const addr = norm(email);
-  if (!EMAIL_RE.test(addr)) return { ok: false };
-  const [cand] = await prisma.$queryRaw`SELECT id, name, email FROM Candidate WHERE lower(trim(email)) = ${addr} ORDER BY createdAt ASC LIMIT 1`;
-  if (!cand) return { ok: true, matched: false };
-  const existing = await prisma.user.findFirst({ where: { email: addr }, select: { id: true, role: true, candidateId: true } });
-  // An employee's or a client's login is never touched from a public form.
-  if (existing && !(existing.role === 'CANDIDATE' && existing.candidateId === cand.id)) return { ok: true, matched: false };
-  const out = await inviteToPortal({ kind: 'candidate', record: cand, email: addr, name: cand.name, req, send: true });
-  return { ok: true, matched: true, created: !!out.created, sent: !!out.sent, userId: out.user && out.user.id };
-}
+// (The old no-code "claim my login" path is gone: a candidate now proves the
+// email with a one-time code — utils/candidatePortalAuth.js.)
 
-module.exports = { portalLoginFor, loginSummary, inviteToPortal, claimCandidateLogin };
+module.exports = { portalLoginFor, loginSummary, inviteToPortal };

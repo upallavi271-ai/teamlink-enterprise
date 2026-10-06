@@ -1,0 +1,50 @@
+/* B2 — credit / debit notes and placement margin. Scoped under .cn-* only. */
+.cn-form { display: grid; gap: 12px; }
+.cn-inv { background: var(--surface-2, #f5f8fd); border: 1px solid var(--line, #dfe6f0); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.cn-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.cn-grid .cn-span { grid-column: 1 / -1; }
+.cn-calc { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cn-calc td { padding: 5px 8px; border-bottom: 1px solid var(--line, #e6ebf2); }
+.cn-calc td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cn-calc tr.sub td:first-child { padding-left: 22px; color: var(--ink-soft, #5b6b80); }
+.cn-calc tr.tot td { font-weight: 700; border-top: 2px solid var(--ink, #1d2b3a); }
+.cn-calc tr.refund td { color: #b42318; font-weight: 700; }
+
+.cn-tabs { display: flex; gap: 6px; margin: 4px 0 12px; flex-wrap: wrap; }
+.cn-tab { border: 1px solid var(--line, #dfe6f0); background: #fff; border-radius: 999px; padding: 7px 16px; font-weight: 600; cursor: pointer; font-size: 13px; color: var(--ink, #1d2b3a); }
+.cn-tab.is-on { background: var(--blue, #1f5fbf); border-color: var(--blue, #1f5fbf); color: #fff; }
+.cn-tab em { font-style: normal; opacity: .8; margin-left: 6px; }
+
+.cn-page { display: grid; gap: 14px; }
+.cn-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.cn-card { background: #fff; border: 1px solid var(--line, #dfe6f0); border-radius: 10px; padding: 12px 14px; text-align: left; cursor: pointer; }
+.cn-card b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.cn-card span { font-size: 12.5px; color: var(--ink-soft, #5b6b80); }
+.cn-card.is-on { outline: 2px solid var(--blue, #1f5fbf); }
+.cn-card.orange b { color: #b54708; }
+.cn-card.red b { color: #b42318; }
+.cn-card.green b { color: #067647; }
+.cn-card.blue b { color: #1f5fbf; }
+.cn-wait { border: 1px solid #fedf89; background: #fffaeb; border-radius: 10px; padding: 12px 14px; }
+.cn-wait h3 { margin: 0 0 8px; font-size: 14px; }
+.cn-wait-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid #fef0c7; font-size: 13px; }
+.cn-wait-row:first-of-type { border-top: 0; }
+.cn-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cn-bar input[type=search] { min-width: 220px; flex: 1; }
+.cn-bar .grow { flex: 1; }
+.cn-table td.n, .cn-table th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cn-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.cn-chip { display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 600; }
+.cn-chip.Draft { background: #fef0c7; color: #93370d; }
+.cn-chip.Issued { background: #dcfae6; color: #067647; }
+.cn-chip.Cancelled { background: #eaecf0; color: #475467; }
+.cn-chip.refund { background: #fee4e2; color: #b42318; }
+.cn-tag { display: inline-block; margin-top: 2px; font-size: 11px; color: #b42318; font-weight: 600; }
+.cn-margin-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; }
+.cn-margin-row .n { text-align: right; font-variant-numeric: tabular-nums; }
+.cn-margin-row .tot { font-weight: 700; border-top: 1px solid var(--line, #dfe6f0); padding-top: 4px; }
+
+@media (max-width: 720px) {
+  .cn-grid { grid-template-columns: 1fr; }
+  .cn-bar input[type=search] { min-width: 0; width: 100%; }
+}

@@ -26,6 +26,7 @@ const { requireAuth, requirePerm } = require('../middleware/auth');
 const { can } = require('../utils/permissions');
 const { scopeOf, employeeWhere, hrmsGlobal, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
+const hrmsNotify = require('../utils/hrmsNotify');
 const {
   parseAudience, parseChannels, resolveAudience, deliver, describeDelivery,
 } = require('../utils/audience');
@@ -249,7 +250,7 @@ router.get('/options', VIEW, async (req, res, next) => {
     const s = scopeOf(me);
     const [{ canAssignOthers, people, reason }, departmentRows, canReview] = await Promise.all([
       assignable(me),
-      prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
+      prisma.department.findMany({ where: require('../utils/masters').activeOnly('Department'), select: { name: true }, orderBy: { name: 'asc' } }),
       can(me, 'hrms', 'hrms', 'Employee Services', 'approve'),
     ]);
     // The department picker offers what this login can actually work in: every
@@ -581,6 +582,9 @@ router.post('/', VIEW, async (req, res, next) => {
       });
     }
     const out = await createTask(req.user, req.body);
+    // HRMS item 14: tell the assignee (in-app; email in their daily email).
+    // The many-people path above already delivers its own notice.
+    if (out.status === 201) hrmsNotify.taskAssigned(out.body, req.user).catch((e) => console.error('[tasks] notify failed', e.message));
     return res.status(out.status).json(out.body);
   } catch (err) { return next(err); }
 });

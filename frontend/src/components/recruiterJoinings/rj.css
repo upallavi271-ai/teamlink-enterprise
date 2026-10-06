@@ -1,0 +1,59 @@
+/* Recruiter joinings (HRMS popup + Performance & Development tab). Scoped under .rj */
+.rj { font-size: 13px; }
+.rj-lead { color: var(--muted, #5b6472); margin: 0 0 10px; line-height: 1.5; }
+.rj-rule { background: var(--blue-tint, #eef4ff); border: 1px solid #d3e2fb; border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; line-height: 1.5; }
+.rj-rule summary { cursor: pointer; font-weight: 600; color: var(--blue, #1f5fd1); }
+.rj-rule p { margin: 6px 0 0; }
+.rj-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
+.rj-bar .rj-grow { flex: 1 1 auto; }
+.rj-bar input[type="month"] { height: 32px; }
+.rj-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.rj-card { border: 1px solid var(--line, #e3e7ee); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.rj-card b { display: block; font-size: 22px; line-height: 1.2; }
+.rj-card span { color: var(--muted, #5b6472); font-size: 12px; }
+.rj-card.green b { color: var(--teal, #0f8a6f); }
+.rj-card.orange b { color: var(--amber, #b7700a); }
+.rj-card.red b { color: var(--red, #c8372d); }
+.rj-card.blue b { color: var(--blue, #1f5fd1); }
+.rj-score { display: inline-block; min-width: 54px; text-align: center; font-weight: 700; border-radius: 999px; padding: 3px 10px; font-size: 13px; white-space: nowrap; }
+.rj-score.green { background: var(--teal-tint, #e5f5f1); color: var(--teal, #0f8a6f); }
+.rj-score.orange { background: var(--amber-tint, #fdf3e2); color: var(--amber, #b7700a); }
+.rj-score.red { background: var(--red-tint, #fdeceb); color: var(--red, #c8372d); }
+.rj-score.grey { background: #f0f2f5; color: #6b7280; }
+.rj-word { font-size: 11.5px; margin-left: 6px; color: var(--muted, #5b6472); }
+.rj-name { background: none; border: 0; padding: 0; color: var(--blue, #1f5fd1); font-weight: 600; cursor: pointer; text-align: left; font-size: 13px; }
+.rj-name:hover { text-decoration: underline; }
+.rj-sub { color: var(--muted, #5b6472); font-size: 11.5px; }
+.rj-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.rj-acts .btn { white-space: nowrap; }
+.rj-done { font-size: 12px; line-height: 1.4; }
+.rj-done.green { color: var(--teal, #0f8a6f); }
+.rj-done.blue { color: var(--blue, #1f5fd1); }
+.rj-done.grey { color: #6b7280; }
+.rj-wait { color: var(--amber, #b7700a); font-size: 12px; font-weight: 600; }
+.rj-detail td { background: #fafbfd; }
+.rj-detail h4 { font-size: 12.5px; margin: 6px 0; }
+.rj-mini { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.rj-mini th, .rj-mini td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line-soft, #eef1f5); font-size: 12.5px; }
+.rj-mini th { color: var(--muted, #5b6472); font-weight: 600; }
+.rj-tag { display: inline-block; border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.rj-tag.green { background: var(--teal-tint, #e5f5f1); color: var(--teal, #0f8a6f); }
+.rj-tag.orange { background: var(--amber-tint, #fdf3e2); color: var(--amber, #b7700a); }
+.rj-tag.red { background: var(--red-tint, #fdeceb); color: var(--red, #c8372d); }
+.rj-empty { color: var(--muted, #5b6472); padding: 10px 0; }
+.rj-saved { background: var(--teal-tint, #e5f5f1); color: var(--teal, #0f8a6f); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.rj-error { background: var(--red-tint, #fdeceb); color: var(--red, #c8372d); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.rj-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.rj-tabs button { border: 1px solid var(--line, #e3e7ee); background: #fff; border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12.5px; }
+.rj-tabs button.on { background: var(--blue, #1f5fd1); color: #fff; border-color: var(--blue, #1f5fd1); }
+.rj-form .field { margin-bottom: 10px; }
+.rj-form .rj-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rj-hint { color: var(--muted, #5b6472); font-size: 12px; line-height: 1.5; margin: 4px 0 10px; }
+.rj-hist { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.rj-hist div { border: 1px solid var(--line, #e3e7ee); border-radius: 8px; padding: 4px 8px; font-size: 12px; text-align: center; min-width: 74px; }
+.rj-mine { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rj-mine b { font-size: 20px; }
+@media (max-width: 640px) {
+  .rj-form .rj-row2 { grid-template-columns: 1fr; }
+  .rj-cards { grid-template-columns: repeat(2, 1fr); }
+}

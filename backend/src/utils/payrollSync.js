@@ -343,6 +343,15 @@ async function sweepOnce() {
         console.error('[payroll-sync] sweep:', err.message);
       }
     }
+    // S3: the month-level journal (utils/payrollPosting.js) — a finalized
+    // month whose posting failed is tried again.
+    try {
+      // eslint-disable-next-line global-require
+      out.months = await require('./payrollPosting').sweepMonths();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[payroll-sync] month sweep:', err.message);
+    }
   } finally {
     sweeping = false;
   }

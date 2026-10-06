@@ -54,12 +54,12 @@ export function DayBar({ value, onChange, latest, today = localToday(), children
 
 // The buckets that add up to the headcount, in order, with what each counts.
 export const BUCKETS = [
-  { key: 'present', label: 'Present', hint: 'Came to work (incl. late, and days with a missing check-out)' },
-  { key: 'halfDay', label: 'Half Day', hint: 'Worked under the full-day hours, or marked' },
-  { key: 'absent', label: 'Absent', hint: 'Marked absent, or worked under the half-day minimum' },
-  { key: 'onLeave', label: 'On Leave', hint: 'Approved leave' },
-  { key: 'offDay', label: 'Week-off / Holiday', hint: 'Weekly off or holiday, nothing worked' },
-  { key: 'noRecord', label: 'No record', hint: 'Working day with no punch, mark or leave' },
+  { key: 'present', label: 'Present', hint: 'Came to work (incl. late, early logout and a missing check-out)' },
+  { key: 'halfDay', label: 'Half Day', hint: 'Left before 5 PM or came after 1:30 PM, or marked' },
+  { key: 'absent', label: 'Absent', hint: 'No check-in, no leave or request' },
+  { key: 'onLeave', label: 'On Leave', hint: 'Leave (approved or pending) or told the manager' },
+  { key: 'offDay', label: 'Week off / Holiday', hint: 'Not a working day for them' },
+  { key: 'noRecord', label: 'No device data', hint: 'Nothing came from the device that day' },
   { key: 'notYet', label: 'Not checked in yet', hint: 'Today, no punch yet' },
   { key: 'upcoming', label: 'Upcoming', hint: 'A future date' },
 ];
@@ -72,7 +72,10 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
   const pick = (key) => onPick && onPick(active === key ? '' : key);
   // Buckets that can only be zero on this date are left out (Not checked in
   // yet is a today thing, Upcoming a future one) unless they hold someone.
-  const shown = BUCKETS.filter((b) => !['notYet', 'upcoming'].includes(b.key) || kpis[b.key] > 0);
+  // The cards ADD UP TO THE HEADCOUNT, visibly (user, 2026-10-05): Week off /
+  // Holiday is a small card again. Cards that can only be zero on this date are
+  // left out (Not checked in yet is a today thing, Upcoming a future one).
+  const shown = BUCKETS.filter((b) => !['notYet', 'upcoming', 'noRecord'].includes(b.key) || kpis[b.key] > 0);
   const info = [
     { key: 'late', value: kpis.late, label: 'Late arrivals', hint: 'Checked in after the grace time' },
     { key: 'checkedIn', value: kpis.checkedIn, label: 'Checked in', hint: 'People with a check-in' },
@@ -84,11 +87,11 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
   return (
     <div>
       <div className="att-kpis">
-        <div className="att-kpi total" title="Employees on the rolls on this date">
+        <button type="button" className={`att-kpi total${active === 'headcount' ? ' on' : ''}`} onClick={() => pick('headcount')} title="Everyone on the rolls on this date, with each person's status. Click to list them.">
           <div className="v">{kpis.headcount}</div>
           <div className="l">Headcount on {date}</div>
-          <div className="h">Employees on the rolls that day</div>
-        </div>
+          <div className="h">Everyone on the rolls — click to list all</div>
+        </button>
         {shown.map((b) => (
           <button key={b.key} type="button" className={`att-kpi${active === b.key ? ' on' : ''}`} onClick={() => pick(b.key)} title={`${b.hint}. Click to list them.`}>
             <div className="v">{kpis[b.key]}</div>
@@ -128,7 +131,7 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
 // Does a row match a KPI card? Day rows carry bucket / status / late /
 // punchRows / checkIn / checkOut; the range's per-person rows carry day counts.
 export function matchesKpi(row, key) {
-  if (!key) return true;
+  if (!key || key === 'headcount') return true;
   if (BUCKET_LABEL[key]) return row.bucket === key;
   if (key === 'late') return !!row.late;
   if (key === 'checkedIn') return 'checkIn' in row ? !!row.checkIn : !!(row.checkInTimes && row.checkInTimes.length);
@@ -210,7 +213,7 @@ export function RangeKpis({ summary, from, to, active, onPick }) {
     { key: 'halfDayAny', value: s.halfDayAny, label: 'Half day on ≥ 1 day' },
     { key: 'absentAny', value: s.absentAny, label: 'Absent on ≥ 1 day' },
     { key: 'onLeaveAny', value: s.onLeaveAny, label: 'On leave on ≥ 1 day' },
-    { key: 'noRecordAny', value: s.noRecordAny, label: 'No record on ≥ 1 day', hint: 'A working day with no punch, mark or leave' },
+    { key: 'noRecordAny', value: s.noRecordAny, label: 'No device data on ≥ 1 day', hint: 'Nothing came from the device that day' },
     { key: 'lateAny', value: s.lateAny, label: 'Late on ≥ 1 day' },
   ];
   const avg = [
@@ -219,8 +222,8 @@ export function RangeKpis({ summary, from, to, active, onPick }) {
     { value: s.avg.halfDay, label: 'Half day per day (avg)' },
     { value: s.avg.absent, label: 'Absent per day (avg)' },
     { value: s.avg.onLeave, label: 'On leave per day (avg)' },
-    { value: s.avg.noRecord, label: 'No record per day (avg)' },
-    { value: s.avg.offDay, label: 'Week-off / holiday per day (avg)' },
+    { value: s.avg.noRecord, label: 'No device data per day (avg)' },
+    { value: s.avg.offDay, label: 'Week off / holiday per day (avg)' },
   ];
   return (
     <div>
@@ -266,7 +269,7 @@ export function DateTotalsTable({ days, onPickDay }) {
         <thead>
           <tr>
             <th>Date</th><th>Headcount</th><th>Present</th><th>Late</th><th>Half Day</th><th>Absent</th><th>On Leave</th>
-            <th>Week-off / Holiday</th><th>No record</th><th>Not checked in yet</th><th>Checked in</th><th>Checked out</th><th>Missing check-out</th>
+            <th>Week off / Holiday</th><th>No device data</th><th>Not checked in yet</th><th>Checked in</th><th>Checked out</th><th>Missing check-out</th>
           </tr>
         </thead>
         <tbody>

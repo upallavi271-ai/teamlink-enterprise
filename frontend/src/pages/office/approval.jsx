@@ -16,17 +16,18 @@ export function canViewOffice(user) {
     && can(user, 'accounts', 'accounts', 'Office & Expenses', 'view');
 }
 
+// Accounts spec S1.3c (2026-10-05): Paid and Pending only. A stored row that
+// still carries Approved / Rejected / Reimbursed (none on 2026-10-05) is
+// shown as "Other (old status)" — nothing is rewritten.
+const OLD = { label: 'Other (old status)', cls: 'oe-appr-old' };
 export const APPROVAL = {
-  PENDING: { label: 'Pending', long: 'Pending approval', cls: 'oe-appr-pending' },
-  APPROVED: { label: 'Approved', long: 'Approved', cls: 'oe-appr-approved' },
+  PENDING: { label: 'Pending', long: 'Pending — not paid yet', cls: 'oe-appr-pending' },
   PAID: { label: 'Paid', long: 'Paid', cls: 'oe-appr-paid' },
-  REJECTED: { label: 'Rejected', long: 'Rejected', cls: 'oe-appr-rejected' },
-  // One-page spec: paid back to whoever paid it — money out, like Paid.
-  REIMBURSED: { label: 'Reimbursed', long: 'Reimbursed', cls: 'oe-appr-reimbursed' },
+  APPROVED: { ...OLD, long: 'Other (old status) — stored as Approved, not paid yet' },
+  REJECTED: { ...OLD, long: 'Other (old status) — stored as Rejected, out of the books' },
+  REIMBURSED: { ...OLD, long: 'Other (old status) — stored as Reimbursed, money out' },
 };
-export const APPROVAL_OPTIONS = [
-  ['All', 'All'], ['PENDING', 'Pending approval'], ['APPROVED', 'Approved'], ['PAID', 'Paid'], ['REIMBURSED', 'Reimbursed'], ['REJECTED', 'Rejected'],
-];
+export const APPROVAL_OPTIONS = [['All', 'All'], ['PENDING', 'Pending'], ['PAID', 'Paid']];
 
 export function ApprovalBadge({ s, title }) {
   const a = APPROVAL[s] || APPROVAL.PENDING;

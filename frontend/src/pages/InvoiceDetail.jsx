@@ -5,9 +5,18 @@ import { useAuth } from '../context/AuthContext.jsx';
 import {
   statusClass, money, money2, fmtD, Stat, invoiceDocumentHtml,
 } from './Invoices.jsx';
-import { canManageAccounts } from '../permissions';
+import { canManageAccounts, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import ClientAccountModal from './invoices/ClientAccountModal.jsx';
+// P4 — GST & TDS: the invoice summary block and its edit form.
+import TaxEditModal from './invoices/TaxEditModal.jsx';
+import {
+  pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
+} from './invoices/invTax';
+import './invoices/invTax.css';
+// B2 — credit / debit notes on this invoice, and its placement margin.
+import NoteModal, { openNotePdf } from './invoices/NoteModal.jsx';
+import { CancelNote, RefundPaid } from './invoices/CreditNotesPanel.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -59,12 +68,20 @@ export default function InvoiceDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const canManage = canManageAccounts(user);
+  const canEditTax = can(user, 'accounts', 'accounts', 'Invoices', 'edit');
+  const [editTax, setEditTax] = useState(false);
+  const [saidTax, setSaidTax] = useState('');
   const [invoice, setInvoice] = useState(null);
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null); // 'client' | 'internal'
   const [send, setSend] = useState(null);
   const [showAccount, setShowAccount] = useState(false);
+  const canNote = can(user, 'accounts', 'accounts', 'Invoices', 'create');
+  const [noteFor, setNoteFor] = useState(null); // null | { kind } | { draft }
+  const [cancelNote, setCancelNote] = useState(null);
+  const [refundNote, setRefundNote] = useState(null);
+  const [saidNote, setSaidNote] = useState('');
   const [form, setForm] = useState({
     amount: '', date: today(), method: 'Bank Transfer', reference: '', notes: '',
   });
@@ -158,6 +175,11 @@ export default function InvoiceDetail() {
   };
 
   const msg = doc ? invoiceMessage(doc, invoice, user) : { subject: '', body: '' };
+  // P4 — the GST / TDS reading (older servers without it fall back to the stored figures).
+  const tax = invoice.tax || null;
+  const tx = tax || {
+    base: billing, gst, gross: invoiceValue, tds, net: receivable, received, balance: pending, gstApplicable: gst > 0.005, gstPercent: gstPct || 0, gstTypeLabel: '', gstType: 'CGST_SGST', cgstPercent: (gstPct || 0) / 2, sgstPercent: (gstPct || 0) / 2, cgst: Math.round((gst / 2) * 100) / 100, sgst: Math.round((gst - Math.round((gst / 2) * 100) / 100) * 100) / 100, tdsApplicable: tds > 0.005, tdsPercent: tdsPct || 0, tdsBase: 'base', tdsStatus: tds > 0.5 ? 'Pending' : 'Not Applicable',
+  };
 
   return (
     <div>
@@ -187,18 +209,70 @@ export default function InvoiceDetail() {
         <Stat n={invoice.status} l="Status" s={`${pct}% collected`} tone={invoice.status === 'Paid' ? 'good' : (invoice.status === 'Overdue' ? 'bad' : undefined)} />
       </div>
 
+      {saidTax && <div className="notice" role="status" style={{ marginBottom: 12 }}><span>{saidTax}</span></div>}
       <div className="grid-2">
-        <div className="card section">
-          <h3>What was billed</h3>
-          <div className="kv"><span className="k">Before GST</span><span>{money2(billing)}</span></div>
-          <div className="kv"><span className="k">GST{gstPct != null ? ` @ ${gstPct}%` : ''}</span><span>{money2(gst)}</span></div>
-          <div className="kv" style={{ fontWeight: 700 }}><span className="k">Invoice amount (after GST)</span><span>{money2(invoiceValue)}</span></div>
-          <div className="kv"><span className="k">Less TDS deducted by the client{tdsPct != null ? ` @ ${tdsPct}%` : ''}</span><span>({money2(tds)})</span></div>
-          <div className="kv" style={{ fontWeight: 700 }}><span className="k">Amount receivable</span><span>{money2(receivable)}</span></div>
-          <div className="small-muted" style={{ marginTop: 8 }}>
-            GST rides on top of the fee at the client&apos;s own rate and is collected for Government;
-            TDS is deducted at source by the client, so it never reaches the bank.
+        {/* P4 — THE INVOICE SUMMARY: every step of the calculation on its own
+            line, from the stored figures (utils/invoiceTax.js taxView). */}
+        <div className="card section" id="summary">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Invoice summary</h3>
+            {canEditTax && invoice.status !== 'Cancelled' && tax && !(invoice.creditNotes || []).some((n) => n.status === 'Issued') && (
+              <button type="button" className="btn btn-sm" onClick={() => { setSaidTax(''); setEditTax(true); }}>Edit GST / TDS</button>
+            )}
           </div>
+          <table className="invx-sum" style={{ marginTop: 8 }}>
+            <tbody>
+              <tr><td className="op" /><td>Amount before GST</td><td className="n">{money2(tx.base)}</td></tr>
+              <tr>
+                <td className="op">+</td>
+                <td>GST charged {tx.gstApplicable ? <>@ {pctTxt(tx.gstPercent)} <span className="small-muted">· {tx.gstTypeLabel}</span></> : <span className="small-muted">· not applicable</span>}</td>
+                <td className="n">{money2(tx.gst)}</td>
+              </tr>
+              {tx.gstApplicable && tx.gstType === 'CGST_SGST' && (
+                <>
+                  <tr className="sub"><td className="op" /><td>CGST @ {pctTxt(tx.cgstPercent)}</td><td className="n">{money2(tx.cgst)}</td></tr>
+                  <tr className="sub"><td className="op" /><td>SGST @ {pctTxt(tx.sgstPercent)}</td><td className="n">{money2(tx.sgst)}</td></tr>
+                </>
+              )}
+              {tx.gstApplicable && tx.gstType === 'IGST' && (
+                <tr className="sub"><td className="op" /><td>IGST @ {pctTxt(tx.igstPercent)}</td><td className="n">{money2(tx.igst)}</td></tr>
+              )}
+              <tr className="tot"><td className="op">=</td><td>Amount after GST (gross)</td><td className="n">{money2(tx.gross)}</td></tr>
+              <tr>
+                <td className="op">−</td>
+                <td>TDS deducted {tx.tdsApplicable ? <>@ {pctTxt(tx.tdsPercent)} <span className="small-muted">· on the amount {tx.tdsBase === 'gross' ? 'after' : 'before'} GST</span></> : <span className="small-muted">· not applicable</span>}</td>
+                <td className="n">{tx.tds > 0 ? `(${money2(tx.tds)})` : money2(0)}</td>
+              </tr>
+              <tr className="net"><td className="op">=</td><td>Net receivable</td><td className="n">{money2(tx.net)}</td></tr>
+              <tr><td className="op">−</td><td>Received</td><td className="n">{money2(tx.received)}</td></tr>
+              {tx.credited > 0.005 && <tr><td className="op">−</td><td>Credit notes <span className="small-muted">· set against the balance</span></td><td className="n">{money2(tx.credited)}</td></tr>}
+              {tx.debited > 0.005 && <tr><td className="op">+</td><td>Debit notes</td><td className="n">{money2(tx.debited)}</td></tr>}
+              <tr className={`bal ${tx.balance > 0.5 ? 'due' : 'ok'}`}><td className="op">=</td><td>Balance</td><td className="n">{money2(Math.max(0, tx.balance))}</td></tr>
+            </tbody>
+          </table>
+          <div className="invx-line">
+            {money2(tx.base)} + {money2(tx.gst)} = {money2(tx.gross)} − {money2(tx.tds)} = <b>{money2(tx.net)}</b> to receive
+          </div>
+          <div className="invx-kv">
+            <span>GST type</span>
+            <span>{tx.gstApplicable ? `${gstSplitText(tx)} · ${GST_TYPE_FROM[tx.gstTypeFrom] || ''}` : 'No GST'}</span>
+            {tx.tdsApplicable && <><span>TDS section</span><span>{tx.tdsSection ? `u/s ${tx.tdsSection}` : 'not set (194J printed)'}</span></>}
+            {tx.tdsApplicable && <><span>TDS deducted on</span><span>{tx.tdsDeductedOn ? fmtD(tx.tdsDeductedOn) : '—'}</span></>}
+            {tx.tdsApplicable && <><span>Certificate / reference</span><span>{tx.tdsCertRef || '—'}</span></>}
+            <span>TDS status</span>
+            <span><span className={`status ${tdsStatusClass(tx.tdsStatus)}`}>{tx.tdsStatus}</span></span>
+          </div>
+          {tx.gstApplicable && tx.gstTypeFrom === 'assumed' && (
+            <div className="small-muted" style={{ marginTop: 8 }}>{tx.supply?.why}. Use Edit GST / TDS to set IGST if the client is in another state.</div>
+          )}
+          {tx.check?.level === 'mismatch' && (
+            <div className="notice amber invx-warn">
+              <span>
+                <b>These stored figures do not match their own %</b> — nothing was changed automatically:
+                {' '}{tx.check.issues.filter((x) => x.level === 'mismatch').map((x) => x.text).join(' · ')}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="card section">
@@ -227,6 +301,71 @@ export default function InvoiceDetail() {
           )}
         </div>
       </div>
+
+      {/* B2 — credit / debit notes against this invoice (Draft → Issued by
+          another Accounts approver), and the placement's margin. */}
+      {invoice.notesReady && (
+        <div className="grid-2">
+          <div className="card section" id="notes">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+              <h3 style={{ margin: 0 }}>Credit &amp; debit notes</h3>
+              {canNote && invoice.status !== 'Cancelled' && (
+                <div className="qa-row" style={{ marginTop: 0 }}>
+                  <button type="button" className="btn btn-sm" onClick={() => setNoteFor({ kind: 'debit' })}>+ Debit note</button>
+                  <button type="button" className="btn btn-sm btn-primary" onClick={() => setNoteFor({ kind: 'credit' })}>+ Credit note</button>
+                </div>
+              )}
+            </div>
+            {saidNote && <div className="notice" role="status" style={{ marginTop: 8 }}><span>{saidNote}</span></div>}
+            {(invoice.creditNotes || []).length === 0 && <div className="small-muted" style={{ marginTop: 8 }}>No credit or debit note on this invoice.</div>}
+            {(invoice.creditNotes || []).map((n) => {
+              const mine = n.createdById === user?.id;
+              return (
+                <div key={n.id} className="kv" style={{ alignItems: 'flex-start' }}>
+                  <span className="k">
+                    <b className="inv-mono">{n.displayNumber}</b> · {n.kindLabel} · <span className={`cn-chip ${n.status}`}>{n.status}</span>
+                    <div className="small-muted">{fmtD(n.noteDate)} · {n.reasonLabel}{n.reasonText ? ` — ${n.reasonText}` : ''}</div>
+                    {n.refundOpen > 0.005 && <div><span className="cn-chip refund">Refund due {money2(n.refundOpen)}</span></div>}
+                    {n.refundPaidOn && <div className="small-muted">Refund paid {fmtD(n.refundPaidOn)}</div>}
+                  </span>
+                  <span style={{ textAlign: 'right' }}>
+                    <b>{n.kind === 'debit' ? '+' : '−'} {money2(n.net)}</b>
+                    <div className="small-muted">{money2(n.amount)} + GST {money2(n.gst)} − TDS {money2(n.tds)}</div>
+                    <div className="cn-acts" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
+                      <button type="button" className="btn btn-sm" onClick={() => openNotePdf(n.id, setError)}>PDF</button>
+                      {n.status === 'Draft' && invoice.canApproveNotes && !mine && (
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => run(async () => { const r = await api.post(`/invoices/credit-notes/${n.id}/issue`); setSaidNote(r.data.said); })}>Issue</button>
+                      )}
+                      {n.status === 'Draft' && mine && <span className="small-muted">Another approver issues it</span>}
+                      {n.status === 'Draft' && (mine || invoice.canApproveNotes) && (
+                        <>
+                          <button type="button" className="btn btn-sm" onClick={() => setNoteFor({ draft: n })}>Change</button>
+                          <button type="button" className="btn btn-sm" onClick={() => run(async () => { await api.delete(`/invoices/credit-notes/${n.id}`); setSaidNote('Draft removed.'); })}>Remove</button>
+                        </>
+                      )}
+                      {n.refundOpen > 0.005 && canManage && <button type="button" className="btn btn-sm" onClick={() => setRefundNote(n)}>Refund paid</button>}
+                      {n.status === 'Issued' && invoice.canApproveNotes && !n.refundPaidOn && <button type="button" className="btn btn-sm" onClick={() => setCancelNote(n)}>Cancel note</button>}
+                    </div>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {invoice.margin && (
+            <div className="card section" id="margin">
+              <h3>Placement margin</h3>
+              <div className="cn-margin-row">
+                <span>Fee billed (before GST)</span><span className="n">{money2(invoice.margin.fee)}</span>
+                {invoice.margin.debit > 0.005 && <><span>+ Debit notes</span><span className="n">{money2(invoice.margin.debit)}</span></>}
+                {invoice.margin.credit > 0.005 && <><span>− Credit notes</span><span className="n">({money2(invoice.margin.credit)})</span></>}
+                <span>− Recruiter incentive <span className="small-muted">· {invoice.margin.incentiveStatus}</span></span><span className="n">({money2(invoice.margin.incentive)})</span>
+                <span>− Partner payout <span className="small-muted">· {invoice.margin.payout > 0.005 ? 'fee before GST owed to the agency / freelancer' : 'no partner on this placement'}</span></span><span className="n">({money2(invoice.margin.payout)})</span>
+                <span className="tot">= Margin{invoice.margin.marginPct != null ? ` · ${invoice.margin.marginPct}% of the fee` : ''}</span><span className="n tot">{money2(invoice.margin.margin)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card section">
         <h3>Payments / instalments</h3>
@@ -521,6 +660,26 @@ export default function InvoiceDetail() {
           </div>
         </div>
       )}
+
+      {editTax && tax && (
+        <TaxEditModal
+          invoice={invoice}
+          onClose={() => setEditTax(false)}
+          onSaved={(said) => { setEditTax(false); setSaidTax(said); load(); }}
+        />
+      )}
+
+      {noteFor && (
+        <NoteModal
+          kind={noteFor.kind || 'credit'}
+          invoiceId={invoice.id}
+          draft={noteFor.draft || null}
+          onClose={() => setNoteFor(null)}
+          onSaved={(note, msg) => { setNoteFor(null); setSaidNote(msg); load(); }}
+        />
+      )}
+      {cancelNote && <CancelNote note={cancelNote} onClose={() => setCancelNote(null)} onDone={(msg) => { setCancelNote(null); setSaidNote(msg); load(); }} />}
+      {refundNote && <RefundPaid note={{ ...refundNote, client: invoice.client?.name }} onClose={() => setRefundNote(null)} onDone={(msg) => { setRefundNote(null); setSaidNote(msg); load(); }} />}
 
       {showAccount && (
         <ClientAccountModal clientId={invoice.clientId} clientName={invoice.client?.name} onClose={() => setShowAccount(false)} />

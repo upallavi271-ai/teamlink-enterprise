@@ -207,6 +207,14 @@ async function recordStageCommunications({
 }) {
   const template = TEMPLATES[toStage];
   if (!template || !candidate) return [];
+  // EVERY PIPELINE MESSAGE FOLLOWS THE ONE "CANDIDATE EMAILS" SWITCH
+  // (utils/interviewNotices.js, OFF by default; e2e gap 4, 2026-10-03). While
+  // it is off the message is still recorded — "Not sent — candidate emails are
+  // switched off" — so it shows on Communications, but nothing is queued for
+  // the real SMTP / SMS / WhatsApp.
+  // eslint-disable-next-line global-require
+  const IN = require('./interviewNotices');
+  const switchedOn = await IN.candidateEmailsOn();
 
   const sender = await senderIdentity(user);
   const tokens = {
@@ -251,8 +259,9 @@ async function recordStageCommunications({
     // SMS / WhatsApp are real channels too now (utils/messaging.js): a row is
     // QUEUED when ITS channel is configured, and the worker sends it.
     // eslint-disable-next-line no-await-in-loop
-    const live = !!recipient && (channel === 'Email' ? emailLive : await channelLive(channel));
-    const detail = live
+    const live = switchedOn && !!recipient && (channel === 'Email' ? emailLive : await channelLive(channel));
+    // eslint-disable-next-line no-nested-ternary
+    const detail = !switchedOn ? `${IN.SWITCHED_OFF_DETAIL}.` : live
       ? 'Queued for sending.'
       : (recipient
         ? NOT_SENT_DETAIL
@@ -269,7 +278,8 @@ async function recordStageCommunications({
         recipient,
         subject: channel === 'Email' ? fill(template.subject, tokens) : null,
         body: fill(template.body, tokens),
-        status: live ? 'QUEUED' : NOT_SENT,
+        // eslint-disable-next-line no-nested-ternary
+        status: !switchedOn ? IN.SWITCHED_OFF : (live ? 'QUEUED' : NOT_SENT),
         statusDetail: detail,
         stageFrom: fromStage || null,
         stageTo: toStage,
@@ -316,6 +326,7 @@ async function commsNote() {
 // label for a state the worker never writes.
 const STATUS_LABELS = {
   NOT_SENT_NO_PROVIDER: 'Not sent — no provider',
+  NOT_SENT_SWITCHED_OFF: 'Not sent — candidate emails are switched off',
   QUEUED: 'Queued',
   RETRY: 'Retrying',
   SENT: 'Sent',

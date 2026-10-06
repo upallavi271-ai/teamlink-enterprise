@@ -8,9 +8,9 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
-import { money, fmtD, todayIso } from './invFormat';
-
-const ROUND = (n) => Math.round((Number(n) || 0) * 100) / 100;
+import { fmtD, todayIso } from './invFormat';
+// P4 — GST & TDS on the new invoice, worked out as you type.
+import TaxFields, { taxFormFrom, taxPayload, taxFormErrors } from './TaxFields.jsx';
 
 export default function NewJoinModal({ initialId, onClose, onSaved }) {
   const [list, setList] = useState(null);
@@ -23,6 +23,7 @@ export default function NewJoinModal({ initialId, onClose, onSaved }) {
   const [errs, setErrs] = useState({});
   const [busy, setBusy] = useState(false);
   const [fail, setFail] = useState('');
+  const [tax, setTax] = useState(() => taxFormFrom({}));
 
   useEffect(() => {
     api.get('/invoices/joinings')
@@ -36,14 +37,14 @@ export default function NewJoinModal({ initialId, onClose, onSaved }) {
     setCtc(row.offeredCtc != null ? String(row.offeredCtc) : '');
     setFee(row.feePercent != null ? String(row.feePercent) : '');
     setJoined(row.joiningDate && /^\d{4}-\d{2}-\d{2}$/.test(row.joiningDate) ? row.joiningDate : todayIso());
+    // The client's own GST / TDS, and CGST + SGST or IGST from the two states.
+    setTax(taxFormFrom(row.taxDefaults || { gstPercent: row.gstPercent, tdsPercent: row.tdsPercent }));
     setErrs({}); setFail('');
   }, [row]);
 
   const c = Number(ctc);
   const p = Number(fee);
   const billing = c > 0 && p > 0 ? Math.round((c * p) / 100) : null;
-  const gst = billing != null && row ? Math.round(billing * (Number(row.gstPercent || 0) / 100)) : null;
-  const tds = billing != null && row ? Math.round(billing * (Number(row.tdsPercent || 0) / 100)) : null;
 
   const raise = async () => {
     const e = {};
@@ -51,12 +52,15 @@ export default function NewJoinModal({ initialId, onClose, onSaved }) {
     if (!(c > 0)) e.ctc = "Enter the candidate's annual CTC — the fee is a percentage of it.";
     if (!(p > 0 && p <= 100)) e.fee = 'The fee % should be more than 0 and at most 100.';
     if (!joined) e.joined = 'Enter the joining date.';
+    Object.assign(e, taxFormErrors(tax));
     setErrs(e);
     if (Object.keys(e).length) return;
     setBusy(true); setFail('');
     try {
       const res = await api.post(`/invoices/joinings/${row.applicationId}/raise`, {
         offeredCtc: c, feePercent: p, joiningDate: joined,
+        // The amounts shown are sent too; the server recalculates and refuses a mismatch.
+        ...taxPayload(tax, billing), amount: undefined,
       });
       onSaved(res.data.id, `Raised ${res.data.invoiceNumber} for ${row.name} at ${row.client}.`);
     } catch (err) {
@@ -122,14 +126,10 @@ export default function NewJoinModal({ initialId, onClose, onSaved }) {
                   <input type="number" min="0" step="0.01" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
                   {errs.fee && <div className="inv-err">{errs.fee}</div>}
                 </label>
-                <div className="field"><span>What it would invoice for</span>
-                  <div className="inv-callout" style={{ margin: 0 }}>
-                    {billing != null
-                      ? <>Fee <b>{money(billing)}</b> + GST {row.gstPercent || 0}% <b>{money(gst)}</b> = <b>{money(ROUND(billing + gst))}</b>{tds ? <> · TDS {row.tdsPercent}% {money(tds)}</> : null}</>
-                      : 'Enter the CTC and the fee %'}
-                  </div>
-                </div>
               </div>
+              {billing != null
+                ? <TaxFields value={tax} onChange={setTax} base={billing} supplyWhy={row.taxDefaults?.supplyWhy} errs={errs} details={false} />
+                : <div className="inv-callout">Enter the CTC and the fee % — the amount before GST is the fee, then GST and TDS are worked out.</div>}
             </>
           )}
           {fail && <div className="notice red"><span>{fail}</span></div>}

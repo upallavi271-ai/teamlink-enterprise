@@ -1,0 +1,44 @@
+/* Accounts spec S2 / S3 (2026-10-05): payroll -> journal strip, Journal &
+   Ledger tabs (Payroll Mapping, Reports, Fixed Assets). Scoped under .lb-*. */
+.lb-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.lb-badge.green { background: #e3f4ea; color: #1e7a46; }
+.lb-badge.grey { background: #eef0f3; color: #5b6472; }
+.lb-badge.blue { background: #e6eefb; color: #1f4fa8; }
+.lb-badge.orange { background: #fdf0dc; color: #a35f00; }
+.lb-badge.red { background: #fde8e8; color: #b42318; }
+.lb-strip { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line-soft); }
+.lb-strip .lb-what { font-size: 13px; line-height: 1.5; }
+.lb-strip .lb-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.lb-err { font-size: 12.5px; color: #b42318; background: #fde8e8; border-radius: 8px; padding: 8px 12px; margin: 8px 18px; line-height: 1.5; }
+.lb-ok { font-size: 12.5px; color: #1e7a46; background: #e3f4ea; border-radius: 8px; padding: 8px 12px; margin: 8px 18px; line-height: 1.5; }
+.lb-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+.lb-num { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+.lb-tbl td, .lb-tbl th { white-space: nowrap; }
+.lb-tbl tr.lb-tot td { font-weight: 700; border-top: 2px solid var(--line); background: var(--paper, #fafaf7); }
+.lb-tbl tr.lb-grp td { font-weight: 700; background: #f3f6fa; }
+.lb-filters { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-end; padding: 12px 18px; }
+.lb-filters select, .lb-filters input { width: auto; min-width: 150px; }
+.lb-filters input[type="checkbox"], .lb-map input[type="checkbox"] { min-width: 0; width: auto; }
+.lb-filters .lb-f { display: flex; flex-direction: column; gap: 3px; }
+.lb-filters .lb-f > span { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); }
+.lb-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; padding: 12px 18px; }
+.lb-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.lb-card .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lb-card .l { font-size: 11.5px; color: var(--ink-soft); }
+.lb-map { display: grid; grid-template-columns: minmax(200px, 1.2fr) minmax(220px, 1.5fr) auto; gap: 8px 14px; align-items: center; padding: 6px 18px; }
+.lb-map select { width: 100%; }
+.lb-map .lb-side { font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+.lb-sub { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px 0; }
+.lb-sub button { border-radius: 999px; }
+.lb-sub button.on { background: var(--navy, #1f3864); color: #fff; border-color: var(--navy, #1f3864); }
+.lb-timeline { list-style: none; margin: 0; padding: 0 0 0 4px; }
+.lb-timeline li { border-left: 2px solid var(--line); padding: 4px 0 10px 14px; position: relative; font-size: 13px; }
+.lb-timeline li::before { content: ''; position: absolute; left: -6px; top: 8px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.lb-timeline li.purchase::before { background: #1f4fa8; }
+.lb-timeline li.depreciation::before { background: #a35f00; }
+.lb-timeline li.repair::before { background: #5b6472; }
+.lb-timeline li.disposal::before { background: #b42318; }
+@media (max-width: 720px) {
+  .lb-map { grid-template-columns: 1fr; }
+  .lb-strip .lb-actions { margin-left: 0; }
+}

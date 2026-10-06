@@ -1,0 +1,26 @@
+/* Clients & Requirements (ATS layout v3) — cards → charts → table.
+   Scoped under .ccr-*; colours come from the shared tokens. */
+.ccr-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin:0 0 16px}
+.ccr-chart{background:var(--paper-raised,#fff);border:1px solid var(--line);border-radius:var(--radius,10px);
+  box-shadow:var(--shadow-sm);padding:12px 14px;min-width:0}
+.ccr-chart h3{font-size:13px;margin:0 0 2px;font-weight:600}
+.ccr-chart .ccr-sub{font-size:11.5px;color:var(--ink-faint);margin:0 0 10px}
+.ccr-sign{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ccr-sign .clrel-sub{display:block}
+.ccr-tabs-note{font-size:12px;color:var(--ink-faint);margin:-8px 0 12px}
+.ccr-section{scroll-margin-top:80px}
+.ccr-section > .section-label{margin-top:18px}
+.ccr-jobhead{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px 14px;margin:6px 0 14px;
+  background:var(--paper-raised,#fff);border:1px solid var(--line);border-radius:var(--radius,10px);padding:10px 14px}
+.ccr-jobhead .k{display:block;font-size:11.5px;color:var(--ink-faint)}
+.ccr-jobhead .v{display:block;font-size:13.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.ccr-funnel-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:12px;margin:0 0 14px}
+.ccr-funnel-row .ccr-chart{margin:0}
+.ccr-side{display:flex;flex-direction:column;gap:10px}
+.ccr-side .btn{justify-content:center}
+.ccr-pick{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.ccr-money{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media(max-width:760px){
+  .ccr-funnel-row{grid-template-columns:1fr}
+  .ccr-money{grid-template-columns:1fr}
+}

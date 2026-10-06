@@ -10,16 +10,41 @@ import Pager, { usePaged } from '../components/Pager.jsx';
 // pipeline never implied being allowed to move a candidate through it.
 import { can, canMoveToStage, workflowStages } from '../permissions';
 import RequirementForm from '../components/RequirementForm.jsx';
+import { SpecLabel } from '../components/SpecPicker.jsx'; // spec D
 import { useJobPortalUrl, jobPortalJobUrl } from './JobPortalRedirect.jsx';
-import { PostedOnPanel, LocationCandidatesPanel } from '../components/jobs/RequirementReach.jsx';
+import { LocationCandidatesPanel } from '../components/jobs/RequirementReach.jsx';
+// Change list 2026-10-03 §5: Pause / Close / Delete, and the six posting sites.
+import { JobLifecycleBar } from '../components/jobs/JobLifecycle.jsx';
+import JobPostingSites from '../components/jobs/JobPostingSites.jsx';
+import PartnerShare from '../components/jobs/PartnerShare.jsx'; // B7: share the job with agencies / freelancers
 import {
-  PriorityChip, PipelineSteps, candidatesLink, ageText, slaInfo, lastActivityText, fmtWhen, fmtShort, nf, reqStatusTone,
+  PriorityChip, candidatesLink, ageText, slaInfo, lastActivityText, fmtWhen, fmtShort, nf,
 } from '../components/jobs/reqFormat.jsx';
 import StatusChip from '../components/ui/StatusChip.jsx';
 import { useHierarchy } from '../components/HierarchyFilter.jsx';
 import { assignCascade } from '../components/jobs/assignCascade.js';
+import { TeamPickers } from '../components/jobs/assignPeople.jsx';
 import '../components/jobs/jobs.css';
 import '../components/jobs/reqrole.css';
+import { ClientPausedBadge, ClientPausedBanner } from '../components/clients/ClientLifecycle.jsx';
+import { deadlineInfo } from '../components/jobs/deadline.js';
+import '../components/jobs/reqSummary.css';
+// ATS layout v3 — header facts, the status chain, department-wise assign, a
+// clickable mini funnel and "View Pipeline" (the Candidates & Pipeline board).
+import { FunnelChart } from '../components/charts';
+import { JobStatusChip } from '../components/jobs/reqStatus.jsx';
+import RequirementBulk from '../components/jobs/RequirementBulk.jsx';
+import '../components/clients/ccr.css';
+// resume_: matching candidates with the 3-number match — shown as the first
+// tab of RequirementMatchTabs (components/resume/MatchSplit.jsx inside).
+// Rejections (spec 2026-10-03 §A2): [Matching] [Previously rejected, but a good fit] [Rejected on this job].
+import RequirementMatchTabs from '../components/rejections/RequirementMatchTabs.jsx';
+// docfill_: the JD / e-mail this job was filled from (downloadable, audited).
+import SourceDocuments from '../components/ui/SourceDocuments.jsx';
+import { RequirementMatchesPanel } from '../components/resume/MatchSplit.jsx'; // fit_: top matches on the Overview
+// B8: Similar people (Match by meaning), Fit version, Added by override badge.
+import SimilarCandidatesPanel from '../components/match/SimilarCandidates.jsx';
+import { OverrideBadge, FitWithVersion } from '../components/match/OverridePrompt.jsx';
 import {
   ALL_STAGE_CODES, stageLabel, stageBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive,
@@ -140,7 +165,7 @@ const FLOW = ['DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCIN
 const PARKED = ['ON_HOLD', 'CLOSED'];
 const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'activity'];
 const TAB_LABELS = {
-  overview: 'Overview', candidates: 'Candidates', recruiter: 'Recruiter', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', activity: 'Activity',
+  overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', activity: 'Activity',
 };
 // Pipeline filter on the Candidates tab — same buckets as the count tiles.
 const PIPE_FILTERS = [
@@ -196,13 +221,16 @@ export default function RequirementDetail() {
   const [clients, setClients] = useState(null);
   const [decision, setDecision] = useState(null);
   const [pipeFilter, setPipeFilter] = useState('all');
+  const [shareOpen, setShareOpen] = useState(false); // the one "Share" button's choices
+  // Department-wise assign (RequirementBulk → /requirements/assignable-people?forJobs=<id>).
+  const [bulkAssign, setBulkAssign] = useState(null); // 'assign-recruiter' | 'assign-tl'
   // Department → Section → TL → Recruiter for the assignment dialog (§10).
   const tree = useHierarchy();
 
   function load() {
     return api.get(`/requirements/${id}`)
       .then((res) => setRequirement(res.data))
-      .catch((err) => setDenied(err.response?.data?.error || 'This record is not available to you'));
+      .catch((err) => setDenied(err.response?.data?.error || "You can't open this job. Ask your team lead."));
   }
   const loadActivity = () => api.get(`/requirements/${id}/activity`).then((res) => setActivity(res.data)).catch(() => setActivity([]));
   useEffect(() => {
@@ -248,10 +276,11 @@ export default function RequirementDetail() {
     setError('');
     try {
       await api.patch(`/applications/${applicationId}/stage`, { stage, ...(extra || {}) });
+      setNotice(`Moved to ${stageLabel(stage)}.`);
       refreshAfterChange();
       return true;
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not change stage');
+      setError(err.response?.data?.error || 'Could not move to that step. Please try again.');
       return false;
     }
   }
@@ -280,12 +309,14 @@ export default function RequirementDetail() {
     setError('');
     try {
       await api.post('/applications', { candidateId, requirementId: id });
+      const who = linkHits.find((c) => c.id === candidateId)?.name;
+      setNotice(who ? `Added ${who}.` : 'Added to this job.');
       setLinkQuery('');
       setLinkHits([]);
       setMatching((m) => (m ? { ...m, rows: m.rows.filter((c) => c.id !== candidateId) } : m));
       refreshAfterChange();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add this candidate to the pipeline');
+      setError(err.response?.data?.error || 'Could not add this person. Please try again.');
     }
   }
 
@@ -293,10 +324,11 @@ export default function RequirementDetail() {
     setError('');
     try {
       await api.post(`/requirements/${id}/${path}`, body || {});
+      setNotice('Saved.');
       refreshAfterChange();
       return true;
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not complete that action');
+      setError(err.response?.data?.error || 'That did not work. Please try again.');
       return false;
     }
   }
@@ -345,7 +377,7 @@ export default function RequirementDetail() {
   const ipaged = usePaged(interviewRows, 25);
 
   if (denied) return <div className="notice">{denied}</div>;
-  if (!requirement) return <div className="small-muted">Loading requirement…</div>;
+  if (!requirement) return <div className="small-muted">Loading job…</div>;
 
   const r = requirement;
   const p = r.permissions || {};
@@ -356,12 +388,12 @@ export default function RequirementDetail() {
   const pct = (v) => (v !== null && v !== undefined && v !== '' ? `${v}%` : null);
   async function deleteRequirement() {
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete ${r.reqCode || r.title}? This cannot be undone. A requirement with candidates or invoices cannot be deleted — close it instead.`)) return;
+    if (!window.confirm(`Delete ${r.reqCode || r.title} for good? Jobs with people can only be closed.`)) return;
     try {
       await api.delete(`/requirements/${r.id}`);
       navigate('/requirements');
     } catch (e) {
-      setNotice(e.response?.data?.error || 'Could not delete this requirement.');
+      setNotice(e.response?.data?.error || 'Could not delete this job. Please try again.');
     }
   }
   const agreementActive = r.agreementActive;
@@ -432,7 +464,7 @@ export default function RequirementDetail() {
       setRequirement((prev) => ({ ...prev, postingLog: res.data.postingLog }));
       if (activity !== null) loadActivity();
     } catch (e) {
-      setNotice(e.response?.data?.error || 'Could not record that.');
+      setNotice(e.response?.data?.error || 'Could not save that. Please try again.');
     }
   }
   const SHARE = [
@@ -445,6 +477,7 @@ export default function RequirementDetail() {
     // Opened BEFORE the await so the browser counts it as the click's own tab.
     window.open(urlOf(), '_blank', 'noopener,noreferrer');
     logPosting('Social Media', 'Shared', channel);
+    setNotice(`Opened ${channel}. The share is saved.`);
   }
   async function copyText(text, done) {
     try { await navigator.clipboard.writeText(text); setNotice(done); } catch { setNotice('Could not copy — select and copy it from Preview Job Posting instead.'); }
@@ -459,7 +492,7 @@ export default function RequirementDetail() {
   ].join('\n');
   function markPosted(s) {
     // eslint-disable-next-line no-alert
-    const link = prompt(`Paste the link of the JOB's page on ${s} — the one candidates see (not the recruiter dashboard or search page). Leave blank if you don't have it:`, '');
+    const link = prompt(`Paste the job's link on ${s} (optional):`, '');
     if (link === null) return;
     logPosting(s, 'Posted manually', link.trim());
   }
@@ -487,57 +520,25 @@ export default function RequirementDetail() {
   // --- tab bodies ------------------------------------------------------------
   const overview = (
     <>
-      {/* Draft → Agreement Check → Open → Recruiter Assigned → Sourcing →
-          Candidates Available → On Hold / Closed */}
+      {/* The status is the chip in the header (no lifecycle strip, 2026-10-03). */}
       <div className="card section">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-          {FLOW.map((s) => (
-            <span
-              key={s}
-              className={`status ${r.status === s ? requirementBadgeClass(s) : ''}`}
-              style={r.status === s ? undefined : { background: 'var(--line-soft)', color: 'var(--ink-soft)' }}
-            >
-              {requirementStatusLabel(s)}
-            </span>
-          ))}
-          {PARKED.includes(r.status) && (
-            <span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span>
-          )}
-        </div>
-        {/* Role spec §7 — Close / Reopen / Delete: Admin all; a BDE may only
-            Close (p.closeOnly); TL, Recruiter, Accounts none. */}
-        {p.approve && p.closeOnly && r.status !== 'CLOSED' && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-            <button className="btn btn-sm btn-danger" onClick={() => runAction('status', { status: 'CLOSED' })}>Close</button>
-          </div>
-        )}
-        {p.delete && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-            <button className="btn btn-sm btn-danger" onClick={deleteRequirement}>Delete requirement</button>
-          </div>
-        )}
+        {/* Pause (reason + date) / Resume / Close (filled or cancelled) /
+            Reopen / Delete (Super Admin, never with people) — the server
+            says which this login may press (GET /:id/lifecycle). */}
+        <JobLifecycleBar requirementId={r.id} onChanged={refreshAfterChange} onDeleted={() => navigate('/requirements')} />
         {p.approve && !p.closeOnly && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {!requirementIsLive(r.status) && !PARKED.includes(r.status) && (
-              <button className="btn btn-sm btn-primary" onClick={() => runAction('activate')}>Activate Requirement</button>
+              <button className="btn btn-sm btn-primary" onClick={() => runAction('activate')}>Open job</button>
             )}
-            {['OPEN', 'ON_HOLD'].includes(r.status) && (
-              <button className="btn btn-sm" onClick={() => runAction('status', { status: 'RECRUITER_ASSIGNED' })}>→ Recruiter Assigned</button>
+            {r.status === 'OPEN' && (
+              <button className="btn btn-sm btn-ghost" onClick={() => runAction('status', { status: 'RECRUITER_ASSIGNED' })}>{`Mark: ${requirementStatusLabel('RECRUITER_ASSIGNED')}`}</button>
             )}
-            {['OPEN', 'RECRUITER_ASSIGNED', 'ON_HOLD'].includes(r.status) && (
-              <button className="btn btn-sm" onClick={() => runAction('status', { status: 'SOURCING' })}>→ Sourcing</button>
+            {['OPEN', 'RECRUITER_ASSIGNED'].includes(r.status) && (
+              <button className="btn btn-sm btn-ghost" onClick={() => runAction('status', { status: 'SOURCING' })}>{`Mark: ${requirementStatusLabel('SOURCING')}`}</button>
             )}
-            {['SOURCING', 'ON_HOLD'].includes(r.status) && (
-              <button className="btn btn-sm" onClick={() => runAction('status', { status: 'CANDIDATES_AVAILABLE' })}>→ Candidates Available</button>
-            )}
-            {requirementIsLive(r.status) && (
-              <button className="btn btn-sm" onClick={() => runAction('status', { status: 'ON_HOLD' })}>Put On Hold</button>
-            )}
-            {r.status !== 'CLOSED' && (
-              <button className="btn btn-sm btn-danger" onClick={() => runAction('status', { status: 'CLOSED' })}>Close</button>
-            )}
-            {r.status === 'CLOSED' && (
-              <button className="btn btn-sm" onClick={() => runAction('status', { status: 'OPEN' })}>Reopen</button>
+            {r.status === 'SOURCING' && (
+              <button className="btn btn-sm btn-ghost" onClick={() => runAction('status', { status: 'CANDIDATES_AVAILABLE' })}>{`Mark: ${requirementStatusLabel('CANDIDATES_AVAILABLE')}`}</button>
             )}
           </div>
         )}
@@ -547,33 +548,34 @@ export default function RequirementDetail() {
       <div className="two-col">
         <div>
           <div className="card section">
-            <h3 style={{ fontSize: 13, marginBottom: 10 }}>Requirement</h3>
+            <h3 style={{ fontSize: 13, marginBottom: 10 }}>Job details</h3>
             <div className="grid-2">
               <div>
-                <Row k="Requirement ID">{r.reqCode || r.id}</Row>
-                <Row k="Job Title">{r.title}</Row>
+                <Row k="Job ID">{r.reqCode || r.id}</Row>
+                <Row k="Job">{r.title}</Row>
                 <Row k="Client">{clientName}</Row>
                 <Row k="Department">{r.department}</Row>
                 <Row k="Location">{r.location}</Row>
                 <Row k="Work Mode">{r.workMode}</Row>
                 <Row k="Experience">{[r.experience, r.relevantExperience && `relevant ${r.relevantExperience}`].filter(Boolean).join(' · ')}</Row>
                 <Row k="Qualification">{[r.education, r.qualifications].filter(Boolean).join(' · ')}</Row>
+                <Row k="Specialization"><SpecLabel qualificationId={r.qualificationId} specialisationId={r.specialisationId} oldValue={r.specialisation} /></Row>
               </div>
               <div>
-                <Row k="Openings">{`${r.openings} · filled ${r.filled ?? 0} · remaining ${r.remaining ?? r.openings}`}</Row>
+                <Row k="Openings">{`${r.openings}${r.filled ? ` · ${r.filled} filled` : ''} · ${r.remaining ?? r.openings} left`}</Row>
                 <Row k="Priority"><PriorityChip value={r.priority} /></Row>
-                <Row k="Salary / CTC Range">{`${r.salary || '—'}${r.salaryType ? ` (${r.salaryType}${r.currency ? `, ${r.currency}` : ''})` : ''}`}</Row>
-                <Row k="Notice Period">{r.noticePeriodMax}</Row>
-                <Row k="Employment Type">{[r.employmentType, r.jobPreference].filter(Boolean).join(' · ')}</Row>
-                <Row k="Created Date">{r.createdAt ? protoDate(r.createdAt) : null}</Row>
-                <Row k="Target Date">{r.targetDate || r.closingDate}</Row>
-                <Row k="Status"><StatusChip status={requirementStatusLabel(r.status)} tone={reqStatusTone(r.status)} /></Row>
+                <Row k="Salary">{`${r.salary || '—'}${r.salaryType ? ` (${r.salaryType}${r.currency ? `, ${r.currency}` : ''})` : ''}`}</Row>
+                <Row k="Notice period">{r.noticePeriodMax}</Row>
+                <Row k="Employment type">{[r.employmentType, r.jobPreference].filter(Boolean).join(' · ')}</Row>
+                <Row k="Posted">{r.createdAt ? protoDate(r.createdAt) : null}</Row>
+                <Row k="Deadline">{r.targetDate || r.closingDate}</Row>
+                <Row k="Status"><JobStatusChip job={r} /></Row>
               </div>
             </div>
             <Row k="Skills">
               {list(r.skills).length ? list(r.skills).map((s) => <span className="skillpill match" key={s}>{s}</span>) : null}
             </Row>
-            <div className="section-label">Job Description</div>
+            <div className="section-label">Job description</div>
             <div className="small-muted" style={{ whiteSpace: 'pre-line', fontSize: 12.5, lineHeight: 1.7 }}>
               {r.jobDescription || r.description || '—'}
             </div>
@@ -583,145 +585,92 @@ export default function RequirementDetail() {
           {/* Review #3 §4 — Assigned Team: TL and recruiters with their seat
               ("MED-5 · Medical Team"). */}
           <div className="card section">
-            <h3 style={{ fontSize: 13, marginBottom: 8 }}>Assigned Team</h3>
+            <h3 style={{ fontSize: 13, marginBottom: 8 }}>Team</h3>
             <Row k="Department">{[r.department, r.section].filter(Boolean).join(' · ')}</Row>
-            <Row k="TL">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
+            <Row k="Team lead">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
             <Row k="Recruiter">{[r.recruiter?.name || r.workedBy, seatText(r.seats?.recruiter) || r.workedByPosition].filter(Boolean).join(' · ')}</Row>
             {(r.coRecruiters || []).map((c) => (
               <Row key={c.id} k="Co-recruiter">{[c.name, seatText(c.seat)].filter(Boolean).join(' · ')}</Row>
             ))}
-            {!r.internal && <Row k="BDE">{r.bde?.name}</Row>}
+            {!r.internal && <Row k="Client manager (BDE)">{r.bde?.name}</Row>}
             <button type="button" className="btn btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => setTab('recruiter')}>
-              Assignment details →
+              See team
             </button>
           </div>
+          {/* docfill_: the source document (only when there is one). */}
+          <SourceDocuments target="job" id={r.id} version={r.updatedAt} />
           {/* Review #3 §4 — Agreement and Job Portal lines of the 360. */}
           {!r.internal && (
             <div className="card section">
-              <h3 style={{ fontSize: 13, marginBottom: 8 }}>{showAgreementTab ? 'Agreement' : 'Agreement gate'}</h3>
+              <h3 style={{ fontSize: 13, marginBottom: 8 }}>Agreement</h3>
               {showAgreementTab && <Row k="Status"><StatusChip status={(r.agreement && r.agreement.label) || agreementStatusLabel(r.client?.agreementStatus)} tone={agreementActive ? 'green' : 'amber'} /></Row>}
               {r.commercial && <Row k="Fee %">{pct(r.commercial.feePercent)}</Row>}
               {r.commercial && <Row k="Guarantee">{r.commercial.guaranteeDays ? (/^\d+$/.test(String(r.commercial.guaranteeDays).trim()) ? `${r.commercial.guaranteeDays} days` : r.commercial.guaranteeDays) : null}</Row>}
               {r.commercial && <Row k="Payment terms">{r.commercial.paymentTerms}</Row>}
-              <Row k="Requirement">{r.agreement?.held ? 'Held at Agreement Check' : agreementActive ? 'May go live' : 'Cannot go live until Active'}</Row>
+              <Row k="Can open?">{r.agreement?.held ? 'Waiting for agreement' : agreementActive ? 'Yes' : 'After agreement is signed'}</Row>
               {showAgreementTab && (
                 <button type="button" className="btn btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => setTab('agreement')}>
-                  Agreement details →
+                  See agreement
                 </button>
               )}
             </div>
           )}
           {r.portal && (
             <div className="card section">
-              <h3 style={{ fontSize: 13, marginBottom: 8 }}>Job Portal</h3>
-              <Row k="Published">
+              <h3 style={{ fontSize: 13, marginBottom: 8 }}>Job portal</h3>
+              <Row k="On the job portal">
                 {r.portal.published
-                  ? <StatusChip tone="green">{`Published${r.portal.publishedAt ? ` · ${fmtShort(r.portal.publishedAt)}` : ''}`}</StatusChip>
-                  : <StatusChip tone="grey">Not published</StatusChip>}
+                  ? <StatusChip tone="green">{`Yes${r.portal.publishedAt ? ` · ${fmtShort(r.portal.publishedAt)}` : ''}`}</StatusChip>
+                  : <StatusChip tone="amber">Not yet</StatusChip>}
               </Row>
               <Row k="Applications">
-                {r.portal.applications ? <Link to={candidatesLink(r.id)}>{nf(r.portal.applications)}</Link> : '0'}
+                {r.portal.applications ? <Link to={candidatesLink(r.id)}>{nf(r.portal.applications)}</Link> : 'None yet'}
               </Row>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12, marginTop: 6 }}>
-                {r.portal.published && <a href={jobPortalJobUrl(portalUrl, r.id)} target="_blank" rel="noreferrer">View on Job Portal ↗</a>}
-                {r.portal.workspace && <Link to="/candidates?view=job-portal">Job Portal Candidates →</Link>}
-              </div>
             </div>
           )}
-          {/* User notes #7 / #6 — where it is posted, and who is nearby.
-              postingLog is only on an internal payload (never a client's). */}
-          {r.postingLog && <PostedOnPanel requirementId={r.id} onChanged={load} />}
-          {p.matching && <LocationCandidatesPanel requirementId={r.id} summaryOnly onOpenList={() => setTab('candidates')} />}
-          <details className="card">
-            <summary style={{ fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Your permissions on this record</summary>
-            <div style={{ marginTop: 8 }}>
-              {[['View', p.view], ['Edit', p.edit], ['Approve', p.approve], ['Assign', p.assign], ['Share / post', p.share], ['Export', p.export]]
-                .map(([label, on]) => (
-                  <div className="kv" key={label}>
-                    <span className="k">{label}</span>
-                    <StatusChip tone={on ? 'green' : 'grey'}>{on ? 'Allowed' : 'Not allowed'}</StatusChip>
-                  </div>
-                ))}
-              <div className="small-muted" style={{ marginTop: 8, fontSize: 11.5 }}>
-                Resolved server-side by the permission engine and this record&apos;s own assignment — the API
-                refuses anything marked Not allowed, whatever this page renders.
-              </div>
-            </div>
-          </details>
+          {/* People nearby: the full list is on the Candidates tab. */}
         </div>
       </div>
 
+      {/* fit_ (user, 2026-10-03): the best-fitting people show right below the job, as soon as it opens. */}
+      {p.matching && (
+        <RequirementMatchesPanel
+          requirementId={r.id}
+          limit={10}
+          onOpenAll={() => setTab('candidates')}
+          onAdd={async (candidateId) => { await api.post('/applications', { candidateId, requirementId: r.id }); refreshAfterChange(); }}
+        />
+      )}
+      {p.matching && (
+        <SimilarCandidatesPanel
+          requirementId={r.id}
+          onAdd={async (candidateId) => { await api.post('/applications', { candidateId, requirementId: r.id }); refreshAfterChange(); }}
+        />
+      )}
+
       <div className="card section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div style={{ flex: '1 1 420px' }}>
-          <b style={{ fontSize: 13 }}>Job Posting &amp; Portal Sync</b>
-          <div className="small-muted" style={{ fontSize: 12, marginTop: 2 }}>
-            {'Posting: '}
-            <span className={`status ${postingStatus === 'Posted' ? 'active' : 'pending'}`}>{postingStatus}</span>
-            {!agreementActive && <span style={{ color: 'var(--red)' }}> · agreement not Active — posting blocked</span>}
-          </div>
-          {sources.length > 0 && (
-            <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
-              {sources.map((s) => {
-                const st = sourceState(s);
-                return (
-                  <div key={s} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
-                    <b style={{ minWidth: 150 }}>{s}</b>
-                    <span className={`status ${st.cls}`}>{st.label}</span>
-                    <span className="small-muted" style={{ flex: '1 1 260px' }}>
-                      {st.note}
-                      {st.link && <> · <a href={/^https?:/i.test(st.link) ? st.link : `https://${st.link}`} target="_blank" rel="noopener noreferrer">open listing</a></>}
-                    </span>
-                    {(p.edit || p.share) && (
-                      <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {/* Publish only where POST /job-portal/jobs/:id/publish will accept it
-                            (r.portal.canPublish — review #3 access audit). */}
-                        {s === JOB_PORTAL && r.portal && r.portal.canPublish && (r.portalPublished
-                          ? <>
-                            <a className="btn btn-sm" href={jobPortalJobUrl(portalUrl, r.id)} target="_blank" rel="noreferrer">View on Job Portal ↗</a>
-                            <button className="btn btn-sm" onClick={() => publishToPortal(false)}>Unpublish</button>
-                          </>
-                          : <button className="btn btn-sm btn-primary" onClick={() => publishToPortal(true)}>Publish</button>)}
-                        {s === 'Social Media' && SHARE.map(([ch, urlOf]) => (
-                          <button key={ch} className="btn btn-sm" onClick={() => share(ch, urlOf)}>Share · {ch}</button>
-                        ))}
-                        {['Naukri', 'Indeed', 'Shine'].includes(s) && (
-                          <>
-                            <button className="btn btn-sm" onClick={() => copyText(postingText(s), `Posting text for ${s} copied — paste it into ${s}.`)}>Copy posting text</button>
-                            {st.label === 'Posted'
-                              ? <button className="btn btn-sm" onClick={() => logPosting(s, 'Removed')}>Mark removed</button>
-                              : <button className="btn btn-sm btn-primary" onClick={() => markPosted(s)}>Mark as posted</button>}
-                            {['Indeed', 'Shine'].includes(s) && r.portalPublished && (
-                              <button className="btn btn-sm" onClick={() => copyText(`${origin}/api/public/jobs.xml`, `Feed URL copied — add it in your ${s} employer account.`)}>Copy feed URL</button>
-                            )}
-                          </>
-                        )}
-                        {s === 'TeamLink Website' && (
-                          <button className="btn btn-sm" onClick={() => copyText(`${origin}/api/public/jobs.feed`, 'Website feed URL copied — give it to whoever maintains tmlink.in.')}>Copy feed URL</button>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-              {onLocalhost && (
-                <div className="small-muted" style={{ fontSize: 11.5 }}>
-                  The app is running on this computer (localhost), so shared links and feed URLs only work here. They work for everyone once the app is online.
-                </div>
-              )}
-            </div>
-          )}
-          {!sources.length && <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>No posting sources selected yet — tick them in Edit Requirement.</div>}
+          <b style={{ fontSize: 13 }}>Where it is posted</b>
+          {!agreementActive && !r.internal && <div className="small-muted" style={{ fontSize: 12, marginTop: 2, color: 'var(--amber)' }}>Posting starts once the agreement is signed.</div>}
+          {r.postingLog
+            ? <div style={{ marginTop: 8 }}><JobPostingSites requirementId={r.id} version={r.updatedAt} postingText={postingText} onChanged={load} /></div>
+            : null}
+          {!r.internal && <PartnerShare requirementId={r.id} onChanged={load} />}
         </div>
+        {/* Two buttons: "Job description" (view, preview the post, generate)
+            and "Share" (LinkedIn / Facebook / WhatsApp / X, each one saved). */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button className="btn btn-sm" onClick={() => setDialog('jd')}>View Job Description</button>
-          <button className="btn btn-sm" onClick={() => setDialog('posting')}>Preview Job Posting</button>
-          {p.share && <button className="btn btn-sm" onClick={() => runAction('generate-jd')}>Generate job description</button>}
-          {p.share && (
-            <Combo value={r.portalSyncStatus || 'Not Synced'} onChange={(e) => runAction('portal-sync', { portalSyncStatus: e.target.value })}>
-              {PORTAL_SYNC_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </Combo>
-          )}
+          <button className="btn btn-sm" onClick={() => setDialog('jd')}>Job description</button>
+          {(p.edit || p.share) && <button className="btn btn-sm" aria-expanded={shareOpen} onClick={() => setShareOpen((o) => !o)}>Share</button>}
         </div>
+        {shareOpen && (p.edit || p.share) && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', flex: '1 1 100%' }}>
+            <span className="small-muted" style={{ fontSize: 12 }}>Share on:</span>
+            {SHARE.map(([ch, urlOf]) => (
+              <button key={ch} type="button" className="btn btn-sm btn-ghost" onClick={() => share(ch, urlOf)}>{ch}</button>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
@@ -730,7 +679,7 @@ export default function RequirementDetail() {
     <>
       <div className="card section" id="pipeline">
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-          <h3 style={{ fontSize: 14, margin: 0 }}>{`Candidates on this requirement (${nf(applications.length)})`}</h3>
+          <h3 style={{ fontSize: 14, margin: 0 }}>{applications.length ? `People in process (${nf(applications.length)})` : 'People in process'}</h3>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <label className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
               Show
@@ -745,7 +694,8 @@ export default function RequirementDetail() {
         </div>
         <div className="tbl-wrap">
           <table>
-            <thead><tr><th>Candidate</th><th>Stage</th><th>Score</th><th>Updated</th><th>Move to…</th></tr></thead>
+            {/* Source + Applied (Save & Post spec §20): where each person came from — the site of the apply link (?src=) or how they were added. */}
+            <thead><tr><th>Candidate</th><th>Step</th><th>Fit %</th><th>Source</th><th>Applied</th><th>Updated</th><th>Move to step</th></tr></thead>
             <tbody>
               {paged.slice.map((a) => (
                 <tr key={a.id}>
@@ -756,9 +706,12 @@ export default function RequirementDetail() {
                         {[a.candidate?.location, a.candidate?.experienceYears != null ? `${a.candidate.experienceYears} yrs` : null].filter(Boolean).join(' · ')}
                       </div>
                     )}
+                    <OverrideBadge reason={a.overrideReason} by={a.overrideByName} at={a.overrideAt} />
                   </td>
                   <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
-                  <td>{a.matchScore != null ? `${a.matchScore}%` : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
+                  <td>{a.matchScore != null ? <FitWithVersion score={a.matchScore} version={a.matchVersion} /> : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
+                  <td className="cell-muted">{a.firstSource || a.source || '—'}</td>
+                  <td className="cell-muted">{a.createdAt ? protoDate(a.createdAt) : '—'}</td>
                   <td className="cell-muted">{a.updatedAt ? protoDate(a.updatedAt) : '—'}</td>
                   <td>
                     {/* requestStage() routes Reject/Hold through the reason
@@ -773,7 +726,7 @@ export default function RequirementDetail() {
                 </tr>
               ))}
               {pipeRows.length === 0 && (
-                <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>{applications.length ? 'No candidates at this point.' : 'No candidates on this requirement yet.'}</td></tr>
+                <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>{applications.length ? 'No one at this step.' : 'No one added yet. Add a candidate below.'}</td></tr>
               )}
             </tbody>
           </table>
@@ -799,10 +752,10 @@ export default function RequirementDetail() {
                     <b>{c.name}</b>
                     <span className="small-muted">{[c.location, c.experienceYears != null ? `${c.experienceYears} yrs` : null].filter(Boolean).map((x) => ` · ${x}`).join('')}</span>
                   </span>
-                  <button type="button" className="btn btn-sm btn-primary" onClick={() => linkCandidate(c.id)}>Add to pipeline</button>
+                  <button type="button" className="btn btn-sm btn-primary" onClick={() => linkCandidate(c.id)}>Add to job</button>
                 </div>
               ))}
-              {linkHits.length === 0 && <div className="reqbulk-row small-muted">No matching candidate in your scope who is not already on this requirement.</div>}
+              {linkHits.length === 0 && <div className="reqbulk-row small-muted">No one found. Try another name or phone.</div>}
             </div>
           )}
         </div>
@@ -810,64 +763,15 @@ export default function RequirementDetail() {
 
       {p.matching && <LocationCandidatesPanel requirementId={r.id} onAdded={refreshAfterChange} />}
 
+      {/* resume_: the 3-number match (Overall · Resume · Location), components/resume/MatchSplit.jsx. */}
       {p.matching && (
-        <div className="card section" id="matching">
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-            <div>
-              <h3 style={{ fontSize: 14, margin: 0 }}>Suggested matches from the candidate master</h3>
-              <div className="small-muted" style={{ fontSize: 12, marginTop: 2 }}>
-                Deterministically matched on skills, location, experience and preferences. Recruiter review is required before anyone is shared further.
-              </div>
-            </div>
-            <button type="button" className="btn btn-sm" disabled={matchingBusy} onClick={findMatches}>
-              {matchingBusy ? 'Matching…' : matching ? 'Refresh matches' : 'Find matching candidates'}
-            </button>
-          </div>
-          {matching && (
-            <>
-              <div className="small-muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-                {`${nf(matching.strong)} at or above ${matching.threshold ?? r.matchThreshold ?? 70}% · ${nf(matching.total)} at 50% or more · showing the top ${matching.rows.length}`}
-              </div>
-              <div className="tbl-wrap">
-                <table>
-                  <thead>
-                    <tr><th>Candidate</th><th>Location</th><th>Experience</th><th>Matching Skills</th><th>Missing Mandatory</th><th>Score</th><th>Action</th></tr>
-                  </thead>
-                  <tbody>
-                    {matching.rows.map((c) => (
-                      <tr key={c.id}>
-                        <td>{c.name}</td>
-                        <td>{c.location || '—'}</td>
-                        <td>{c.experienceYears != null ? `${c.experienceYears} yrs` : '—'}</td>
-                        <td>
-                          {c.match.matchedSkills.slice(0, 3).length
-                            ? c.match.matchedSkills.slice(0, 3).map((s) => <span className="skillpill match" key={s}>{s}</span>)
-                            : <span className="cell-muted">—</span>}
-                        </td>
-                        <td>
-                          {c.match.missingSkills.length
-                            ? c.match.missingSkills.slice(0, 3).map((s) => <span className="skillpill" key={s}>{s}</span>)
-                            : <span className="status active">None</span>}
-                        </td>
-                        <td><span className="link-btn">{c.match.overall}%</span></td>
-                        {/* p.pipelineEdit, not p.pipeline: reading the match
-                            list is a view, adding to the pipeline is a write. */}
-                        <td>
-                          {p.pipelineEdit
-                            ? <button className="btn btn-sm btn-primary" onClick={() => linkCandidate(c.id)}>Add to Pipeline</button>
-                            : <span className="cell-muted">—</span>}
-                        </td>
-                      </tr>
-                    ))}
-                    {matching.rows.length === 0 && (
-                      <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No candidate outside this pipeline matches 50% or more right now.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </div>
+        <RequirementMatchTabs
+          requirementId={r.id}
+          title={r.title}
+          clientName={r.internal ? 'TeamLink internal' : r.client?.name}
+          onAdd={linkCandidate}
+          onChanged={refreshAfterChange}
+        />
       )}
     </>
   );
@@ -877,34 +781,30 @@ export default function RequirementDetail() {
       <div>
         {/* THE ASSIGNMENT CHAIN — this is what drives scope. */}
         <div className="card section">
-          <h3 style={{ fontSize: 13, marginBottom: 4 }}>Assignment</h3>
-          <div className="small-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
-            Requirement → Assigned TL → Assigned Recruiter(s) → BDE → Client
-          </div>
-          <Row k="Assigned TL">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
-          <Row k="Assigned Recruiter">{[r.recruiter?.name, seatText(r.seats?.recruiter)].filter(Boolean).join(' · ')}</Row>
+          <h3 style={{ fontSize: 13, marginBottom: 8 }}>Team</h3>
+          <Row k="Team lead">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
+          <Row k="Recruiter">{[r.recruiter?.name, seatText(r.seats?.recruiter)].filter(Boolean).join(' · ')}</Row>
           <Row k="Co-recruiters">
             {(r.coRecruiters || []).length ? (r.coRecruiters || []).map((c) => [c.name, seatText(c.seat)].filter(Boolean).join(' · ')).join(', ') : null}
           </Row>
-          <Row k="BDE">{r.bde?.name}</Row>
-          <Row k="STL">{r.stlName || r.stl}</Row>
-          <Row k="Account Manager">{r.accountManager || r.client?.accountManager}</Row>
+          <Row k="Client manager (BDE)">{r.bde?.name}</Row>
+          <Row k="Senior team lead">{r.stlName || r.stl}</Row>
+          <Row k="Account manager">{r.accountManager || r.client?.accountManager}</Row>
           {!r.recruiter && r.workedBy && <Row k="Worked by">{[r.workedBy, r.workedByPosition].filter(Boolean).join(' · ')}</Row>}
           {p.assign ? (
             <button className="btn btn-sm btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => openAssign(r)}>
-              Change assignment
+              Change team
             </button>
           ) : (
-            <div className="small-muted" style={{ marginTop: 8 }}>You can view this assignment but not change it — ASSIGN is a separate permission from VIEW.</div>
+            <div className="small-muted" style={{ marginTop: 8 }}>Only your team lead can change the team.</div>
           )}
         </div>
       </div>
       <div>
         <div className="card section">
-          <h3 style={{ fontSize: 13, marginBottom: 4 }}>Who has worked this requirement</h3>
-          <div className="small-muted" style={{ fontSize: 11.5, marginBottom: 8 }}>Everyone who moved one of its candidates, newest first.</div>
+          <h3 style={{ fontSize: 13, marginBottom: 8 }}>Who worked on this job</h3>
           {workers === null && <div className="small-muted">Loading…</div>}
-          {workers && workers.length === 0 && <div className="small-muted">Nobody has moved a candidate on this requirement yet.</div>}
+          {workers && workers.length === 0 && <div className="small-muted">No one has worked on it yet.</div>}
           {workers && workers.length > 0 && (
             <div className="tbl-wrap">
               <table>
@@ -931,7 +831,7 @@ export default function RequirementDetail() {
     <div className="card section" style={{ maxWidth: 760 }}>
       <h3 style={{ fontSize: 13, marginBottom: 10 }}>Client</h3>
       {r.internal ? (
-        <div className="small-muted">Internal TeamLink hiring — there is no client on this requirement.</div>
+        <div className="small-muted">Internal hiring. No client on this job.</div>
       ) : r.sections && r.sections.clientContact ? (
         <>
           <Row k="Client">{r.clientLink ? <Link to={`/clients/${r.clientId}`}>{r.client?.name}</Link> : r.client?.name}</Row>
@@ -942,8 +842,8 @@ export default function RequirementDetail() {
           <Row k="Primary contact">{[r.client?.contactName, r.client?.contactDesignation].filter(Boolean).join(' · ')}</Row>
           {r.sections.clientContact === 'full' && <Row k="Contact">{[r.client?.contactPhone, r.client?.contactEmail].filter(Boolean).join(' · ')}</Row>}
           <Row k="Owner BDE">{[r.client?.bdeOwner || r.client?.accountManager, r.bde?.name].filter(Boolean).join(' · ')}</Row>
-          {r.sections.clientContact === 'names' && <div className="small-muted" style={{ marginTop: 8 }}>Contact names only — phone and e-mail stay with the client desk.</div>}
-          {r.clientLink && <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}`}>Open Client 360 →</Link>}
+          {r.sections.clientContact === 'names' && <div className="small-muted" style={{ marginTop: 8 }}>Only the client manager (BDE) sees phone and email.</div>}
+          {r.clientLink && <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}`}>Open client</Link>}
         </>
       ) : !r.sections && clientDesk ? (
         <>
@@ -960,13 +860,13 @@ export default function RequirementDetail() {
           <Row k="Agreement">
             <span className={`status ${agreementBadgeClass(r.client?.agreementStatus)}`}>{agreementStatusLabel(r.client?.agreementStatus)}</span>
           </Row>
-          <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}`}>Open the client →</Link>
+          <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}`}>Open client</Link>
         </>
       ) : (
         <>
           <Row k="Client">{r.client?.name}</Row>
           <div className="small-muted" style={{ marginTop: 8 }}>
-            Client details are kept on the Clients module (Admin, Manager and BDE). You see the client&apos;s name and this requirement.
+            Only the client manager (BDE) sees more client details.
           </div>
         </>
       )}
@@ -977,12 +877,12 @@ export default function RequirementDetail() {
     <>
       <div className="card section">
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-          <h3 style={{ fontSize: 14, margin: 0 }}>{`Client & recruitment interviews (${nf(interviewRows.length)})`}</h3>
-          <Link className="btn btn-sm" to="/ats/calendar">Interview Calendar →</Link>
+          <h3 style={{ fontSize: 14, margin: 0 }}>{interviewRows.length ? `Interviews (${nf(interviewRows.length)})` : 'Interviews'}</h3>
+          <Link className="btn btn-sm" to="/ats/calendar">Interview Calendar</Link>
         </div>
         <div className="tbl-wrap">
           <table>
-            <thead><tr><th>Candidate</th><th>Stage</th><th>Interview</th><th>When</th><th>Status</th><th>Mode / Interviewer</th><th>Client result</th></tr></thead>
+            <thead><tr><th>Candidate</th><th>Step</th><th>Interview</th><th>When</th><th>Status</th><th>Mode / Interviewer</th><th>Client result</th></tr></thead>
             <tbody>
               {ipaged.slice.map((a) => (
                 <tr key={a.id}>
@@ -995,7 +895,7 @@ export default function RequirementDetail() {
                   <td className="cell-muted">{a.interviewResult || '—'}</td>
                 </tr>
               ))}
-              {interviewRows.length === 0 && <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No interviews on this requirement yet.</td></tr>}
+              {interviewRows.length === 0 && <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No interviews yet. Book one from a candidate.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1005,7 +905,7 @@ export default function RequirementDetail() {
       {aiRows.length > 0 && (
         <div className="card section">
           <h3 style={{ fontSize: 14, marginBottom: 4 }}>{`AI interviews (${nf(aiRows.length)})`}</h3>
-          <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>The AI interview score is separate from client interview feedback and is never combined with it.</div>
+          <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>AI score is kept apart from client feedback.</div>
           <div className="tbl-wrap">
             <table>
               <thead><tr><th>Candidate</th><th>AI interview status</th><th>AI score</th></tr></thead>
@@ -1030,7 +930,7 @@ export default function RequirementDetail() {
     <div className="card section" style={{ maxWidth: 760 }}>
       <h3 style={{ fontSize: 13, marginBottom: 10 }}>Agreement</h3>
       {r.internal || ag.internal ? (
-        <div className="small-muted">Internal TeamLink hiring — no client agreement applies.</div>
+        <div className="small-muted">Internal hiring. No agreement needed.</div>
       ) : (
         <>
           <Row k="Client">{clientName}</Row>
@@ -1048,26 +948,26 @@ export default function RequirementDetail() {
           {r.client?.agreementId !== undefined && (
             <>
               <Row k="Agreement ID">{r.client?.agreementId}</Row>
-              <Row k="Agreement Date">{r.client?.agreementStart}</Row>
+              <Row k="Agreement date">{r.client?.agreementStart}</Row>
               <Row k="Expiry">{r.client?.agreementEnd}</Row>
             </>
           )}
-          <Row k="Requirement">{ag.held ? 'Held at Agreement Check — not live' : agreementActive ? 'May go live' : 'Cannot go live until the agreement is Active'}</Row>
-          <Row k="Next step">{agreementActive ? 'Nothing — the agreement is Active.' : ag.nextStep}</Row>
+          <Row k="Can open?">{ag.held ? 'Waiting for agreement' : agreementActive ? 'Yes' : 'After agreement is signed'}</Row>
+          <Row k="Next step">{agreementActive ? 'Nothing. The agreement is signed.' : ag.nextStep}</Row>
           {!agreementActive && (
             ag.canOpen ? (
               <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <Link className="btn btn-sm btn-primary" to={`/clients/${r.clientId}?tab=agreements`}>Open the client&apos;s Agreement tab →</Link>
-                {!ag.canManage && <span className="small-muted">An Admin completes the agreement itself.</span>}
+                <Link className="btn btn-sm btn-primary" to={`/clients/${r.clientId}?tab=agreements`}>Open agreement</Link>
+                {!ag.canManage && <span className="small-muted">Admin finishes the agreement.</span>}
               </div>
             ) : (
               <div className="small-muted" style={{ marginTop: 10 }}>
-                {`Ask the BDE${r.bde?.name ? ` (${r.bde.name})` : ''} or an Admin who owns ${clientName} to complete the agreement. When it is Active, this requirement can be activated.`}
+                {`Ask the client manager (BDE)${r.bde?.name ? `, ${r.bde.name},` : ''} to get it signed.`}
               </div>
             )
           )}
           {agreementActive && ag.canOpen && (
-            <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}?tab=agreements`}>Open the agreement →</Link>
+            <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}?tab=agreements`}>Open agreement</Link>
           )}
         </>
       )}
@@ -1077,7 +977,7 @@ export default function RequirementDetail() {
   const activityTab = (
     <div className="card section">
       <h3 style={{ fontSize: 14, marginBottom: 4 }}>Activity</h3>
-      <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>Who did what, when and why — on the requirement and on its candidates.</div>
+      <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>Who did what and when on this job.</div>
       {activity === null && <div className="small-muted">Loading…</div>}
       {activity && activity.length === 0 && <div className="small-muted">No activity recorded yet.</div>}
       {activity && activity.length > 0 && (
@@ -1125,60 +1025,113 @@ export default function RequirementDetail() {
 
   return (
     <div>
-      <Link className="small-muted" to="/requirements">← Jobs &amp; Requirements</Link>
+      <Link className="small-muted" to="/requirements">← Jobs</Link>
 
       <div className="page-head" style={{ marginTop: 10, marginBottom: 6 }}>
         <div>
           <h1 style={{ fontSize: 20 }}>{`${r.reqCode ? `${r.reqCode} · ` : ''}${r.title}`}</h1>
           <div className="page-sub reqrole" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className={`rr-type ${r.internal ? 'internal' : 'client'}`} style={{ marginTop: 0 }}>{r.internal ? 'INTERNAL' : 'CLIENT'}</span>
+            <span className={`rr-type ${r.internal ? 'internal' : 'client'}`} style={{ marginTop: 0 }}>{r.internal ? 'Internal' : 'Client'}</span>
             {r.internal
-              ? <span className="rr-org-internal">Organization: TeamLink (internal)</span>
-              : (r.clientLink ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} title="Open Client 360">{clientName}</Link> : <span>{clientName}</span>)}
+              ? <span className="rr-org-internal">TeamLink (internal)</span>
+              : (r.clientLink ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} title="Open client">{clientName}</Link> : <span>{clientName}</span>)}
+            {!r.internal && <ClientPausedBadge lifecycle={r.client?.lifecycle} />}
             <span>{[r.department, r.location].filter(Boolean).join(' · ')}</span>
-            {r.unassigned && <span className="rr-unassigned">Unassigned</span>}
+            {requirementIsLive(r.status) && (!r.tlId || (!r.recruiterId && !(r.coRecruiters || []).length)) && <span className="rr-unassigned">{!r.tlId ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
             {r.daysOpen !== null && r.daysOpen !== undefined && <span className={`rr-days${r.daysOpen >= 15 ? ' overdue' : ''}`}>{`Open ${r.daysOpen} days`}</span>}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* EDIT REQUIREMENT opens the same form Create Requirement uses;
               p.edit is resolved on the server with the record-level check. */}
+          <JobStatusChip job={r} />
           {p.edit && (
             <button className="btn btn-sm" onClick={() => { setNotice(''); ensureClients(); ensurePeople(); setDialog('edit'); }}>
-              Edit Requirement
+              Edit job
             </button>
           )}
-          {p.assign && <button className="btn btn-sm" onClick={() => openAssign(r)}>Assign Recruiter</button>}
-          <StatusChip status={requirementStatusLabel(r.status)} tone={reqStatusTone(r.status)} />
+          {/* B9.4: Copy job → a new Draft with the same details (dates, sites and the team cleared), opened at once. */}
+          {can(user, 'ats', 'requirements', 'Create Requirement', 'create') && (
+            <button
+              className="btn btn-sm"
+              title="Makes a new Draft with the same job details. Dates, posting sites and the team start empty."
+              onClick={async () => {
+                setError('');
+                try {
+                  const res = await api.post(`/requirements/${id}/copy`, {});
+                  navigate(`/requirements/${res.data.id}`);
+                } catch (err) { setError(err.response?.data?.error || 'Could not copy this job.'); }
+              }}
+            >
+              Copy job
+            </button>
+          )}
+          {/* Department-wise: only this job's department's people are offered. */}
+          {p.assign && !r.tlId && <button className="btn btn-sm" onClick={() => setBulkAssign('assign-tl')}>Assign TL</button>}
+          {p.assign && <button className="btn btn-sm" onClick={() => setBulkAssign('assign-recruiter')}>Assign recruiter</button>}
+          {/* The one main button: add people to this job. */}
+          {p.pipelineEdit && <button className="btn btn-sm btn-primary" onClick={() => setTab('candidates')}>Add candidate</button>}
         </div>
       </div>
 
-      <div className="reqdet-strip">
-        <PriorityChip value={r.priority} />
-        <span>{ageText(r.ageDays)}</span>
-        {sla ? <span className={`status ${sla.cls}`} title={sla.title}>{sla.text}</span> : <span>No SLA date</span>}
-        <span title={r.lastActivity ? `${fmtWhen(r.lastActivity.at)}${r.lastActivity.what ? ` — ${r.lastActivity.what}` : ''}` : undefined}>
-          {'Last activity: '}
-          <b>{r.lastActivity ? lastActivityText(r.lastActivity) : 'none yet'}</b>
-        </span>
-        <span>{'Openings '}<b>{nf(r.openings)}</b>{` · filled ${nf(r.filled)} · remaining ${nf(r.remaining)}`}</span>
-      </div>
+      {/* ATS LAYOUT v3 — THE JOB AT A GLANCE: role (the title above), client,
+          department, openings, budget, location, urgency, due date, team. */}
+      {(() => {
+        const dl = deadlineInfo(r);
+        const recruiters = [r.recruiter?.name || r.workedBy, ...(r.coRecruiters || []).map((x) => x.name)].filter(Boolean);
+        const items = [
+          ['Client', clientName],
+          ['Department', r.department || '—'],
+          ['Openings', `${nf(r.openings)}${r.filled ? ` · ${nf(r.filled)} filled` : ''} · ${nf(r.remaining ?? r.openings)} left`],
+          ['Budget', r.salary ? `${r.salary}${r.salaryType ? ` (${r.salaryType})` : ''}` : 'Not set'],
+          ['Location', r.location || '—'],
+          ['Urgency', <PriorityChip key="pr" value={r.priority} />],
+          ['Due date', <span key="dl" style={dl.overdue ? { color: 'var(--red)', fontWeight: 600 } : undefined}>{dl.text}</span>],
+          ['Team', [r.tlName || r.tl ? `TL ${r.tlName || r.tl}` : 'No TL yet', recruiters.length ? recruiters.join(', ') : 'No recruiter yet'].join(' · ')],
+        ];
+        return (
+          <div className="ccr-jobhead" role="group" aria-label="Job summary">
+            {items.map(([k, v]) => (
+              <div key={k}><span className="k">{k}</span><span className="v">{v}</span></div>
+            ))}
+          </div>
+        );
+      })()}
 
-      {/* Review #3 §4 — New → Recruiter Review → TL Review → Client Review →
-          Interview → Selected → Joined; the SAME counts the list's drawer shows. */}
-      <PipelineSteps requirementId={r.id} pipeline={r.pipeline} />
+      {/* Mini funnel of THIS job's people per step (click a step → those
+          people) + View Pipeline → the Candidates & Pipeline board for this job. */}
+      {(() => {
+        const pl = r.pipeline || {};
+        const steps = (pl.steps || []).map((s) => ({ label: s.label, value: s.count, onClick: () => navigate(candidatesLink(r.id, s.stages)) }));
+        const boardLink = `/candidates?view=pipeline&sub=active&requirementId=${encodeURIComponent(r.id)}&layout=board`;
+        return (
+          <div className="ccr-funnel-row">
+            <div className="ccr-chart">
+              <h3>{pl.candidates ? `People on this job (${nf(pl.candidates)})` : 'People on this job'}</h3>
+              <div className="ccr-sub">Each step shows how many people are there now. Click a step to see them.</div>
+              <FunnelChart steps={steps} title="People on this job by step" empty="No one added yet" />
+            </div>
+            <div className="ccr-chart ccr-side">
+              <h3>Progress</h3>
+              <Link className="btn btn-primary" to={boardLink}>View Pipeline</Link>
+              <Link className="btn btn-sm" to={candidatesLink(r.id)}>{pl.candidates ? `All ${nf(pl.candidates)} people` : 'No one yet'}</Link>
+              {pl.hold ? <Link className="btn btn-sm btn-ghost" to={candidatesLink(r.id, ['HOLD'])}>{`${nf(pl.hold)} on hold`}</Link> : null}
+              {pl.rejected ? <Link className="btn btn-sm btn-ghost" to={candidatesLink(r.id, ['REJECTED'])}>{`${nf(pl.rejected)} rejected`}</Link> : null}
+            </div>
+          </div>
+        );
+      })()}
 
       {notice && <div className="notice">{notice}</div>}
+      {!r.internal && <ClientPausedBanner clientName={clientName} lifecycle={r.client?.lifecycle} />}
       {!agreementActive && !r.internal && tab !== 'agreement' && (
         <div className="notice amber" style={{ alignItems: 'center' }}>
           <span>
-            {'Agreement gate: '}
+            {'Waiting for agreement. This job opens once '}
             <b>{clientName}</b>
-            {"'s agreement is "}
-            <b>{showAgreementTab ? agreementStatusLabel(r.client?.agreementStatus) : 'not Active yet'}</b>
-            {' — this requirement cannot go live until it is Active.'}
+            {' signs.'}
           </span>
-          {showAgreementTab && <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setTab('agreement')}>Agreement →</button>}
+          {showAgreementTab && <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setTab('agreement')}>See agreement</button>}
         </div>
       )}
       {error && <div className="error-text">{error}</div>}
@@ -1187,7 +1140,7 @@ export default function RequirementDetail() {
         {tabs.map((t) => (
           <div key={t} className={`tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
             {TAB_LABELS[t]}
-            {tabCount[t] !== undefined && <span className="n" style={{ marginLeft: 4, opacity: 0.75 }}>{nf(tabCount[t])}</span>}
+            {tabCount[t] ? <span className="n" style={{ marginLeft: 4, opacity: 0.75 }}>{nf(tabCount[t])}</span> : null}
           </div>
         ))}
       </div>
@@ -1196,131 +1149,60 @@ export default function RequirementDetail() {
 
       {dialog === 'assign' && assign && (
         <Modal
-          title="Change assignment"
+          title="Change team"
           onClose={() => setDialog(null)}
           footer={(
             <>
               <button className="btn" onClick={() => setDialog(null)}>Cancel</button>
               <button className="btn btn-primary" onClick={async () => { if (await runAction('assign', assign)) setDialog(null); }}>
-                Save assignment
+                Save
               </button>
             </>
           )}
         >
           <div className="small-muted" style={{ marginBottom: 10 }}>
-            Changing this changes who can see the requirement. A recruiter sees the ones assigned to them,
-            a TL the ones they lead plus their team&apos;s, a BDE their clients&apos;.
+            This changes who can see the job.
           </div>
           {people === null && <div className="small-muted" style={{ marginBottom: 8 }}>Loading people…</div>}
-          {(() => {
-            // §10 — Department (the requirement's) → Section → TL → Recruiter.
-            const cas = assignCascade(tree.data, peopleList, {
-              department: r.department, section: assign.section || '', tlId: assign.tlId,
-              keep: [r.tlId, r.recruiterId, ...(r.coRecruiters || []).map((c) => c.id)].filter(Boolean), keepTlId: r.tlId || '',
-            });
-            const recFits = (id) => !id || cas.recruiters.some((x) => x.id === id);
-            const pickSection = (section) => {
-              const next = assignCascade(tree.data, peopleList, { department: r.department, section, tlId: '' });
-              const fits = (id) => !id || !section || next.recruiters.some((x) => x.id === id);
-              setAssign({
-                ...assign,
-                section,
-                tlId: !section || next.tls.some((t) => t.id === assign.tlId) ? assign.tlId : '',
-                recruiterId: fits(assign.recruiterId) ? assign.recruiterId : '',
-                recruiterIds: assign.recruiterIds.filter(fits),
-              });
-            };
-            const pickTl = (tlId) => {
-              const next = assignCascade(tree.data, peopleList, { department: r.department, section: assign.section || '', tlId });
-              const fits = (id) => !id || next.recruiters.some((x) => x.id === id);
-              setAssign({
-                ...assign,
-                tlId,
-                recruiterId: fits(assign.recruiterId) ? assign.recruiterId : '',
-                recruiterIds: assign.recruiterIds.filter(fits),
-              });
-            };
-            return (
-              <>
-                {cas.sections.length > 0 && (
-                  <label className="field">
-                    <span>{`Section · ${r.department}`}</span>
-                    <Combo value={cas.section} onChange={(e) => pickSection(e.target.value)}>
-                      <option value="">All sections</option>
-                      {cas.sections.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                    </Combo>
-                  </label>
-                )}
-                <label className="field">
-                  <span>{`Assigned TL${r.department ? ` · ${r.department}` : ''}`}</span>
-                  <Combo value={assign.tlId} onChange={(e) => pickTl(e.target.value)}>
-                    <option value="">— Not assigned —</option>
-                    {cas.tls.map((t) => <option key={t.id} value={t.id}>{`${t.name}${t.seat?.code ? ` · ${t.seat.code}` : ''}`}</option>)}
-                  </Combo>
-                </label>
-                <label className="field">
-                  <span>{`Assigned Recruiter${assign.tlId ? ' · this TL\'s team' : ''}`}</span>
-                  <Combo value={recFits(assign.recruiterId) ? assign.recruiterId : ''} onChange={(e) => setAssign({ ...assign, recruiterId: e.target.value })}>
-                    <option value="">— Not assigned —</option>
-                    {cas.recruiters.map((t) => <option key={t.id} value={t.id}>{`${t.name}${t.seat?.code ? ` · ${t.seat.code}` : ''}`}</option>)}
-                  </Combo>
-                </label>
-              </>
-            );
-          })()}
-          <div className="field">
-            <span>Co-recruiters</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-              {assignCascade(tree.data, peopleList, {
-                department: r.department, section: assign.section || '', tlId: assign.tlId, keep: [...assign.recruiterIds, ...(r.coRecruiters || []).map((c) => c.id)], keepTlId: r.tlId || '',
-              }).recruiters.filter((t) => t.id !== assign.recruiterId).map((t) => (
-                <label key={t.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: 'auto' }}
-                    checked={assign.recruiterIds.includes(t.id)}
-                    onChange={() => setAssign({
-                      ...assign,
-                      recruiterIds: assign.recruiterIds.includes(t.id)
-                        ? assign.recruiterIds.filter((x) => x !== t.id)
-                        : [...assign.recruiterIds, t.id],
-                    })}
-                  />
-                  {t.name}
-                </label>
-              ))}
-            </div>
-          </div>
+          {/* 2026-10-05: any department's team lead; recruiters = that team lead's team, least busy first. */}
+          <TeamPickers job={r} value={assign} onChange={setAssign} fallback={peopleList} />
           <label className="field">
-            <span>BDE</span>
+            <span>Client manager (BDE)</span>
             <Combo value={assign.bdeId} onChange={(e) => setAssign({ ...assign, bdeId: e.target.value })}>
               <option value="">— Not assigned —</option>
               {byRole('BDE').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </Combo>
           </label>
           <label className="field">
-            <span>STL</span>
+            <span>Senior team lead</span>
             <Combo value={assign.stlId} onChange={(e) => setAssign({ ...assign, stlId: e.target.value })}>
               <option value="">— None —</option>
               {byRole('STL').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </Combo>
           </label>
-          <label className="field">
-            <span>Account Manager</span>
-            <input value={assign.accountManager} onChange={(e) => setAssign({ ...assign, accountManager: e.target.value })} />
-          </label>
+          {/* Account manager: unchanged here (sent as it is); edit it in Edit job. */}
         </Modal>
+      )}
+
+      {bulkAssign && (
+        <RequirementBulk
+          kind={bulkAssign}
+          items={[{ id: r.id, reqCode: r.reqCode, title: r.title }]}
+          onClose={() => setBulkAssign(null)}
+          onDone={() => { refreshAfterChange(); }}
+        />
       )}
 
       {dialog === 'jd' && (
         <Modal
-          title="Job Description"
+          title="Job description"
           size="wide"
           onClose={() => setDialog(null)}
           footer={(
             <>
               <button className="btn" onClick={() => setDialog(null)}>Close</button>
-              <button className="btn btn-primary" onClick={() => setDialog('posting')}>Preview Job Posting →</button>
+              {p.share && <button className="btn" onClick={async () => { if (await runAction('generate-jd')) setDialog(null); }}>Write it for me</button>}
+              <button className="btn btn-primary" onClick={() => setDialog('posting')}>Preview job post</button>
             </>
           )}
         >
@@ -1330,19 +1212,16 @@ export default function RequirementDetail() {
 
       {dialog === 'posting' && (
         <Modal
-          title="Preview Job Posting"
+          title="Preview job post"
           size="wide"
           onClose={() => setDialog(null)}
-          footer={<button className="btn" onClick={() => setDialog('jd')}>← Back to JD</button>}
+          footer={<button className="btn" onClick={() => setDialog('jd')}>← Back</button>}
         >
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>
-            Candidate-facing preview. This is the same JD that goes to the Job Portal and each selected source.
+            This is what candidates see on every site.
           </div>
-          <Row k="Posting status">
-            <span className={`status ${postingStatus === 'Posted' ? 'active' : 'pending'}`}>{postingStatus}</span>
-          </Row>
-          <Row k="Job Portal Sync">{r.portalSyncStatus || 'Not Synced'}</Row>
-          <Row k="Sources">{sources.length ? sources.map((s) => `${s} (${sourceState(s).label})`).join(', ') : 'None selected'}</Row>
+          {/* Each site's real status is in "Posting sources" on the job page (stored per site). */}
+          <Row k="Sites">{sources.length ? `${sources.join(', ')} — see each site's status under Posting sources.` : 'None picked'}</Row>
           <JobDescription requirement={r} forCandidate />
         </Modal>
       )}

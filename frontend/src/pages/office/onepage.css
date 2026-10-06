@@ -26,33 +26,8 @@
 .oe-btx-v{font-weight:600;font-size:13px;margin-top:2px;overflow-wrap:anywhere;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .oe-btx-s{font-size:11.5px;color:var(--ink-soft);overflow-wrap:anywhere}
 .oe-btx-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--ink-soft)}
-.oe-portals-d{margin-top:12px;border:1px solid var(--line-soft);border-radius:10px}
-.oe-portals-d>summary{list-style:none;cursor:pointer;padding:9px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
-.oe-portals-d>summary::-webkit-details-marker{display:none}
-.oe-portals-d>summary b{font-size:13.5px}
-.oe-portals-d>summary .oe-sec-car{margin-left:2px}
-.oe-portals-d:not([open])>summary .oe-sec-car{transform:rotate(-90deg)}
-.oe-portals-d[open]>summary{border-bottom:1px solid var(--line-soft)}
-.oe-portals-in{padding:10px 12px}
-.oe-portals-in .oe-portal{padding:8px 10px;margin-bottom:6px}
-.oe-portals-more{margin-top:8px}
-.oe-portals-more>summary{cursor:pointer;font-size:12px;color:var(--navy);font-weight:600}
 
 /* ---- 2 · financial overview ---- */
-.oe-fo{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));border:1px solid var(--line-soft);border-radius:10px;overflow:hidden}
-.oe-fo-i{padding:9px 11px;border-right:1px solid var(--line-soft);min-width:0;background:#fff}
-.oe-fo-i:last-child{border-right:0}
-.oe-fo-l{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;line-height:1.25;min-height:2.5em}
-.oe-fo-v{font-family:var(--font-mono);font-size:14.5px;font-weight:700;color:var(--ink);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.oe-fo-s{font-size:10.5px;color:var(--ink-soft);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.oe-fo-i.bad .oe-fo-v{color:var(--red)}
-.oe-fo-i.good .oe-fo-v{color:var(--teal)}
-.oe-fo-note{margin-top:6px;font-size:11.5px;color:var(--ink-soft)}
-.oe-period{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.oe-period .oe-sel{flex:none;width:auto}
-.oe-period .oe-mb-ctl{display:inline-flex;gap:4px;align-items:center}
-.oe-period .oe-mb-ctl .oe-sel[aria-label=Month]{min-width:128px}
-.oe-period>span{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:700}
 
 /* ---- 3 · expenses & bills ---- */
 .oe-lg-bar{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;margin-bottom:10px}
@@ -160,43 +135,15 @@
 .oe-bill-img img{max-width:100%;height:auto}
 
 /* ---- 4 · GST reconciliation ---- */
-.oe-rc-eq{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px}
-.oe-rc-eq b{font-family:var(--font-mono)}
-.oe-rc-op{color:var(--ink-faint);font-weight:700}
-.oe-rc-d{margin-top:10px;border:1px solid var(--line-soft);border-radius:10px}
-.oe-rc-d>summary{cursor:pointer;padding:8px 12px;font-size:13px;font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap;list-style:none}
-.oe-rc-d>summary::-webkit-details-marker{display:none}
-.oe-rc-d:not([open])>summary .oe-sec-car{transform:rotate(-90deg)}
-.oe-rc-d>summary .small-muted{font-weight:400}
-.oe-rc-d[open]>summary{border-bottom:1px solid var(--line-soft)}
-.oe-rc-in{padding:10px 12px}
-table.oe-rc-st{width:100%;max-width:860px;font-size:12.75px}
-table.oe-rc-st td{padding:5px 8px;border-bottom:1px dashed var(--line)}
-main table.oe-rc-st td{white-space:normal}
-main table.oe-rc-st td.num{white-space:nowrap}
-table.oe-rc-st tr.h td{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--navy);font-weight:700;border-bottom:1px solid var(--line);padding-top:10px}
-table.oe-rc-st td.num{text-align:right;font-family:var(--font-mono);white-space:nowrap}
-table.oe-rc-st tr.t td{font-weight:700}
-.oe-rc-tbl{max-height:420px}
-.oe-rc-tbl table{width:100%}
-.oe-rc-tbl th,.oe-rc-tbl td{padding:6px 8px;font-size:12.5px}
 
 @media (max-width:1100px){
-  .oe-fo{grid-template-columns:repeat(4,minmax(0,1fr))}
-  .oe-fo-i:nth-child(4n){border-right:0}
-  .oe-fo-i:nth-child(-n+4){border-bottom:1px solid var(--line-soft)}
   .oe-btx{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:760px){
   .oe-sec-hd{padding:10px 12px}
   .oe-sec-r{margin-left:0;width:100%}
-  .oe-period{width:100%}
-  .oe-period .oe-sel,.oe-lg-bar .oe-sel{width:auto;max-width:100%}
-  .oe-period .oe-mb-ctl .oe-sel[aria-label=Month]{min-width:0}
+  .oe-lg-bar .oe-sel{width:auto;max-width:100%}
   .oe-sec-bd{padding:10px 12px 12px}
-  .oe-fo{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .oe-fo-i:nth-child(2n){border-right:0}
-  .oe-fo-i:nth-child(-n+6){border-bottom:1px solid var(--line-soft)}
   .oe-btx{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}
   .oe-lg-acts{margin-left:0;width:100%}
   .oe-lg-combo{max-width:none;flex:1 1 100%}
@@ -250,4 +197,4 @@ table.oe-rc-st tr.t td{font-weight:700}
 }
 @media (prefers-reduced-motion:reduce){.oe-fs-link{transition:none}}
 /* The GST summary table (GstRecon.jsx) scrolls inside itself on a phone instead of widening the page. */
-@media (max-width:760px){table.oe-rc-st{display:block;overflow-x:auto;max-width:100%}}
+

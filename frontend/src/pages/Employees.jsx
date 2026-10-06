@@ -12,6 +12,7 @@ import { atsRoleLabel, registerRoleLabels } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
 import EmployeeBulkImport from '../components/employees/EmployeeBulkImport.jsx';
+import ManageFieldsModal from '../components/employees/ManageFieldsModal.jsx';
 import GlobalExportPanel from '../components/employees/GlobalExportPanel.jsx';
 // Template export / import (every form field), for everyone who can open this
 // screen — scoped; view-only roles send an import REQUEST (Super Admin approves).
@@ -119,6 +120,7 @@ export default function Employees() {
   const [resetFor, setResetFor] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showImport, setShowImport] = useState(false);
+  const [showFields, setShowFields] = useState(false); // HRMS item 15 — Manage Fields
   // Bulk Import (Sample Excel, .xlsx/.csv upload, row-wise checks, valid rows
   // only) lives in components/employees/EmployeeBulkImport.jsx.
   // GLOBAL EXPORT — the Export Fields panel (components/employees/GlobalExportPanel.jsx).
@@ -558,6 +560,7 @@ export default function Employees() {
             onImported={() => load()}
           />
           {caps.create && <button className="btn" title="Create new employees with logins from the short sample (sign-in links, no passwords)" onClick={() => setShowImport((s) => !s)}>Bulk create + logins</button>}
+          {caps.configure && <button className="btn" title="Add your own fields to the employee form" onClick={() => setShowFields(true)}>Manage Fields</button>}
           {caps.create && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
         </div>
       </div>
@@ -655,6 +658,7 @@ export default function Employees() {
       )}
 
       {showImport && <EmployeeBulkImport onImported={load} />}
+      {showFields && <ManageFieldsModal onClose={() => setShowFields(false)} />}
       {/* Import requests: the Super Admin's queue; everyone else sees their own. */}
       <ImportRequests ioKey="employees" onChanged={load} />
 

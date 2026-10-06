@@ -1365,7 +1365,11 @@ router.post('/courses/:id/materials', MANAGE, EDIT_COURSE(byCourseParam), async 
       stored = await media.receive(req, { filename, contentType: req.headers['content-type'] });
     }
   } catch (err) {
-    return res.status(400).json({ error: media.MESSAGE[err.code] || attachments.MESSAGE[err.code] || 'Could not store the upload.' });
+    // 413 for a file over its cap (the screen says "This video is bigger than
+    // 300 MB."); the connection is closed so the rest of the body is not read.
+    const status = media.STATUS[err.code] || 400;
+    if (status === 413) res.set('Connection', 'close');
+    return res.status(status).json({ error: media.MESSAGE[err.code] || attachments.MESSAGE[err.code] || 'Could not store the upload.' });
   }
   const title = fields.title ? String(fields.title).slice(0, 200) : stored.fileName;
   const created = await prisma.courseMaterial.create({
@@ -1905,7 +1909,7 @@ router.get('/courses/:id/assign-options', ASSIGN, async (req, res) => {
       select: { id: true, name: true, employeeCode: true, department: true, team: true, designation: true },
       orderBy: { name: 'asc' },
     }),
-    prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } }),
+    prisma.department.findMany({ where: require('../utils/masters').activeOnly('Department'), select: { name: true }, orderBy: { name: 'asc' } }),
     prisma.courseAssignment.findMany({ where: { courseId: course.id }, select: { employeeId: true } }),
   ]);
   const assignedIds = new Set(assigned.map((a) => a.employeeId));

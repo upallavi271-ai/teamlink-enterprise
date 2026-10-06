@@ -151,7 +151,7 @@ export function AiStatusDot() {
   return (
     <button
       type="button"
-      className="rolechip"
+      className="rolechip tb-ai"
       style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer' }}
       title={statusText(status)}
       aria-label={statusText(status)}
@@ -180,7 +180,7 @@ function areaOf(pathname) {
 function DueChip({ row }) {
   if (!row.due) return <span className="small-muted">—</span>;
   const today = new Date().toISOString().slice(0, 10);
-  if (row.overdue) return <span className="status overdue">Overdue</span>;
+  if (row.overdue) return <span className="status overdue">Late</span>;
   if (row.due === today) return <span className="status pending">Today</span>;
   return <span className="small-muted">{row.due}</span>;
 }
@@ -210,7 +210,7 @@ function ProposalCard({ card, onConfirm, onCancel }) {
       )}
       {card.state === 'done' && card.message && <div className="small-muted" style={{ marginTop: 6 }}>{card.message}</div>}
       {card.autoExecuted && (card.state === 'done' || card.state === 'failed') && (
-        <div className="small-muted" style={{ marginTop: 6 }}>Carried out without a confirm step — your role has that grant in Role Catalog. Recorded in the audit log as “via AI Agent”.</div>
+        <div className="small-muted" style={{ marginTop: 6 }}>Done without asking first (your role allows it). Saved in the history as “via AI Agent”.</div>
       )}
       {card.state === 'failed' && <div className="ai-action-error">{card.message}</div>}
       {card.state === 'cancelled' && <div className="small-muted" style={{ marginTop: 6 }}>You cancelled this — nothing was changed.</div>}
@@ -330,7 +330,7 @@ function Transcript({
       {busy && (
         <div className="ai-turn ai-turn-assistant small-muted">
           {local
-            ? 'Thinking… the local model reads slowly on this computer — the first answer can take a few minutes; follow-ups are quicker.'
+            ? 'Thinking… the first answer can take a few minutes.'
             : 'Thinking…'}
         </div>
       )}
@@ -527,7 +527,7 @@ export default function AiAssistant() {
       // §26 — the assistant's OWN error, word for word (e.g. the AI provider
       // refusing for want of credit), never a softened stand-in.
       const msg = err.response?.data?.error
-        || (err.response ? `The AI could not answer (HTTP ${err.response.status}).` : `The AI could not be reached${err.message ? ` — ${err.message}` : ''}.`);
+        || (err.response ? 'The AI could not answer. Please try again.' : 'The AI is not reachable right now. Please try again later.');
       if (err.response && err.response.status === 503) refreshStatus();
       addTurn(which, { role: 'assistant', error: true, content: msg });
     } finally {
@@ -544,7 +544,7 @@ export default function AiAssistant() {
       // Counts on the agent tab (things waiting on me) may have moved.
       api.get('/agent/context').then((r) => setAgentCtx(r.data)).catch(() => {});
     } catch (err) {
-      patchCard(card.id, { state: 'failed', message: err.response?.data?.error || 'That could not be done.' });
+      patchCard(card.id, { state: 'failed', message: err.response?.data?.error || 'That did not work. Please try again.' });
     }
   }
 
@@ -695,9 +695,9 @@ export default function AiAssistant() {
           aria-label="AI Assistant"
           title={fabTitle}
         >
-          <span className="ai-fab-mark">AI Assistant</span>
-          {/* Review #3 §25 — the button reads "AI Assistant" and nothing
-              else: no count on it (the 🔔 carries the counts). */}
+          <span className="ai-fab-mark ai-fab-emoji" aria-hidden="true">🤖</span>
+          {/* User, 2026-10-03: just the bot emoji, no text. The name stays
+              in aria-label + the hover title; no count (the 🔔 has it). */}
         </button>
       )}
 
@@ -787,9 +787,9 @@ export default function AiAssistant() {
                     )}
 
                     {hasAts && failed && (
-                      <div className="small-muted" style={{ margin: '10px 0' }}>Could not load your queue just now.</div>
+                      <div className="small-muted" style={{ margin: '10px 0' }}>Could not load your tasks. Please try again.</div>
                     )}
-                    {hasAts && !data && !failed && <div className="small-muted" style={{ marginTop: 10 }}>Reading your queue…</div>}
+                    {hasAts && !data && !failed && <div className="small-muted" style={{ marginTop: 10 }}>Loading your tasks…</div>}
                     {hasAts && data && (
                       <>
                         <div className="ai-sec">Do next</div>

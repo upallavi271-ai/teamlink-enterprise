@@ -64,7 +64,7 @@ function ClientJobPortal() {
   const load = useCallback(() => {
     api.get('/job-portal/client')
       .then((r) => setData(r.data))
-      .catch((e) => setError(e.response?.data?.error || 'Could not load your job portal view.'));
+      .catch((e) => setError(e.response?.data?.error || 'Could not load the portal. Please try again.'));
   }, []);
   useEffect(load, [load]);
 
@@ -78,11 +78,11 @@ function ClientJobPortal() {
     Promise.resolve(api.post(`/job-portal/client/applications/${app.applicationId}/decision`, { decision, ...(extra || {}) }))
       .then((r) => {
         setNotice(decision === 'REQUEST_INTERVIEW'
-          ? `${app.name}: interview requested. The recruiter has been notified and will schedule it — the candidate stays at ${r.data.stageLabel}.`
+          ? `${app.name}: interview asked. The recruiter will book it.`
           : `${app.name}: ${r.data.action} — now at ${r.data.stageLabel}.`);
         load();
       })
-      .catch((e) => setError(e.response?.data?.error || `${label} was refused.`))
+      .catch((e) => setError(e.response?.data?.error || `${label} did not work. Please try again.`))
       .finally(() => setBusy(''));
   }
 
@@ -102,7 +102,7 @@ function ClientJobPortal() {
       <div>
         <div className="page-head"><div><h1>Job Portal</h1></div></div>
         <div className="notice red">
-          The client Job Portal view isn&apos;t included in your role&apos;s permissions.
+          This portal is not part of your role.
         </div>
       </div>
     );
@@ -115,7 +115,7 @@ function ClientJobPortal() {
           <h1>Job Portal</h1>
           <div className="page-sub">
             {data?.company ? `${data.company} · ` : ''}
-            your requirements, whether each is published, and the candidates shared with you
+            Your jobs and the people shared with you.
           </div>
         </div>
         {/* Export only: the client's own requirements / shared candidates. */}
@@ -131,18 +131,18 @@ function ClientJobPortal() {
       {notice && <div className="notice"><span>{notice}</span></div>}
 
       <div className="stat-row" style={{ marginBottom: 16 }}>
-        <div className="stat-cell"><div className="v">{requirements.length}</div><div className="l">Your requirements</div></div>
-        <div className="stat-cell"><div className="v">{requirements.filter((r) => r.published).length}</div><div className="l">Published</div></div>
-        <div className="stat-cell"><div className="v">{requirements.filter((r) => r.live).length}</div><div className="l">Currently live</div></div>
-        <div className="stat-cell"><div className="v">{candidates.length}</div><div className="l">Candidates shared with you</div></div>
+        <div className="stat-cell"><div className="v">{requirements.length || '—'}</div><div className="l">Your jobs</div></div>
+        <div className="stat-cell"><div className="v">{requirements.filter((r) => r.published).length || '—'}</div><div className="l">Published</div></div>
+        <div className="stat-cell"><div className="v">{requirements.filter((r) => r.live).length || '—'}</div><div className="l">Open now</div></div>
+        <div className="stat-cell"><div className="v">{candidates.length || '—'}</div><div className="l">People shared with you</div></div>
       </div>
 
       <div className="tabs" style={{ marginBottom: 12 }}>
         <div className={`tab${view === 'requirements' ? ' active' : ''}`} onClick={() => setView('requirements')}>
-          My Requirements
+          Jobs
         </div>
         <div className={`tab${view === 'candidates' ? ' active' : ''}`} onClick={() => setView('candidates')}>
-          Candidates Shared With Me
+          People shared with me
         </div>
       </div>
 
@@ -151,8 +151,8 @@ function ClientJobPortal() {
           <table>
             <thead>
               <tr>
-                <th>Req ID</th><th>Job Title</th><th>Department</th><th>Location</th>
-                <th>Openings</th><th>Raised</th><th>Published</th><th>Candidates Shared</th>
+                <th>Job ID</th><th>Job</th><th>Department</th><th>Location</th>
+                <th>Openings</th><th>Raised</th><th>Published</th><th>People shared</th>
               </tr>
             </thead>
             <tbody>
@@ -174,7 +174,7 @@ function ClientJobPortal() {
               ))}
               {!requirements.length && (
                 <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>
-                  {data ? 'No requirements raised for your company yet.' : 'Loading…'}
+                  {data ? 'No jobs for your company yet.' : 'Loading…'}
                 </td></tr>
               )}
             </tbody>
@@ -188,7 +188,7 @@ function ClientJobPortal() {
             <table>
               <thead>
                 <tr>
-                  <th>Candidate</th><th>Experience</th><th>Location</th><th>Key Skills</th>
+                  <th>Candidate</th><th>Experience</th><th>Location</th><th>Key skills</th>
                   <th>For</th><th>Status</th><th>Interview</th><th>Your decision</th>
                 </tr>
               </thead>
@@ -226,7 +226,7 @@ function ClientJobPortal() {
                                 className="btn btn-sm"
                                 disabled={busy === c.applicationId}
                                 onClick={() => decide(c, 'REQUEST_INTERVIEW', 'Request interview')}
-                              >Request Interview</button>
+                              >Request interview</button>
                               <button
                                 className="btn btn-sm btn-ghost"
                                 disabled={busy === c.applicationId}
@@ -248,10 +248,7 @@ function ClientJobPortal() {
             </table>
           </div>
           <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
-            Only candidates that have actually been shared with you appear here — a profile still under internal
-            recruiter review does not. <strong>Request Interview</strong> tells the recruiter you want one; it does
-            not book a slot, because the recruiter schedules it and nobody should find a meeting in their calendar
-            that no one arranged. Interview feedback stays on the interview record itself.
+            <strong>Request interview</strong> asks the recruiter to book one for you.
           </div>
         </>
       )}

@@ -34,7 +34,7 @@ export default function MoreFilters({ primary, children, activeMore = 0, onClear
         {primary}
         {children && (
           <button type="button" className={`mf-toggle${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open}>
-            More Filters{activeMore ? ` (${activeMore})` : ''} {open ? '▴' : '▾'}
+            Filters{activeMore ? ` (${activeMore})` : ''} {open ? '▴' : '▾'}
           </button>
         )}
         {onClearAll && <button type="button" className="mf-clear" onClick={onClearAll}>Clear All</button>}

@@ -72,8 +72,16 @@ function scopeOf(user) {
   // can() in permissions.js). A department list on their login no longer
   // narrows what they see.
   const configuredGlobal = held.some((r) => CONFIGURABLE_GLOBAL_ROLES.includes(r));
+  // PER-ROLE SPEC (2026-10-03): in ATS a Manager is scoped to THEIR
+  // DEPARTMENTS and an Assistant Manager to their ASSIGNED TEAMS, with
+  // actions. `global` keeps its HRMS meaning (Manager / Assistant Manager
+  // read the whole company there, view-only); `adminGlobal` is the ATS /
+  // money reading — Super Admin / Admin only. atsScopeOf() below hands every
+  // ATS helper a scope whose `global` IS adminGlobal.
+  const adminGlobal = held.some((r) => GLOBAL_SCOPE_ROLES.includes(r));
   return {
-    global: held.some((r) => GLOBAL_SCOPE_ROLES.includes(r)) || configuredGlobal,
+    global: adminGlobal || configuredGlobal,
+    adminGlobal,
     role: u.role,
     hrmsRole,
     accountsRole,
@@ -94,12 +102,31 @@ function scopeOf(user) {
     // A TL's team members (user ids), resolved by utils/identity.js when the
     // TL has a team configured; null means "no team — department fallback".
     teamUserIds: Array.isArray(u.atsTeamUserIds) && u.atsTeamUserIds.length ? u.atsTeamUserIds : null,
+    // HRMS: an STL's departments / teams (identity.js, spec item 24).
+    hrmsTeamScope: Array.isArray(u.hrmsTeamScope) && u.hrmsTeamScope.length ? u.hrmsTeamScope : null,
     // THE SEAT STRUCTURE (utils/positionScope.js, resolved by identity.js):
     // set only for a TL / STL / Recruiter who holds a seat of that kind.
     // When set it is the ATS scope; null -> the team / department logic.
     positions: u.atsPositionScope && Array.isArray(u.atsPositionScope.positionCodes)
       && u.atsPositionScope.role === atsRole ? u.atsPositionScope : null,
   };
+}
+
+// The ATS reading of scopeOf(): identical, except that `global` is Super
+// Admin / Admin only — a Manager / Assistant Manager is held to their
+// departments / teams in ATS (per-role spec 2026-10-03). Every ATS helper in
+// this file and every ATS route reads this one.
+function atsScopeOf(user) {
+  const s = scopeOf(user);
+  return s.global === s.adminGlobal ? s : { ...s, global: s.adminGlobal };
+}
+
+// ATS departments: like departmentsOf() but a Manager / Assistant Manager is
+// not unrestricted here.
+function atsDepartmentsOf(user) {
+  const s = atsScopeOf(user);
+  if (s.global) return undefined;
+  return s.departments.length ? s.departments : ['__no_department_assigned__'];
 }
 
 // --- Seat (position) scope ---------------------------------------------------
@@ -204,7 +231,7 @@ function seatApplicationWhere(s) {
 // "my team's requirements" reading (teamRequirementWhere below).
 function requirementWhere(user, opts = {}) {
   const withPool = !(opts && opts.pool === false);
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   if (s.global) return {};
   // HR IN ATS IS INTERNAL HIRING ONLY (access matrix 2026-09-25 §3). HR sees
   // TeamLink's own openings — requirements filed `internal` under the
@@ -257,10 +284,26 @@ function requirementWhere(user, opts = {}) {
       if (s.departments.length) or.push({ department: { in: s.departments } });
       return { OR: or };
     }
-    case 'MANAGER':
     case 'ASSISTANT_MANAGER':
-      // Department-scoped. A Manager with no configured departments is global
-      // and never reaches this branch (see scopeOf).
+      // PER-ROLE SPEC (2026-10-03): the ASSIGNED TEAMS — what their teams'
+      // TLs and recruiters lead / are assigned (utils/identity.js resolves
+      // the members into teamUserIds) plus the department's unassigned
+      // openings, so new work can be picked up and assigned. No team
+      // assigned on Users -> their department(s), as for a Manager.
+      if (s.teamUserIds) {
+        const arms = [
+          { tlId: { in: s.teamUserIds } },
+          { stlId: s.userId },
+          { recruiterId: { in: s.teamUserIds } },
+          ...s.teamUserIds.map((id) => ({ recruiterIds: { contains: id } })),
+        ];
+        const pool = withPool ? tlPoolArm(s) : null;
+        if (pool) arms.push(pool);
+        return { OR: arms };
+      }
+      return s.departments.length ? { department: { in: s.departments } } : { id: '__none__' };
+    case 'MANAGER':
+      // PER-ROLE SPEC (2026-10-03): their department(s), with actions.
       return s.departments.length ? { department: { in: s.departments } } : { id: '__none__' };
     default:
       // Employees / accountants with no ATS working role see no requirements.
@@ -280,8 +323,12 @@ function teamRequirementWhere(user) {
 // for the EDIT / ASSIGN split: a TL can SEE a requirement in their department
 // without being the person who may re-assign or edit it.
 function isAssignedTo(user, requirement) {
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   if (!requirement) return false;
+  // A Manager / Assistant Manager runs EVERY requirement inside their own
+  // department / teams (per-role spec 2026-10-03) — not only the ones that
+  // name them.
+  if (['MANAGER', 'ASSISTANT_MANAGER'].includes(s.atsRole) && matches(requirement, requirementWhere(user))) return true;
   const co = csv(requirement.recruiterIds);
   return requirement.recruiterId === s.userId
     || co.includes(s.userId)
@@ -314,7 +361,7 @@ function portalRequirementWhere(user, { publishedOnly = false } = {}) {
 
 // --- Clients ---------------------------------------------------------------
 function clientWhere(user) {
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   if (s.global) return {};
   // HR — Internal Hiring only: the one internal client record, nothing else.
   if (s.atsRole === 'HR') return { clientType: 'Internal' };
@@ -336,6 +383,9 @@ function clientWhere(user) {
   // TL (clients role spec §1): "only clients that have my team's
   // requirements" — not the department's directory, not the unassigned pool.
   if (s.atsRole === 'TL') return { requirements: { some: teamRequirementWhere(user) } };
+  // STL (per-role spec 2026-10-03): VIEW only, "only where needed" — the
+  // clients their section's requirements are for.
+  if (s.atsRole === 'STL') return { requirements: { some: requirementWhere(user) } };
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
   if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
   // A BDE is scoped to the clients assigned to them; where none are assigned
@@ -360,7 +410,8 @@ function clientWhere(user) {
   // so a cross-desk assignment never blanks a row they legitimately work on.
   // departmentsOf(), NOT scopeDepartments(): HR's company-wide HRMS reach is
   // an HRMS fact and must never widen the ATS client directory.
-  const departments = departmentsOf(user);
+  // atsDepartmentsOf(): a Manager / Assistant Manager is department-held here.
+  const departments = atsDepartmentsOf(user);
   if (departments === undefined) return {};
   return {
     OR: [
@@ -374,7 +425,7 @@ function clientWhere(user) {
 // One shared rule: an application is visible when its requirement is, or when
 // it belongs to the signed-in candidate.
 function applicationWhere(user) {
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   if (s.global) return {};
   // HR falls through to the requirement rule below: internal openings only.
   if (s.atsRole === 'CANDIDATE') {
@@ -394,9 +445,12 @@ function applicationWhere(user) {
 // TL may raise a requirement for any client of their department, so the
 // picker keeps the department directory the TL's Clients view no longer has.
 function clientPickerWhere(user) {
-  const s = scopeOf(user);
-  if (s.atsRole === 'TL' && !s.global) {
-    const departments = departmentsOf(user);
+  const s = atsScopeOf(user);
+  // TL / STL / Assistant Manager may RAISE a requirement for any client of
+  // their department, so the picker keeps the department directory their
+  // (narrower) Clients view does not have.
+  if (['TL', 'STL', 'ASSISTANT_MANAGER'].includes(s.atsRole) && !s.global) {
+    const departments = atsDepartmentsOf(user);
     if (departments === undefined) return {};
     return {
       OR: [
@@ -416,7 +470,7 @@ function clientPickerWhere(user) {
 //   mgmt       Manager / Assistant Manager (global, view-only)
 //   bde · tl · stl · recruiter · accounts · hr · client · candidate · none
 function atsViewRole(user) {
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   const held = [s.role, s.atsRole];
   if (held.some((r) => GLOBAL_SCOPE_ROLES.includes(r))) return 'admin';
   if (held.some((r) => CONFIGURABLE_GLOBAL_ROLES.includes(r))) return 'mgmt';
@@ -431,7 +485,7 @@ function atsViewRole(user) {
 // WITH its requirement (candidate detail, etc.). Same rule, evaluated in
 // memory — matches() cannot follow the `requirement` relation by itself.
 function applicationInScope(user, application) {
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   if (s.global) return true;
   if (!application) return false;
   if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;
@@ -474,7 +528,7 @@ const CLIENT_SHARED_STAGES = [
 // A candidate record is reachable when the user can reach one of its
 // applications. Candidates themselves see only their own record.
 function candidateWhere(user) {
-  const s = scopeOf(user);
+  const s = atsScopeOf(user);
   if (s.global) return {};
   // HR falls through to applicationWhere(): internal-hiring candidates only.
   if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
@@ -487,7 +541,10 @@ function candidateWhere(user) {
 // refused the module.
 function invoiceWhere(user) {
   const s = scopeOf(user);
-  if (s.global) return {};
+  // Money is company-wide for Super Admin / Admin only (per-role spec
+  // 2026-10-03: a Manager's "company money" is hidden). An Accountant keeps
+  // the whole ledger below.
+  if (s.adminGlobal) return {};
   if (s.accountsRole === 'CLIENT' || s.role === 'CLIENT') return { clientId: s.clientId || '__none__' };
   // An invoice's department is the department of the CLIENT it is raised
   // against, or of the REQUIREMENT it bills for. Both arms are needed: an
@@ -607,6 +664,14 @@ function employeeWhere(user) {
     if (where) return withReports(s, withSeniority(s, where));
   }
 
+  // AN STL WITH PICKED TEAMS (spec item 24): each department either whole or
+  // cut to the picked teams — "Education Team A + Team B" sees exactly those.
+  if (s.hrmsRole === 'STL' && s.hrmsTeamScope) {
+    const arms = s.hrmsTeamScope.map((d) => (d.teams && d.teams.length
+      ? { department: d.department, team: { in: d.teams } }
+      : { department: d.department }));
+    return withReports(s, withSeniority(s, { AND: [{ OR: arms }] }));
+  }
   if (['STL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(s.hrmsRole) && s.departments.length) {
     return withReports(s, withSeniority(s, { department: { in: s.departments } }));
   }
@@ -738,13 +803,13 @@ function sectionPath(s) {
 }
 
 function scopeLabel(user, product) {
-  const s = scopeOf(user);
-  if (s.global) return 'All Company';
   const ats = product === 'ats';
+  const s = ats ? atsScopeOf(user) : scopeOf(user);
+  if (s.global) return 'All Company';
   if (ats && s.atsRole === 'HR') return 'Internal Hiring';
   if (ats && s.atsRole === 'ACCOUNTANT') return 'Billing — joined candidates';
   if (!ats && hrmsGlobal(user)) return 'All Employees';
-  const departments = ats ? departmentsOf(user) : scopeDepartments(user);
+  const departments = ats ? atsDepartmentsOf(user) : scopeDepartments(user);
   if (departments === undefined) return 'All Company';
   const path = sectionPath(s);
   const under = (tail) => (path ? `${path} → ${tail}` : tail);
@@ -755,9 +820,11 @@ function scopeLabel(user, product) {
     case 'BDE': return s.departments.length ? `${s.departments.join(', ')} → My Clients` : 'My Clients';
     case 'RECRUITER': return under('My Work');
     case 'TL': return under('My Team');
+    case 'ASSISTANT_MANAGER':
+      if (ats && s.teamUserIds && s.teams.length) return `${s.departments.join(', ') || 'Teams'} → ${s.teams.join(', ')}`;
+      // falls through — no team assigned: their department(s)
     case 'STL':
     case 'MANAGER':
-    case 'ASSISTANT_MANAGER':
       return departments.length === 1
         ? `${departments[0]} Department`
         : `${departments.length} Departments — ${departments.join(', ')}`;
@@ -767,8 +834,9 @@ function scopeLabel(user, product) {
 }
 
 // --- Record-level check, used by can(..., record) and by detail endpoints ---
+const ATS_SCOPE_MODULES = ['requirements', 'clients', 'candidates', 'interviews', 'recruiterbde'];
 function recordInScope(user, moduleId, record) {
-  const s = scopeOf(user);
+  const s = ATS_SCOPE_MODULES.includes(moduleId) ? atsScopeOf(user) : scopeOf(user);
   if (s.global) return true;
   if (!record) return false;
 
@@ -822,7 +890,9 @@ module.exports = {
   HRMS_GLOBAL_ROLES,
   hrmsGlobal,
   departmentsOf,
+  atsDepartmentsOf,
   scopeOf,
+  atsScopeOf,
   requirementWhere,
   teamRequirementWhere,
   UNASSIGNED_WHERE,

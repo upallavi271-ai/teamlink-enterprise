@@ -90,7 +90,7 @@ function parseChannels(value) {
 // --- scope ------------------------------------------------------------------
 const PICK = {
   id: true, name: true, employeeCode: true, department: true, designation: true,
-  email: true, phone: true, userId: true, employmentStatus: true, team: true,
+  email: true, phone: true, userId: true, employmentStatus: true, team: true, tl: true,
 };
 
 // Every active employee this login may reach.
@@ -108,7 +108,7 @@ async function reachableEmployees(user, narrow = {}) {
 // list plus any department their reachable people sit in (a direct report
 // filed elsewhere), and nothing more.
 async function allowedDepartments(user, reachable) {
-  const all = (await prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } })).map((d) => d.name);
+  const all = (await prisma.department.findMany({ where: require('./masters').activeOnly('Department'), select: { name: true }, orderBy: { name: 'asc' } })).map((d) => d.name);
   const scoped = scopeDepartments(user);
   if (scoped === undefined) return all;
   const people = reachable || await reachableEmployees(user);
@@ -361,6 +361,8 @@ async function audienceOptions(user) {
     employees: employees.map((e) => ({
       id: e.id, name: e.name, employeeCode: e.employeeCode, department: e.department,
       designation: e.designation, hasLogin: !!e.userId, userId: e.userId || null,
+      // Team / TL feed the Department -> Team -> TL -> Employee filter cascade.
+      team: e.team || null, tl: e.tl || null,
     })),
     channels: {
       Email: { connected: email.configured, note: email.configured ? `Connected (${email.host})` : 'not connected — will be recorded, not sent' },

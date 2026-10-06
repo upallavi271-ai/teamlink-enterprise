@@ -1,0 +1,90 @@
+/* Office & Accounts — Office spec P1 / P2 (2026-10-05): the summary cards, the
+   "i" tooltips and what sits under the expense table (due dates, government
+   portals, Business details, the audit line). Scoped under .ofp-* / .ofk-*. */
+
+/* 16px between the page's blocks */
+.ofp-page .ofb,.ofp-page .oe-sec,.ofp-page .ofp-blk{margin-bottom:16px}
+.ofp-page .oe-sec{scroll-margin-top:66px}
+
+/* The "i" tooltip */
+.ofp-i{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:17px;height:17px;border-radius:50%;
+  border:1.5px solid var(--ink-faint,#8a96a3);color:var(--ink-soft,#5b6b7a);font:italic 700 11px/1 Georgia,'Times New Roman',serif;cursor:help;vertical-align:middle}
+.ofp-i:hover,.ofp-i:focus{border-color:var(--navy,#1f3864);color:var(--navy,#1f3864);outline:none}
+.ofp-i::after{content:attr(data-tip);position:absolute;left:-8px;top:calc(100% + 8px);z-index:40;display:none;width:max-content;max-width:min(320px,calc(100vw - 48px));
+  padding:8px 10px;border-radius:8px;background:#1f2a37;color:#fff;font:400 12px/1.45 var(--font-sans,inherit);font-style:normal;white-space:normal;text-align:left;
+  box-shadow:0 6px 18px rgba(22,32,43,.18)}
+.ofp-i:hover::after,.ofp-i:focus::after{display:block}
+
+/* Summary cards: one grid, equal cards */
+.ofk.ofk-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.ofk-cards .ofk-i{height:100%;min-height:92px;justify-content:flex-start}
+.ofk-cards .ofk-v{font-size:17px}
+.ofk-cards .ofk-s{line-height:1.35;overflow-wrap:anywhere}
+.ofk-x{font-family:var(--font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:11px;color:var(--ink-soft);margin-top:2px;overflow-wrap:anywhere}
+.ofk-x.bad{color:var(--red,#a5342a);font-family:inherit}
+.ofk-wrap{position:relative;min-width:0;display:flex}
+.ofk-wrap>.ofk-i{flex:1 1 auto;width:100%}
+.ofk-i.ofk-empty{border:1.5px dashed #d6a541;border-top:3px dashed #d6a541;background:#fffbf0}
+.ofk-i.ofk-empty .ofk-v{color:#8a5a00;font-family:inherit;font-size:14px}
+.ofk-i:disabled{cursor:default;opacity:1}
+.ofk-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:250px;max-width:calc(100vw - 32px);background:#fff;border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 10px 28px rgba(22,32,43,.16);padding:12px}
+.ofk-pop input{width:100%;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit}
+.ofk-pop-t{font-weight:700;font-size:13px;margin-bottom:8px}
+.ofk-pop-a{display:flex;align-items:center;gap:6px;margin-top:10px}
+.ofk-cards>.ofk-wrap:nth-last-child(1) .ofk-pop{left:auto;right:0}
+
+/* Filters bar: two tidy rows of four, equal-height controls */
+.ofp-page .ofb-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ofp-page .ofb-q{grid-column:auto}
+.ofp-page .ofb .lph-facet select,.ofp-page .ofb .lph-facet input,.ofp-page .ofb .tlpp-trigger{height:38px;min-height:38px;box-sizing:border-box}
+
+/* Blocks under the table */
+.ofp-blk{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-sm);padding:12px 14px;scroll-margin-top:66px}
+.ofp-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.ofp-hd h3{margin:0;font-size:14.5px;font-weight:700;color:var(--ink)}
+.ofp-hd-r{margin-left:auto;display:inline-flex;gap:8px}
+.ofp-biz .ofp-hd{margin-bottom:0}
+.ofp-biz #ofp-biz-b{margin-top:10px}
+.ofp-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ofp-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+
+.ofp-due{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line);border-top:3px solid #9aa5ad;border-radius:10px;background:#fff;min-width:0}
+.ofp-due-n{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint)}
+.ofp-due-d{font-family:var(--font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:15px;font-weight:700;color:var(--ink)}
+.ofp-due-w{font-size:12.5px;font-weight:600;color:#56666e}
+.ofp-due.red{border-top-color:var(--red,#a5342a);background:#fdf1ef}
+.ofp-due.red .ofp-due-w{color:var(--red,#a5342a)}
+.ofp-due.amber{border-top-color:#d97706;background:#fff8ec}
+.ofp-due.amber .ofp-due-w{color:#b45309}
+
+.ofp-portal{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-top:3px solid var(--navy,#1f3864);border-radius:10px;background:#fff;min-width:0}
+.ofp-portal-t{display:flex;align-items:center;gap:8px}
+.ofp-portal-t b{flex:1 1 auto;font-size:13.5px}
+.ofp-portal-id{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--ink-soft)}
+.ofp-portal-id b{color:var(--ink);font-size:13px;overflow-wrap:anywhere}
+.ofp-open{align-self:flex-start;text-decoration:none}
+.ofp-gear{flex:none;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink-soft);cursor:pointer}
+.ofp-gear:hover,.ofp-gear:focus-visible{border-color:var(--navy,#1f3864);color:var(--navy,#1f3864)}
+
+.ofp-btx2.oe-btx{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+.ofp-audit{margin:4px 2px 8px;font-size:11.5px;color:var(--ink-faint,#8a96a3)}
+
+@media (max-width:1180px){.ofk.ofk-cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:900px){
+  .ofk.ofk-cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ofp-page .ofb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ofp-grid4{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:640px){
+  .ofk.ofk-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .ofp-grid3{grid-template-columns:1fr}
+  .ofp-blk{padding:10px 12px}
+}
+@media (max-width:640px){
+  .ofp-page .ofb-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .ofp-page .ofb-period,.ofp-page .ofb-q{grid-column:1 / -1}
+}
+@media (max-width:340px){.ofp-page .ofb-grid{grid-template-columns:1fr}}
+@media (max-width:420px){.ofp-btx2.oe-btx{grid-template-columns:1fr}}

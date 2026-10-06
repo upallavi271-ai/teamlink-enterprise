@@ -302,6 +302,15 @@
       .then(function () {}, function () {});
   }
 
+  /* A scanned resume was read by the model, not from a text layer: say so,
+     so the candidate checks what was filled in. */
+  function noteScan(res) {
+    if (res && res.parser === 'ai-ocr' && typeof window.toast === 'function') {
+      window.toast('Your resume is a scanned file, so we read it with AI. Please check the details we filled in.', '🔍');
+    }
+    return res;
+  }
+
   function request(method, path, body, opts) {
     opts = opts || {};
 
@@ -461,6 +470,8 @@
   var LOCAL_ONLY = {
     tl_ext_src_filter: 1, tl_ext_match_threshold: 1,
     teamlink_apps_cofilter_v1: 1, teamlink_apps_allco_v1: 1,
+    /* 0109: the registration draft - this device only, never sent to /api/prefs. */
+    tl_reg_draft_v1: 1,
   };
 
   // Entity keys whose writes are forwarded to a real endpoint.
@@ -490,7 +501,9 @@
   };
 
   function isLocalOnly(k) {
-    return LOCAL_ONLY[k] === 1 || k.indexOf('tl_ai_last_qset_') === 0;
+    return LOCAL_ONLY[k] === 1 || k.indexOf('tl_ai_last_qset_') === 0
+      /* 0106: an unsent application form draft stays on this device. */
+      || k.indexOf('tl_apply_draft_') === 0;
   }
 
   /**
@@ -670,11 +683,46 @@
       exp: j.exp, pay: j.pay, type: j.type, postingKind: j.postingKind,
       department: j.department, education: j.education,
       easyApply: !!j.easyApply, featured: !!j.featured,
+      /* 0072. `gender` is null when nobody stated one, which is what
+         every job posted before the field existed carries. */
+      gender: j.gender || null, accommodation: !!j.accommodation,
       salaryMin: j.salaryMin == null ? null : Number(j.salaryMin),
       salaryMax: j.salaryMax == null ? null : Number(j.salaryMax),
       skills: j.skills || [], desc: j.desc || '',
       responsibilities: j.responsibilities || [], requirements: j.requirements || [],
       status: j.status === 'closed' ? 'closed' : (j.status === 'draft' ? 'draft' : 'open'),
+
+      /*
+       * 0083. The walk-in's date, time, venue and contact, and the
+       * internship's duration, type and stipend.
+       *
+       * These were collected by the posting forms, merged into the
+       * object in the browser, and then not sent - so a walk-in
+       * survived until the next reload with its date in the
+       * description and nowhere else. Only sent when the posting
+       * actually has them, so a full-time role does not write nine
+       * nulls over columns it has no opinion about.
+       */
+      ...(j.walkinDate || j.walkinVenue || j.walkinContact ? {
+        walkinDate: j.walkinDate || '',
+        walkinFrom: j.walkinFrom || '',
+        walkinTo: j.walkinTo || '',
+        walkinVenue: j.walkinVenue || '',
+        walkinContact: j.walkinContact || '',
+        walkinPhone: j.walkinPhone || '',
+        /* 0106: the rest of a walk-in (teamlink-walkin-jobs.js sets them). */
+        walkinAddress: j.walkinAddress || '',
+        walkinMapLink: j.walkinMapLink || '',
+        walkinDocuments: j.walkinDocumentsToCarry || j.walkinDocuments || '',
+        walkinInstructions: j.walkinInstructions || '',
+        walkinCapacity: j.walkinSlotCapacity == null || j.walkinSlotCapacity === '' ? null : Number(j.walkinSlotCapacity),
+      } : {}),
+      ...(j.internshipDuration || j.internshipType || j.stipend != null ? {
+        internshipDuration: j.internshipDuration || '',
+        internshipType: j.internshipType === 'Unpaid' ? 'Unpaid'
+          : (j.internshipType === 'Paid' ? 'Paid' : ''),
+        ...(j.stipend != null && j.stipend !== '' ? { stipend: Number(j.stipend) } : {}),
+      } : {}),
     };
   }
 
@@ -700,6 +748,17 @@
     (d.jobs || []).forEach(function (j) { TL.serverJobs[j.id] = jobToApi(j); });
     refill(DATA.candidates, d.candidates);
     refill(DATA.applications, d.applications);
+    /* EVERY ONE OF THESE CARRIES THE DATABASE'S OWN ID, and it has to
+       survive. A later layer in the prototype rewrites application ids to
+       a deterministic candidate+job form to stop two tabs stamping a
+       local record differently - a sound idea for a record that exists
+       only in this browser, and destructive for one the server issued.
+       Once the id is rewritten, every later call that quotes it fails:
+       the interview session is planned against an application the server
+       has never heard of, so a candidate finishes an interview, sees
+       "Completed" on their own page, and the recruiter's list still says
+       Applied. Marked here so that layer leaves them alone. */
+    (DATA.applications || []).forEach(function (a) { if (a) a.fromServer = true; });
     refill(DATA.interviews, d.interviews);
     refill(DATA.recruiters, d.recruiters);
     refill(DATA.clients, d.clients);
@@ -738,10 +797,67 @@
     // the session the SERVER says we have — not what localStorage claimed
     TL.session = payload.session;
     if (payload.session) {
-      STATE.session = { role: payload.session.role, id: payload.session.id };
+      STATE.session = {
+        role: payload.session.role,
+        id: payload.session.id,
+        /* Whether they are still on a password somebody else generated.
+           Carried on the session so the gate survives a refresh. */
+        mustChangePassword: !!payload.session.mustChangePassword,
+      };
     } else {
       STATE.session = null;
     }
+  }
+
+  /**
+   * The sample saved searches, taken out wherever they are.
+   *
+   * WHY THIS IS HERE AND NOT IN index.html. A seeder in index.html once
+   * wrote five made-up searches - "React Developers — Bengaluru" and
+   * four others, credited to "TeamLink Demo Data" - into localStorage on
+   * first load. That seeder is gone, but this shim MIRRORS localStorage
+   * to /api/prefs, so the five were copied to the server the day they
+   * were written and `loadPrefs()` hands them back on every single boot.
+   *
+   * A cleanup in index.html therefore removed them and watched them
+   * reappear on the next reload: it ran BEFORE this restore, and the
+   * restore overwrote it from the database. The only place that can
+   * actually finish the job is immediately AFTER the restore, writing
+   * back through the normal path so the server copy is corrected too.
+   *
+   * It touches nothing else. A search the recruiter saved has no
+   * `sample` flag, no `sample_` id and is credited to them by name.
+   */
+  var SEARCH_KEY = 'teamlink_saved_candidate_searches';
+  function isSampleSearch(x) {
+    return !!(x && (x.sample === true
+      || /^sample_/.test(String(x.id || ''))
+      || x.by === 'TeamLink Demo Data'));
+  }
+  function dropSampleSearches() {
+    try {
+      var raw = mem[SEARCH_KEY];
+      if (raw == null) return;
+      var all = JSON.parse(raw);
+      if (!Array.isArray(all)) return;
+      var kept = all.filter(function (x) { return !isSampleSearch(x); });
+      if (kept.length === all.length) return;
+
+      mem[SEARCH_KEY] = JSON.stringify(kept);
+      /*
+       * The pref is written DIRECTLY rather than through the shim's
+       * setItem, because setItem returns early while TL.ready is false -
+       * "boot-time replay, not a user action" - and this runs during
+       * boot. Going through it would have corrected the copy in this tab
+       * and left the database exactly as it was, which is the bug being
+       * fixed rather than the fix.
+       */
+      api.put('/prefs/' + encodeURIComponent(SEARCH_KEY), { value: kept })
+        .then(function () {
+          console.log('[TeamLink] removed ' + (all.length - kept.length)
+            + ' sample saved search(es) left by an earlier build');
+        }, function () { /* offline: the next boot tries again */ });
+    } catch (e) { /* storage blocked, or a value that is not a list */ }
   }
 
   function loadPrefs() {
@@ -751,6 +867,7 @@
       Object.keys(prefs).forEach(function (k) {
         try { mem[k] = JSON.stringify(prefs[k]); } catch (e) {}
       });
+      dropSampleSearches();
     }).catch(function () { /* a cold prefs table is not an error */ });
   }
 
@@ -1089,14 +1206,45 @@
       var password = (document.getElementById('regPassword') || {}).value || '';
       var phone = g('regMobile');
 
+      /*
+       * THE FORM IS READ NOW, WHILE IT IS STILL ON THE SCREEN.
+       *
+       * This was read after the account was created and after refresh() -
+       * by which point registration has signed the candidate in and the
+       * page has moved on, so every field lookup returned an empty string
+       * and STATE.regResumeExtras had been cleared. The profile that
+       * reached the server was therefore almost empty: a candidate who
+       * registered with a complete CV arrived with a name, an email and a
+       * phone number, and a recruiter searching by skill could not find
+       * them.
+       *
+       * Reading it here costs nothing if the registration then fails -
+       * the object is simply discarded.
+       */
+      var profile = collectRegistrationProfile();
+
+      /*
+       * The four required preferences go with the REGISTRATION, not with
+       * the profile PUT that follows it. The server refuses a
+       * registration without them, so they have to be in the request it
+       * refuses - and a rejection then names the field, instead of
+       * creating an account and failing to complete it afterwards.
+       */
+      var modes = [].slice.call(
+        document.querySelectorAll('#regWorkModeGroup input[type="checkbox"]:checked'))
+        .map(function (cb) { return cb.value; });
+      var salary = Number(String(g('regExpSalary')).replace(/[^\d.]/g, ''));
+
       return api.post('/auth/register', {
         name: name, email: email, password: password, phone: phone,
+        preferredLocation: g('regPrefLocation'),
+        expectedCtc: isFinite(salary) ? salary : undefined,
+        noticePeriod: g('regNotice'),
+        preferredWorkModes: modes,
       }).then(function (res) {
-        // Let the prototype's own function build the rich candidate object
-        // from every field on the form, then persist it to the new record.
+        // The rest of the profile, against the record that now exists.
         var candidateId = res.candidateId;
         return refresh().then(function () {
-          var profile = collectRegistrationProfile();
           if (!profile) return;
           return api.put('/candidates/' + encodeURIComponent(candidateId), profile)
             .then(function (r) {
@@ -1156,10 +1304,35 @@
    * Requirement 9: whatever could not be parsed stays editable and is
    * saved as-is rather than causing the record to be discarded.
    */
+  /**
+   * Everything the registration form and the uploaded CV between them
+   * know about this person.
+   *
+   * THIS SENT SIX FIELDS. Location, employer, job title, candidate type,
+   * years and work modes - and nothing else. The resume extractor reads
+   * seventeen: skills, education, notice period, certifications,
+   * languages, LinkedIn, GitHub, portfolio, previous employers. Those
+   * were pulled out of the CV, shown on the form for the candidate to
+   * check, and then dropped on the way to the server, which had columns
+   * waiting for every one of them. A candidate registered with a full
+   * CV and arrived in the recruiter's portal with a name, an email and a
+   * phone number - so a recruiter searching by skill could not find
+   * them, which is the whole point of the search.
+   *
+   * Only what is actually there is sent: an empty field is left off
+   * rather than sent as an empty string, so nothing overwrites a value
+   * the server already has with a blank.
+   */
   function collectRegistrationProfile() {
     var g = function (id) {
       var el = document.getElementById(id);
       return el ? String(el.value || '').trim() : '';
+    };
+    var list = function (v) {
+      return String(v || '').split(/[,;|]/)
+        .map(function (x) { return x.trim(); })
+        .filter(function (x) { return x.length > 1; })
+        .slice(0, 40);
     };
     var typeEl = document.querySelector('input[name="regCandidateType"]:checked');
     var out = {
@@ -1167,17 +1340,54 @@
       currentCompany: g('regCompany'),
       title: g('regDesignation'),
       candidateType: typeEl ? typeEl.value : undefined,
+      noticePeriod: g('regNotice'),
+      preferredLocation: g('regPrefLocation'),
+      education: g('regQualification'),
     };
+
     var exp = Number(g('regTotalExp') || 0);
     if (exp > 0) { out.expYears = exp; out.exp = exp + ' yrs'; }
+
+    var ctc = Number(String(g('regExpSalary')).replace(/[^\d.]/g, ''));
+    if (ctc > 0) out.expectedCtc = ctc;
+
+    var skills = list(g('regSkills'));
+    if (skills.length) out.skills = skills;
 
     var modes = [].slice.call(
       document.querySelectorAll('.opt-row input[type="checkbox"]:checked'))
       .map(function (cb) { return cb.value; });
     if (modes.length) out.preferredWorkModes = modes;
 
+    /*
+     * What the CV said that the form has no box for. The extractor puts
+     * these on STATE.regResumeExtras precisely because there is nowhere
+     * on the page to show them; until now that meant nowhere at all.
+     */
+    var extras = (window.STATE && window.STATE.regResumeExtras) || null;
+    if (extras) {
+      if ((extras.certifications || []).length) out.certifications = extras.certifications.slice(0, 60);
+      if ((extras.languages || []).length) out.languages = extras.languages.slice(0, 30);
+      if ((extras.previousCompanies || []).length) out.previousCompanies = extras.previousCompanies.slice(0, 40);
+      if (extras.linkedin) out.linkedin = String(extras.linkedin).slice(0, 300);
+      if (extras.github) out.github = String(extras.github).slice(0, 300);
+      if (extras.portfolio) out.portfolio = String(extras.portfolio).slice(0, 300);
+    }
+
+    /*
+     * The degree, its subject, the institute and the year, as one line -
+     * which is the shape the education column holds and what a recruiter
+     * reads. STATE.regEdu is what the education parser made of the CV.
+     */
+    var edu = (window.STATE && window.STATE.regEdu) || null;
+    if (edu && (edu.spec || edu.institute || edu.year)) {
+      var bits = [edu.degree || out.education, edu.spec, edu.institute, edu.year]
+        .filter(Boolean).join(', ');
+      if (bits) out.education = bits.slice(0, 400);
+    }
+
     Object.keys(out).forEach(function (k) {
-      if (out[k] === '' || out[k] === undefined) delete out[k];
+      if (out[k] === '' || out[k] === undefined || out[k] === null) delete out[k];
     });
     return Object.keys(out).length ? out : null;
   }
@@ -1252,6 +1462,10 @@
    */
   var FIELD_INPUT = {
     name: 'regName', email: 'regEmail', password: 'regPassword', phone: 'regMobile',
+    /* Section 4. Without these the server's per-field answer had nowhere
+       to go and fell back to one sentence for all of them. */
+    preferredLocation: 'regPrefLocation', expectedCtc: 'regExpSalary',
+    noticePeriod: 'regNotice', preferredWorkModes: 'regWorkModeGroup',
   };
 
   /**
@@ -1514,6 +1728,9 @@
         { jobId: jobId, source: TL.applicationSource() })
       .then(function (res) {
         // reconcile the cache with what the server actually recorded
+        // The server's row, with the server's id - which must not be
+        // rewritten afterwards. See the note beside refill() above.
+        res.application.fromServer = true;
         DATA.applications.push(res.application);
         var job = DATA.jobById(jobId);
         if (job && typeof res.applicants === 'number') job.applicants = res.applicants;
@@ -1598,6 +1815,9 @@
       email: f.email || '',
       phone: f.phone || '',
       location: f.location || '',
+      /* Mandatory on the registration form and never carried across, so
+         a candidate whose resume states it was still asked to type it. */
+      preferredLocation: f.preferredLocation || '',
       qualification: f.qualification || '',
       currentCompany: f.currentCompany || '',
       jobTitle: f.title || '',
@@ -1611,6 +1831,10 @@
       linkedin: f.linkedin || '',
       github: f.github || '',
       portfolio: f.portfolio || '',
+      /* A name the parser could only GUESS at, from the email, when the
+         document stated none. Carried across so the form can offer it as
+         a question; it is never written into the field by anything. */
+      nameSuggestion: f.nameSuggestion || '',
     };
   }
 
@@ -1681,6 +1905,7 @@
 
       // A large PDF takes longer than an ordinary request.
       return request('POST', '/resume/extract', fd, { timeout: 60000 })
+        .then(noteScan)
         .then(function (res) {
           TL.lastExtract = res;          // read by the parseResumeText wrap
 
@@ -2151,6 +2376,7 @@
       fd.append('resume', file);
 
       return request('POST', '/resume/extract', fd, { timeout: 60000 })
+        .then(noteScan)
         .then(function (res) {
           // Store the file itself, so Easy Apply and the recruiter see the
           // NEW resume rather than the one it replaced.
@@ -2485,6 +2711,60 @@
   /* ------------------------------------------------------------------ *
    * 10. Notifications
    * ------------------------------------------------------------------ */
+
+  /* ------------------------------------------------------------------ *
+   * "Run AI Screening" screens.
+   *
+   * The prototype's version ran a setTimeout, moved the application to
+   * Shortlisted using the score that was already on the row, and told the
+   * recruiter "AI screening passed (34% match)". It called nothing and
+   * computed nothing - it was a stand-in from before there was a scorer,
+   * and it was still the thing the button did.
+   *
+   * This asks the server to screen it again and repaints with whatever
+   * comes back. The server decides the stage, as it does for the
+   * automatic pass; the browser no longer has an opinion about it.
+   * ------------------------------------------------------------------ */
+  var prevRunAI = window.runAIScreeningForApp;
+  window.runAIScreeningForApp = function (appId) {
+    var id = String(appId || '');
+    // "primary__<candidateId>" is the prototype's way of saying "that
+    // person's main application"; resolve it to a real application id.
+    if (id.indexOf('primary__') === 0) {
+      var candId = id.slice('primary__'.length);
+      var app = (DATA.applications || []).filter(function (a) {
+        return a.candidateId === candId && a.primary;
+      })[0] || (DATA.applications || []).filter(function (a) {
+        return a.candidateId === candId;
+      })[0];
+      if (!app) return typeof prevRunAI === 'function' ? prevRunAI.apply(this, arguments) : undefined;
+      id = app.id;
+    }
+
+    if (typeof toast === 'function') toast('Screening…', '\uD83E\uDD16');
+    return api.post('/applications/' + encodeURIComponent(id) + '/screen', {})
+      .then(function (res) {
+        var local = (DATA.applications || []).filter(function (a) { return a.id === id; })[0];
+        if (local) {
+          if (res && res.score != null) { local.aiScore = res.score; local.matchScore = res.score; }
+          if (res && res.stage) local.stage = res.stage;
+        }
+        if (typeof toast === 'function') {
+          toast(res && res.score != null
+            ? 'Screened: ' + Math.round(res.score) + '% match'
+            : 'Screened', '\u2705');
+        }
+        if (typeof window.render === 'function') window.render();
+        return res;
+      })
+      .catch(function (err) {
+        // Said plainly. A screening that did not happen must not look
+        // like one that did.
+        if (typeof toast === 'function') {
+          toast('Could not screen this application: ' + (err && err.message ? err.message : 'unknown error'), '\u26A0\uFE0F');
+        }
+      });
+  };
 
   TL.markNotificationRead = function (id) {
     return api.put('/notifications/' + encodeURIComponent(id) + '/read', {})
@@ -3000,6 +3280,19 @@
       var out = prevAiivSubmit.apply(this, arguments);
       try {
         var appId = TL.__aiivAppId || (window.AIIV && window.AIIV.appId);
+
+        /*
+         * SENT ONCE PER INTERVIEW.
+         *
+         * The prototype's own aiivSubmit refuses to run twice, but this
+         * wrapper is a separate function and ran every time it was
+         * called - so a second call, from a stray click or the last
+         * question's timer landing with the Finish button, posted every
+         * answer and the finish a second time and then fell through to
+         * recordAiInterview as well. One interview, several results.
+         */
+        if (TL.__aiivSentFor === appId) return out;
+        TL.__aiivSentFor = appId;
         var found = TL.aiivRec(appId);
         var rec = found && found.rec;
         var report = rec && rec.aiInterview && rec.aiInterview.report;
@@ -3381,6 +3674,9 @@
   if (typeof prevStartForPlan === 'function') {
     window.aiivStart = function (appId) {
       TL.__aiivSession = null;
+      // A new attempt may be submitted again; the once-only guard is per
+      // interview, not for the life of the page.
+      TL.__aiivSentFor = null;
       var out = prevStartForPlan.apply(this, arguments);
       try { TL.planAiSession(appId); } catch (e) {
         console.error('TeamLink: the interview could not be planned.', e);
@@ -4610,11 +4906,27 @@
               esc(s.message || s.error) +
               (s.missing ? ' (set ' + esc((s.missing || []).join(', ')) + ')' : '') + '</div>';
           }
-          return '<div><b>' + esc(s.mailbox) + '</b>: read ' + s.seen + ', imported ' + s.imported +
+          /*
+           * "read 50, imported 0" READS AS A FAILURE AND USUALLY IS NOT.
+           *
+           * A mailbox that has already been synced has nothing new in
+           * it, so zero is the correct and expected answer - but next to
+           * the word "imported" it looks like the import broke, and a
+           * recruiter goes hunting for candidates that were brought in
+           * days ago and are already in the pool.
+           *
+           * So a sync that found nothing new says that in words, and
+           * every other count is still itemised underneath.
+           */
+          var nothingNew = !s.imported && s.duplicates === s.seen && s.seen > 0;
+          var head = nothingNew
+            ? 'read ' + s.seen + ' — nothing new since the last sync'
+            : 'read ' + s.seen + ', imported ' + s.imported;
+          return '<div><b>' + esc(s.mailbox) + '</b>: ' + head +
             (s.needsMapping ? ', ' + s.needsMapping + ' awaiting a requirement' : '') +
             (s.needsReview ? ', ' + s.needsReview + ' needing review' : '') +
             (s.ignored ? ', ' + s.ignored + ' ignored' : '') +
-            (s.duplicates ? ', ' + s.duplicates + ' already seen' : '') + '</div>';
+            (s.duplicates && !nothingNew ? ', ' + s.duplicates + ' already seen' : '') + '</div>';
         }).join('');
 
         /*
@@ -4832,9 +5144,27 @@
    * on a table that fits.
    */
   function addTopScrollbars() {
+    /*
+     * STAND DOWN WHERE teamlink-table-scroll.js IS DOING THIS.
+     *
+     * That module arrived later, does the same job with a pinned first
+     * column and a remembered scroll position, and on the candidate
+     * portal now puts its bar at the FOOT of the window instead. With
+     * both running, a wide table grew two scrollbars - and on the
+     * candidate screens they would have been at opposite ends of it.
+     *
+     * Checked per table rather than globally, so a wrapper the other
+     * module does not manage still gets a bar from here.
+     */
     var wraps = document.querySelectorAll('.tbl-wrap, .fcr-table-wrap, .table-scroll');
     for (var i = 0; i < wraps.length; i++) {
       var wrap = wraps[i];
+      if (wrap.classList.contains('tlts-w')
+          || (wrap.parentNode && wrap.parentNode.querySelector('.tlts-bar'))) {
+        var mine = wrap.previousElementSibling;
+        if (mine && mine.classList && mine.classList.contains('tl-scroll-top')) mine.remove();
+        continue;
+      }
       var overflows = wrap.scrollWidth > wrap.clientWidth + 2;
       var existing = wrap.previousElementSibling;
       var bar = existing && existing.classList
@@ -5993,96 +6323,26 @@
         '$1' + row + '$2');
 
       /*
-       * THE NEARBY PLACES GO IN THE LIST, with their distance beside
-       * them, as rows of the list that is already there.
+       * NOTHING IS INJECTED ABOVE THE LIST ANY MORE.
        *
-       * They used to be chips in a panel of their own beside it, which
-       * meant a recruiter picking Hyderabad saw a second block appear
-       * rather than the list they were already reading filling in. This
-       * injects rows into the SAME list, built from the SAME markup the
-       * list uses for every other row - the same <label class="tl-row2">,
-       * the same checkbox, the same tlTreePick() - so ticking one is
-       * indistinguishable from ticking a district, and the candidate
-       * search receives it exactly as it always did.
+       * This used to build a "Near <place>" group and prepend it to the
+       * main column. Even reduced to rows of the same markup it was still
+       * a SECOND section: a recruiter who picked Poonch with no distance
+       * chosen got a block reading "NEAR POONCH / Poonch - 0 KM / Choose
+       * a distance above to list the places around it" sitting on top of
+       * the list they were trying to read - a heading whose only content
+       * was an instruction.
        *
-       * NOTHING HERE IS A STORED DISTANCE. Every kilometre on screen is
-       * haversine over the latitude and longitude the dataset holds, so
-       * changing the radius changes the list, and a place with no
-       * coordinates on file never appears with a made-up number.
+       * The radius now filters the ONE list, in tlTreeHtml, where the
+       * geography already is: rows outside it are not drawn and every row
+       * inside it carries its own measured distance. Nothing is prepended,
+       * nothing is duplicated, and there is no "Near ..." heading
+       * anywhere.
+       *
+       * What is kept here is the distance pills, which this wrapper still
+       * rebuilds so 'Exact city' and 'Any Distance' sit alongside the KM
+       * choices.
        */
-      var anchor = null;
-      var tags = st.tags || [];
-      for (var i = tags.length - 1; i >= 0 && !anchor; i--) {
-        // A whole state has no single point to measure from.
-        if (window.INDIA_GEO && window.INDIA_GEO[tags[i]]) continue;
-        var c = null;
-        try {
-          c = (window.INDIA_COORDS || {})[tags[i]]
-            || (window.TL_LOC && TL_LOC.coordsOf ? TL_LOC.coordsOf(tags[i]) : null);
-        } catch (e) { c = null; }
-        if (c) anchor = { name: tags[i], c: c };
-      }
-
-      if (anchor && typeof window.tlNearbyList === 'function') {
-        /*
-         * "Any Distance" means every place we can locate, so the radius
-         * is the planet rather than a number somebody has to maintain.
-         * "Exact city" means the one they picked and nothing else.
-         */
-        var chosen = String(st.km || '');
-        var radius = chosen === 'any' ? 20000 : (chosen ? Number(chosen) : 0);
-
-        var near = radius ? window.tlNearbyList(anchor, radius, tags) : [];
-        var picked = function (v) {
-          return tags.some(function (t) { return String(t).toLowerCase() === String(v).toLowerCase(); });
-        };
-        var nearRow = function (name, km, isAnchor) {
-          return '<label class="tl-row2' + (isAnchor ? ' b' : '') + '"'
-            + ' onmousedown="event.preventDefault()">'
-            + '<input type="checkbox"' + (picked(name) ? ' checked' : '')
-            + " onchange=\"tlTreePick('" + q(key) + "','" + q(name) + "',this.checked)\">"
-            + '<span class="nm">' + esc(name) + '</span>'
-            // Rounded for reading, measured exactly for filtering.
-            + '<span class="tl-km">' + esc(String(Math.round(km))) + ' KM</span>'
-            + '</label>';
-        };
-
-        var rows = nearRow(anchor.name, 0, true)
-          + near.map(function (p) { return nearRow(p.name, p.km, false); }).join('');
-
-        var heading = chosen === 'any'
-          ? 'Near ' + anchor.name
-          : chosen
-            ? 'Near ' + anchor.name + ' &middot; within ' + esc(chosen) + ' KM'
-            : 'Near ' + anchor.name;
-        var note = chosen
-          ? (near.length + ' place' + (near.length === 1 ? '' : 's') + ' found')
-          : 'Choose a distance above to list the places around it.';
-
-        var block = '<div class="grp tl-nbgrp"><b>' + heading + '</b>'
-          + rows
-          + '<div class="tl-kmnote" style="padding-top:4px">' + esc(note) + '</div></div>';
-
-        /*
-         * At the top of the MAIN column, immediately above "Country &
-         * region", inside the list a recruiter is already reading.
-         *
-         * The panel is two columns - tl-main scrolls the list, tl-side
-         * holds the distance buttons - so this goes into the first, not
-         * beside it. A plain string replace rather than a pattern,
-         * because the one thing that must not happen is a silent miss
-         * that leaves the list looking untouched.
-         */
-        var COUNTRY = '<div class="grp"><b>Country &amp; region</b>';
-        if (html.indexOf(COUNTRY) >= 0) {
-          html = html.replace(COUNTRY, block + COUNTRY);
-        } else {
-          // The list is built differently from what this expects. Say so
-          // in the console rather than quietly rendering nothing.
-          try { console.warn('[TeamLink] nearby rows: the list anchor moved'); } catch (e) {}
-        }
-      }
-
       return html;
     };
     window.tlTreeHtml.__tlLocalities = true;
@@ -6101,9 +6361,27 @@
     var original = window.tlTreeKm;
     window.tlTreeKm = function (key) {
       window.__tlLocActiveKey = key;
+      window.__tlKmRedrew = false;
       var out = original.apply(this, arguments);
       try {
-        if (typeof window.tlLocRefresh === 'function') window.tlLocRefresh(key);
+        /*
+         * ONLY IF THE RADIUS HANDLER DID NOT ALREADY REDRAW.
+         *
+         * This refresh existed because tlTreeKm used to record the
+         * choice and leave the panel alone. It now redraws the Near by
+         * group itself - six kilobytes, under a millisecond - and this
+         * unconditional call put the full eight-hundred-row rebuild
+         * straight back on top of it, so pressing a distance still cost
+         * four hundred milliseconds and the fast path bought nothing.
+         *
+         * The flag is set by the handler when it has done the work.
+         * When it has not - a field with no distance pills, or anything
+         * that leaves no group to replace - this still runs, so the
+         * panel can never be left stale.
+         */
+        if (!window.__tlKmRedrew && typeof window.tlLocRefresh === 'function') {
+          window.tlLocRefresh(key);
+        }
       } catch (e) { /* the radius still applied */ }
       return out;
     };

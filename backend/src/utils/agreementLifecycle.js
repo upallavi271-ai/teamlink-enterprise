@@ -80,8 +80,8 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     '',
     `Open the agreement: ${url}`,
     '',
-    'Read the agreement, press "OK, Proceed", sign (type your name, draw, or upload your signature) and confirm',
-    `with the one-time code we send to your registered mobile number.${validity}`,
+    'Read the agreement, ask for the one-time code (we email it to this address), type your name and',
+    `designation and press "I agree and sign".${validity}`,
     '',
     'If you were not expecting this, please reply and let us know.',
     '',
@@ -113,7 +113,23 @@ function dispatchReasons(results) {
 }
 
 // ---- 2. Auto-activation --------------------------------------------------------
-const isExecuted = (c) => !!(c && c.agreementCompanySealedAt && c.agreementClientSealedAt && c.agreementVerifiedAt);
+// 2026-10-05 (user): Active only when BOTH sides have a signature AND a company
+// stamp, and the client's signature was confirmed with the code.
+function missingSeals(c) {
+  const teamlink = [];
+  const client = [];
+  if (!c) return { teamlink: ['signature', 'stamp'], client: ['signature', 'stamp'] };
+  if (!c.agreementCompanySignFile) teamlink.push('signature');
+  if (!c.agreementCompanyStampFile) teamlink.push('stamp');
+  if (!c.agreementClientSignFile && !(c.agreementEsignProvider === 'eMudhra' && c.agreementEsignTxnId)) client.push('signature');
+  if (!c.agreementClientStampFile) client.push('stamp');
+  if (!c.agreementVerifiedAt) client.push('code');
+  return { teamlink, client };
+}
+const isExecuted = (c) => {
+  const m = missingSeals(c);
+  return !!(c && c.agreementCompanySealedAt && c.agreementClientSealedAt && !m.teamlink.length && !m.client.length);
+};
 
 // Call after any step that can complete execution. Returns the updated client
 // when it activated, otherwise null. Idempotent: an ACTIVE agreement is left.
@@ -138,25 +154,57 @@ async function maybeAutoActivate(clientId, { actorUserId = null, via = '' } = {}
     message: `${c.agreementId || 'The agreement'} was signed by the client (OTP-verified) and countersigned by TeamLink, and is now Active automatically. Requirements for this client can go live.`,
     exceptUserId: actorUserId,
   });
+  // Jobs parked at Agreement Check go live + their TLs are told (e2e gap 7).
+  // eslint-disable-next-line global-require
+  await require('./openParkedJobs').openParkedJobs(c.id, { actorUserId });
   return updated;
 }
 
 // ---- 3. Expiry / renewal reminders ------------------------------------------
+// Never a test login (ZZTEST / example.test) as a recipient of a real alert.
+const NOT_TEST_USER = [{ name: { contains: 'zztest' } }, { email: { contains: 'example.test' } }];
+
 async function ownersAndAdmins(clientId) {
   const bdes = await prisma.requirement.findMany({
     where: { clientId, bdeId: { not: null } }, select: { bdeId: true }, distinct: ['bdeId'],
   });
+  // Spec 6: the client's OWNER BDE (Client.bdeOwner holds the name) too.
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { bdeOwner: true } });
+  const ownerName = String((client && client.bdeOwner) || '').trim();
   const admins = await prisma.user.findMany({
     where: {
       status: 'Active',
+      NOT: NOT_TEST_USER,
       OR: [{ role: { in: ['SUPER_ADMIN', 'ADMIN'] } }, { atsRole: { in: ['SUPER_ADMIN', 'ADMIN'] } }, { hrmsRole: { in: ['SUPER_ADMIN', 'ADMIN'] } }],
     },
     select: { id: true },
   });
-  const bdeUsers = bdes.length
-    ? await prisma.user.findMany({ where: { id: { in: bdes.map((b) => b.bdeId) }, status: 'Active' }, select: { id: true } })
+  const bdeOr = [
+    ...(bdes.length ? [{ id: { in: bdes.map((b) => b.bdeId) } }] : []),
+    ...(ownerName ? [{ name: ownerName, OR: [{ atsRole: 'BDE' }, { role: 'BDE' }] }] : []),
+  ];
+  const bdeUsers = bdeOr.length
+    ? await prisma.user.findMany({ where: { status: 'Active', NOT: NOT_TEST_USER, OR: bdeOr }, select: { id: true } })
     : [];
   return [...new Set([...bdeUsers.map((u) => u.id), ...admins.map((u) => u.id)])];
+}
+
+// Spec 6 — the renewal alert by E-MAIL as well, only when Agreement settings
+// say so (renewalEmail, OFF by default). One mail per recipient with an
+// address; never throws. In the test sandbox the mailer is a fake transport.
+async function emailRenewal(userIds, { subject, text }) {
+  const settings = await require('./agreementSettings').agreementSettings(); // eslint-disable-line global-require
+  if (!settings.renewalEmail || !userIds.length) return { emailed: 0, skipped: true };
+  const mailer = require('./mailer'); // eslint-disable-line global-require
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { email: true } });
+  let emailed = 0;
+  for (const u of users) {
+    if (!u.email) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const r = await mailer.sendMail({ to: u.email, subject, text, useEmployeeFrom: false, fromName: '' }).catch(() => ({ ok: false }));
+    if (r && r.ok) emailed += 1;
+  }
+  return { emailed, skipped: false };
 }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -189,6 +237,8 @@ const REMIND_ACTION = (days) => `Agreement expiry reminder (${days} days)`;
 // One pass. `onlyClientIds` limits it (tests); `now` is injectable.
 async function sweepExpiry({ now = new Date(), onlyClientIds = null } = {}) {
   const today = dayOf(ymd(now));
+  // Spec 6 — the alert days are an Admin setting (default 30 and 7).
+  const reminderDays = (await require('./agreementSettings').agreementSettings()).renewalDays || REMINDER_DAYS; // eslint-disable-line global-require
   const clients = await prisma.client.findMany({
     where: {
       agreementStatus: { in: ['ACTIVE', 'SIGNED', 'CONFIRMED'] },
@@ -222,11 +272,11 @@ async function sweepExpiry({ now = new Date(), onlyClientIds = null } = {}) {
       }
       continue;
     }
-    if (daysLeft < 0 || daysLeft > REMINDER_DAYS[0]) continue;
+    if (daysLeft < 0 || daysLeft > Math.max(...reminderDays)) continue;
 
     // The most urgent reminder that applies — a client first seen at 5 days
     // out gets the 7-day one, not a stale 30-day one as well.
-    const stage = [...REMINDER_DAYS].sort((a, b) => a - b).find((d) => daysLeft <= d);
+    const stage = [...reminderDays].sort((a, b) => a - b).find((d) => daysLeft <= d);
     // eslint-disable-next-line no-await-in-loop
     const sent = await prisma.auditLog.findFirst({
       where: { action: REMIND_ACTION(stage), entityId: c.id, toValue: e.end }, select: { id: true },
@@ -235,17 +285,24 @@ async function sweepExpiry({ now = new Date(), onlyClientIds = null } = {}) {
     // eslint-disable-next-line no-await-in-loop
     const recipients = await ownersAndAdmins(c.id);
     const what = e.explicit ? 'ends' : 'renews (12-month term)';
-    // eslint-disable-next-line no-await-in-loop
-    await notifyUsers(recipients, {
+    const alert = {
       title: `${c.name} — agreement ${e.explicit ? 'expires' : 'renews'} in ${daysLeft} day(s)`,
       message: `${c.agreementId || 'The service agreement'} ${what} on ${e.end}.${e.explicit ? ' Renew it before then or requirements for this client stop going live.' : ' Review the terms before the renewal date.'}`,
-    });
+    };
+    // eslint-disable-next-line no-await-in-loop
+    await notifyUsers(recipients, alert);
+    // eslint-disable-next-line no-await-in-loop
+    const mail = await emailRenewal(recipients, { subject: alert.title, text: `${alert.message}
+
+Open TeamLink → Clients → ${c.name} → Agreement.
+
+— TeamLink` });
     // eslint-disable-next-line no-await-in-loop
     await logAudit({
       action: REMIND_ACTION(stage), entity: 'Client', entityId: c.id, toValue: e.end,
-      reason: `${daysLeft} day(s) left · ${e.explicit ? 'agreement end date' : 'derived renewal date (start + 12-month term)'} · ${recipients.length} recipient(s)`,
+      reason: `${daysLeft} day(s) left · ${e.explicit ? 'agreement end date' : 'derived renewal date (start + 12-month term)'} · ${recipients.length} recipient(s)${mail.skipped ? '' : ` · ${mail.emailed} e-mailed`}`,
     });
-    out.reminded.push({ id: c.id, name: c.name, end: e.end, explicit: e.explicit, daysLeft, stage, recipients: recipients.length });
+    out.reminded.push({ id: c.id, name: c.name, end: e.end, explicit: e.explicit, daysLeft, stage, recipients: recipients.length, emailed: mail.emailed });
   }
   return out;
 }
@@ -279,23 +336,30 @@ async function sweepSigningReminders({ now = new Date(), onlyClientIds = null, r
       const told = await prisma.auditLog.findFirst({ where: { action: signing.ACTION.expiredLink, entityId: c.id, toValue: key }, select: { id: true } });
       if (!told) {
         // eslint-disable-next-line no-await-in-loop
-        await logAudit({ action: signing.ACTION.expiredLink, entity: 'Client', entityId: c.id, toValue: key, reason: `Sent ${key.slice(0, 10)}, unsigned after ${signing.LINK_DAYS} days` });
+        await logAudit({ action: signing.ACTION.expiredLink, entity: 'Client', entityId: c.id, toValue: key, reason: `Sent ${key.slice(0, 10)}, unsigned after ${signing.linkMeta(c).days} days` });
         // eslint-disable-next-line no-await-in-loop
         await notifyUsers(await ownersAndAdmins(c.id), {
           title: `${c.name} — agreement signing link expired`,
-          message: `${c.agreementId || 'The agreement'} was not signed within ${signing.LINK_DAYS} days. Open the client's Agreement tab and press Resend to send a new link.`,
+          message: `${c.agreementId || 'The agreement'} was not signed within ${signing.linkMeta(c).days} days. Open the client's Agreement tab and make a new link.`,
         });
         out.expired.push({ id: c.id, name: c.name });
       }
       continue;
     }
+    // A link made with "Create agreement link" is shared by the user; nothing
+    // goes to the client by itself (2026-10-05). The expiry notice above still does.
+    if (signing.linkMeta(c).manual) continue;
     const due = SIGN_REMINDER_DAYS.filter((d) => age >= d).pop();
     if (!due) continue;
     // eslint-disable-next-line no-await-in-loop
     const sent = await prisma.auditLog.findFirst({ where: { action: signing.ACTION.reminder(due), entityId: c.id, toValue: key }, select: { id: true } });
     if (sent) continue;
     // eslint-disable-next-line no-await-in-loop
-    const results = await dispatchSigningLink({ client: c, url: signingUrl(req, c.esignToken), kind: 'reminder' });
+    // The link token is stored hashed; the server re-derives it (utils/agreementSigning.js).
+    const linkToken = signing.tokenFor(c);
+    if (!linkToken) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const results = await dispatchSigningLink({ client: c, url: signingUrl(req, linkToken), kind: 'reminder' });
     // eslint-disable-next-line no-await-in-loop
     await logAudit({
       action: signing.ACTION.reminder(due), entity: 'Client', entityId: c.id, toValue: key,
@@ -322,10 +386,19 @@ function startExpirySweep() {
   setTimeout(remind, 180000).unref?.();
   const hourly = setInterval(remind, 3600000);
   if (hourly.unref) hourly.unref();
+  // "Make it Active" reminders (2026-10-05): checked every 15 minutes; each
+  // client is reminded once per due day, at the time in Agreement settings.
+  // eslint-disable-next-line global-require
+  const activeRemind = () => require('./agreementActivateReminders').sweepActivateReminders()
+    .then((r) => { if (r.reminded && r.reminded.length) console.log(`[agreement make-Active reminders] ${r.reminded.length} sent`); })
+    .catch((e) => console.error('[agreement make-Active reminders]', e.message));
+  setTimeout(activeRemind, 240000).unref?.();
+  const quarter = setInterval(activeRemind, 15 * 60000);
+  if (quarter.unref) quarter.unref();
 }
 
 module.exports = {
   signingUrl, contactsOf, dispatchSigningLink, describeDispatch, dispatchReasons,
-  isExecuted, maybeAutoActivate, endOf, sweepExpiry, startExpirySweep, ownersAndAdmins,
-  sweepSigningReminders, SIGN_REMINDER_DAYS,
+  isExecuted, missingSeals, maybeAutoActivate, endOf, sweepExpiry, startExpirySweep, ownersAndAdmins,
+  sweepSigningReminders, SIGN_REMINDER_DAYS, emailRenewal,
 };

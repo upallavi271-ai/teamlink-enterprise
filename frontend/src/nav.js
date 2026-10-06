@@ -153,45 +153,87 @@ export const HRMS_ITEMS = [
   leaf('🛎️', '/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
 ];
 
-// The reference prototype's ATS navigation is flat — six entries, no
-// sub-tabs (see SUBNAV.ats in teamlink-enterprise_69.html, line 2179).
-// Clients and Jobs / Requirements stay separate, and the calendar keeps its
-// own entry. The Agreements, Offers, Joining, Internal Hiring and Interview
-// Feedback screens still exist and are still routed — they are reachable by
-// URL and from the screens that link to them, just not listed here.
-export const ATS_ITEMS = [
-  leaf('📊', '/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'),
-  leaf('💼', '/requirements', 'Jobs / Requirements', [['requirements', 'Requirement List', 'view']]),
-  // NO "Job Portal" ENTRY HERE, DELIBERATELY (the user, 2026-09-29). The Job
-  // Portal is candidate INTAKE, not a module and not a Requirements tab:
-  //   Candidates & Pipeline → Job Portal Candidates → Send to ATS → Pipeline
-  // Publishing stays on each requirement ("Posted on"), and the portal sync
-  // status / logs live under Administration → Integrations → Job Portal.
-  // Jobs / Requirements itself has no tab strip any more.
-  // CLIENTS IS IN ONE PLACE — HERE (clients role spec 2026-09-29). It is no
-  // longer a tab of Jobs / Requirements. Admin, Management and BDE ("My
-  // Clients") ✅; a TL 👁 (their team's clients, limited); Accounts 👁 (the
-  // billing view); a Recruiter never — they hold no Client List view, so the
-  // entry is hidden and GET /api/clients answers 403.
+// ATS LAYOUT v3 (user, 2026-10-03) — EXACTLY FIVE ATS ENTRIES:
+//
+//   Dashboard · Clients & Requirements · Candidates & Pipeline ·
+//   Interview Calendar · Reports & Team
+//
+// Two of them are MODULES WITH TABS (drawn above the page by Shell.jsx,
+// components/ModuleTabs.jsx — same pattern as InterviewTabs / SetupTabs):
+//   Clients & Requirements  Clients | Requirements       (/clients, /requirements)
+//   Reports & Team          Reports | Team | Settings     (/reports/ats or
+//                           /reports/my-results, /ats/team, /ats/settings)
+// Each tab keeps its own route and its own view permission; the module entry
+// is shown when the login may open at least one tab, and it opens the first
+// one it may. The entry stays lit on every tab and on the detail pages
+// (/clients/:id, /requirements/:id). Every old address still works.
+//
+// Still no Job Portal / Internal Hiring / Agreements / Offers entries — they
+// are tabs, filters or views INSIDE these five (see the history in
+// UNLISTED_ATS_VIEWS). Clients is visible to SA / Admin / Manager / BDE / TL /
+// Accounts only (Client List view); a recruiter's module shows Requirements
+// alone and is called "My Jobs".
+export const CLIENTS_REQ_TABS = [
   leaf('🏢', '/clients', 'Clients', [['clients', 'Client List', 'view']]),
-  leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]),
-  leaf('🎯', '/ats/team', 'Recruiter & BDE', [['recruiterbde', 'Team View', 'view']]),
-  leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]),
-  // NO "Reports" ENTRY HERE (the user, 2026-09-29: "Move the ATS Reports into
-  // the overall Reports module"). ATS Reports is listed once, in the Reports
-  // group beside Job Portal Reports and Accounts Reports — same page, same
-  // permission (reports / ATS Reports / view), so everyone who reached it
-  // from ATS reaches it from Reports.
-  // NO "Internal Hiring" ENTRY (the user's rule, 2026-09-29: "In ATS, Internal
-  // Hiring must NOT be a separate module"). Internal hiring runs INSIDE the
-  // normal modules: Jobs / Requirements has a Client | Internal split
-  // (/requirements?type=internal), Candidates & Pipeline the same filter, and
-  // an internal application's pipeline reads HR Review → Dept Head / TL →
-  // Interview → Feedback → Selected → Offer → Joining → HRMS. The old
-  // /ats/internal-hiring URL redirects to /requirements?type=internal. HR's
-  // ATS menu is therefore Dashboard · Jobs / Requirements · Candidates &
-  // Pipeline · Interview Calendar, all server-scoped to internal openings.
+  leaf('💼', '/requirements', 'Jobs', [['requirements', 'Requirement List', 'view']]),
+  // Agreements list: a tab here, not a second tab strip (ClientsTabs retired 2026-10-03).
+  leaf('📝', '/agreements', 'Agreements', [['clients', 'Agreement Lifecycle', 'view']]),
 ];
+export const REPORTS_TEAM_TABS = [
+  // ATS Reports; a login without it (a recruiter) gets "My Results" instead.
+  leaf('📊', '/reports/ats', 'Reports', [['reports', 'ATS Reports', 'view']], 'ats'),
+  leaf('📊', '/reports/my-results', 'My Results', [['reports', 'My Results', 'view']], 'ats', [['reports', 'ATS Reports', 'view']]),
+  leaf('👥', '/ats/team', 'Team', [['recruiterbde', 'Team View', 'view']]),
+  // NO Settings tab (user, 2026-10-03: 'settings already Administration lo
+  // vunnai, extra em cheyyaku'). Settings stay in Administration only.
+];
+// The Administration screens the Settings tab links to (never duplicated).
+export const ATS_SETTINGS_LINKS = [
+  { ...leaf('📋', '/admin/master-lists', 'Master lists', [['administration', 'Company Setup', 'view']]), hint: 'Departments, rejection reasons, sources and the other pick lists', counts: true },
+  { ...leaf('⏰', '/admin/step-timing', 'Step timing', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role), hint: 'How long each step may take before it shows as Late, and the alerts', counts: true },
+  { ...leaf('🎯', '/admin/fit', 'Fit settings', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role), hint: 'How the Fit % is worked out', counts: true },
+  { ...leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]), hint: 'Roles: Admin, Dept Head, BDE, Recruiter — who may do what', counts: true },
+  { ...leaf('🔔', '/admin/notifications', 'Notifications', null), hint: 'Your own notifications', counts: false },
+];
+export function atsSettingsLinks(user) {
+  // eslint-disable-next-line no-use-before-define
+  return visibleItems(user, ATS_SETTINGS_LINKS);
+}
+const firstTo = (user, tabs, fallback) => {
+  // eslint-disable-next-line no-use-before-define
+  const shown = visibleItems(user, tabs);
+  return shown.length ? shown[0].to : fallback;
+};
+// A module entry: visible when any of its tabs is; `to` is resolved per login
+// in atsItemsFor() (the first tab that login may open).
+const moduleLeaf = (id, icon, to, label, tabs) => ({
+  id, icon, to, label, perms: null, tabs,
+  // eslint-disable-next-line no-use-before-define
+  when: (u) => visibleItems(u, tabs).length > 0,
+});
+
+export const ATS_ITEMS = [
+  { ...leaf('📊', '/ats/dashboard', 'Dashboard', [['dashboard', 'Pending Approvals', 'view']], 'ats'), id: 'dashboard' },
+  moduleLeaf('clients-req', '💼', '/clients', 'Clients & Requirements', CLIENTS_REQ_TABS),
+  { ...leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]), id: 'candidates' },
+  { ...leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]), id: 'calendar' },
+  moduleLeaf('reports-team', '🎯', '/reports/ats', 'Reports & Team', REPORTS_TEAM_TABS),
+];
+
+// Which module a URL belongs to, so its entry stays lit on every tab and on
+// the detail pages.
+export const MODULE_PATHS = {
+  'clients-req': /^\/(clients|requirements|agreements)(\/|$)/,
+  'reports-team': /^\/(reports\/(ats|my-results|job-portal)|ats\/(team|settings|followups))(\/|$)/,
+};
+export function moduleOfPath(pathname) {
+  return Object.keys(MODULE_PATHS).find((k) => MODULE_PATHS[k].test(pathname)) || null;
+}
+// A tab's own label, for the breadcrumb.
+export function moduleTabLabel(pathname) {
+  const t = [...CLIENTS_REQ_TABS, ...REPORTS_TEAM_TABS].find((x) => x.to === pathname);
+  return t ? t.label : null;
+}
 
 // Review #3 §1 — nothing below is a menu entry, anywhere: they are tabs,
 // stages, filters or action views INSIDE the seven pages above, still routed
@@ -210,6 +252,9 @@ export const ACCOUNTS_ITEMS = [
   leaf('📒', '/accounts/journal', 'Journal & Ledger', [['accounts', 'Journal & Ledger', 'view']]),
   // Signed client agreements, read-only for the accounts desk (routes/agreementSeal.js).
   leaf('📝', '/accounts/agreements', 'Client Agreements', [['accounts', 'Invoices', 'view']], 'accounts'),
+  // Accounts Reports lives here now: the separate Reports group was removed
+  // (user, 2026-10-03: "remove this module").
+  leaf('💰', '/reports/accounts', 'Reports', [['reports', 'Accounts Reports', 'view']], 'accounts'),
 ];
 
 // ADMINISTRATION — §15, exactly.
@@ -251,6 +296,36 @@ export const ADMIN_ITEMS = [
   leaf('👤', '/admin/profile', 'Profile', null),
 ];
 
+// COMPANY SETUP TABS (user, 2026-10-03: no extra sidebar modules — new
+// settings pages live as tabs inside the existing Company Setup entry).
+// Rendered above the page by Shell.jsx (components/SetupTabs.jsx).
+export const SETUP_TABS = [
+  leaf('🏢', '/admin/company', 'Company', [['administration', 'Company Setup', 'view']]),
+  leaf('📋', '/admin/master-lists', 'Master lists', [['administration', 'Company Setup', 'view']]),
+  { ...leaf('⏰', '/admin/step-timing', 'Step timing', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
+  { ...leaf('🧹', '/admin/data-cleanup', 'Data cleanup', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
+  { ...leaf('🎯', '/admin/fit', 'Fit settings', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
+  // Vendor portal (P3): vendor logins — Admin, or an Accounts desk login (the server allows only Accounts approvers).
+  // Vendor portal (P3 / v2 §3): Super Admin / Admin, or a login that already manages users or holds the Vendor Logins grant.
+  { ...leaf('🔑', '/admin/vendor-logins', 'Vendor logins', null), when: (u) => !!u && !u.viewAs && (['SUPER_ADMIN', 'ADMIN'].includes(u.role) || can(u, null, 'administration', 'Vendor Logins', 'view') || can(u, null, 'administration', 'Users', 'edit')) },
+  // B7 agency / freelancer partners: the master, their logins, the Partner emails switch — Super Admin / Admin, or an Accounts desk login (the server allows only Accounts approvers).
+  { ...leaf('🤝', '/admin/partners', 'Partners', null), when: (u) => !!u && !u.viewAs && (['SUPER_ADMIN', 'ADMIN'].includes(u.role) || ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'].includes(u.accountsRole)) },
+  { ...leaf('💾', '/admin/system', 'Backups & safety', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.viewAs },
+];
+export const SETUP_PATHS = SETUP_TABS.map((t) => t.to);
+
+// INTERVIEW CALENDAR TABS (user, 2026-10-03: no extra modules). Feedback,
+// Offers and Joining are tabs of the existing Interview Calendar entry, drawn
+// above the page by Shell.jsx (components/InterviewTabs.jsx). Same routes and
+// the same view permission each page's API asks for.
+export const INTERVIEW_TABS = [
+  leaf('📅', '/ats/calendar', 'Interviews', [['interviews', 'Calendar View', 'view']]),
+  leaf('📝', '/ats/interview-feedback', 'Feedback', [['interviews', 'Interview Feedback', 'view']]),
+  leaf('📨', '/ats/offers', 'Offers', [['interviews', 'Offers', 'view']]),
+  leaf('🤝', '/ats/joining', 'Joining', [['interviews', 'Joining', 'view']]),
+];
+export const INTERVIEW_PATHS = INTERVIEW_TABS.map((t) => t.to);
+
 export const REPORTS_ITEMS = [
   // ONE entry for all of ATS Reports: the eleven reports (Recruitment,
   // Requirements, … SLA & Aging) are tabs inside the page, never sidebar
@@ -260,9 +335,21 @@ export const REPORTS_ITEMS = [
   // Product-gated (user, 2026-09-29): an R&D employee or anyone without ATS
   // must not see ATS / Job Portal reports, whatever their HRMS role grants.
   leaf('🎯', '/reports/ats', 'ATS Reports', [['reports', 'ATS Reports', 'view']], 'ats'),
-  leaf('🌐', '/reports/job-portal', 'Job Portal Reports', [['reports', 'Job Portal Reports', 'view']], 'ats'),
+  // Job Portal Reports is a TAB of ATS Reports now (?tab=jobportal, simplicity
+  // lead 2026-10-03); its old address /reports/job-portal still opens the page.
+  // A recruiter's own numbers (per-role spec 2026-10-03) — NOT a new sidebar
+  // entry (user, 2026-10-03: "side bar lo extra modules add cheyyodhu"): a
+  // login without ATS Reports gets the same "ATS Reports" entry, opening
+  // their own results.
+  leaf('🎯', '/reports/my-results', 'ATS Reports', [['reports', 'My Results', 'view']], 'ats', [['reports', 'ATS Reports', 'view']]),
   leaf('💰', '/reports/accounts', 'Accounts Reports', [['reports', 'Accounts Reports', 'view']], 'accounts'),
 ];
+// ATS LAYOUT v3: ATS Reports / My Results moved INTO ATS → Reports & Team (a
+// tab). REPORTS_ITEMS still lists every report screen (the home dashboard's
+// report links read it); the sidebar's Reports group shows the rest
+// (Accounts Reports).
+export const ATS_REPORT_PATHS = ['/reports/ats', '/reports/my-results', '/reports/job-portal'];
+export const REPORTS_SIDEBAR_ITEMS = REPORTS_ITEMS.filter((i) => !ATS_REPORT_PATHS.includes(i.to));
 
 function leafVisible(user, item) {
   if (item.product && !(user?.products || {})[item.product]) return false;
@@ -294,26 +381,31 @@ export function atsRoleOf(user) {
   return (user && user.scopeRoles && user.scopeRoles.ats) || productRole(user, 'ats');
 }
 
-// Review #3 §15 / §28 — "My Work everywhere". SAME routes, SAME permissions;
-// only the words change, so a recruiter reads the menu as their own work:
-//   Recruiter  My Work · My Requirements · My Candidates · My Workload ·
-//              My Interviews · Reports
-//   BDE        My Work · Jobs / Requirements · My Clients · Candidates &
-//              Pipeline · My Workload · Interview Calendar · Reports
-//   TL         My Team (dashboard) · … · Team Workload (Recruiter & BDE) — one
-//              "My Team" entry, not two with the same name
+// Review #3 §15 / §28 — "My Work everywhere", on the five v3 entries. SAME
+// routes, SAME permissions; only the words change (keyed by entry id):
+//   Recruiter  My Work · My Jobs · My Candidates · My Interviews · My Results
+//   BDE        My Work · My Clients & Jobs · Candidates & Pipeline ·
+//              Interview Calendar · My Results
+//   TL         My Team (dashboard) · … · Reports & Team
 // Manager / Asst Manager / STL / Super Admin keep the module names.
 const ROLE_LABELS = {
   RECRUITER: {
-    '/ats/dashboard': 'My Work', '/requirements': 'My Requirements', '/candidates': 'My Candidates',
-    '/ats/team': 'My Workload', '/ats/calendar': 'My Interviews',
+    dashboard: 'My Work', 'clients-req': 'My Jobs', candidates: 'My Candidates',
+    calendar: 'My Interviews', 'reports-team': 'My Results',
   },
-  BDE: { '/ats/dashboard': 'My Work', '/clients': 'My Clients', '/ats/team': 'My Workload' },
-  // The module keeps its name "Recruiter & BDE" for a TL (user spec
-  // 2026-09-29) — TL review / workload lives inside it as filters.
-  TL: { '/ats/dashboard': 'My Team' },
+  BDE: { dashboard: 'My Work', 'clients-req': 'My Clients & Jobs', 'reports-team': 'My Results' },
+  TL: { dashboard: 'My Team' },
 };
-const ROLE_ICONS = { '/ats/team': { RECRUITER: '🗂️', BDE: '🗂️' } };
+const ROLE_ICONS = { 'reports-team': { RECRUITER: '🗂️', BDE: '🗂️' } };
+// The tabs inside a module, in a recruiter's / BDE's own words.
+const ROLE_TAB_LABELS = {
+  RECRUITER: { '/requirements': 'My Jobs', '/ats/team': 'My Workload' },
+  BDE: { '/clients': 'My Clients', '/requirements': 'Jobs', '/ats/team': 'My Workload' },
+};
+export function moduleTabsFor(user, tabs) {
+  const labels = ROLE_TAB_LABELS[atsRoleOf(user)] || {};
+  return visibleItems(user, tabs).map((t) => (labels[t.to] ? { ...t, label: labels[t.to] } : t));
+}
 // User notes #4 — a Client or a Candidate login gets ONE entry: its own
 // portal (pages/portal/*). The internal ATS screens stay reachable only by
 // typing their address, and the API still scopes every one of them.
@@ -322,17 +414,20 @@ const PORTAL_ITEMS = {
   CANDIDATE: [leaf('🗂️', '/my-applications', 'My Applications', [['candidates', 'Candidate List', 'view']])],
 };
 // ACCOUNTS IN ATS is a billing view and nothing else (role specs 2026-09-29):
-// Jobs / Requirements (the requirements with joined candidates) and Clients
-// (the billing view). No ATS dashboard, candidates, team or calendar entry.
-const ACCOUNTS_ATS_PATHS = ['/requirements', '/clients'];
+// Clients & Requirements only (the billing view of clients and the
+// requirements with joined candidates). No ATS dashboard, candidates, team or
+// calendar entry.
+const ACCOUNTS_ATS_IDS = ['clients-req'];
 export function atsItemsFor(user) {
   const role = atsRoleOf(user);
   if (PORTAL_ITEMS[role]) return PORTAL_ITEMS[role];
-  if (role === 'ACCOUNTANT') return ATS_ITEMS.filter((i) => ACCOUNTS_ATS_PATHS.includes(i.to));
+  // A module entry opens the first tab this login may open.
+  const items = ATS_ITEMS.map((i) => (i.tabs ? { ...i, to: firstTo(user, i.tabs, i.to) } : i));
+  if (role === 'ACCOUNTANT') return items.filter((i) => ACCOUNTS_ATS_IDS.includes(i.id));
   const labels = ROLE_LABELS[role];
-  if (!labels) return ATS_ITEMS;
-  return ATS_ITEMS.map((i) => (labels[i.to]
-    ? { ...i, label: labels[i.to], ...((ROLE_ICONS[i.to] || {})[role] ? { icon: ROLE_ICONS[i.to][role] } : {}) }
+  if (!labels) return items;
+  return items.map((i) => (labels[i.id]
+    ? { ...i, label: labels[i.id], ...((ROLE_ICONS[i.id] || {})[role] ? { icon: ROLE_ICONS[i.id][role] } : {}) }
     : i));
 }
 
@@ -350,7 +445,8 @@ export function groupsForUser(user) {
   add('hrms', sectionLabel('hrms', user), HRMS_ITEMS);
   add('ats', sectionLabel('ats', user), atsItemsFor(user));
   add('accounts', sectionLabel('accounts', user), ACCOUNTS_ITEMS);
-  add('reports', sectionLabel('reports', user), REPORTS_ITEMS);
+  // No separate Reports group (user, 2026-10-03): ATS reports are in ATS →
+  // Reports & Team, Accounts reports in Accounts → Reports.
   add('admin', sectionLabel('admin', user), ADMIN_ITEMS);
   return groups;
 }
@@ -375,8 +471,11 @@ const SECTION_OF_PATH = [
   // they hold nothing else in.
   [/^\/(hrms|attendance|leave|payroll|performance|employee-services|my-profile|employees)/, 'hrms'],
   [/^\/(ats|requirements|clients|candidates|client-portal|agreements)/, 'ats'],
+  // ATS Reports / My Results are a tab of ATS → Reports & Team (layout v3).
+  [/^\/reports\/(ats|my-results|job-portal)(\/|$)/, 'ats'],
   // ATS Reports is in the Reports group (2026-09-29) — /reports/* below.
   [/^\/(accounts|invoices|bank|office)/, 'accounts'],
+  [/^\/reports\/accounts(\/|$)/, 'accounts'],
   [/^\/reports/, 'reports'],
   [/^\/admin/, 'admin'],
 ];
@@ -408,6 +507,14 @@ export function sectionOf(pathname, user) {
 // entry am I on" has to compare the query too, not just the path.
 export function scoreMatch(to, pathname, search) {
   const [toPath, toQuery] = to.split('?');
+  // The Company Setup entry stays lit on every one of its tabs.
+  if (toPath === '/admin/company' && SETUP_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return 950;
+  // The Interview Calendar entry stays lit on its Feedback / Offers / Joining tabs.
+  if (toPath === '/ats/calendar' && INTERVIEW_PATHS.some((p) => pathname === p)) return 950;
+  // A v3 module entry (Clients & Requirements, Reports & Team) stays lit on
+  // every one of its tabs and on their detail pages.
+  const mod = moduleOfPath(pathname);
+  if (mod && moduleOfPath(toPath) === mod) return 950;
   if (toQuery) {
     if (pathname !== toPath) return 0;
     const here = new URLSearchParams(search);

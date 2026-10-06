@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import api from '../../api';
 import { PanelPad, EmptyMini } from '../../components/proto.jsx';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
@@ -9,6 +9,7 @@ import HierarchyFilter, { EMPTY_HIERARCHY, toParams, hierarchyChips, useHierarch
 import FilterChips from '../../components/FilterChips.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+// The per-step rules table moved to Administration → Step timing (pages/admin/AtsAlertSettings.jsx).
 
 // ---------------------------------------------------------------------------
 // THE FOLLOW-UP DASHBOARD (§21-§25) and DO THIS NOW (§27).
@@ -30,9 +31,16 @@ const TONE = {
   Upcoming: 'fu-upcoming',
   Completed: 'fu-done',
 };
+// Four colours only: red problem · orange waiting · blue going on · green done.
 const DOT = {
-  Overdue: '🔴', 'Due Today': '🟠', Upcoming: '🟡', Completed: '🟢',
+  Overdue: '🔴', 'Due Today': '🟠', Upcoming: '🔵', Completed: '🟢',
 };
+// Everyday words for the server's status values (the values themselves are
+// unchanged — they are what the API filters on).
+const WORD = { Overdue: 'Late', 'Due Today': 'Due today', Upcoming: 'Upcoming', Completed: 'Done' };
+const word = (s) => WORD[s] || s;
+// Never a bare zero.
+const n0 = (n) => (Number(n) > 0 ? n : '—');
 
 function Tiles({ t }) {
   return (
@@ -42,8 +50,8 @@ function Tiles({ t }) {
         ['Upcoming', t.upcoming], ['Completed', t.completed],
       ].map(([label, n]) => (
         <div className={`fu-tile ${TONE[label]}`} key={label}>
-          <span className="fu-tile-n">{n}</span>
-          <span className="fu-tile-l">{DOT[label]} {label}</span>
+          <span className="fu-tile-n">{n0(n)}</span>
+          <span className="fu-tile-l">{DOT[label]} {word(label)}</span>
         </div>
       ))}
     </div>
@@ -61,7 +69,7 @@ const MINE_SORTS = [
   { key: 'urgent', label: 'Most urgent first', cmp: null },
   { key: 'due', label: 'Due date — soonest', cmp: (a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')) },
   { key: 'dueLate', label: 'Due date — latest', cmp: (a, b) => String(b.dueDate || '').localeCompare(String(a.dueDate || '')) },
-  { key: 'name', label: 'Candidate A–Z', cmp: (a, b) => String(a.candidateName || '').localeCompare(String(b.candidateName || '')) },
+  { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.candidateName || '').localeCompare(String(b.candidateName || '')) },
 ];
 
 function Rows({ rows, empty }) {
@@ -76,7 +84,7 @@ function Rows({ rows, empty }) {
             <th>Purpose</th>
             <th style={{ width: 110 }}>Method</th>
             <th style={{ width: 120 }}>Status</th>
-            <th style={{ width: 110 }}>Action</th>
+            <th style={{ width: 110 }}>Next</th>
           </tr>
         </thead>
         <tbody>
@@ -91,7 +99,7 @@ function Rows({ rows, empty }) {
               </td>
               <td className="cell-muted">{f.purpose || f.nextAction}</td>
               <td className="cell-muted">{f.contactMode || '—'}</td>
-              <td><span className={`fu-chip ${TONE[f.status]}`}>{DOT[f.status]} {f.status}</span></td>
+              <td><span className={`fu-chip ${TONE[f.status]}`}>{DOT[f.status]} {word(f.status)}</span></td>
               <td>
                 <Link className="btn btn-sm btn-primary" to={`/candidates/${f.candidateId}`}>
                   {f.status === 'Upcoming' ? 'View' : 'Contact'}
@@ -105,7 +113,17 @@ function Rows({ rows, empty }) {
   );
 }
 
-export default function FollowUps() {
+// /ats/followups is a TAB of Recruiter & BDE now (user, 2026-10-03: no extra
+// modules). The old address opens that tab; a login without the Recruiter &
+// BDE page keeps the stand-alone screen, so nobody loses it.
+export function FollowUpsRoute() {
+  const { user } = useAuth();
+  if (can(user, null, 'recruiterbde', 'Team View', 'view')) return <Navigate to="/ats/team?view=followups" replace />;
+  return <FollowUps />;
+}
+
+// embedded: drawn inside Recruiter & BDE (no page title of its own).
+export default function FollowUps({ embedded = false }) {
   const { user } = useAuth();
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   const [data, setData] = useState(null);
@@ -119,15 +137,17 @@ export default function FollowUps() {
   const load = useCallback(() => {
     api.get('/followups/dashboard', { params: { rows: 'all', ...JSON.parse(hierKey) } })
       .then((r) => { setData(r.data); setError(''); })
-      .catch((err) => setError(err.response?.data?.error || 'Follow-ups are not included in your role’s permissions.'));
+      .catch((err) => setError(err.response?.data?.error || (err.response?.status === 403
+        ? 'Follow-ups are not part of your role.'
+        : 'Could not load follow-ups. Please try again.')));
   }, [hierKey]);
   useEffect(load, [load]);
 
   const mineLf = useListFilters((data && data.mine && data.mine.rows) || [], [
-    { key: 'q', type: 'search', placeholder: 'Search candidate, requirement or purpose…', get: (f) => `${f.candidateName || ''} ${f.requirementTitle || ''} ${f.requirementCode || ''} ${f.purpose || f.nextAction || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search name, job or purpose…', get: (f) => `${f.candidateName || ''} ${f.requirementTitle || ''} ${f.requirementCode || ''} ${f.purpose || f.nextAction || ''}` },
     { key: 'status', label: 'Status', primary: true, get: (f) => f.status, options: ['Overdue', 'Due Today', 'Upcoming', 'Completed'] },
     { key: 'method', label: 'Method', primary: true, get: (f) => f.contactMode },
-    { key: 'stage', label: 'Stage', get: (f) => f.stageLabel },
+    { key: 'stage', label: 'Step', get: (f) => f.stageLabel },
     { key: 'client', label: 'Client', get: (f) => f.clientName, show: clientDesk },
     { key: 'due', type: 'daterange', label: 'Due date', get: (f) => f.dueDate },
   ], { sorts: MINE_SORTS });
@@ -138,7 +158,7 @@ export default function FollowUps() {
     { key: 'role', label: 'Role', primary: true, get: (o) => o.ownerRole },
   ], {
     sorts: [
-      { key: 'overdue', label: 'Most overdue first', cmp: null },
+      { key: 'overdue', label: 'Most late first', cmp: null },
       { key: 'name', label: 'Owner A–Z', cmp: (a, b) => String(a.owner || '').localeCompare(String(b.owner || '')) },
     ],
   });
@@ -149,13 +169,13 @@ export default function FollowUps() {
 
   return (
     <div>
-      <div className="breadcrumb">ATS / Follow-ups</div>
+      {/* The Shell already draws the breadcrumb — no second one here. */}
       <div className="page-head">
         <div>
-          <h1>Follow-ups</h1>
+          {!embedded && <h1>Follow-ups</h1>}
           <div className="page-sub">
-            <b className="scope-tag">Scope: {data.scope}</b>
-            {' · '}Who to contact, why, and by when.
+            Who to contact, why, and by when.
+            {data.scope ? <>{' · '}<b className="scope-tag">Your area: {data.scope}</b></> : null}
           </div>
         </div>
         {/* Template · Import · Export: every follow-up in your scope
@@ -174,9 +194,9 @@ export default function FollowUps() {
 
       {/* §27 — first, short, and each one has a button. */}
       <div className="card section do-now">
-        <h3>🔴 Do This Now</h3>
+        <h3>Do this now</h3>
         {data.doThisNow.length === 0
-          ? <EmptyMini>Nothing is overdue or due today. Your upcoming work is below.</EmptyMini>
+          ? <EmptyMini>Nothing late or due today. You&apos;re all caught up.</EmptyMini>
           : (
             <ol className="do-now-list">
               {data.doThisNow.map((d) => (
@@ -185,7 +205,7 @@ export default function FollowUps() {
                     <b>{d.what}</b>
                     <span className="small-muted"> — {d.why}</span>
                   </span>
-                  <span className={`fu-chip ${TONE[d.status]}`}>{DOT[d.status]} {d.status}{d.due ? ` · ${d.due}` : ''}</span>
+                  <span className={`fu-chip ${TONE[d.status]}`}>{DOT[d.status]} {word(d.status)}{d.due ? ` · ${d.due}` : ''}</span>
                   <Link className="btn btn-sm btn-primary" to={`/candidates/${d.candidateId}`}>Contact</Link>
                 </li>
               ))}
@@ -195,12 +215,12 @@ export default function FollowUps() {
 
       {/* §21 */}
       <PanelPad style={{ marginTop: 14 }}>
-        <h3>My Follow-ups</h3>
+        <h3>My follow-ups</h3>
         <Tiles t={data.mine} />
         <ListFilterBar lf={mineLf} storageKey="fu-mine" noun="follow-ups" />
         <Rows
           rows={minePage.slice}
-          empty={mineLf.activeCount ? <ListEmpty lf={mineLf} noun="follow-ups" /> : 'Nothing assigned to you right now.'}
+          empty={mineLf.activeCount ? <ListEmpty lf={mineLf} noun="follow-ups" /> : 'No follow-ups for you right now.'}
         />
         {mineLf.rows.length > 0 && <Pager page={minePage} noun="follow-ups" />}
       </PanelPad>
@@ -212,7 +232,7 @@ export default function FollowUps() {
           <Tiles t={data.team} />
           {data.team.owners.length > 0 && <ListFilterBar lf={teamLf} storageKey="fu-team" noun="owners" />}
           {data.team.owners.length === 0
-            ? <EmptyMini>Nobody else has follow-ups in your scope.</EmptyMini>
+            ? <EmptyMini>No one else in your area has follow-ups.</EmptyMini>
             : teamLf.rows.length === 0 ? <ListEmpty lf={teamLf} noun="owners" /> : (
               <>
               <div className="tbl-wrap">
@@ -220,9 +240,9 @@ export default function FollowUps() {
                   <thead>
                     <tr>
                       <th>Owner</th><th style={{ width: 120 }}>Role</th>
-                      <th style={{ width: 110 }}>🔴 Overdue</th>
-                      <th style={{ width: 110 }}>🟠 Due Today</th>
-                      <th style={{ width: 110 }}>🟡 Upcoming</th>
+                      <th style={{ width: 110 }}>🔴 Late</th>
+                      <th style={{ width: 110 }}>🟠 Due today</th>
+                      <th style={{ width: 110 }}>🔵 Upcoming</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -230,9 +250,9 @@ export default function FollowUps() {
                       <tr key={o.ownerUserId || o.owner}>
                         <td><b>{o.owner}</b></td>
                         <td className="cell-muted">{o.ownerRole}</td>
-                        <td className={o.overdue ? 'fu-num-bad' : 'cell-muted'}>{o.overdue}</td>
-                        <td className="cell-muted">{o.dueToday}</td>
-                        <td className="cell-muted">{o.upcoming}</td>
+                        <td className={o.overdue ? 'fu-num-bad' : 'cell-muted'}>{n0(o.overdue)}</td>
+                        <td className="cell-muted">{n0(o.dueToday)}</td>
+                        <td className="cell-muted">{n0(o.upcoming)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -247,25 +267,26 @@ export default function FollowUps() {
       {/* §24 */}
       {data.health && (
         <PanelPad style={{ marginTop: 14 }}>
-          <h3>Follow-up Health</h3>
+          <h3>All follow-ups</h3>
           <Tiles t={data.health} />
-          <div className="small-muted">
-            <b>{data.health.unassigned}</b> unassigned
-            {' · '}
-            <b>{data.health.escalated}</b> escalated past their owner.
-            {data.health.unassigned > 0 && ' An unassigned follow-up is the one that will certainly be missed.'}
-          </div>
+          {(data.health.unassigned > 0 || data.health.escalated > 0) && (
+            <div className="small-muted">
+              {data.health.unassigned > 0 && <><b>{data.health.unassigned}</b> have no owner — give them one.</>}
+              {data.health.unassigned > 0 && data.health.escalated > 0 && ' · '}
+              {data.health.escalated > 0 && <><b>{data.health.escalated}</b> sent up to a lead.</>}
+            </div>
+          )}
         </PanelPad>
       )}
 
       {/* §25 — only genuinely unresolved items are on the ladder. */}
       {data.escalation && (
         <PanelPad style={{ marginTop: 14 }}>
-          <h3>Escalation Monitor</h3>
+          <h3>Sent up to a lead</h3>
           <div className="fu-ladder">
             {data.escalation.map((r) => (
               <div className={`fu-rung${r.count ? ' has-any' : ''}`} key={r.level}>
-                <span className="fu-rung-n">{r.count}</span>
+                <span className="fu-rung-n">{n0(r.count)}</span>
                 <span className="fu-rung-l">
                   Level {r.level} — {r.label}
                   {r.afterDays ? <span className="small-muted"> · after {r.afterDays}d</span> : null}
@@ -274,9 +295,17 @@ export default function FollowUps() {
             ))}
           </div>
           <div className="small-muted" style={{ marginTop: 8 }}>
-            A follow-up leaves this ladder when it is completed. Escalating tells somebody else — it never moves
-            the work, and the original owner stays responsible.
+            It leaves this list once it is done. The owner still does the work.
           </div>
+        </PanelPad>
+      )}
+
+      {/* C1 (2026-10-03): when a follow-up is due, per step. Only the people
+          who can open Step timing (Super Admin / Admin) see this pointer. */}
+      {user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
+        <PanelPad style={{ marginTop: 14 }}>
+          {/* One screen for every per-step day: Administration → Company Setup → Step timing. */}
+          <b>Due days per step</b> are set in <Link to="/admin/step-timing">Step timing</Link>.
         </PanelPad>
       )}
     </div>

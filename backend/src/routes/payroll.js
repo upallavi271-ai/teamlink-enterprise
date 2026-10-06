@@ -436,7 +436,20 @@ router.get('/runs', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'),
   const runs = await prisma.payrollRun.findMany({ orderBy: { month: 'desc' }, include: { _count: { select: { entries: true } } } });
   // perEmployee: the month is run through per-employee records (SPEC B) and
   // is paid per record through Accounts; otherwise it is an older month run.
-  res.json(runs.map(({ _count, ...r }) => ({ ...r, perEmployee: _count.entries > 0, records: _count.entries })));
+  // S3: "Posted to Accounts" / "Not posted" per month (one journal per month).
+  // eslint-disable-next-line global-require
+  const P = require('../utils/payrollPosting');
+  const out = [];
+  for (const { _count, ...r } of runs) {
+    const perEmployee = _count.entries > 0;
+    // eslint-disable-next-line no-await-in-loop
+    const st = perEmployee ? await P.monthState(r.month) : null;
+    out.push({
+      ...r, perEmployee, records: _count.entries,
+      accountsPosted: st ? st.posted : null, accountsJournalId: st && st.journalEntry ? st.journalEntry.id : null,
+    });
+  }
+  res.json(out);
 });
 
 // Marks an OLDER month run (one with no per-employee records, e.g. August
@@ -533,14 +546,23 @@ async function payslipPayload(slip) {
   if (!lopDeduction && lopDays > 0 && !slip.payrollEntryId) lopDeduction = Math.max(0, Math.round(gross - pf - pt - lateCut - (Number(slip.netPay) || 0)));
   const workingDays = Number(slip.workingDays) > 0 ? Number(slip.workingDays) : null;
 
-  const earnings = isStipend
-    ? [{ label: 'Stipend', amount: gross }]
-    : [
-      { label: 'Basic', amount: slip.basic || 0 },
-      { label: 'HRA', amount: slip.hra || 0 },
-      { label: 'Bonus', amount: slip.bonus || 0 },
-      { label: 'Special Allowance', amount: slip.specialAllowance || 0 },
-    ];
+  // Recruiter-joinings incentive (Super Admin's decision, utils/recruiterJoinings.js):
+  // its own earning line, already inside the run's gross.
+  const incentive = Math.max(0, Number(slip.incentive) || 0);
+  const earnings = [
+    ...(isStipend
+      ? [{ label: 'Stipend', amount: gross - incentive }]
+      : [
+        { label: 'Basic', amount: slip.basic || 0 },
+        { label: 'HRA', amount: slip.hra || 0 },
+        // Payroll import (2026-10-06): the registers' Conveyance line, only when paid.
+        ...(Number(slip.conveyance) > 0 ? [{ label: 'Conveyance', amount: Number(slip.conveyance) }] : []),
+        { label: 'Bonus', amount: slip.bonus || 0 },
+        { label: 'Special Allowance', amount: slip.specialAllowance || 0 },
+      ]),
+    ...(Number(slip.arrears) > 0 ? [{ label: 'Arrears', amount: Number(slip.arrears) }] : []),
+    ...(incentive > 0 ? [{ label: 'Incentive', amount: incentive }] : []),
+  ];
   const deductions = [
     ...(isStipend ? [] : [{ label: 'PF', amount: pf }, { label: 'PT', amount: pt }]),
     // SPEC B lines, printed only when the run deducted them.

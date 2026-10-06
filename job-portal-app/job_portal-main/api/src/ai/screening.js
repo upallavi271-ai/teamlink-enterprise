@@ -25,7 +25,7 @@
  */
 import { withUser } from '../db.js';
 import { toJob, toCandidate } from '../shapes.js';
-import { matchCandidate } from './match.js';
+import { matchCandidate, WEIGHTS } from './match.js';
 
 const ENGINE = { userId: '', role: 'admin', profileId: null };
 
@@ -36,6 +36,8 @@ const DEFAULTS = {
   weightEducation: 15,
   weightLocation: 10,
   autoScreeningEnabled: true,
+  // 0097: how much the screening answers count, out of 100.
+  weightScreeningAnswers: 20,
 };
 
 export async function loadAiSettings() {
@@ -66,18 +68,93 @@ export function scoreApplication({ job, candidate, settings = DEFAULTS }) {
     return Math.max(0, Math.min(1, v / max));
   };
 
+  /*
+   * A DIMENSION THE REQUIREMENT DID NOT STATE IS NOT A ZERO.
+   *
+   * `stated: false` means the requirement lists no skills at all - which
+   * is true of every real requirement in this account: Staff Nurse,
+   * Cardiologist, Emergency Physician and Human Resource Recruiter were
+   * all posted with an empty skills list. Scoring that as zero and then
+   * dividing by the full weight punishes the candidate for something
+   * nobody asked them about. Skills carry the largest weight, so
+   * forty-three of eighty-seven applications came out at exactly 34%,
+   * which reads as "none of these people are any good" and means "nobody
+   * wrote down what the job needs".
+   *
+   * So an unassessable dimension is dropped from BOTH sides of the
+   * average. The score then answers the question it appears to answer:
+   * how well this person fits what the requirement actually says.
+   *
+   * The other three always produce something - an unstated experience
+   * band or location scores half rather than nothing - so only skills
+   * can be missing in this sense.
+   */
+  /*
+   * The divisor is the matcher's OWN weight for that dimension, read
+   * from the matcher. It used to be written here as 40, 20, 5 and 15 -
+   * a copy of those weights, in a second file, with nothing to keep the
+   * two in step. Rebalancing the matcher so that skills lead silently
+   * broke this: a skills score of 50 was divided by 40 and clamped, and
+   * an experience score of 15 was divided by 20 and could never exceed
+   * three quarters. Both files now read one definition.
+   */
   const parts = [
-    { key: 'skills', unit: unit('skills', 40), weight: Number(settings.weightSkills) || 0 },
-    { key: 'experience', unit: unit('experience', 20), weight: Number(settings.weightExperience) || 0 },
-    { key: 'education', unit: unit('education', 5), weight: Number(settings.weightEducation) || 0 },
-    { key: 'location', unit: unit('location', 15), weight: Number(settings.weightLocation) || 0 },
+    { key: 'skills', unit: unit('skills', WEIGHTS.skills), weight: Number(settings.weightSkills) || 0,
+      assessable: !(b.skills && b.skills.stated === false) },
+    { key: 'experience', unit: unit('experience', WEIGHTS.experience), weight: Number(settings.weightExperience) || 0,
+      assessable: true },
+    { key: 'education', unit: unit('education', WEIGHTS.education), weight: Number(settings.weightEducation) || 0,
+      assessable: true },
+    { key: 'location', unit: unit('location', WEIGHTS.location), weight: Number(settings.weightLocation) || 0,
+      assessable: true },
   ];
 
-  const totalWeight = parts.reduce((t, p) => t + p.weight, 0) || 1;
-  const score = Math.round(parts.reduce((t, p) => t + p.unit * p.weight, 0) / totalWeight * 100);
+  const weighed = parts.filter((p) => p.assessable && p.weight > 0);
+  // Every dimension unassessable, or all weights zero: there is nothing
+  // to say, and 0 is the honest answer rather than a number made up from
+  // an empty average.
+  const totalWeight = weighed.reduce((t, p) => t + p.weight, 0);
+  const weightedScore = totalWeight
+    ? Math.round(weighed.reduce((t, p) => t + p.unit * p.weight, 0) / totalWeight * 100)
+    : 0;
+
+  /*
+   * THE SAME SKILLS CEILING THE MATCHER APPLIES.
+   *
+   * This rescales the matcher's dimensions with the admin's weights and
+   * then produces its own number, so the matcher's ceiling - which is not
+   * a dimension but a limit on the total - was being discarded. That put
+   * two different answers on screen for the same pairing: an alert saying
+   * 20% and a screening score saying 58%, for a candidate with none of
+   * the skills the requirement names.
+   *
+   * The ceiling is read from the matcher rather than recomputed, so there
+   * is one rule and one place it is written down.
+   */
+  const ceiling = m.basis && m.basis.ceiling;
+  const score = Number.isFinite(ceiling) ? Math.min(weightedScore, ceiling) : weightedScore;
 
   const threshold = Number(settings.autoShortlistThreshold) || 80;
-  const verdict = score >= threshold ? 'shortlist'
+
+  /*
+   * A SCORE THAT COULD NOT LOOK AT SKILLS DOES NOT SHORTLIST BY ITSELF.
+   *
+   * Dropping the unassessable dimension from the average is right - it
+   * stops a candidate being marked down for something nobody asked them
+   * about - but it also means a requirement with no skills listed hands
+   * out high scores cheaply: experience, location and education are all
+   * a person is measured on, and most people clear them. Forty-two
+   * applications moved straight to Shortlisted on an 82% that had never
+   * compared a single skill, against a requirement that lists none.
+   *
+   * Automatic shortlisting is the one verdict that MOVES somebody
+   * without a human, so it needs the dimension that actually decides
+   * whether they can do the job. Without it the best this can honestly
+   * say is "worth a look", which puts the candidate and the score in
+   * front of a recruiter and leaves the decision where it belongs.
+   */
+  const skillsAssessed = !(b.skills && b.skills.stated === false);
+  const verdict = (score >= threshold && skillsAssessed) ? 'shortlist'
     : score >= threshold - 15 ? 'review'
     : 'hold';
 
@@ -102,6 +179,7 @@ export function scoreApplication({ job, candidate, settings = DEFAULTS }) {
     score,
     verdict,
     threshold,
+    skillsAssessed,
     reasons,
     matched,
     missing,
@@ -180,12 +258,37 @@ export async function screenApplication(applicationId, { actor = 'system', force
    * position in the pipeline - with the score attached and on screen.
    * Nobody is rejected either way: that stays a person's decision.
    */
+  /*
+   * SCREENING ANSWERS (0097).
+   *
+   * The resume score above is untouched - it is still ai_score. When the
+   * candidate has answered the job's questions, a combined score mixes in
+   * the answer score by the admin's "screening answers" weight (default
+   * 20), and that is what decides the verdict. Not answered yet: combined
+   * = resume score, and the screen says "answers pending".
+   *
+   * A failed must-have is NEVER shortlisted automatically, whatever the
+   * numbers say. It is not rejected either - a recruiter decides.
+   */
+  const answers = await screeningAnswersFor(ctx.app, result, settings);
+  if (answers.combined !== null) {
+    result.combinedScore = answers.combined;
+    result.verdict = (answers.combined >= result.threshold && result.skillsAssessed) ? 'shortlist'
+      : answers.combined >= result.threshold - 15 ? 'review' : 'hold';
+  }
+  if (answers.knockedOut && result.verdict === 'shortlist') result.verdict = 'review';
+
   const movable = ['applied', 'ai_screening'].includes(ctx.app.stage);
   const nextStage = movable
     ? (result.verdict === 'shortlist' ? 'shortlisted' : 'applied')
     : ctx.app.stage;
 
-  const note = `AI screening ${result.score}% (threshold ${result.threshold}) - `
+  const note = `AI screening ${result.score}%`
+    + (answers.combined !== null ? ` (with screening answers ${answers.combined}%)` : '')
+    /* No word about a failed must-have here: this note lands in the stage
+       history, which the candidate can read. The recruiter sees it on the
+       screening badge instead. */
+    + ` (threshold ${result.threshold}) - `
     + `${result.verdict === 'shortlist' ? 'recommend shortlist'
        : result.verdict === 'review' ? 'worth a look' : 'gaps against the requirement'}`
     + (result.reasons.length ? `: ${result.reasons.join('; ')}` : '');
@@ -195,14 +298,24 @@ export async function screenApplication(applicationId, { actor = 'system', force
     await c.query(
       `update applications
           set ai_score = $2,
-              match_score = coalesce(match_score, $2),
+              /* THE MATCH SCORE IS RE-COMPUTED, NOT PRESERVED.
+                 This was coalesce(match_score, $2), so the first number
+                 ever written stuck forever: re-screening a hundred and
+                 seventeen applications after the requirements finally
+                 listed their skills changed nothing on screen, because
+                 every row already had a match score from before the
+                 skills existed. A re-screen exists precisely to replace
+                 a score that was computed on less. */
+              match_score = $2,
               stage = $3,
               -- So "was this score worked out before the resume arrived?"
               -- has an answer, which is what decides a re-screen.
               ai_screened_at = now(),
+              -- Resume and answers together (0097); null until answered.
+              screening_combined_score = $4,
               updated_at = now()
         where id = $1`,
-      [applicationId, result.score, nextStage]);
+      [applicationId, result.score, nextStage, answers.combined]);
 
     await c.query(
       `select app_event($1,$2,'screening.completed',$3,$4,$5::jsonb)`,
@@ -228,6 +341,24 @@ export async function screenApplication(applicationId, { actor = 'system', force
   });
 
   return { applicationId, ...result, stage: nextStage };
+}
+
+/**
+ * The screening-answer side of a result: the combined score (null when
+ * the job asks nothing or the answers have not arrived) and whether a
+ * must-have was failed. Read from the application row itself, which the
+ * answer writer keeps current.
+ */
+async function screeningAnswersFor(app, result, settings) {
+  const status = app.screening_status || 'not_required';
+  const knockedOut = status === 'knocked_out';
+  const answered = status === 'answered' || knockedOut;
+  const s = app.screening_answer_score;
+  if (!answered || s === null || s === undefined) return { combined: null, knockedOut };
+  const w = Number(settings.weightScreeningAnswers);
+  const weight = Number.isFinite(w) ? Math.max(0, Math.min(100, w)) : 20;
+  const combined = Math.round(result.score * (100 - weight) / 100 + Number(s) * weight / 100);
+  return { combined, knockedOut };
 }
 
 /**

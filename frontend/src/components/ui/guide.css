@@ -1,0 +1,55 @@
+/* Guide pieces (components/ui/Guide.jsx): ? tips, How it works, first-visit tips. */
+
+/* --- ? tooltip --- */
+.gd-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:5px;
+  border-radius:50%;border:1px solid var(--line);background:var(--paper-raised,#fff);color:var(--ink-faint);
+  font-size:10.5px;font-weight:700;line-height:1;cursor:help;vertical-align:middle;flex:none}
+.gd-help:hover,.gd-help:focus{color:var(--brand-ink);border-color:var(--brand-tint-2,#c9dcd4);outline:none}
+.gd-help:focus-visible{box-shadow:0 0 0 2px var(--brand-ring,rgba(94,139,126,.34))}
+.gd-help::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);
+  width:max-content;max-width:min(240px,80vw);padding:6px 9px;border-radius:7px;background:var(--navy,#22333B);color:#fff;
+  font-size:12px;font-weight:500;line-height:1.35;text-align:left;white-space:normal;box-shadow:var(--shadow);
+  opacity:0;pointer-events:none;transition:opacity .12s;z-index:40}
+.gd-help:hover::after,.gd-help:focus::after{opacity:1}
+
+/* --- How it works --- */
+.gd-hiw{border:1px solid var(--line);background:var(--paper-raised,#fff);border-radius:var(--radius,10px);
+  padding:10px 12px;margin:0 0 12px;box-shadow:var(--shadow-sm)}
+.gd-hiw-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:8px}
+.gd-hiw-head b{font-size:13.5px;color:var(--ink)}
+.gd-hiw-sub{font-size:12.5px;color:var(--ink-soft);flex:1 1 220px;min-width:0}
+.gd-x{border:0;background:transparent;color:var(--ink-faint);font:inherit;font-size:12.5px;cursor:pointer;padding:2px 4px;border-radius:6px}
+.gd-x:hover{color:var(--ink);background:var(--paper)}
+.gd-hiw-steps{display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;list-style:none;margin:0;padding:0}
+.gd-hiw-li{display:flex;align-items:center}
+.gd-step{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);
+  border-radius:999px;padding:5px 11px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.gd-step:disabled{cursor:default}
+.gd-step:not(:disabled):hover{border-color:var(--brand-tint-2,#c9dcd4);background:var(--brand-tint)}
+.gd-step.is-on{border-color:var(--brand);background:var(--brand-tint);color:var(--brand-ink);font-weight:600}
+.gd-step:focus-visible{outline:2px solid var(--brand-ring,rgba(94,139,126,.34));outline-offset:2px}
+.gd-step-ic{font-size:14px;line-height:1}
+.gd-step-n{font-weight:700;font-variant-numeric:tabular-nums;background:var(--paper-raised,#fff);border-radius:999px;padding:0 7px;font-size:12px;border:1px solid var(--line-soft,#e9efec)}
+.gd-step-none{font-size:11.5px;color:var(--ink-faint)}
+.gd-arrow{color:var(--ink-faint);padding:0 6px;font-size:13px}
+.gd-hiw-off{margin:-4px 0 8px;font-size:12.5px}
+
+/* --- first-visit tips --- */
+.gd-tips{border:1px solid var(--brand-tint-2,#c9dcd4);background:var(--brand-tint);border-radius:var(--radius,10px);
+  padding:10px 14px 12px;margin:0 0 12px;color:var(--ink)}
+.gd-tips-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.gd-tips-head b{font-size:13.5px;color:var(--brand-ink)}
+.gd-tips-list{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:6px}
+.gd-tips-list li{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4}
+.gd-tips-n{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;
+  background:var(--brand);color:#fff;font-size:11.5px;font-weight:700}
+
+@media(max-width:600px){
+  .gd-hiw{padding:10px}
+  .gd-hiw-steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .gd-hiw-li{min-width:0}
+  .gd-step{width:100%;min-width:0;justify-content:flex-start;white-space:normal;padding:5px 8px;gap:5px;font-size:12.5px}
+  .gd-step-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gd-step-n,.gd-step-none{margin-left:auto;flex:none;padding:0 5px}
+  .gd-arrow{display:none}
+}

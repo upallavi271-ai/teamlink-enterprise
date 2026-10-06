@@ -1,0 +1,8 @@
+/* PageFilterBar — one row above the cards (ATS layout v3). */
+.pfb{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px;margin:0 0 14px;padding:10px 12px;
+  background:var(--paper-raised,#fff);border:1px solid var(--line);border-radius:var(--radius,10px)}
+.pfb .lph-facet{flex:0 1 190px;min-width:140px}
+.pfb .pfb-range{flex-basis:150px}
+.pfb .pfb-custom{flex-basis:290px}
+.pfb .pfb-clear{align-self:flex-end;margin-left:auto}
+@media(max-width:560px){.pfb .lph-facet{flex:1 1 100%}.pfb .pfb-clear{margin-left:0}}

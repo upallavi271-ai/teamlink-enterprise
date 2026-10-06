@@ -118,3 +118,103 @@
 .tlc-panel .tlc-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
 .tlc-panel .tlc-scope{font-size:11.5px;color:var(--ink-soft);margin:-4px 0 10px}
 .tlc-panel .tlc-err{margin:0 0 10px}
+
+/* ---------------------------------------------------------------------------
+   ATS layout v3 kit (.tlk) — BarChart / GroupedBarChart / FunnelChart /
+   DonutChart / LineChart / MiniBar / ProgressBar. See kit.jsx for the palette
+   and its validation. Status tones come from styles.css --st-* tokens.
+   ------------------------------------------------------------------------- */
+.tlk{
+  --tlk-s1:#0a74bd; --tlk-s2:#c2410c; --tlk-s3:#7f56d9; --tlk-s4:#15803d; --tlk-s5:#d6409f; --tlk-s6:#b88600;
+  --tlk-other:#8a97a8;
+  --tlk-green:var(--st-green,#1f9d55); --tlk-yellow:var(--st-yellow,#e0a100); --tlk-red:var(--st-red,#d03b3b);
+  --tlk-blue:var(--st-blue,#2a78d6); --tlk-grey:var(--st-grey,#9aa5ad);
+}
+:root[data-theme="dark"] .tlk{
+  --tlk-s1:#3d8fd6; --tlk-s2:#e0662e; --tlk-s3:#9a7de6; --tlk-s4:#2f9e57; --tlk-s5:#e05aaa; --tlk-s6:#b88600; --tlk-other:#7d8894;
+}
+@media (prefers-color-scheme: dark){
+  :root[data-theme="system"] .tlk{
+    --tlk-s1:#3d8fd6; --tlk-s2:#e0662e; --tlk-s3:#9a7de6; --tlk-s4:#2f9e57; --tlk-s5:#e05aaa; --tlk-s6:#b88600; --tlk-other:#7d8894;
+  }
+}
+.tlk-wrap{position:relative;width:100%;min-width:0}
+.tlk-wrap svg{display:block;overflow:visible}
+.tlk-grid line{stroke:var(--tlc-grid);stroke-width:1}
+.tlk-base{stroke:var(--tlc-axis);stroke-width:1}
+.tlk-tick{font-size:10.5px;fill:var(--tlc-muted);font-variant-numeric:tabular-nums}
+.tlk-val{font-size:11px;font-weight:600;fill:var(--tlc-ink);font-variant-numeric:tabular-nums}
+.tlk-mark{outline:none}
+.tlk-bar,.tlk-slice{transition:filter .1s}
+.tlk-mark:hover .tlk-bar,.tlk-mark:focus-visible .tlk-bar,.tlk-mark:hover .tlk-slice,.tlk-mark:focus-visible .tlk-slice,
+.tlk-hbar:hover .bar,.tlk-hbar:focus-visible .bar{filter:brightness(1.12) saturate(1.05)}
+.tlk-mark:focus-visible .tlk-bar,.tlk-mark:focus-visible .tlk-slice{stroke:var(--tlc-ink);stroke-width:1.5}
+.tlk-slice{stroke:var(--tlc-surface);stroke-width:2}
+.tlk-line{fill:none;stroke:var(--tlk-s1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.tlk-area{fill:var(--tlk-s1);opacity:.1}
+.tlk-dot{fill:var(--tlk-s1);stroke:var(--tlc-surface);stroke-width:2}
+.tlk-cross{stroke:var(--tlc-axis);stroke-width:1}
+.tlk-wrap svg:focus:not(:focus-visible),.tlk-mark:focus:not(:focus-visible){outline:none}
+.tlk-wrap svg:focus-visible{outline:2px solid var(--tlc-axis);outline-offset:2px;border-radius:4px}
+.tlk-empty{display:flex;align-items:center;justify-content:center;text-align:center;padding:22px 10px;color:var(--ink-soft,#56666E);font-size:13px;min-height:90px}
+
+/* Horizontal bars (BarChart horizontal, FunnelChart). */
+.tlk-hbars,.tlk-funnel{display:flex;flex-direction:column;gap:6px}
+.tlk-hbar{display:grid;grid-template-columns:minmax(70px,150px) 1fr auto;gap:10px;align-items:center;font-size:12.5px;
+  padding:3px 4px;border-radius:6px}
+.tlk-hbar[role="button"]:hover{background:var(--tlc-track)}
+.tlk-hbar:focus-visible{box-shadow:0 0 0 2px var(--tlc-axis)}
+.tlk-hbar .lab{color:var(--tlc-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlk-hbar .trk{height:14px;background:var(--tlc-track);border-radius:0 4px 4px 0}
+.tlk-hbar .bar{height:100%;border-radius:0 4px 4px 0;transition:width .25s ease}
+.tlk-hbar .val{font-variant-numeric:tabular-nums;font-weight:600;color:var(--tlc-ink);min-width:44px;text-align:right;white-space:nowrap}
+.tlk-hbar .val .pct{font-weight:400;color:var(--tlc-muted);margin-left:6px;font-size:11.5px}
+.tlk-funnelwrap .tlk-hbar{grid-template-columns:minmax(70px,150px) 1fr 96px}
+.tlk-drop{font-size:11px;color:var(--tlc-muted);padding:0 4px 0 calc(min(150px,30%) + 14px);margin:-2px 0 -2px}
+
+/* Donut + its legend. */
+.tlk-donut{display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px}
+.tlk-donut svg{flex:0 0 auto}
+.tlk-cval{font-size:20px;font-weight:600;fill:var(--tlc-ink)}
+.tlk-clab{font-size:11px;fill:var(--tlc-muted)}
+.tlk-dlegend{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;flex:1 1 160px;min-width:0}
+.tlk-dl-row{display:grid;grid-template-columns:10px 1fr auto 46px;gap:8px;align-items:center;width:100%;font:inherit;font-size:12.5px;
+  background:transparent;border:0;padding:3px 4px;border-radius:6px;text-align:left;color:var(--tlc-ink)}
+button.tlk-dl-row{cursor:pointer}
+button.tlk-dl-row:hover{background:var(--tlc-track)}
+.tlk-dl-row i{width:10px;height:10px;border-radius:2px}
+.tlk-dl-row .n{color:var(--tlc-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlk-dl-row b{font-variant-numeric:tabular-nums}
+.tlk-dl-row .p{color:var(--tlc-muted);text-align:right;font-variant-numeric:tabular-nums;font-size:11.5px}
+
+/* Legend (>= 2 series). */
+.tlk-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 8px;font-size:11.5px;color:var(--tlc-ink2)}
+.tlk-legend span{display:inline-flex;align-items:center;gap:6px}
+.tlk-legend i{display:inline-block;width:10px;height:10px;border-radius:2px}
+
+/* Tooltip: value leads, name follows, line keys. */
+.tlk-tip{position:absolute;z-index:6;pointer-events:none;background:var(--tlc-surface);color:var(--tlc-ink);
+  border:1px solid var(--tlc-line);border-radius:8px;box-shadow:var(--shadow-md,0 8px 24px rgba(0,0,0,.12));
+  padding:7px 10px;font-size:11.5px;min-width:110px;max-width:240px;transform:translate(-50%,calc(-100% - 10px))}
+.tlk-tip .t{color:var(--tlc-muted);margin-bottom:3px}
+.tlk-tip .r{display:flex;align-items:center;gap:7px;line-height:1.55}
+.tlk-tip .r b{font-variant-numeric:tabular-nums;font-size:12.5px}
+.tlk-tip .r i{display:inline-block;width:12px;height:2px;border-radius:1px}
+.tlk-tip .r span{color:var(--tlc-ink2)}
+.tlk-tip .h{color:var(--tlc-muted);font-size:10.5px;margin-top:3px}
+
+/* Screen-reader table (every chart). */
+.tlk-sr{position:absolute !important;left:0;top:0;width:1px;height:1px;max-width:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* MiniBar / ProgressBar: the track is a light step of the same tone. */
+.tlk-mini{display:inline-block;width:72px;vertical-align:middle}
+.tlk-track{display:block;position:relative;height:8px;border-radius:4px;overflow:hidden;background:var(--st-blue-tint,#e8effb)}
+.tlk-mini .tlk-track{height:6px}
+.tlk-track.tlk-t-green{background:var(--st-green-tint,#e5f0ea)}
+.tlk-track.tlk-t-yellow{background:var(--st-yellow-tint,#fdf3d6)}
+.tlk-track.tlk-t-red{background:var(--st-red-tint,#fbebea)}
+.tlk-track.tlk-t-grey{background:var(--st-grey-tint,#eef1f0)}
+.tlk-fill{display:block;height:100%;border-radius:4px;transition:width .25s ease}
+.tlk-progress{display:flex;flex-direction:column;gap:4px;min-width:0}
+.tlk-pg-head{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--tlc-ink2)}
+.tlk-pg-head b{color:var(--tlc-ink);font-variant-numeric:tabular-nums}

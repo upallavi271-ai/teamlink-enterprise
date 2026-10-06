@@ -111,6 +111,8 @@ async function sendWhatsApp({ to, kind = 'bulk', text, vars }) {
   if (!mobile.ok) return { ok: false, invalid: true, transient: false, error: mobile.reason };
   const content = templatePayload(cfg, kind, vars)
     || { type: 'text', text: { body: String(text || (vars || []).join(' ')).slice(0, 4096), preview_url: true } };
+  // TEST SANDBOX: reported as sent, never transmitted (utils/sandbox.js).
+  if (require('./sandbox').isSandbox()) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-wa-${Date.now().toString(36)}`, mode: content.type, sandbox: true };
   await core.acquire('WhatsApp');
   const res = await core.httpJson(`${cfg.base}/${VERSION}/${encodeURIComponent(cfg.phoneId)}/messages`, {
     method: 'POST',
