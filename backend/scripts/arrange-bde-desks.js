@@ -14,13 +14,16 @@
 // belongs to no desk, so no desk BDE can see it.
 //
 // WHAT IT CHANGES — nothing is created, nothing is deleted:
-//   1. A BDE whose desk the sheet (or their team / seat) names:
-//        User.atsScopeDepartments = "BDE,<desk>"
-//      the scope Administration -> Users edits; keeps them in BDE as well, so
-//      syncLoginToEmployee() leaves it alone on the next employee edit.
-//   2. A client with no Department, all of whose requirements are one
+//   1. A BDE whose sheet desk is missing from their scope: that desk is
+//      ADDED to User.atsScopeDepartments (the scope Administration -> Users
+//      edits). Never narrowed: a desk an administrator gave them stays.
+//   2. A TL whose sheet designation is a BDE one ("BDE TL") but who is not in
+//      the BDE department: BDE is added to their scope, which is what makes
+//      them the BDE TL who sees every client.
+//   3. A client with no Department, all of whose requirements are one
 //      department's: Client.ownerDepartment = that department. A client whose
-//      requirements are split, or who has none, is LISTED, not guessed.
+//      requirements are split, or who has none, is LISTED, not guessed. The
+//      internal-hiring client is never given a department.
 //
 // Dry run by default; --commit writes. Every change is audited.
 //
@@ -113,30 +116,78 @@ async function sheetTitles() {
     });
     const title = e && e.employeeCode ? titles.get(String(e.employeeCode).toUpperCase()) : null;
     const fromSheet = desksInText(title);
-    const want = fromSheet.length ? fromSheet : now;
+    // ADD what the sheet names and the scope lacks — never take a desk away.
+    const missing = fromSheet.filter((d) => !now.includes(d));
+    const want = [...now, ...missing];
     const row = { u, e, title: title || '', now, want };
     bdeRows.push(row);
-    if (fromSheet.length && fromSheet.join() !== now.join()) {
-      const next = ['BDE', ...fromSheet.map(spell)].join(',');
+    if (missing.length) {
+      const base = scope.length ? scope : [u.atsDepartment || (e && e.department) || 'BDE'];
+      const next = [...new Set([...base, ...missing.map(spell)])].join(',');
       bdeChanges.push({ ...row, from: u.atsScopeDepartments || '', to: next });
     }
   }
 
   console.log(`BDEs (${bdeRows.length})`);
-  console.log('  ' + pad('CODE', 10) + pad('NAME', 28) + pad('SHEET SAYS', 24) + pad('DESK NOW', 18) + 'DESK AFTER');
+  console.log('  ' + pad('CODE', 10) + pad('NAME', 28) + pad('SHEET SAYS', 24) + pad('DESK NOW', 30) + 'DESK AFTER');
   bdeRows.forEach((r) => console.log('  ' + pad(r.e ? r.e.employeeCode : '—', 10) + pad(String(r.u.name).slice(0, 26), 28)
-    + pad(r.title || '—', 24) + pad(r.now.join(', ') || 'BDE (own clients)', 18) + (r.want.join(', ') || 'BDE (own clients)')));
+    + pad(r.title || '—', 24) + pad(r.now.join(', ') || 'BDE (own clients)', 30) + (r.want.join(', ') || 'BDE (own clients)')));
   console.log(`\n  ${bdeChanges.length} BDE scope(s) to set.\n`);
 
-  // ---- 2. Clients with no Department -----------------------------------------
+  // ---- 2. The BDE TL --------------------------------------------------------
+  // isBdeTl() (utils/scope.js): ATS role TL and BDE among their departments.
+  const tls = await prisma.user.findMany({
+    where: { status: { not: 'Inactive' }, OR: [{ atsRole: 'TL' }, { AND: [{ atsRole: null }, { role: 'TL' }] }] },
+    select: {
+      id: true, name: true, atsDepartment: true, atsScopeDepartments: true, team: true,
+      employee: { select: { employeeCode: true, department: true, team: true } },
+    },
+    orderBy: { name: 'asc' },
+  });
+  const isBdeText = (t) => /\bbde\b|\bbed\b|business development/i.test(String(t || ''));
+  const tlRows = [];
+  const tlChanges = [];
+  tls.forEach((u) => {
+    const e = u.employee;
+    const scope = csv(u.atsScopeDepartments);
+    const depts = scope.length ? scope : [u.atsDepartment || (e && e.department)].filter(Boolean);
+    const inBde = depts.some((d) => canonicalDepartment(d) === 'BDE');
+    const title = e && e.employeeCode ? titles.get(String(e.employeeCode).toUpperCase()) : null;
+    const bdeSignal = isBdeText(title) || isBdeText(u.team) || isBdeText(e && e.team);
+    if (!inBde && !bdeSignal) return;
+    const row = { u, e, title: title || '', depts, inBde };
+    tlRows.push(row);
+    if (!inBde && isBdeText(title)) {
+      tlChanges.push({ ...row, from: u.atsScopeDepartments || '', to: [...new Set([...depts, spell('BDE')])].join(',') });
+    }
+  });
+  console.log(`BDE TLs — see every client and agreement (${tlRows.length})`);
+  if (!tlRows.length) {
+    console.log('  NONE. No TL is in the BDE department and none is a BDE TL on the sheet.');
+    console.log('  Make one: Administration -> Users -> that TL -> Scope departments: add BDE.');
+  }
+  tlRows.forEach((r) => {
+    const fix = tlChanges.find((c) => c.u.id === r.u.id);
+    console.log('  ' + pad(r.e ? r.e.employeeCode : '—', 10) + pad(String(r.u.name).slice(0, 26), 28)
+      + pad(r.title || '—', 24) + pad(r.depts.join(', ') || '—', 30)
+      + (r.inBde ? 'already BDE TL' : fix ? `-> ${fix.to}` : 'BDE in team only — add BDE to scope on Users'));
+  });
+  console.log(`\n  ${tlChanges.length} TL scope(s) to set.\n`);
+
+  // ---- 3. Clients with no Department -----------------------------------------
   const orphans = await prisma.client.findMany({
     where: { OR: [{ ownerDepartment: null }, { ownerDepartment: '' }] },
-    select: { id: true, name: true, requirements: { select: { department: true } } },
+    select: { id: true, name: true, clientType: true, requirements: { select: { department: true } } },
     orderBy: { name: 'asc' },
   });
   const clientChanges = [];
   const unresolved = [];
   orphans.forEach((c) => {
+    // TeamLink's own internal-hiring client belongs to HR, not to a desk.
+    if (String(c.clientType || '').toLowerCase() === 'internal' || /internal hiring/i.test(c.name)) {
+      unresolved.push({ c, why: 'internal hiring — left as it is' });
+      return;
+    }
     const desks = [...new Set(c.requirements.map((r) => canonicalDepartment(r.department)).filter(Boolean))];
     if (desks.length === 1 && desks[0] !== 'BDE') clientChanges.push({ c, to: spell(desks[0]), jobs: c.requirements.length });
     else unresolved.push({ c, why: desks.length ? `jobs in ${desks.join(' + ')}` : 'no jobs' });
@@ -173,7 +224,16 @@ async function sheetTitles() {
       entity: 'Client', entityId: x.c.id, fromValue: '(none)', toValue: x.to,
     });
   }
-  console.log(`${bdeChanges.length} BDE scope(s) and ${clientChanges.length} client department(s) updated.`);
+  for (const x of tlChanges) {
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.user.update({ where: { id: x.u.id }, data: { atsScopeDepartments: x.to } });
+    // eslint-disable-next-line no-await-in-loop
+    await logAudit({
+      action: `BDE TL: BDE added to scope from the attendance record (${x.title})`,
+      entity: 'User', entityId: x.u.id, fromValue: x.from || '(none)', toValue: x.to,
+    });
+  }
+  console.log(`${bdeChanges.length} BDE scope(s), ${tlChanges.length} TL scope(s) and ${clientChanges.length} client department(s) updated.`);
 
   const g = await prisma.client.groupBy({ by: ['ownerDepartment'], _count: true });
   console.log('\nCLIENTS PER DEPARTMENT NOW');
