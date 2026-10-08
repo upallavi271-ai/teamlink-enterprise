@@ -101,8 +101,8 @@ function slimClient(o) {
 function clientLevelFor(user) {
   if (!user) return 'min';
   // eslint-disable-next-line global-require
-  const { atsViewRole } = require('./scope');
-  const role = atsViewRole(user);
+  const { clientViewRole } = require('./scope');
+  const role = clientViewRole(user);
   if (role === 'mgmt') {
     // eslint-disable-next-line global-require
     const { atsScopeOf } = require('./scope');
@@ -203,7 +203,7 @@ function clientFieldGuard(req, res, next) {
     if (!user) return json(body);
     const level = clientLevelFor(user);
     // eslint-disable-next-line global-require
-    const bde = require('./scope').atsViewRole(user) === 'bde';
+    const bde = require('./scope').clientViewRole(user) === 'bde';
     const cut = bde ? stripInternalForBde(body) : body;
     if (level === 'full' && isClientLogin(user)) return json(redactClients(cut, 0, 'client'));
     if (level === 'full') return json(cut);

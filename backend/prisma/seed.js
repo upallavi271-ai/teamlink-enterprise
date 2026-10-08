@@ -302,7 +302,7 @@ async function main() {
       jobDescription: 'Own reporting and analysis across the Medivant clinical operations group.',
       reqCode: 'REQ-0003',
       clientId: medivant.id, department: 'Medical', priority: 'Low', status: 'AGREEMENT_CHECK',
-      recruiterId: recruiterMedical.id, tl: 'Divya Rao', stlId: cStl.user.id, stl: cStl.user.name, tlId: tlMedical.id,
+      recruiterId: recruiterMedical.id, tl: 'Divya Rao', tlId: tlMedical.id,
       accountManager: 'Meera Iyer', targetDate: '2026-12-15',
       skills: 'SQL, Excel, Data Analysis, Python', goodToHaveSkills: 'Machine Learning',
       experience: '2-4 yrs', relevantExperience: '2 yrs',
@@ -330,7 +330,7 @@ async function main() {
       responsibilities: 'Ship and own Spring Boot services\nPartner with the payments domain team',
       qualifications: 'Bachelor’s degree in Computer Science or equivalent practical experience.',
       clientId: orbit.id, department: 'IT', priority: 'High', status: 'RECRUITER_ASSIGNED',
-      stlId: cStl.user.id, stl: cStl.user.name, tlId: tlMedical.id, tl: 'Divya Rao',
+      tlId: tlMedical.id, tl: 'Divya Rao',
       recruiterId: recruiterMedical.id,
       recruiterIds: recruiter.id, // Arun Nair joins as a co-recruiter
       bdeId: bde.id, stlId: multiProduct.id, stl: 'Priya Nambiar',
@@ -921,14 +921,27 @@ async function main() {
     return 'EMPLOYEE';
   }
 
+  // RETIRED DESIGNATIONS (c4f0c62 — "Eight employee roles"). Recruiter and
+  // BDE are not designations any more: such a person is an EMPLOYEE holding
+  // the ATS role, and an Admin is a Super Admin designation holding ADMIN.
+  // The logins below still name the old designation; this is what they mean.
+  const RETIRED_DESIGNATIONS = {
+    Admin: { designation: 'Super Admin', role: 'ADMIN' },
+    Recruiter: { designation: 'Employee', atsRole: 'RECRUITER' },
+    BDE: { designation: 'Employee', atsRole: 'BDE' },
+  };
+
   let staffSeq = 10; // EMP-001 .. EMP-010 are taken above.
   async function staffLogin({
     email, name, department, team, designation, location = 'Hyderabad',
     scopeDepartments, scopeClients, username,
   }) {
+    const retired = RETIRED_DESIGNATIONS[designation];
+    if (retired) designation = retired.designation;
     const m = designationByName[designation];
     if (!m) throw new Error(`Seed: no DesignationRole row for "${designation}"`);
-    const role = roleForDesignation(designation);
+    const role = (retired && retired.role) || roleForDesignation(designation);
+    const atsRole = (retired && (retired.atsRole || retired.role)) || m.atsRole || role;
     staffSeq += 1;
     const employeeCode = `EMP-${String(staffSeq).padStart(4, '0')}`;
     const user = await prisma.user.create({
@@ -942,7 +955,7 @@ async function main() {
         // are what the permission engine resolves against, one per product.
         role,
         hrmsRole: m.hrms ? role : 'NONE',
-        atsRole: m.ats ? (m.atsRole || role) : 'NONE',
+        atsRole: m.ats ? atsRole : 'NONE',
         accountsRole: m.accounts ? role : 'NONE',
         hrmsAccess: !!m.hrms,
         atsAccess: !!m.ats,
@@ -1407,7 +1420,7 @@ async function main() {
   console.log('  ittl@teamlink.com                     IT / TL                   -> TL, IT (Section A)');
   console.log('  manufacturingtl@teamlink.com          Manufacturing / TL        -> TL, Manufacturing');
   console.log('  edutl@teamlink.com                    Educational / TL          -> TL, Educational');
-  console.log('  bdetl@teamlink.com                    BDE / TL                  -> TL, BDE');
+  console.log('  bdetl@teamlink.com                    BDE / TL                  -> TL, BDE — every client and agreement');
   console.log('  medical1@teamlink.com                 Medical / Recruiter       -> RECRUITER, assigned Medical reqs');
   console.log('  itrecruiter1@teamlink.com             IT / Recruiter            -> RECRUITER, assigned IT reqs');
   console.log('  manufacturingrecruiter1@teamlink.com  Manufacturing / Recruiter -> RECRUITER, assigned Manufacturing reqs');

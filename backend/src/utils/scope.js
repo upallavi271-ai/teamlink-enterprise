@@ -19,6 +19,8 @@
 // ad-hoc `user.role === 'CLIENT'` filters that were scattered across routes.
 // ---------------------------------------------------------------------------
 
+const { isBdeDepartment } = require('./bdeDesk');
+
 // Roles that see everything, always.
 const GLOBAL_SCOPE_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 // HRMS roles that are COMPANY-WIDE BY FUNCTION, in HRMS and only in HRMS.
@@ -94,6 +96,10 @@ function scopeOf(user) {
     // plus the ones whose Owner BDE they are (Client.bdeOwner, resolved by
     // utils/identity.js into atsOwnedClientIds — role spec 2026-09-29).
     clientIds: [...new Set([...csv(u.atsScopeClients), ...(Array.isArray(u.atsOwnedClientIds) ? u.atsOwnedClientIds : [])])],
+    // A desk BDE's Client.ownerDepartment values (utils/identity.js, from
+    // utils/bdeDesk.js): a Manufacturing BDE sees Manufacturing's clients.
+    bdeDeskDepartments: Array.isArray(u.atsBdeDeskDepartments) ? u.atsBdeDeskDepartments : [],
+    bdeDeskRequirementDepartments: Array.isArray(u.atsBdeDeskRequirementDepartments) ? u.atsBdeDeskRequirementDepartments : [],
     // ACCOUNTS (role spec 2026-09-29): the requirements that have a joined
     // candidate — resolved once per request by utils/identity.js.
     joinedRequirementIds: Array.isArray(u.atsJoinedRequirementIds) ? u.atsJoinedRequirementIds : null,
@@ -260,6 +266,9 @@ function requirementWhere(user, opts = {}) {
     case 'BDE': {
       const or = [{ bdeId: s.userId }];
       if (s.clientIds.length) or.push({ clientId: { in: s.clientIds } });
+      // A desk BDE (Manufacturing, Medical, Education …) sees that
+      // department's requirements, as they see its clients (utils/bdeDesk.js).
+      if (s.bdeDeskRequirementDepartments.length) or.push({ department: { in: s.bdeDeskRequirementDepartments } });
       return { OR: or };
     }
     case 'TL': {
@@ -360,9 +369,17 @@ function portalRequirementWhere(user, { publishedOnly = false } = {}) {
 }
 
 // --- Clients ---------------------------------------------------------------
+// THE BDE TL (user, 2026-10-08): a TL of the BDE department sees EVERY client
+// and its agreement — the whole book the BDE desks between them work.
+function isBdeTl(user) {
+  const s = atsScopeOf(user);
+  return !s.global && s.atsRole === 'TL' && isBdeDepartment(s.departments);
+}
+
 function clientWhere(user) {
   const s = atsScopeOf(user);
   if (s.global) return {};
+  if (isBdeTl(user)) return {};
   // HR — Internal Hiring only: the one internal client record, nothing else.
   if (s.atsRole === 'HR') return { clientType: 'Internal' };
   // AN ATS LOGIN WITH NO ATS WORKING ROLE SEES NO ATS RECORDS.
@@ -388,12 +405,17 @@ function clientWhere(user) {
   if (s.atsRole === 'STL') return { requirements: { some: requirementWhere(user) } };
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
   if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
-  // A BDE is scoped to the clients assigned to them; where none are assigned
-  // they fall back to the clients they hold a requirement for.
+  // A BDE sees their own clients — assigned on Users or Owner BDE, and any
+  // they hold a requirement for — plus, for a desk BDE (Manufacturing,
+  // Medical, Education …), every client of that desk (utils/bdeDesk.js).
   if (s.atsRole === 'BDE') {
-    return s.clientIds.length
-      ? { id: { in: s.clientIds } }
-      : { requirements: { some: requirementWhere(user) } };
+    return {
+      OR: [
+        ...(s.clientIds.length ? [{ id: { in: s.clientIds } }] : []),
+        ...(s.bdeDeskDepartments.length ? [{ ownerDepartment: { in: s.bdeDeskDepartments } }] : []),
+        { requirements: { some: requirementWhere(user) } },
+      ],
+    };
   }
   // A recruiter is scoped by their ASSIGNMENT, here as everywhere else: the
   // clients they actually hold a requirement for. They cannot raise a
@@ -446,6 +468,7 @@ function applicationWhere(user) {
 // picker keeps the department directory the TL's Clients view no longer has.
 function clientPickerWhere(user) {
   const s = atsScopeOf(user);
+  if (isBdeTl(user)) return {};
   // TL / STL / Assistant Manager may RAISE a requirement for any client of
   // their department, so the picker keeps the department directory their
   // (narrower) Clients view does not have.
@@ -479,6 +502,13 @@ function atsViewRole(user) {
     BDE: 'bde', TL: 'tl', STL: 'stl', RECRUITER: 'recruiter', ACCOUNTANT: 'accounts',
     HR: 'hr', CLIENT: 'client', CANDIDATE: 'candidate',
   }[s.atsRole] || 'none';
+}
+
+// The role the CLIENTS screens are drawn for: atsViewRole(), except that a
+// BDE TL reads clients and agreements as a BDE does (all of them — see
+// clientWhere()). Requirements and candidates keep the TL view.
+function clientViewRole(user) {
+  return isBdeTl(user) ? 'bde' : atsViewRole(user);
 }
 
 // Record-level twin of applicationWhere() for an application already loaded
@@ -902,6 +932,8 @@ module.exports = {
   portalRequirementWhere,
   isAssignedTo,
   clientWhere,
+  clientViewRole,
+  isBdeTl,
   applicationWhere,
   applicationInScope,
   candidateWhere,
