@@ -1,0 +1,160 @@
+/* ===========================================================================
+   REPORTS v4 — the Reports & Analytics overview (2026-10-08). Every rule is
+   scoped under .rv4 so nothing outside this screen changes; the ATS kit and
+   the shared report pieces are only overridden here, never edited.
+   =========================================================================== */
+.rv4{min-width:0}
+
+/* --- header ---------------------------------------------------------------- */
+.rv4 .rv4-head{align-items:center;flex-wrap:nowrap;margin-bottom:16px}
+.rv4 .rv4-head > div:first-child{min-width:0}
+.rv4 .rv4-head .ak-page-tools{flex:none;flex-wrap:nowrap}
+@media (max-width:1100px){.rv4 .rv4-head{flex-wrap:wrap}.rv4 .rv4-head .ak-page-tools{flex-wrap:wrap}}
+.rv4 .rv4-head h1{font-size:24px}
+.rv4 .rv4-head p{max-width:640px}
+.rv4 .rv4-dates{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 12px;background:var(--paper-raised);
+  border:1px solid var(--line);border-radius:10px;color:var(--ink-soft);font-size:13px;box-shadow:0 1px 2px rgba(22,32,43,.04)}
+.rv4 .rv4-dates input{flex:none;margin:0;border:0;background:transparent;font:inherit;font-size:13px;font-weight:600;color:var(--ink);padding:0;width:122px;min-height:0;box-shadow:none}
+.rv4 .rv4-dates input:focus{outline:none}
+.rv4 .rv4-dates:focus-within{border-color:var(--navy)}
+.rv4 .rv4-select{flex:none;width:auto;margin:0;height:40px;min-width:140px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-raised);
+  font:inherit;font-size:13px;color:var(--ink);box-shadow:0 1px 2px rgba(22,32,43,.04)}
+.rv4 .rv4-btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border:1px solid var(--line);border-radius:10px;
+  background:var(--paper-raised);color:var(--ink);font:inherit;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 1px 2px rgba(22,32,43,.04)}
+.rv4 .rv4-btn:hover{border-color:var(--navy);color:var(--navy)}
+.rv4 .rv4-btn:disabled{opacity:.6;cursor:default}
+.rv4 .rv4-export{position:relative}
+.rv4 .rv4-export-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:170px;background:var(--paper-raised);border:1px solid var(--line);
+  border-radius:10px;box-shadow:0 10px 28px rgba(22,32,43,.14);padding:6px;display:flex;flex-direction:column}
+.rv4 .rv4-export-menu button{border:0;background:none;text-align:left;font:inherit;font-size:13px;padding:8px 10px;border-radius:7px;cursor:pointer;color:var(--ink)}
+.rv4 .rv4-export-menu button:hover{background:#F2F6FC;color:var(--navy)}
+.rv4 .rv4-filtered{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--ink-soft);margin:-6px 0 12px}
+
+/* --- KPI row: seven across on a laptop ------------------------------------ */
+.rv4 .rv4-kpis{grid-template-columns:repeat(7,minmax(0,1fr));gap:12px}
+.rv4 .rv4-kpis .ak-kpi{padding:14px 12px;gap:11px}
+.rv4 .rv4-kpis .ak-kpi-value{font-size:23px}
+.rv4 .rv4-kpis .ak-kpi-label{white-space:normal;line-height:1.2}
+/* compact: the shell caps the content column, so always */
+.rv4 .rv4-kpis{gap:10px}
+.rv4 .rv4-kpis .ak-kpi{padding:12px 10px;gap:9px}
+.rv4 .rv4-kpis .ak-kpi-ic{width:36px;height:36px}
+.rv4 .rv4-kpis .ak-kpi-value{font-size:20px}
+.rv4 .rv4-kpis .ak-kpi-label{font-size:11.5px}
+.rv4 .rv4-kpis .ak-kpi-ic svg{width:18px;height:18px}
+@media (max-width:1180px){.rv4 .rv4-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:700px){.rv4 .rv4-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* --- rows of three panels, in the reference's proportions ------------------- */
+.rv4 .rv4-row{display:grid;gap:14px;margin-bottom:14px;align-items:stretch}
+.rv4 .rv4-r2{grid-template-columns:minmax(0,1.3fr) minmax(0,1.15fr) minmax(0,.95fr)}
+.rv4 .rv4-r3{grid-template-columns:minmax(0,1.25fr) minmax(0,1.25fr) minmax(0,.85fr)}
+.rv4 .rv4-r4{grid-template-columns:minmax(0,1.1fr) minmax(0,1.05fr) minmax(0,1.15fr)}
+@media (max-width:1100px){
+  .rv4 .rv4-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rv4 .rv4-row > :last-child{grid-column:1/-1}
+}
+@media (max-width:760px){.rv4 .rv4-row{grid-template-columns:minmax(0,1fr)}}
+
+.rv4 .ak-panel-head{padding:14px 16px 10px}
+.rv4 .ak-panel-title h3{font-size:15px}
+
+/* tables */
+.rv4 .rv4-table td{padding:9px 12px;font-size:12.5px}
+.rv4 .rv4-table th{padding:8px 12px;text-transform:none;letter-spacing:0;font-size:11px;white-space:normal;line-height:1.25;vertical-align:bottom}
+.rv4 .rv4-table{table-layout:auto}
+.rv4 .rv4-table th:first-child,.rv4 .rv4-table td:first-child{padding-left:16px}
+.rv4 .rv4-table th:last-child,.rv4 .rv4-table td:last-child{padding-right:16px}
+.rv4 .rv4-trunc{max-width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv4 .rv4-tl{color:#1F5BD8;font-weight:600}
+.rv4 .rv4-rank{color:var(--ink-faint);width:18px}
+.rv4 .rv4-more{font-size:11.5px;color:var(--ink-faint);padding:8px 16px 4px}
+.rv4 .rv4-num-btn{border:0;background:none;padding:0;font:inherit;font-variant-numeric:tabular-nums;color:#1F5BD8;cursor:pointer}
+.rv4 .rv4-num-btn:hover{text-decoration:underline}
+/* compact: the shell caps the content column, so always */
+.rv4 .rv4-table td,.rv4 .rv4-table th{padding-left:7px;padding-right:7px}
+.rv4 .rv4-table th{font-size:10.5px}
+.rv4 .rv4-table td{font-size:12px}
+.rv4 .rv4-trunc{max-width:110px}
+.rv4 .rv4-table .ak-avatar{width:22px !important;height:22px !important;font-size:9px !important}
+
+/* trend chart */
+.rv4 .rv4-trend{position:relative;width:100%;min-width:0}
+.rv4 .rv4-trend svg{display:block}
+.rv4 .rv4-grid{stroke:#EDF1F6;stroke-width:1}
+.rv4 .rv4-tick{font-size:10.5px;fill:var(--ink-faint);font-family:var(--font-ui)}
+.rv4 .rv4-cross{stroke:#B9C8E0;stroke-dasharray:3 3}
+.rv4 .rv4-tip{position:absolute;top:0;width:150px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(22,32,43,.12);
+  padding:6px 9px;font-size:11.5px;display:flex;flex-direction:column;gap:2px;pointer-events:none}
+.rv4 .rv4-tip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.rv4 .rv4-legend{display:flex;gap:14px;font-size:11.5px;color:var(--ink-soft);white-space:nowrap}
+.rv4 .rv4-legend span{display:inline-flex;align-items:center;gap:6px}
+.rv4 .rv4-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.rv4 .rv4-dot-blue{background:#2F6FE4}.rv4 .rv4-dot-violet{background:#8B5CF6}
+
+/* quick reports: bordered rows like the reference */
+.rv4 .rv4-quick .ak-quick{display:flex;flex-direction:column;gap:7px}
+.rv4 .rv4-quick .ak-quick li > button{border:1px solid var(--line);border-radius:9px;padding:5px 10px;background:#fff}
+.rv4 .rv4-quick .ak-quick li:last-child > *{border-bottom:1px solid var(--line)}
+.rv4 .rv4-quick .ak-quick li > button:hover{border-color:#B9C8E0;background:#F8FAFE}
+.rv4 .rv4-quick .ak-quick-ic{width:28px;height:28px;border-radius:8px}
+.rv4 .rv4-quick .ak-quick-label{font-size:12.5px}
+.rv4 .rv4-quick .ak-quick-sub{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* recent activity */
+.rv4 .rv4-activity{list-style:none;margin:0;padding:0}
+.rv4 .rv4-activity li{display:flex;align-items:center;gap:11px;padding:8px 0;border-bottom:1px solid var(--line-soft)}
+.rv4 .rv4-activity li:last-child{border-bottom:0}
+.rv4 .rv4-act-ic{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex:none}
+.rv4 .rv4-act-txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.rv4 .rv4-act-label{font-size:12.5px;font-weight:600;color:var(--ink)}
+.rv4 .rv4-act-sub{font-size:11px;color:var(--ink-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv4 .rv4-act-n{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.rv4 .rv4-act-foot{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);border-top:1px solid var(--line-soft);padding-top:8px;margin-top:4px}
+
+/* funnel */
+.rv4 .rv4-funnel{display:flex;align-items:flex-start;gap:14px}
+.rv4 .rv4-funnel-svg{flex:none;display:block;margin-top:2px}
+.rv4 .rv4-funnel-list{list-style:none;margin:0;padding:0;flex:1;min-width:0}
+.rv4 .rv4-funnel-list li{display:grid;grid-template-columns:10px minmax(0,1fr) auto 44px;align-items:center;gap:8px;font-size:12.5px;border-bottom:1px dashed var(--line-soft)}
+.rv4 .rv4-funnel-list li:last-child{border-bottom:0}
+.rv4 .rv4-funnel-list i{width:8px;height:8px;border-radius:50%;display:block}
+.rv4 .rv4-fl-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.rv4 .rv4-fl-val,.rv4 .rv4-funnel-list .rv4-num-btn{font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.rv4 .rv4-fl-pct{font-size:11px;color:var(--ink-faint);text-align:right}
+
+/* location bars */
+.rv4 .rv4-locs{list-style:none;margin:0;padding:0}
+.rv4 .rv4-locs li{display:grid;grid-template-columns:16px minmax(70px,.9fr) minmax(60px,1.5fr) auto;align-items:center;gap:9px;padding:7px 0}
+.rv4 .rv4-pin{color:#4A5A70}
+.rv4 .rv4-loc-label{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv4 .rv4-loc-track{height:7px;border-radius:7px;background:#EEF2F7;overflow:hidden}
+.rv4 .rv4-loc-track span{display:block;height:100%;border-radius:7px;background:#2F6FE4}
+.rv4 .rv4-loc-val{font-size:12.5px;font-weight:700;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rv4 .rv4-loc-pct{font-weight:500;font-size:11px;color:var(--ink-faint);margin-left:4px}
+
+/* key insights: 2 x 2 */
+.rv4 .rv4-insights{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.rv4 .rv4-insight{display:flex;align-items:flex-start;gap:10px;text-align:left;border:1px solid var(--line);border-radius:10px;background:#fff;
+  padding:10px;font:inherit;color:inherit;cursor:pointer;min-width:0}
+.rv4 .rv4-insight:hover:not(:disabled){border-color:#B9C8E0;background:#F8FAFE}
+.rv4 .rv4-insight:disabled{cursor:default}
+.rv4 .rv4-ins-ic{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex:none}
+.rv4 .rv4-ins-txt{display:flex;flex-direction:column;min-width:0}
+.rv4 .rv4-ins-label{font-size:11.5px;color:var(--ink-soft);font-weight:600}
+.rv4 .rv4-ins-val{font-size:13px;font-weight:700;color:var(--ink);margin-top:2px;overflow-wrap:anywhere}
+
+/* --- all reports (the existing report cards, below the overview) ----------- */
+.rv4 .rv4-all{margin-top:8px;scroll-margin-top:70px}
+.rv4 .rv4-all-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:6px 0 4px}
+.rv4 .rv4-all-head h2{font-family:var(--font-ui);font-size:17px;font-weight:800;margin:0;color:var(--ink)}
+.rv4 .rv4-all-head span{font-size:12.5px;color:var(--ink-faint)}
+.rv4 .rphome h2{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint);margin:14px 0 8px}
+.rv4 .rphome-grid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.rv4 .rphome-card{border-color:var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 1px 2px rgba(22,32,43,.04);background:var(--paper-raised)}
+.rv4 .rphome-card:hover,.rv4 .rphome-card:focus-visible{border-color:#B9C8E0;box-shadow:0 6px 18px rgba(31,56,100,.08)}
+.rv4 .rphome-ic{font-size:19px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:#EEF4FE}
+.rv4 .rphome-t{font-size:13.5px;color:var(--ink)}
+.rv4 .rphome-a{font-size:12px}
+
+.rv4 .rv4-row .ak-panel{overflow:hidden}

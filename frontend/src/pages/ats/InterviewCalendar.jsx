@@ -9,17 +9,16 @@ import {
   interviewStatusLabel, interviewStatusClass, resultClass, aiStatusClass, stageLabel,
 } from '../../atsVocab';
 import './InterviewCalendar.css';
-import { canActOnPipeline, productRole, can } from '../../permissions';
+import { canActOnPipeline, productRole, can, canRaiseRequirement } from '../../permissions';
 // ATS LAYOUT v3 (2026-10-03): filters bar → cards → charts → table, all from
 // the shared kit. The calendar is coloured by department (kit palette).
 import PageFilterBar, { usePageFilters } from '../../components/ui/PageFilterBar.jsx';
-import StatCard, { StatRow } from '../../components/ui/StatCard.jsx';
 import { BarChart, slotVar } from '../../components/charts';
 import './InterviewCalendarV3.css';
 import HierarchyFilter, {
   EMPTY_HIERARCHY, toParams, hierarchyChips, useHierarchy,
 } from '../../components/HierarchyFilter.jsx';
-import ListPageHeader, {
+import {
   StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useLocalFacets,
 } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
@@ -62,6 +61,26 @@ const shortDay = (iso) => {
   return d.toLocaleDateString('en-GB', o);
 };
 import AtsDataTools from '../../components/AtsDataTools.jsx';
+// INTERVIEW CALENDAR v4 (2026-10-08): the reference layout, built from the
+// shared ATS kit + components/interviews-v4 (presentation only).
+import {
+  KpiRow, KpiTile, Panel as AkPanel, QuickActions, Pill, Icon, pctChange,
+} from '../../components/atskit/AtsKit.jsx';
+import WeekGrid from '../../components/interviews-v4/WeekGrid.jsx';
+import MiniMonth from '../../components/interviews-v4/MiniMonth.jsx';
+import DetailsCard from '../../components/interviews-v4/DetailsCard.jsx';
+import {
+  viewRange, stepAnchor, startOfDay, groupByDay, statusTone, fmtDay, DAY_MS,
+} from '../../components/interviews-v4/calUtils.js';
+import '../../components/interviews-v4/iv4.css';
+
+// v4: the left column's quick filters — the list's own views, counted.
+const QUICK = [
+  ['upcoming', 'Upcoming', 'blue'], ['today', 'Today', 'teal'], ['feedback', 'Feedback pending', 'amber'],
+  ['moved', 'Rescheduled / did not attend', 'violet'], ['completed', 'Done', 'green'], ['cancelled', 'Cancelled / no-show', 'red'],
+];
+// "Completed" for the KPI tile: the interview happened (done, feedback owed or in).
+const DONE_STATUSES = ['COMPLETED', 'PENDING_FEEDBACK', 'FEEDBACK_SUBMITTED'];
 
 // The prototype's Interview Calendar (calendarView, line 9184): two tabs kept
 // deliberately apart, because an AI interview score is never mixed into
@@ -373,6 +392,15 @@ export default function InterviewCalendar() {
     try { return localStorage.getItem('ivcal.layout') === 'calendar' ? 'calendar' : 'list'; } catch { return 'list'; }
   });
   const pickLayout = (v) => { setLayout(v); try { localStorage.setItem('ivcal.layout', v); } catch { /* private mode */ } };
+  // v4: the main calendar's size (Day / Week / Month, remembered), the day it
+  // shows, its quick filter and the interview open in the details card.
+  const [calMode, setCalModeS] = useState(() => {
+    try { const v = localStorage.getItem('ivcal.v4.mode'); return ['day', 'week', 'month'].includes(v) ? v : 'week'; } catch { return 'week'; }
+  });
+  const setCalMode = (v) => { setCalModeS(v); try { localStorage.setItem('ivcal.v4.mode', v); } catch { /* private mode */ } };
+  const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
+  const [quick, setQuick] = useState('');
+  const [selId, setSelId] = useState(null);
   // Automatic reminders — the Admin switch (OFF until an Admin turns it on).
   const [reminders, setReminders] = useState(null);
   useEffect(() => {
@@ -453,6 +481,11 @@ export default function InterviewCalendar() {
     [data.recruitment, filters, pr.from, pr.to], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const pfFacets = useLocalFacets(pfRows, PF_FIELDS, facetValues, calPred);
+  // v4: the filter bar's Job / Interview type / Status, counted over every
+  // interview in your area (any view) — the same rows the calendar draws.
+  // The AI interviews have their own tab — no "opens the AI tab" type option.
+  const barFacets = useLocalFacets(pfRows, CAL_FIELDS, facetValues, calPred);
+  const barTypeOptions = useMemo(() => (barFacets.type || []).filter((o) => o.value !== 'AI Interview'), [barFacets.type]);
   const pfOptions = useMemo(() => ({
     department: pfFacets.department || [],
     clientId: pfFacets.clientId || [],
@@ -495,8 +528,6 @@ export default function InterviewCalendar() {
     if (t === 'AI Interview') { setTab('ai'); setFilter({ type: '' }); return; }
     setFilter({ type: t });
   };
-  // The AI interviews have their own tab above — no "opens the AI tab" option here.
-  const typeOptions = useMemo(() => (facets.type || []).filter((o) => o.value !== 'AI Interview'), [facets.type]);
   const setType = (row, interviewType) => act(
     () => api.patch(`/ats/interviews/${row.id}/type`, { interviewType }),
     `${row.candidate.name} — interview type set to ${interviewType}.`,
@@ -532,6 +563,7 @@ export default function InterviewCalendar() {
     setTab('recruitment');
     setViews((prev) => ({ ...prev, recruitment: v }));
     setDrill(d);
+    setQuick('');
     if (d) setFilter({ phase: '' });
     pickLayout('list');
     setTimeout(() => {
@@ -716,36 +748,125 @@ export default function InterviewCalendar() {
           : `Saved. Interview ${interviewStatusLabel(to).toLowerCase()}.`,
   );
 
+  // --- v4 LAYOUT (2026-10-08, the reference): header → 5 KPI tiles → filter
+  // bar → mini month + quick filters | Day / Week / Month grid | interview
+  // details → Today's interviews | Quick actions | Upcoming → charts → the
+  // full list (Client & team / AI) → reminder switches. Every number below is
+  // counted from the rows GET /ats/calendar returned (the same `filtered`
+  // rows the list uses), nothing else.
+  const range = viewRange(calMode, anchor);
+  const gridRows = useMemo(
+    () => (quick ? calRows.filter((r) => clientInView(quick, r)) : calRows),
+    [calRows, quick],
+  );
+  const dayCounts = useMemo(() => {
+    const m = new Map();
+    groupByDay(gridRows).forEach((list, k) => m.set(k, list.length));
+    return m;
+  }, [gridRows]);
+  const nowMs = Date.now();
+  const autoRow = useMemo(() => {
+    const a = range.from.getTime();
+    const b = range.to.getTime() + DAY_MS;
+    const timed = gridRows.filter((r) => r.interviewAt).sort((x, y) => new Date(x.interviewAt) - new Date(y.interviewAt));
+    const inRange = timed.filter((r) => { const t = new Date(r.interviewAt).getTime(); return t >= a && t < b; });
+    return inRange.find((r) => new Date(r.interviewAt).getTime() >= nowMs)
+      || inRange[0]
+      || timed.find((r) => new Date(r.interviewAt).getTime() >= nowMs)
+      || null;
+  }, [gridRows, calMode, anchor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const picked = selId ? (data.recruitment || []).find((r) => r.id === selId) || null : null;
+  const shownRow = picked || autoRow;
+  const focusRow = (r) => {
+    setSelId(r.id);
+    if (r.interviewAt) setAnchor(startOfDay(new Date(r.interviewAt)));
+  };
+  const openDay = (d) => { setAnchor(startOfDay(d)); setCalMode('day'); };
+
+  const kpi = useMemo(() => {
+    const now = new Date();
+    const ms = new Date(now.getFullYear(), now.getMonth(), 1);
+    const me = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const ps = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const [wa, wb] = thisWeek();
+    const out = { upWeek: 0, doneM: 0, doneP: 0, cxl: 0, moved: 0 };
+    filtered.forEach((r) => {
+      const ld = localDay(r.interviewAt);
+      if (clientInView('upcoming', r) && ld && ld >= wa && ld <= wb) out.upWeek += 1;
+      if (r.interviewAt && DONE_STATUSES.includes(r.status)) {
+        const t = new Date(r.interviewAt);
+        if (t >= ms && t < me) out.doneM += 1;
+        else if (t >= ps && t < ms) out.doneP += 1;
+      }
+      if (['CANCELLED', 'NO_SHOW'].includes(r.status)) out.cxl += 1;
+      if (r.status === 'RESCHEDULED') out.moved += 1;
+    });
+    return out;
+  }, [filtered]);
+  const inThisWeek = (r) => { const [a, b] = thisWeek(); const ld = localDay(r.interviewAt); return !!ld && ld >= a && ld <= b; };
+  const inThisMonth = (r) => {
+    if (!r.interviewAt) return false;
+    const t = new Date(r.interviewAt);
+    const n = new Date();
+    return t.getFullYear() === n.getFullYear() && t.getMonth() === n.getMonth();
+  };
+
+  const todayRows = useMemo(
+    () => filtered.filter((r) => clientInView('today', r)).sort((a, b) => new Date(a.interviewAt) - new Date(b.interviewAt)),
+    [filtered],
+  );
+  const nextRows = useMemo(
+    () => filtered
+      .filter((r) => clientInView('upcoming', r) && r.interviewAt && new Date(r.interviewAt).getTime() >= Date.now())
+      .sort((a, b) => new Date(a.interviewAt) - new Date(b.interviewAt))
+      .slice(0, 5),
+    [filtered],
+  );
+  const pickQuick = (id) => {
+    const next = quick === id ? '' : id;
+    setQuick(next);
+    setDrill(null);
+    setViews((prev) => ({ ...prev, recruitment: next || 'all' }));
+  };
+  const quickActions = [
+    canAct && { key: 'book', icon: 'plus', label: 'Book interview', sub: 'Pick a candidate, time and panel', onClick: () => setScheduling(true), tone: 'blue' },
+    canRaiseRequirement(user) && { key: 'job', icon: 'briefcase', label: 'Post a job', sub: 'Create a new requirement', to: '/requirements?new=1', tone: 'blue' },
+    can(user, 'ats', 'candidates', 'Add Candidate', 'create') && { key: 'cand', icon: 'user', label: 'Add candidate', sub: 'Add a candidate by hand', to: '/candidates?add=1', tone: 'violet' },
+    can(user, 'ats', 'requirements', 'Requirement List', 'view') && { key: 'jobs', icon: 'list', label: 'View all jobs', sub: 'Every requirement in your area', to: '/requirements', tone: 'green' },
+    can(user, 'ats', 'candidates', 'Candidate List', 'view') && { key: 'cands', icon: 'users', label: 'View candidates', sub: 'Search and filter candidates', to: '/candidates', tone: 'amber' },
+    can(user, 'ats', 'interviews', 'Interview Feedback', 'view') && { key: 'fb', icon: 'chat', label: 'Interview feedback', sub: 'Decide after the interview', to: '/ats/interview-feedback', tone: 'red' },
+  ].filter(Boolean).slice(0, 5);
+
   return (
-    <div className="ivcal-page">
-      {/* The page's primary action ("Schedule Interview") is only shown to a
-          login that may schedule (`canAct`, the same matrix answer the API
-          enforces) — absent, not greyed out (§3). §8: it opens the flow
-          (candidate → requirement → type → date & time → mode → interviewer →
-          confirm), not a link to the candidates list. Import / Export buttons: template ·
-          import (interview schedules on existing applications — the import
-          never sends an invitation) · export of this tab as filtered. */}
-      <ListPageHeader
-        title="Interview Calendar"
-        question="Every interview: who, when, and what is left to do after it."
-        data={(
-          <AtsDataTools
-            module="interviews"
-            kinds={['interviews']}
-            onImported={load}
-            body={() => {
-              const params = serverParams();
-              const all = data.recruitment || [];
-              return {
-                params,
-                tab: tab === 'ai' ? 'ai' : 'recruitment',
-                ids: tab !== 'ai' && rows.length !== all.length ? rows.map((r) => r.id) : null,
-              };
-            }}
-          />
-        )}
-        primary={canAct ? <button type="button" className="btn btn-primary" onClick={() => setScheduling(true)}>Book interview</button> : null}
-      />
+    <div className="ivcal-page iv4">
+      {/* HEADER — title, the calendar's date range, Day / Week / Month, Book. */}
+      <div className="ak-page-head iv4-head">
+        <div>
+          <h1>Interview Calendar</h1>
+          <p>Every interview: who, when, and what is left to do after it.</p>
+        </div>
+        <div className="ak-page-tools">
+          <span className="iv4-range" title="The days the calendar shows">
+            <Icon name="calendar" size={16} />
+            <span>{fmtDay(range.from, true)}</span>
+            <span aria-hidden="true">→</span>
+            <span>{fmtDay(range.to, true)}</span>
+          </span>
+          <div className="iv4-seg" role="tablist" aria-label="Calendar size">
+            {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={calMode === id} className={calMode === id ? 'is-on' : ''} onClick={() => setCalMode(id)}>{label}</button>
+            ))}
+          </div>
+          {/* The page's primary action ("Book interview") is only shown to a
+              login that may schedule (`canAct`, the same matrix answer the API
+              enforces) — absent, not greyed out (§3). */}
+          {canAct && (
+            <button type="button" className="btn btn-primary iv4-book" onClick={() => setScheduling(true)}>
+              <Icon name="plus" size={16} /> Book interview
+            </button>
+          )}
+        </div>
+      </div>
       {scheduling && (
         <ScheduleInterview
           preset={scheduling && scheduling.preset ? scheduling.preset : null}
@@ -755,242 +876,404 @@ export default function InterviewCalendar() {
         />
       )}
 
-      {/* §1 — NO WORKSPACE STRIP HERE. Interview Feedback, Offers, Joining
-          and Internal Hiring are candidate workflow states, not peers of this
-          module; listing them here is what made the ATS look like it had five
-          more modules. They are reached from the candidate record and from the
-          pipeline tabs that already carry them. */}
-
       {error && <div className="error-text">{error}</div>}
-      {notice && <div className="card section" style={{ marginBottom: 14 }} role="status">{notice}</div>}
+      {notice && <div className="card section iv4-notice" role="status">{notice}</div>}
 
-      {/* ATS LAYOUT v3: the filters bar → cards → charts → the list / calendar. */}
-      <PageFilterBar value={pf} onChange={(v) => { setPf(v); setDrill(null); }} options={pfOptions} />
-
-      <StatRow className="ivv3-cards">
-        <StatCard label="Today" help="Interviews booked for today" value={cards.today} zeroText={cards.week > 0 ? 'No interviews today 🎉 — see this week' : 'No interviews today 🎉'} tone="blue" onClick={() => openList(cards.today > 0 || !(cards.week > 0) ? 'today' : 'week')} hint={cards.today > 0 ? 'Click to see the list' : undefined} />
-        <StatCard label="This week" help="Interviews from Monday to Sunday this week" value={cards.week} zeroText="None this week — press Book interview" tone="blue" onClick={() => openList('week')} hint="Monday to Sunday" />
-        <StatCard
-          label="Waiting for feedback"
-          help="The interview is done, but nobody has written what the client said yet"
-          value={cards.feedback}
-          zeroText="All feedback is in"
-          tone={cards.late > 0 ? 'red' : 'yellow'}
-          onClick={() => openList('feedback')}
-          hint={cards.late > 0 ? `${cards.late.toLocaleString('en-IN')} late (more than a day)` : 'Interview done, feedback not in'}
+      {/* KPI ROW — five tiles, each opens its list below. */}
+      <KpiRow className="iv4-kpis">
+        <KpiTile
+          icon="calendar" tone="blue" label="Today's interviews" value={cards.today} loading={!loaded}
+          sub={cards.today > 0 ? 'Click to see the list' : (cards.week > 0 ? 'None today — see this week' : 'None today')}
+          title="Interviews booked for today"
+          onClick={() => openList(cards.today > 0 || !(cards.week > 0) ? 'today' : 'week')}
         />
-        <StatCard label="Rescheduled / did not attend" help="Interviews moved to a new time, or the person did not come" value={cards.moved} zeroText="Nothing moved or missed" tone="red" onClick={() => openList('moved')} hint="Needs a new time or a call" />
-      </StatRow>
+        <KpiTile
+          icon="clock" tone="green" label="Upcoming (this week)" value={kpi.upWeek} loading={!loaded}
+          sub={`${cards.week.toLocaleString('en-IN')} in all this week (Mon–Sun)`}
+          title="Booked interviews still to happen this week (Monday to Sunday)"
+          onClick={() => openList('upcoming', { label: 'Upcoming this week', test: inThisWeek })}
+        />
+        <KpiTile
+          icon="check" tone="teal" label="Completed (this month)" value={kpi.doneM} loading={!loaded}
+          delta={pctChange(kpi.doneM, kpi.doneP)} deltaLabel="vs last month"
+          sub={kpi.doneP ? undefined : 'Interviews held this month'}
+          title="Interviews this month that are done (completed, feedback pending or feedback in)"
+          onClick={() => openList('all', { label: 'Completed this month', test: (r) => DONE_STATUSES.includes(r.status) && inThisMonth(r) })}
+        />
+        <KpiTile
+          icon="x" tone="red" label="Cancelled / Rescheduled" value={kpi.cxl + kpi.moved} loading={!loaded}
+          sub={`${kpi.cxl.toLocaleString('en-IN')} cancelled / no-show · ${kpi.moved.toLocaleString('en-IN')} moved`}
+          title="Cancelled, did not attend, or moved to a new time — none of them rejects the candidate"
+          onClick={() => openList('all', { label: 'Cancelled / rescheduled', test: (r) => ['CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(r.status) })}
+        />
+        <KpiTile
+          icon="chat" tone="violet" label="Pending feedback" value={cards.feedback} loading={!loaded}
+          sub={cards.late > 0 ? `${cards.late.toLocaleString('en-IN')} late (more than a day)` : (cards.feedback ? 'Interview done, feedback not in' : 'All feedback is in')}
+          title="The interview is done, but nobody has written what the client said yet"
+          onClick={() => openList('feedback')}
+        />
+      </KpiRow>
 
+      {/* FILTER BAR — Department · Client · Job · Interview type · Status ·
+          Date range · Recruiter / BDE · Search (the page's existing filters). */}
+      <div className="iv4-filters" role="search">
+        <PageFilterBar
+          className="iv4-pfb iv4-pfb-a"
+          value={pf}
+          onChange={(v) => { setPf(v); setDrill(null); }}
+          options={pfOptions}
+          show={{ department: true, dateRange: false, client: true, people: false }}
+        />
+        <FacetSelect label="Job / Requirement" value={filters.requirement} onChange={(v) => setFilter({ requirement: v })} options={barFacets.requirement} allLabel="All jobs" />
+        <FacetSelect label="Interview type" value={filters.type} onChange={pickType} options={barTypeOptions} allLabel="All types" />
+        <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={barFacets.status} allLabel="All statuses" />
+        <PageFilterBar
+          className="iv4-pfb iv4-pfb-b"
+          value={pf}
+          onChange={(v) => { setPf(v); setDrill(null); }}
+          options={pfOptions}
+          show={{ department: false, dateRange: true, client: false, people: true }}
+        />
+        <label className="iv4-search">
+          <Icon name="search" size={16} />
+          <input
+            type="search"
+            value={filters.q}
+            onChange={(e) => setFilter({ q: e.target.value })}
+            placeholder="Search name, job or interview ID…"
+            aria-label="Search interviews"
+          />
+        </label>
+      </div>
+
+      {/* MAIN — mini month + quick filters | the calendar | interview details. */}
+      <div className="iv4-main">
+        <aside className="ak-panel iv4-left" aria-label="Month and quick filters">
+          <MiniMonth anchor={anchor} from={range.from} to={range.to} counts={dayCounts} onPick={(d) => setAnchor(startOfDay(d))} />
+          <div className="iv4-qf">
+            <h4>Quick filters</h4>
+            <ul>
+              {QUICK.map(([id, label, tone]) => (
+                <li key={id}>
+                  <button type="button" className={quick === id ? 'is-on' : ''} aria-pressed={quick === id} onClick={() => pickQuick(id)}>
+                    <i className={`iv4-dot ak-f-${tone}`} aria-hidden="true" />
+                    <span>{label}</span>
+                    <b>{loaded ? (clientCounts[id] || 0).toLocaleString('en-IN') : '…'}</b>
+                  </button>
+                </li>
+              ))}
+              {quick && (
+                <li><button type="button" className="iv4-qf-all" onClick={() => pickQuick(quick)}><span>Show all</span><b>{filtered.length.toLocaleString('en-IN')}</b></button></li>
+              )}
+            </ul>
+          </div>
+        </aside>
+        <WeekGrid
+          rows={gridRows}
+          mode={calMode}
+          anchor={anchor}
+          loaded={loaded}
+          onStep={(dir) => setAnchor(stepAnchor(calMode, anchor, dir))}
+          onToday={() => setAnchor(startOfDay(new Date()))}
+          onPickDay={openDay}
+          onMore={(d) => {
+            const k = ymdL(d);
+            openList('all', { label: `Interviews on ${fmtDate(d)}`, test: (r) => localDay(r.interviewAt) === k });
+          }}
+          selectedId={shownRow ? shownRow.id : null}
+          onSelect={(r) => setSelId(r.id)}
+        />
+        <DetailsCard
+          row={shownRow}
+          auto={!picked && !!shownRow}
+          loaded={loaded}
+          onClear={() => setSelId(null)}
+          onOpenCandidate={showCand}
+          onFull={(r) => setDialog({ kind: 'detail', row: r })}
+          actions={shownRow && canAct ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} /></div> : null}
+        />
+      </div>
+
+      {/* BELOW — Today's interviews | Quick actions | Upcoming (next 5). */}
+      <div className="iv4-row3">
+        <AkPanel
+          title={`Today's interviews (${todayRows.length.toLocaleString('en-IN')})`}
+          action={todayRows.length > 6 ? { label: 'View all', onClick: () => openList('today') } : null}
+          flush
+          className="iv4-today"
+        >
+          {todayRows.length === 0 ? (
+            <div className="ak-empty">{loaded ? (cards.week > 0 ? 'No interviews today — see Upcoming.' : 'No interviews today.') : 'Loading…'}</div>
+          ) : (
+            <table className="ak-table">
+              <thead><tr><th>Time</th><th>Candidate</th><th>Job / ID</th><th>Client</th><th>Status</th><th aria-label="Open" /></tr></thead>
+              <tbody>
+                {todayRows.slice(0, 6).map((r) => (
+                  <tr key={r.id} className="ak-row-click" onClick={() => focusRow(r)}>
+                    <td className="iv4-nowrap">{fmtTime(r.interviewAt)}</td>
+                    <td className="iv4-trunc" title={r.candidate.name}>{r.candidate.name}</td>
+                    <td className="iv4-trunc" title={`${r.requirement.title} · ${r.interviewCode}`}>{r.interviewCode}</td>
+                    <td className="iv4-trunc" title={r.requirement.client?.name || 'TeamLink (internal)'}>{r.requirement.client?.name || 'TeamLink (internal)'}</td>
+                    <td><Pill tone={statusTone(r)}>{r.statusLabel}</Pill></td>
+                    <td className="iv4-go" aria-hidden="true">→</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AkPanel>
+        <AkPanel title="Quick actions" className="iv4-quick">
+          {quickActions.length ? <QuickActions items={quickActions} /> : <div className="ak-empty">No actions for this login.</div>}
+        </AkPanel>
+        <AkPanel
+          title="Upcoming interviews (next 5)"
+          action={clientCounts.upcoming > 5 ? { label: 'View all', onClick: () => openList('upcoming') } : null}
+          className="iv4-next"
+        >
+          {nextRows.length === 0 ? (
+            <div className="ak-empty">{loaded ? 'No interviews coming up.' : 'Loading…'}</div>
+          ) : (
+            <ul className="iv4-nextlist">
+              {nextRows.map((r) => (
+                <li key={r.id}>
+                  <button type="button" onClick={() => focusRow(r)}>
+                    <span className="iv4-next-when">{`${fmtDay(new Date(r.interviewAt))}, ${fmtTime(r.interviewAt)}`}</span>
+                    <span className="iv4-next-who">
+                      <b title={r.candidate.name}>{r.candidate.name}</b>
+                      <span title={r.requirement.title}>{`${r.requirement.title} · ${r.interviewCode}`}</span>
+                    </span>
+                    <Pill tone={statusTone(r)}>{r.statusLabel}</Pill>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AkPanel>
+      </div>
+
+      {/* CHARTS — interviews per week; interview → selected, by client. */}
       {loaded && (
-        <div className="ivv3-charts">
-          <section className="ivv3-chart" aria-label="Interviews per week">
-            <h3>Interviews per week</h3>
-            <div className="ivv3-sub">Click a bar to see that week&apos;s interviews.</div>
-            <BarChart title="Interviews per week" data={weekBars} height={200} empty="No interviews in these weeks" />
-          </section>
-          <section className="ivv3-chart" aria-label="Interview to selected, by client">
-            <h3>Interview → selected, by client</h3>
-            <div className="ivv3-sub">Of the interviews that happened, how many were selected.</div>
+        <div className="iv4-charts">
+          <AkPanel title="Interviews per week" sub="Click a bar to see that week's interviews." icon="chart">
+            <BarChart title="Interviews per week" data={weekBars} height={180} empty="No interviews in these weeks" />
+          </AkPanel>
+          <AkPanel title="Interview → selected, by client" sub="Of the interviews that happened, how many were selected." icon="trend" iconTone="green">
             <BarChart title="Interview to selected ratio by client" data={ratioBars} horizontal valueFormat={(v) => `${v}%`} empty="No interviews have happened yet" />
-          </section>
+          </AkPanel>
         </div>
       )}
 
-{/* Two tabs kept apart: an AI interview score is never mixed into
-          recruitment / client interview feedback. "Only mine" sits on the
-          same row (user 2026-10-03: one calm row instead of three). */}
-      <StatusTabs
-        label="Interview kind"
-        tabs={[
-          { key: 'recruitment', label: 'Client & team interviews', count: (data.recruitment || []).length },
-          { key: 'ai', label: 'AI interviews', count: (data.ai || []).length },
-        ]}
-        value={tab}
-        onChange={setTab}
-        hideZero={!isAdmin}
-        extra={(
-          <label className="ivcal-mine" title={mine ? 'Showing interviews on your own candidates' : (atsRole === 'TL' ? 'Showing your team' : 'Showing everything in your area')}>
-            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />
-            Only my interviews
-          </label>
-        )}
-      />
-
-      <div className="tab-content">
-        {tab === 'recruitment' ? (
-          <>
-            <div id="ivv3-list" />
-            {/* Today / This week / Feedback pending / Moved are the cards above; these chips are the rest. */}
-            {layout === 'list' && <ViewBar view={views.recruitment} setView={(v) => { setDrill(null); setView(v); }} counts={clientCounts} labels={CLIENT_VIEW_LABELS} hideZero={!isAdmin} base={['upcoming', 'completed', 'all']} />}
-
-            <ListToolbar
-              search={filters.q}
-              onSearch={(v) => setFilter({ q: v })}
-              placeholder="Search name, job or interview ID…"
-              filterCount={chips.length}
-              sort={sort}
-              sortOptions={[['', 'Best order for this view'], ['soonest', 'Time: soonest first'], ['latest', 'Time: latest first'], ['candidate', 'Candidate A–Z'], ['client', 'Client A–Z'], ['round', 'Round: highest first']]}
-              onSort={setSort}
-              right={(
-                <div className="ivx-seg" role="tablist" aria-label="List or calendar">
-                  <button type="button" role="tab" aria-selected={layout === 'list'} className={layout === 'list' ? 'is-on' : ''} onClick={() => pickLayout('list')}>List</button>
-                  <button type="button" role="tab" aria-selected={layout === 'calendar'} className={layout === 'calendar' ? 'is-on' : ''} onClick={() => pickLayout('calendar')}>Calendar</button>
-                </div>
-              )}
-              chips={[...chips, filters.q && { key: 'q', label: 'Search', value: filters.q, onRemove: () => setFilter({ q: '' }) }].filter(Boolean)}
-              onClearAll={clearAll}
-              panel={(
-                <>
-                  <PanelField label="Step">
-                    <select value={filters.phase || ''} onChange={(e) => setPhase(e.target.value)}>
-                      <option value="">Any step</option>
-                      {[...INTERVIEW_LIFECYCLE, ...INTERVIEW_EXCEPTIONS].filter(([id]) => (phaseCounts[id] || 0) > 0 || filters.phase === id).map(([id]) => (
-                        <option key={id} value={id}>{`${PHASE_LABEL[id]} (${(phaseCounts[id] || 0).toLocaleString('en-IN')})`}</option>
-                      ))}
-                    </select>
-                  </PanelField>
-                  <FacetSelect label="Type" value={filters.type} onChange={pickType} options={typeOptions} allLabel="All types" />
-                  <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={facets.status} allLabel="All statuses" />
-                  {/* Department, dates, client and recruiter / BDE are on the bar above. */}
-                  <HierarchyFilter value={{ ...hier, department: pf.department }} onChange={(v) => { setHier({ ...v, department: '' }); if (v.tl) setMine(false); }} show={{ department: false, recruiter: false }} />
-                  <FacetSelect label="Job" value={filters.requirement} onChange={(v) => setFilter({ requirement: v })} options={facets.requirement} allLabel="All jobs" />
-                  <FacetSelect label="Candidate" value={filters.candidate} onChange={(v) => setFilter({ candidate: v })} options={facets.candidate} allLabel="All candidates" />
-                  <FacetSelect label="Hiring type" value={filters.hiringType} onChange={(v) => setFilter({ hiringType: v })} options={facets.hiringType} allLabel="All hiring types" />
-                </>
-              )}
+      {/* THE FULL LIST — Client & team interviews / AI interviews, kept apart:
+          an AI interview score is never mixed into recruitment / client
+          interview feedback. Import / Export / history sit on this card. */}
+      <div id="ivv3-list" />
+      <section className="ak-panel iv4-listcard" aria-label="All interviews">
+        <header className="iv4-list-head">
+          <h3>All interviews</h3>
+          {/* Import / Export buttons: template · import (interview schedules on
+              existing applications — the import never sends an invitation) ·
+              export of this tab as filtered. */}
+          <div className="iv4-list-tools">
+            <AtsDataTools
+              module="interviews"
+              kinds={['interviews']}
+              onImported={load}
+              body={() => {
+                const params = serverParams();
+                const all = data.recruitment || [];
+                return {
+                  params,
+                  tab: tab === 'ai' ? 'ai' : 'recruitment',
+                  ids: tab !== 'ai' && rows.length !== all.length ? rows.map((r) => r.id) : null,
+                };
+              }}
             />
+          </div>
+        </header>
+        <StatusTabs
+          label="Interview kind"
+          tabs={[
+            { key: 'recruitment', label: 'Client & team interviews', count: (data.recruitment || []).length },
+            { key: 'ai', label: 'AI interviews', count: (data.ai || []).length },
+          ]}
+          value={tab}
+          onChange={setTab}
+          hideZero={!isAdmin}
+          extra={(
+            <label className="ivcal-mine" title={mine ? 'Showing interviews on your own candidates' : (atsRole === 'TL' ? 'Showing your team' : 'Showing everything in your area')}>
+              <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />
+              Only my interviews
+            </label>
+          )}
+        />
 
-            {layout === 'calendar' && filters.phase !== 'SHORTLISTED' ? (
-              <div className="tlk"><InterviewCalendarGrid rows={calRows} colorOf={colorOf} legend={legend} onOpen={(r) => setDialog({ kind: 'detail', row: r })} /></div>
-            ) : filters.phase === 'SHORTLISTED' ? (
+        <div className="tab-content">
+          {tab === 'recruitment' ? (
+            <>
+              {layout === 'list' && <ViewBar view={views.recruitment} setView={(v) => { setDrill(null); setQuick(''); setView(v); }} counts={clientCounts} labels={CLIENT_VIEW_LABELS} hideZero={!isAdmin} base={['upcoming', 'completed', 'all']} />}
+
+              <ListToolbar
+                filterCount={chips.length}
+                sort={sort}
+                sortOptions={[['', 'Best order for this view'], ['soonest', 'Time: soonest first'], ['latest', 'Time: latest first'], ['candidate', 'Candidate A–Z'], ['client', 'Client A–Z'], ['round', 'Round: highest first']]}
+                onSort={setSort}
+                right={(
+                  <div className="ivx-seg" role="tablist" aria-label="List or calendar">
+                    <button type="button" role="tab" aria-selected={layout === 'list'} className={layout === 'list' ? 'is-on' : ''} onClick={() => pickLayout('list')}>List</button>
+                    <button type="button" role="tab" aria-selected={layout === 'calendar'} className={layout === 'calendar' ? 'is-on' : ''} onClick={() => pickLayout('calendar')} title="Calendar coloured by department">Calendar</button>
+                  </div>
+                )}
+                chips={[...chips, filters.q && { key: 'q', label: 'Search', value: filters.q, onRemove: () => setFilter({ q: '' }) }].filter(Boolean)}
+                onClearAll={clearAll}
+                panel={(
+                  <>
+                    <PanelField label="Step">
+                      <select value={filters.phase || ''} onChange={(e) => setPhase(e.target.value)}>
+                        <option value="">Any step</option>
+                        {[...INTERVIEW_LIFECYCLE, ...INTERVIEW_EXCEPTIONS].filter(([id]) => (phaseCounts[id] || 0) > 0 || filters.phase === id).map(([id]) => (
+                          <option key={id} value={id}>{`${PHASE_LABEL[id]} (${(phaseCounts[id] || 0).toLocaleString('en-IN')})`}</option>
+                        ))}
+                      </select>
+                    </PanelField>
+                    {/* Department, client, job, type, status, dates, recruiter / BDE and search are on the bar above. */}
+                    <HierarchyFilter value={{ ...hier, department: pf.department }} onChange={(v) => { setHier({ ...v, department: '' }); if (v.tl) setMine(false); }} show={{ department: false, recruiter: false }} />
+                    <FacetSelect label="Candidate" value={filters.candidate} onChange={(v) => setFilter({ candidate: v })} options={facets.candidate} allLabel="All candidates" />
+                    <FacetSelect label="Hiring type" value={filters.hiringType} onChange={(v) => setFilter({ hiringType: v })} options={facets.hiringType} allLabel="All hiring types" />
+                  </>
+                )}
+              />
+
+              {layout === 'calendar' && filters.phase !== 'SHORTLISTED' ? (
+                <div className="tlk"><InterviewCalendarGrid rows={calRows} colorOf={colorOf} legend={legend} onOpen={(r) => setDialog({ kind: 'detail', row: r })} /></div>
+              ) : filters.phase === 'SHORTLISTED' ? (
+                <div className="tbl-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Hiring</th><th>Shortlisted</th><th>Next</th></tr>
+                    </thead>
+                    <tbody>
+                      {shortlisted.map((r) => (
+                        <tr key={r.id}>
+                          <td className="row-link"><a href={`/candidates/${r.candidate.id}`} onClick={(e) => { e.preventDefault(); showCand(r); }}>{r.candidate.name}</a></td>
+                          <td className="row-link"><Link to={`/requirements/${r.requirement.id}`}>{r.requirement.title}</Link></td>
+                          <td className="small-muted">{r.requirement.client?.name || '—'}</td>
+                          <td><HiringTypeChip value={r.hiringType} /></td>
+                          <td className="small-muted">{fmtDate(r.shortlistedAt)}</td>
+                          <td>
+                            {canAct
+                              ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-primary"
+                                  onClick={() => setScheduling({ preset: { id: r.id, candidate: r.candidate, job: r.requirement.title, client: r.requirement.client?.name || '' } })}
+                                >
+                                  Book interview
+                                </button>
+                              )
+                              : <span className="small-muted">Waiting for a booking</span>}
+                          </td>
+                        </tr>
+                      ))}
+                      {shortlisted.length === 0 && (
+                        <tr><td colSpan="6" style={{ padding: 0 }}><EmptyState compact icon="✅" title="Nobody shortlisted is waiting for an interview." hint="Shortlisted people show here until you book an interview." /></td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                  <ListFooter from={shortlisted.length ? 1 : 0} to={shortlisted.length} total={shortlisted.length} noun="people waiting for an interview" />
+                </div>
+              ) : (
               <div className="tbl-wrap">
                 <table>
                   <thead>
-                    <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Hiring</th><th>Shortlisted</th><th>Next</th></tr>
+                    <tr>
+                      <SortTh label="Time" k="soonest" alt="latest" sort={sort} setSort={setSort} />
+                      <SortTh label="Candidate" k="candidate" sort={sort} setSort={setSort} />
+                      <SortTh label="Client" k="client" sort={sort} setSort={setSort} />
+                      <SortTh label="Round" k="round" sort={sort} setSort={setSort} />
+                      <th>Mode</th><th>Status</th><th>Actions</th>
+                    </tr>
                   </thead>
                   <tbody>
-                    {shortlisted.map((r) => (
+                    {ivPage.slice.map((r) => (
                       <tr key={r.id}>
-                        <td className="row-link"><a href={`/candidates/${r.candidate.id}`} onClick={(e) => { e.preventDefault(); showCand(r); }}>{r.candidate.name}</a></td>
-                        <td className="row-link"><Link to={`/requirements/${r.requirement.id}`}>{r.requirement.title}</Link></td>
-                        <td className="small-muted">{r.requirement.client?.name || '—'}</td>
-                        <td><HiringTypeChip value={r.hiringType} /></td>
-                        <td className="small-muted">{fmtDate(r.shortlistedAt)}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <b>{r.interviewAt ? fmtTime(r.interviewAt) : '—'}</b>
+                          <div className="ivv3-sub2">{r.interviewAt ? fmtDate(r.interviewAt) : 'No time yet'}</div>
+                          {r.rescheduleCount > 0 && <div className="ivv3-sub2" title="Times rescheduled">{`Moved ${r.rescheduleCount}×`}</div>}
+                        </td>
+                        {/* The job and the interview ID: small grey text under the name. */}
+                        <td className="row-link">
+                          <a href={`/candidates/${r.candidate.id}`} onClick={(e) => { e.preventDefault(); showCand(r); }}>{r.candidate.name}</a>
+                          <div className="ivv3-sub2" title={r.requirement.title}>
+                            <Link to={`/requirements/${r.requirement.id}`}>{r.requirement.title}</Link>
+                            {` · ${r.interviewCode}`}
+                          </div>
+                        </td>
                         <td>
-                          {canAct
-                            ? (
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-primary"
-                                onClick={() => setScheduling({ preset: { id: r.id, candidate: r.candidate, job: r.requirement.title, client: r.requirement.client?.name || '' } })}
-                              >
-                                Book interview
-                              </button>
-                            )
-                            : <span className="small-muted">Waiting for a booking</span>}
+                          {r.requirement.client?.name || 'TeamLink (internal)'}
+                          {r.requirement.department && <div className="ivv3-sub2">{r.requirement.department}</div>}
+                        </td>
+                        <td><span className="ivv3-round">{`Round ${r.round || 1}`}</span></td>
+                        <td>
+                          {r.mode === 'In Person' ? 'Offline (in person)' : (r.mode || '—')}
+                          {r.meetingLink
+                            ? <div className="ivv3-sub2"><a href={r.meetingLink} target="_blank" rel="noreferrer" title={r.meetingLink}>Open link</a></div>
+                            : r.location && <div className="ivv3-sub2" title={r.location}>{r.location}</div>}
+                          {(r.panel && r.panel.length ? r.panel.map((p) => p.name).join(', ') : r.interviewer) && <div className="ivv3-sub2" title={r.panel && r.panel.length > 1 ? 'Interview panel' : 'Interviewer'}>{`With ${r.panel && r.panel.length ? r.panel.map((p) => p.name).join(', ') : r.interviewer}`}</div>}
+                        </td>
+                        <td>
+                          <StatusChip status={r.statusLabel} tone={{ RESCHEDULED: 'yellow', FEEDBACK_SUBMITTED: 'green', NO_SHOW: 'red', CANCELLED: 'grey' }[r.status]} />
+                          {isLateFeedback(r) ? <> <StatusChip status="Feedback late" tone="red" /></> : slotOverdue(r) && <> <StatusChip status="Waiting for feedback" tone="yellow" /></>}
+                          {r.cancelReason && <div className="ivv3-sub2" title={r.cancelReason}>{r.cancelReason}</div>}
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {!canAct ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} />}
                         </td>
                       </tr>
                     ))}
-                    {shortlisted.length === 0 && (
-                      <tr><td colSpan="6" style={{ padding: 0 }}><EmptyState compact icon="✅" title="Nobody shortlisted is waiting for an interview." hint="Shortlisted people show here until you book an interview." /></td></tr>
+                    {rows.length === 0 && (
+                      <tr><td colSpan="7" style={{ padding: 0 }}>
+                        <EmptyState
+                          compact
+                          icon="📅"
+                          title={loaded ? (drill ? 'No interviews in this part of the chart.' : CLIENT_EMPTY[views.recruitment] || 'No interviews yet.') : 'Loading interviews…'}
+                          hint={loaded ? (mine ? "Untick 'Only my interviews' to see your team's." : 'Try Upcoming, or clear the filters.') : undefined}
+                        />
+                      </td></tr>
                     )}
                   </tbody>
                 </table>
-                <ListFooter from={shortlisted.length ? 1 : 0} to={shortlisted.length} total={shortlisted.length} noun="people waiting for an interview" />
               </div>
-            ) : (
-            <div className="tbl-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <SortTh label="Time" k="soonest" alt="latest" sort={sort} setSort={setSort} />
-                    <SortTh label="Candidate" k="candidate" sort={sort} setSort={setSort} />
-                    <SortTh label="Client" k="client" sort={sort} setSort={setSort} />
-                    <SortTh label="Round" k="round" sort={sort} setSort={setSort} />
-                    <th>Mode</th><th>Status</th><th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ivPage.slice.map((r) => (
-                    <tr key={r.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <b>{r.interviewAt ? fmtTime(r.interviewAt) : '—'}</b>
-                        <div className="ivv3-sub2">{r.interviewAt ? fmtDate(r.interviewAt) : 'No time yet'}</div>
-                        {r.rescheduleCount > 0 && <div className="ivv3-sub2" title="Times rescheduled">{`Moved ${r.rescheduleCount}×`}</div>}
-                      </td>
-                      {/* The job and the interview ID: small grey text under the name. */}
-                      <td className="row-link">
-                        <a href={`/candidates/${r.candidate.id}`} onClick={(e) => { e.preventDefault(); showCand(r); }}>{r.candidate.name}</a>
-                        <div className="ivv3-sub2" title={r.requirement.title}>
-                          <Link to={`/requirements/${r.requirement.id}`}>{r.requirement.title}</Link>
-                          {` · ${r.interviewCode}`}
-                        </div>
-                      </td>
-                      <td>
-                        {r.requirement.client?.name || 'TeamLink (internal)'}
-                        {r.requirement.department && <div className="ivv3-sub2">{r.requirement.department}</div>}
-                      </td>
-                      <td><span className="ivv3-round">{`Round ${r.round || 1}`}</span></td>
-                      <td>
-                        {r.mode === 'In Person' ? 'Offline (in person)' : (r.mode || '—')}
-                        {r.meetingLink
-                          ? <div className="ivv3-sub2"><a href={r.meetingLink} target="_blank" rel="noreferrer" title={r.meetingLink}>Open link</a></div>
-                          : r.location && <div className="ivv3-sub2" title={r.location}>{r.location}</div>}
-                        {(r.panel && r.panel.length ? r.panel.map((p) => p.name).join(', ') : r.interviewer) && <div className="ivv3-sub2" title={r.panel && r.panel.length > 1 ? 'Interview panel' : 'Interviewer'}>{`With ${r.panel && r.panel.length ? r.panel.map((p) => p.name).join(', ') : r.interviewer}`}</div>}
-                      </td>
-                      <td>
-                        <StatusChip status={r.statusLabel} tone={{ RESCHEDULED: 'yellow', FEEDBACK_SUBMITTED: 'green', NO_SHOW: 'red', CANCELLED: 'grey' }[r.status]} />
-                        {isLateFeedback(r) ? <> <StatusChip status="Feedback late" tone="red" /></> : slotOverdue(r) && <> <StatusChip status="Waiting for feedback" tone="yellow" /></>}
-                        {r.cancelReason && <div className="ivv3-sub2" title={r.cancelReason}>{r.cancelReason}</div>}
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {!canAct ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} />}
-                      </td>
-                    </tr>
-                  ))}
-                  {rows.length === 0 && (
-                    <tr><td colSpan="7" style={{ padding: 0 }}>
-                      <EmptyState
-                        compact
-                        icon="📅"
-                        title={loaded ? (drill ? 'No interviews in this part of the chart.' : CLIENT_EMPTY[views.recruitment] || 'No interviews yet.') : 'Loading interviews…'}
-                        hint={loaded ? (mine ? "Untick 'Only my interviews' to see your team's." : 'Try Upcoming, or clear the filters.') : undefined}
-                      />
-                    </td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            )}
-            {layout === 'list' && filters.phase !== 'SHORTLISTED' && rows.length > 0 && (
-              <ListFooter from={ivPage.from} to={ivPage.to} total={rows.length} noun="interviews">
-                <Pager page={ivPage} noun="interviews" />
-              </ListFooter>
-            )}
-          </>
-        ) : (
-          <>
-            <ViewBar view={views.ai} setView={setView} counts={aiCounts} labels={AI_VIEW_LABELS} hideZero={!isAdmin} also={['cancelled']} />
-            <ListToolbar
-              search={aiQ}
-              onSearch={setAiQ}
-              placeholder="Search name, job or AI interview ID…"
-              filterCount={aiStatus ? 1 : 0}
-              sort={aiSort}
-              sortOptions={[['', 'Default order'], ['deadline', 'Due soonest'], ['candidate', 'Name A–Z']]}
-              onSort={setAiSort}
-              chips={[
-                aiStatus && { key: 'aistatus', label: 'Status', value: AI_STATUS_TEXT[aiStatus] || aiStatus, onRemove: () => setAiStatus('') },
-                aiQ && { key: 'q', label: 'Search', value: aiQ, onRemove: () => setAiQ('') },
-              ].filter(Boolean)}
-              onClearAll={() => { setAiStatus(''); setAiQ(''); }}
-              panel={<FacetSelect label="Status" value={aiStatus} onChange={setAiStatus} options={aiFacets.status} allLabel="All statuses" />}
-            />
-            <AiTab rows={aiRows} canAct={canAct} act={act} emptyLabel={AI_EMPTY[views.ai]} mine={mine} onOpen={showCand} />
-          </>
-        )}
-      </div>
+              )}
+              {layout === 'list' && filters.phase !== 'SHORTLISTED' && rows.length > 0 && (
+                <ListFooter from={ivPage.from} to={ivPage.to} total={rows.length} noun="interviews">
+                  <Pager page={ivPage} noun="interviews" />
+                </ListFooter>
+              )}
+            </>
+          ) : (
+            <>
+              <ViewBar view={views.ai} setView={setView} counts={aiCounts} labels={AI_VIEW_LABELS} hideZero={!isAdmin} also={['cancelled']} />
+              <ListToolbar
+                search={aiQ}
+                onSearch={setAiQ}
+                placeholder="Search name, job or AI interview ID…"
+                filterCount={aiStatus ? 1 : 0}
+                sort={aiSort}
+                sortOptions={[['', 'Default order'], ['deadline', 'Due soonest'], ['candidate', 'Name A–Z']]}
+                onSort={setAiSort}
+                chips={[
+                  aiStatus && { key: 'aistatus', label: 'Status', value: AI_STATUS_TEXT[aiStatus] || aiStatus, onRemove: () => setAiStatus('') },
+                  aiQ && { key: 'q', label: 'Search', value: aiQ, onRemove: () => setAiQ('') },
+                ].filter(Boolean)}
+                onClearAll={() => { setAiStatus(''); setAiQ(''); }}
+                panel={<FacetSelect label="Status" value={aiStatus} onChange={setAiStatus} options={aiFacets.status} allLabel="All statuses" />}
+              />
+              <AiTab rows={aiRows} canAct={canAct} act={act} emptyLabel={AI_EMPTY[views.ai]} mine={mine} onOpen={showCand} />
+            </>
+          )}
+        </div>
+      </section>
 
       {dialog?.kind === 'reschedule' && <RescheduleForm dialog={dialog} setDialog={setDialog} act={act} error={error} />}
       {dialog?.kind === 'cancel' && <CancelForm dialog={dialog} setDialog={setDialog} act={act} error={error} />}

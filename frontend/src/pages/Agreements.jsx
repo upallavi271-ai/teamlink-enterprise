@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
 import Combo from '../components/Combo.jsx';
 import AtsDataTools from '../components/AtsDataTools.jsx';
@@ -14,6 +14,10 @@ import { AgreementStepChip, AGREEMENT_STEPS, agreementStepLabel, agreementStepOf
 import { AgreementSettingsButton } from '../components/agreements/AgreementSettings.jsx';
 import AgreementLinkCard from '../components/agreements/AgreementLinkCard.jsx';
 import Modal from '../components/Modal.jsx';
+// Clients & Requirements v4 (2026-10-08): the module header + KPI tiles on the
+// ATS routes only (/agreements, /ats/agreements); /accounts/agreements keeps its look.
+import { KpiRow, KpiTile } from '../components/atskit/AtsKit.jsx';
+import { CrqHead } from '../components/clientsreq-v4/ListBits.jsx';
 
 // The monthly agreement report (moved here from the Requirements screen's old
 // "Agreement Report" sub-tab, §5): counts from each client's own milestones;
@@ -40,6 +44,8 @@ const MONTH = (value) => {
 
 export default function Agreements() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const v4 = !pathname.startsWith('/accounts');
   const { user } = useAuth();
   // The client desk (SA / Admin / Manager / Asst Manager / BDE) works from the
   // Clients data and opens the client's Agreement tab; the accounts desk sees
@@ -143,24 +149,53 @@ export default function Agreements() {
   const stepOptions = [...AGREEMENT_STEPS.map(([k]) => k), 'REJECTED'].filter((k) => stepCounts[k]);
   const canSettings = can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit');
 
+  const headTools = (
+    <>
+      {canSettings && <AgreementSettingsButton />}
+      {desk && <AtsDataTools
+        module="agreements"
+        kinds={['agreements']}
+        onImported={() => api.get('/clients').then((res) => setClients(res.data)).catch(() => {})}
+        body={() => ({ ids: statusFilter || search ? rows.map((c) => c.id) : null })}
+      />}
+    </>
+  );
+  const headSub = desk ? 'Which client agreements need a next step?' : 'Signed client agreements. Read and download.';
+  const headScope = loaded ? <ScopeLine user={user} count={clients.length} noun="agreement" inline /> : 'Loading…';
+  // v4 tiles: each step's count (from the same list), click = the Step filter.
+  const stepTile = (key, icon, tone, label, sub) => (
+    <KpiTile
+      key={key} icon={icon} tone={tone} label={label} value={loaded ? (stepCounts[key] || 0) : null} loading={!loaded} sub={sub}
+      active={statusFilter === key}
+      onClick={stepCounts[key] ? () => setStatusFilter(statusFilter === key ? '' : key) : undefined}
+    />
+  );
+
   return (
-    <div>
-      <div className="page-head">
-        <div>
-          <h1>Agreements</h1>
-          <div className="page-sub">{desk ? 'Which client agreements need a next step?' : 'Signed client agreements. Read and download.'}</div>
-          <div className="page-sub">{loaded ? <ScopeLine user={user} count={clients.length} noun="agreement" inline /> : 'Loading…'}</div>
+    <div className={v4 ? 'crq4 crq4-agr' : undefined}>
+      {v4 ? <CrqHead sub={headSub} scope={headScope} tools={headTools} /> : (
+        <div className="page-head">
+          <div>
+            <h1>Agreements</h1>
+            <div className="page-sub">{headSub}</div>
+            <div className="page-sub">{headScope}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {headTools}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {canSettings && <AgreementSettingsButton />}
-          {desk && <AtsDataTools
-            module="agreements"
-            kinds={['agreements']}
-            onImported={() => api.get('/clients').then((res) => setClients(res.data)).catch(() => {})}
-            body={() => ({ ids: statusFilter || search ? rows.map((c) => c.id) : null })}
-          />}
-        </div>
-      </div>
+      )}
+
+      {v4 && (
+        <KpiRow className="crq4-kpis">
+          <KpiTile icon="handshake" tone="blue" label="Total Agreements" value={loaded ? clients.length : null} loading={!loaded} sub="In your area" onClick={statusFilter ? () => setStatusFilter('') : undefined} />
+          {stepTile('DRAFT', 'file', 'slate', 'Draft', 'Not sent yet')}
+          {stepTile('SENT', 'send', 'violet', 'Sent', 'With the client')}
+          {stepTile('SIGNED', 'clock', 'amber', 'Signed', 'To be made Active')}
+          {stepTile('ACTIVE', 'check', 'green', 'Active', 'Jobs can go live')}
+          {stepTile('EXPIRED', 'x', 'red', 'Expired', 'Needs a renewal')}
+        </KpiRow>
+      )}
 
 
       {listError && !desk && <div className="notice red"><span>{listError}</span></div>}

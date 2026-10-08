@@ -15,6 +15,8 @@ import ListPageHeader, {
 // Section 17 (2026-10-03): the landing page of report cards, and the small
 // pieces every report uses (compare, "12 of 20", Excel / PDF buttons).
 import ReportsHome, { cardOfTab } from './ReportsHome.jsx';
+// Reports & Analytics overview on the landing page (redesign 2026-10-08).
+import ReportsOverview from '../../components/reports-v4/ReportsOverview.jsx';
 // Everyday words + one-line ? tips (user, 2026-10-05: "a new person gets it in 20–30 s").
 import { plainWords } from '../../components/ui/Guide.jsx';
 
@@ -595,9 +597,45 @@ export default function AtsReports({ fixedTab = '' } = {}) {
     if (msg) setError(msg);
   }
 
-  // THE LANDING PAGE — one list of report cards.
+  // THE LANDING PAGE (redesign 2026-10-08) — the Reports & Analytics
+  // overview (components/reports-v4) over the existing report endpoints,
+  // then the same list of report cards as before ("All reports").
   // No Settings tab (user, 2026-10-03): settings live in Administration.
-  if (!tab) return <ReportsHome tabs={ATS_REPORT_TABS} onOpen={(id, cardId) => goTab(id, cardId ? { card: cardId } : {})} />;
+  if (!tab) {
+    const landingQuery = (extra) => queryOf({ ...EMPTY, ...bar }, extra);
+    const openFromOverview = (id, extra = {}, gb = '') => {
+      if (gb) setGroupBy((m) => ({ ...m, [id]: gb }));
+      const { card: cardId, ...rest } = extra;
+      goTab(id, { ...rest, ...(cardId ? { card: cardId } : {}) });
+    };
+    const exportOverview = async (format) => {
+      setBusy(format);
+      const q = landingQuery({});
+      const msg = await download(`/ats-reports/recruitment/export?${q}${q ? '&' : ''}format=${format}`, `report.${format}`);
+      setBusy('');
+      return msg;
+    };
+    return (
+      <>
+        <ReportsOverview
+          pf={pf}
+          setPf={setPf}
+          queryFor={landingQuery}
+          cat={cat}
+          canExport={canExport}
+          busy={busy}
+          onExport={exportOverview}
+          onDrill={(d) => setDrill(d)}
+          onOpen={openFromOverview}
+        >
+          <ReportsHome embedded tabs={ATS_REPORT_TABS} onOpen={(id, cardId) => goTab(id, cardId ? { card: cardId } : {})} />
+        </ReportsOverview>
+        {drill && (
+          <DrillModal tab={drill.tab} query={drill.query} target={drill} canExport={canExport} onClose={() => setDrill(null)} />
+        )}
+      </>
+    );
+  }
 
   const card = cardOfTab(tab, ATS_REPORT_TABS, params.get('card')) || { title: 'Report', answers: '', views: [[tab, tab]] };
   const views = (card.views || []).filter(([id]) => TAB_IDS.includes(id));

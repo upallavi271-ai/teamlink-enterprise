@@ -26,7 +26,7 @@ import HierarchyFilter, { EMPTY_HIERARCHY, toParams, hierarchyChips, useHierarch
 import AtsDataTools, { runAtsExport, useAtsIoAccess } from '../components/AtsDataTools.jsx';
 // cand7_ (Candidates §7): the Progress board.
 import CandidateBoard from '../components/candidate/CandidateBoard.jsx';
-import ListPageHeader, {
+import {
   StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import ColumnChooser, { useStoredState } from '../components/ColumnChooser.jsx';
@@ -54,8 +54,16 @@ import PageFilterBar, { rangeDates } from '../components/ui/PageFilterBar.jsx';
 import StepPopup from '../components/candidate/StepPopups.jsx';
 // "A new person gets it in 20–30 s" (user, 2026-10-05): How it works · first-visit tips · ? tips.
 import {
-  HowItWorks, FirstTips, Help, usePipelineSteps, stepStageFilter, stepOfStageFilter, PIPELINE_STEPS,
+  FirstTips, Help, stepOfStageFilter, PIPELINE_STEPS,
 } from '../components/ui/Guide.jsx';
+// v4 (2026-10-08): the reference layout — ATS kit tiles / panels / strip, plus
+// this page's own pieces (components/candidates-v4/).
+import {
+  KpiRow, KpiTile, Panel, StageStrip, AttentionList, BarList, QuickActions,
+} from '../components/atskit/AtsKit.jsx';
+import {
+  STRIP_STEPS, stripFilter, stripStepOf, usePipelineOverview, useAttentionRequirements, TopRequirements, StageDonut, topFacet,
+} from '../components/candidates-v4/CandidatesV4.jsx';
 
 // The Step filter's options in everyday words (the server's names are the
 // old ones: "TL Review", "Client Submitted"…). Internal hiring keeps its own.
@@ -539,16 +547,27 @@ export default function Candidates() {
   const facetLabel = (key, value) => ((facets[key] || []).find((o) => String(o.value) === String(value)) || {}).label;
   // How it works: the count at each step, over everything in your area with
   // the other filters on; a click shows the people at that step.
-  const stepCounts = usePipelineSteps(facetParams, { enabled: main === 'pipeline' });
-  const stepOn = stepOfStageFilter(filters.stage);
+  // v4: the same request also feeds the KPI tiles, Needs attention and the
+  // insights donut (GET /candidates sub=all pageSize=1 → counts).
+  const overview = usePipelineOverview(facetParams, { enabled: main === 'pipeline' });
+  const stepOn = stripStepOf(filters.stage);
+  // A step click shows the people at that step (All tab); again = everyone.
   function pickStep(id) {
-    if (id === 'job') { navigate('/requirements'); return; }
-    setFilter({ stage: id ? stepStageFilter(id) : '' });
-    if (id) {
+    const s = STRIP_STEPS.find((x) => x.id === id);
+    setFilter({ stage: s ? stripFilter(s) : '' });
+    if (s) {
       setQuick('');
       if (pipeSub !== 'all') goPipeSub('all');
     }
   }
+  const hiwKey = `tl.guide.hiw.candidates.${uid}`;
+  const [stripHidden, setStripHidden] = useState(() => { try { return localStorage.getItem(hiwKey) === '1'; } catch { return false; } });
+  function hideStrip(on) {
+    setStripHidden(on);
+    try { if (on) localStorage.setItem(hiwKey, '1'); else localStorage.removeItem(hiwKey); } catch { /* not remembered */ }
+  }
+  const [attnAll, setAttnAll] = useState(false);
+  const reqAttention = useAttentionRequirements(requirements);
   const plainStep = (o) => (filters.hiring === 'internal' ? o.label : (STEP_PLAIN[o.key] || o.label));
 
   // --- ATS layout v3: the filter bar (Department · Date range · Client ·
@@ -811,6 +830,8 @@ export default function Candidates() {
     const st = filters.stage;
     if (!st) return '';
     if (st.startsWith('st:')) {
+      const strip = STRIP_STEPS.find((x) => x.id === stripStepOf(st));
+      if (strip) return strip.label;
       const step = PIPELINE_STEPS.find((x) => x.id === stepOfStageFilter(st));
       if (step) return step.label;
       const keys = st.slice(3).split(',');
@@ -948,15 +969,155 @@ export default function Candidates() {
   };
   const viewNoun = masterView ? 'candidate' : 'application';
 
+  // --- v4 (reference layout): tiles, attention, quick actions, insights ----
+  const ov = overview;
+  const subN = (k) => (ov ? Number(ov.subs[k] ?? 0) : null);
+  const qN = (k) => (ov ? Number(ov.quick[k] ?? 0) : null);
+  const plainList = !quick && !filters.stage && !cardOn;
+  // A tile is a drill-down: it drops the step / card picks that would hide its own rows.
+  const goTile = (s) => {
+    if (filters.stage || filters.contactAge || filters.available) setFilter({ stage: '', contactAge: '', available: '' });
+    goPipeSub(s);
+  };
+  const kpiTiles = [
+    {
+      key: 'total', icon: 'users', tone: 'blue', label: 'Applications', value: subN('all'),
+      sub: cards && cards.people != null ? `${Number(cards.people).toLocaleString('en-IN')} people` : 'All, any status',
+      onClick: () => openCard('total'), active: pipeSub === 'all' && plainList, title: 'Every application in your area (with the filters on)',
+    },
+    {
+      key: 'active', icon: 'trend', tone: 'green', label: 'Active', value: subN('active'), sub: 'In the pipeline',
+      onClick: () => goTile('active'), active: pipeSub === 'active' && plainList,
+    },
+    {
+      key: 'joined', icon: 'briefcase', tone: 'teal', label: 'Joined', value: subN('joined'),
+      sub: ov ? `Selected: ${Number(ov.subs.selected ?? 0).toLocaleString('en-IN')}` : undefined,
+      onClick: () => goTile('joined'), active: pipeSub === 'joined' && plainList,
+    },
+    {
+      key: 'today_interviews', icon: 'calendar', tone: 'violet', label: 'Interviews today', value: qN('today_interviews'), sub: 'Booked today',
+      onClick: () => pickQuick('today_interviews'), active: quick === 'today_interviews', title: defs.today_interviews,
+    },
+    {
+      key: 'client_feedback', icon: 'chat', tone: 'pink', label: 'Feedback pending', value: qN('client_feedback'), sub: 'From the client',
+      onClick: () => pickQuick('client_feedback'), active: quick === 'client_feedback', title: defs.client_feedback,
+    },
+    {
+      key: 'rejected', icon: 'x', tone: 'red', label: 'Rejected', value: subN('rejected'), sub: 'Never deleted',
+      onClick: () => goTile('rejected'), active: pipeSub === 'rejected' && plainList,
+    },
+    {
+      key: 'hold', icon: 'pause', tone: 'amber', label: 'On hold', value: subN('hold'), sub: 'Paused',
+      onClick: () => goTile('hold'), active: pipeSub === 'hold' && plainList,
+    },
+  ];
+  const quickBtn = (id, label = 'Open') => ({ label: quick === id ? 'Showing' : label, onClick: () => pickQuick(id) });
+  const attnItems = [
+    { key: 'overdue', count: qN('overdue'), label: 'Late', sub: 'Past the due date', tone: 'red', action: quickBtn('overdue') },
+    { key: 'due_today', count: qN('due_today'), label: 'Due today', sub: 'Next step due today', tone: 'amber', action: quickBtn('due_today') },
+    { key: 'my_pending', count: qN('my_pending'), label: 'Needs my action', sub: 'Your move now', tone: 'blue', action: quickBtn('my_pending') },
+    cards && cards.notFollowed7 != null && {
+      key: 'nf7', count: cards.notFollowed7, label: 'No follow-up 7+ days', sub: 'Not contacted for a week', tone: 'violet', action: { label: cardOn === 'nf7' ? 'Showing' : 'Chase', onClick: () => openCard('nf7') },
+    },
+    ...(attnAll ? [
+      { key: 'new', count: qN('new'), label: 'New, not checked yet', sub: 'Nobody has acted since it arrived', tone: 'teal', action: quickBtn('new') },
+      { key: 'client_feedback', count: qN('client_feedback'), label: 'Waiting for client feedback', sub: 'Client interview done, no feedback', tone: 'pink', action: quickBtn('client_feedback', 'Chase') },
+      cards && cards.notFollowed30 != null && {
+        key: 'nf30', count: cards.notFollowed30, label: 'No follow-up 30+ days', sub: 'Not contacted for a month', tone: 'red', action: { label: cardOn === 'nf30' ? 'Showing' : 'Chase', onClick: () => openCard('nf30') },
+      },
+      cards && cards.unverified != null && {
+        key: 'unverified', count: cards.unverified, label: 'Unverified', sub: 'New people nobody has checked', tone: 'slate', action: { label: cardOn === 'unverified' ? 'Showing' : 'Open', onClick: () => openCard('unverified') },
+      },
+    ] : []),
+  ].filter(Boolean);
+  function openBoard() {
+    pickLayout('board'); clearSelection();
+    if (!['all', 'active'].includes(pipeSub)) { setPipeSub('active'); writeUrl('pipeline', 'active'); }
+  }
+  const quickItems = [
+    can(user, 'ats', 'candidates', 'Add Candidate', 'create') && {
+      key: 'add', icon: 'plus', label: 'Add candidate', sub: 'Type it in, or upload a CV', onClick: () => { setError(''); setDupe(null); setShowForm(true); },
+    },
+    boardAllowed && {
+      key: 'board', icon: onBoard ? 'list' : 'chart', label: onBoard ? 'Show as list' : 'Progress board', sub: onBoard ? 'One row per application' : 'People by step, in columns', onClick: () => (onBoard ? pickLayout('list') : openBoard()),
+    },
+    portalTab && {
+      key: 'portal', icon: 'send', label: 'New from job portal', sub: Number(viewCounts.jobPortal) > 0 ? `${Number(viewCounts.jobPortal).toLocaleString('en-IN')} waiting to be checked` : 'Check, then send to a job', onClick: () => goMain('job-portal'),
+    },
+    {
+      key: 'people', icon: 'team', label: 'People', sub: 'One row per person', onClick: () => goMain('master'),
+    },
+    can(user, 'ats', 'requirements', 'Requirement List', 'view') && {
+      key: 'jobs', icon: 'briefcase', label: 'View jobs', sub: 'Requirements', to: '/requirements',
+    },
+    can(user, 'ats', 'interviews', 'Calendar View', 'view') && {
+      key: 'cal', icon: 'calendar', label: 'Interview calendar', sub: 'Who is interviewed when', to: '/ats/calendar',
+    },
+  ].filter(Boolean);
+  const stageOn = (v) => !!filters.stage && filters.stage.slice(3).split(',').sort().join(',') === v.slice(3).split(',').sort().join(',');
+  const pickStageFilter = (v) => {
+    if (stageOn(v)) { setFilter({ stage: '' }); return; }
+    setFilter({ stage: v }); setQuick('');
+    if (pipeSub !== 'all') goPipeSub('all');
+  };
+  const st = (ov && ov.steps) || {};
+  const DONUT = [
+    { key: 'checking', label: 'In checking', value: (st.recruiter || 0) + (st.lead || 0), filter: 'st:recruiter_review,tl_review,bde_review' },
+    { key: 'client', label: 'With the client', value: (st.sent || 0) + (st.short || 0), filter: 'st:client_submitted,client_shortlisted' },
+    { key: 'interview', label: 'Interview', value: st.interview || 0, filter: stripFilter(STRIP_STEPS[4]) },
+    { key: 'offer', label: 'Selected / offer', value: st.offer || 0, filter: stripFilter(STRIP_STEPS[5]) },
+    { key: 'joined', label: 'Joined', value: st.joined || 0, filter: stripFilter(STRIP_STEPS[6]) },
+    { key: 'hold', label: 'On hold', value: subN('hold') || 0, tab: 'hold' },
+    { key: 'rejected', label: 'Rejected', value: subN('rejected') || 0, tab: 'rejected' },
+  ].map((d) => ({ ...d, onClick: () => (d.tab ? goTile(d.tab) : pickStageFilter(d.filter)) }));
+  const donutOn = (DONUT.find((d) => (d.tab ? pipeSub === d.tab && plainList : d.filter && stageOn(d.filter))) || {}).key || '';
+  const cardNote = cardOn && main !== 'job-portal' && (
+    <div className="small-muted cviews-def">
+      {{
+        unverified: 'Showing: unverified — new people nobody has checked yet.',
+        nf7: 'Showing: not followed up for 7+ days (never contacted counts from the day they were added).',
+        nf30: 'Showing: not followed up for 30+ days.',
+        available: 'Showing: available for matching — not on any live job, not joined, not "Do not use".',
+      }[cardOn]}
+      {' '}
+      <button type="button" className="link-btn" onClick={() => setFilter({ stage: cardOn === 'unverified' ? '' : filters.stage, contactAge: '', available: '' })}>Show everyone</button>
+    </div>
+  );
+  const stepFacet = (
+    <FacetSelect
+      label="Step"
+      allLabel="All steps"
+      value={filters.stage}
+      onChange={(v) => setFilter({ stage: v })}
+      options={withCurrent(
+        [...(counts.stageOptions || []).filter((o) => o.relevant), ...(counts.stageOptions || []).filter((o) => !o.relevant)]
+          .map((o) => ({ value: `st:${o.key}`, label: plainStep(o), count: o.count })),
+        filters.stage,
+        stageChipLabel,
+      )}
+      title="Where the person is now"
+    />
+  );
+
   return (
-    <div className="cpl">
-      <ListPageHeader
-        title="Candidates & Pipeline"
-        question="Everyone who applied, and which step they're at."
-        sub={main !== 'job-portal'
-          ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
-          : <span className="small-muted">New from the job portal — not checked yet</span>}
-        data={listOn && (
+    <div className={`cpl cv4${main === 'pipeline' ? ' cv4-pipe' : ''}`}>
+      <header className="ak-page-head cv4-head">
+        <div className="cv4-titles">
+          <h1>Candidates &amp; Pipeline</h1>
+          <p>
+            Everyone who applied, and which step they&apos;re at.
+            <span className="cv4-scope">
+              {main !== 'job-portal'
+                ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
+                : <span className="small-muted">New from the job portal — not checked yet</span>}
+            </span>
+          </p>
+        </div>
+        <div className="ak-page-tools cv4-tools">
+          {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
+            <button type="button" className="btn btn-primary cv4-add" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>+ Add candidate</button>
+          )}
+          {listOn && (
             <AtsDataTools
               module="candidates"
               kinds={['candidates', 'applications']}
@@ -968,24 +1129,34 @@ export default function Candidates() {
                 ids: selected.size && !masterView ? [...selected.keys()] : null,
               })}
             />
-        )}
-        primary={can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
-          <button className="btn btn-primary" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>+ Add candidate</button>
-        )}
-      />
-
-      {cardOn && main !== 'job-portal' && (
-        <div className="small-muted cviews-def">
-          {{
-            unverified: 'Showing: unverified — new people nobody has checked yet.',
-            nf7: 'Showing: not followed up for 7+ days (never contacted counts from the day they were added).',
-            nf30: 'Showing: not followed up for 30+ days.',
-            available: 'Showing: available for matching — not on any live job, not joined, not "Do not use".',
-          }[cardOn]}
-          {' '}
-          <button type="button" className="link-btn" onClick={() => setFilter({ stage: cardOn === 'unverified' ? '' : filters.stage, contactAge: '', available: '' })}>Show everyone</button>
+          )}
+          {main !== 'job-portal' && (
+            <SavedViews storageKey="cand" label="Saved filters" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
+          )}
         </div>
-      )}
+      </header>
+
+      <div className="cviews cv4-views" role="tablist" aria-label="Candidates views" title={(MAIN_VIEWS.find((v) => v.id === main) || {}).say}>
+        {MAIN_VIEWS.filter((v) => v.id !== 'job-portal' || portalTab).map((v) => {
+          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : viewCounts.jobPortal;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={main === v.id}
+              title={v.id === 'job-portal' ? `${v.hint}. The number is how many are still waiting to be checked.` : v.hint}
+              className={`cviews-btn${main === v.id ? ' is-on' : ''}`}
+              onClick={() => goMain(v.id)}
+            >
+              {v.label}
+              {n != null && Number(n) > 0 && <span className="cviews-n">{Number(n).toLocaleString('en-IN')}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {main === 'master' && cardNote}
       {stepPopup && (
         <StepPopup
           kind={stepPopup.kind}
@@ -1320,27 +1491,6 @@ export default function Candidates() {
       {/* --- ONE MODULE, THREE VIEWS (spec: "not three pages to wander
               between"). Each view has its own sub-tabs, columns, filters
               and counts. --- */}
-      <FirstTips uid={uid} page="candidates" tips={CAND_TIPS} />
-      <div className="cviews" role="tablist" aria-label="Candidates views" title={(MAIN_VIEWS.find((v) => v.id === main) || {}).say}>
-        {MAIN_VIEWS.filter((v) => v.id !== 'job-portal' || portalTab).map((v) => {
-          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : viewCounts.jobPortal;
-          return (
-            <button
-              key={v.id}
-              type="button"
-              role="tab"
-              aria-selected={main === v.id}
-              title={v.id === 'job-portal' ? `${v.hint}. The number is how many are still waiting to be checked.` : v.hint}
-              className={`cviews-btn${main === v.id ? ' is-on' : ''}`}
-              onClick={() => goMain(v.id)}
-            >
-              {v.label}
-              {n != null && Number(n) > 0 && <span className="cviews-n">{Number(n).toLocaleString('en-IN')}</span>}
-            </button>
-          );
-        })}
-      </div>
-
       {main === 'job-portal' && portalTab && <JobPortalCandidates onSentToAts={reload} />}
 
       {main === 'master' && (
@@ -1479,7 +1629,62 @@ export default function Candidates() {
 
       {main === 'pipeline' && (
         <>
-          <HowItWorks uid={uid} page="candidates" counts={stepCounts ? { ...stepCounts } : null} active={stepOn} onPick={pickStep} />
+          <KpiRow className="cv4-kpis">
+            {kpiTiles.map(({ key, ...k }) => <KpiTile key={key} {...k} loading={!ov} />)}
+          </KpiRow>
+          <div className="cv4-layout">
+            <div className="cv4-main">
+              {stripHidden ? (
+                <div className="cv4-strip-off">
+                  <button type="button" className="link-btn" onClick={() => hideStrip(false)}>Show the candidate pipeline</button>
+                </div>
+              ) : (
+                <Panel
+                  className="cv4-strip"
+                  icon="trend"
+                  title="Candidate pipeline"
+                  sub={ov ? `Active: ${Number(ov.subs.active ?? 0).toLocaleString('en-IN')} · every person moves left to right — click a step to see who is there` : 'Every person moves left to right — click a step to see who is there'}
+                  extra={<button type="button" className="ak-panel-link cv4-hide" title="Hide (you can show it again)" onClick={() => hideStrip(true)}>Hide ×</button>}
+                >
+                  <StageStrip
+                    compact
+                    steps={STRIP_STEPS.map((s) => ({
+                      key: s.id, label: s.label, icon: s.icon, tone: s.tone, value: ov ? st[s.id] : null, active: stepOn === s.id,
+                      onClick: () => pickStep(stepOn === s.id ? '' : s.id),
+                    }))}
+                  />
+                </Panel>
+              )}
+              <div className="cv4-row3">
+                <Panel
+                  className="cv4-attn"
+                  icon="alert"
+                  iconTone="red"
+                  title="Needs attention"
+                  action={attnItems.length > 3 || attnAll ? { label: attnAll ? 'Show less' : 'View all', onClick: () => setAttnAll((x) => !x) } : null}
+                >
+                  <AttentionList items={attnItems} />
+                </Panel>
+                <Panel
+                  className="cv4-topreq"
+                  icon="briefcase"
+                  title="Top requirements"
+                  sub="Needing attention — click to filter"
+                  flush
+                  action={reqAttention.total > 0 && can(user, 'ats', 'requirements', 'Requirement List', 'view') ? { label: `View all ${reqAttention.total.toLocaleString('en-IN')}`, to: '/requirements' } : null}
+                >
+                  <TopRequirements
+                    rows={reqAttention.top}
+                    activeId={filters.requirementId}
+                    onPick={(r) => setFilter({ requirementId: filters.requirementId === r.id ? '' : r.id })}
+                  />
+                </Panel>
+                <Panel className="cv4-quick" icon="bolt" title="Quick actions">
+                  <QuickActions items={quickItems} />
+                </Panel>
+              </div>
+              <section className="ak-panel cv4-listpanel">
+          {cardNote}
           <StatusTabs
             label="Job applications"
             tabs={PIPE_SUBS.map((s) => ({
@@ -1592,9 +1797,7 @@ export default function Candidates() {
                     </select>
                   </PanelField>
                 )}
-                <PanelField label="Saved views">
-                  <SavedViews storageKey="cand" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
-                </PanelField>
+                {/* Saved views: in the page header (Saved filters ▾). */}
                 <FacetSelect
                   label="Job"
                   allLabel="All jobs"
@@ -1792,8 +1995,91 @@ export default function Candidates() {
               other jobs. The client never sees our own reason.
             </div>
           )}
+              </section>
+            </div>
+            <aside className="cv4-aside">
+              <Panel
+                className="cv4-filters"
+                icon="list"
+                title="Filters"
+                action={filterCount ? { label: 'Reset', onClick: clearAll } : null}
+              >
+                <div className="cv4-rail">
+                  {stepFacet}
+                  <FacetSelect label="Department" allLabel="All departments" value={hier.department} onChange={(v) => setPageFilters({ ...pfValue, department: v })} options={pfOptions.department} loading={facetsLoading} />
+                  {show.source && (
+                    <FacetSelect label="Source" allLabel="All sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={withCurrent(facets.source, filters.source)} loading={facetsLoading} />
+                  )}
+                  <FacetSelect label="Client" allLabel="All clients" value={filters.clientId} onChange={(v) => setPageFilters({ ...pfValue, clientId: v })} options={pfOptions.clientId} loading={facetsLoading} />
+                  <FacetSelect
+                    label="Job / role"
+                    allLabel="All jobs"
+                    value={filters.requirementId}
+                    onChange={(v) => setFilter({ requirementId: v })}
+                    options={withCurrent(facets.requirementId, filters.requirementId, (chips.find((ch) => ch.key === 'req') || {}).value)}
+                    loading={facetsLoading}
+                  />
+                  <PanelField label="Date added">
+                    <span className="lph-pair cv4-dates">
+                      <input type="date" aria-label="Added from" value={filters.appliedFrom || ''} onChange={(e) => setPageFilters({ ...pfValue, range: 'custom', from: e.target.value, to: filters.appliedTo || '' })} />
+                      <input type="date" aria-label="Added to" value={filters.appliedTo || ''} onChange={(e) => setPageFilters({ ...pfValue, range: 'custom', from: filters.appliedFrom || '', to: e.target.value })} />
+                    </span>
+                  </PanelField>
+                  <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
+                  <PanelField label="Skills">
+                    <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
+                  </PanelField>
+                </div>
+                <div className="cv4-rail-foot">
+                  <button type="button" className="btn btn-sm" onClick={clearAll} disabled={!filterCount}>Clear filters</button>
+                  <span className="small-muted">More under Filters ▾ above the list</span>
+                </div>
+              </Panel>
+              <Panel className="cv4-insights" icon="chart" title="Candidate insights" sub="Applications by step">
+                {ov ? <StageDonut slices={DONUT} centerLabel="Applications" active={donutOn} /> : <div className="ak-empty">Loading…</div>}
+                {cards && (cards.people != null || cards.available != null) && (
+                  <ul className="cv4-minis">
+                    {cards.people != null && <li><span>People (one row each)</span><b>{Number(cards.people).toLocaleString('en-IN')}</b></li>}
+                    {cards.available != null && (
+                      <li>
+                        <button type="button" onClick={() => openCard('available')} aria-pressed={cardOn === 'available'}>
+                          <span>Available for matching</span>
+                          <b>{Number(cards.available).toLocaleString('en-IN')}</b>
+                        </button>
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </Panel>
+            </aside>
+          </div>
+          <div className="cv4-bottom">
+            <Panel icon="trend" title="Hiring funnel" sub="Applications at each step">
+              <BarList
+                showShare={false}
+                rows={STRIP_STEPS.map((s, i) => ({
+                  key: s.id, label: s.label, value: ov ? st[s.id] : 0, tone: ['blue', 'violet', 'green', 'amber', 'pink', 'teal', 'green'][i], onClick: () => pickStep(stepOn === s.id ? '' : s.id),
+                }))}
+              />
+            </Panel>
+            <Panel icon="pin" title="Applications by location" sub="In this list — click to filter">
+              <BarList rows={topFacet(facets.location, 5).map((o) => ({ key: o.value, label: o.label || o.value, value: Number(o.count), onClick: () => setFilter({ location: filters.location === o.value ? '' : o.value }) }))} />
+            </Panel>
+            {show.source ? (
+              <Panel icon="send" title="Applications by source" sub="In this list — click to filter">
+                <BarList rows={topFacet(facets.source, 5).map((o) => ({ key: o.value, label: o.label || o.value, value: Number(o.count), onClick: () => setFilter({ source: filters.source === o.value ? '' : o.value }) }))} />
+              </Panel>
+            ) : (
+              <Panel icon="building" title="Applications by client" sub="In this list — click to filter">
+                <BarList rows={topFacet(facets.clientId, 5).map((o) => ({ key: o.value, label: o.label || o.value, value: Number(o.count), onClick: () => setPageFilters({ ...pfValue, clientId: filters.clientId === o.value ? '' : o.value }) }))} />
+              </Panel>
+            )}
+          </div>
         </>
       )}
+      <div className="cv4-tips">
+        <FirstTips uid={uid} page="candidates" tips={CAND_TIPS} />
+      </div>
     </div>
   );
 }

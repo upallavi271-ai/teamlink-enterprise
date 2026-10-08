@@ -1,0 +1,313 @@
+/* ===========================================================================
+   CLIENTS & REQUIREMENTS v4 (2026-10-08) — Jobs · Clients · Agreements in the
+   reference layout, on the shared ATS kit (atskit.css) and TeamLink tokens.
+   Every selector is scoped under .crq4 (the page root) or to the <main> that
+   holds it, so no other screen changes.
+   =========================================================================== */
+
+/* --- module header above the Shell's Clients | Jobs | Agreements strip ----
+   The strip is drawn by Shell (ModuleTabs) before the page. The page root
+   becomes display:contents inside a column-flex <main>, and the header takes
+   order -1 — so the order is: title, strip, the rest. Only while a .crq4 page
+   is mounted. */
+main:has(> .crq4){display:flex;flex-direction:column}
+main:has(> .crq4) > .crq4{display:contents}
+main:has(> .crq4) > .tabs{margin-bottom:12px !important;border-bottom:0;gap:8px}
+main:has(> .crq4) > .tabs .tab{margin-right:0;padding:7px 18px;border:1px solid var(--line);border-radius:9px;background:#fff;font-weight:600;color:var(--ink)}
+main:has(> .crq4) > .tabs .tab.active{background:var(--navy);border-color:var(--navy);color:#fff}
+.crq4 > .crq4-head{order:-1}
+/* Fixed overlays (drawers, modals) stay what they were. */
+
+.crq4-head{align-items:flex-start;margin-bottom:12px}
+.crq4-head h1{font-size:22px}
+.crq4-head-scope{margin-top:4px;font-size:12px;color:var(--ink-soft)}
+.crq4-head-scope .page-sub,.crq4-head-scope > *{margin:0}
+.crq4-tools{justify-content:flex-end;padding-top:4px}
+/* AtsDataTools' buttons join the tools row: Import · Export · + Add · Approvals & history · Saved filters */
+.crq4-tools .atsio{display:contents}
+.crq4-tools .btn{height:34px;display:inline-flex;align-items:center;gap:6px;padding:0 14px;font-size:12.5px;border-radius:8px}
+.crq4-tools .atsio > .btn{order:1}
+.crq4-tools > .btn-primary,.crq4-tools > .crq4-primary{order:3}
+.crq4-tools .atsio > .btn-ghost{order:4;background:#fff;border:1px solid var(--line)}
+.crq4-tools .savedviews{order:5}
+.crq4-tools .savedviews-toggle{background:#fff;border:1px solid var(--line)}
+.crq4-tools .atsio > .atsio-msg{order:6;flex-basis:100%;text-align:right}
+.crq4-tools > .crq4-extra{order:0}
+
+/* --- the compact filter card ----------------------------------------------- */
+.crq4-filters{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(22,32,43,.04);padding:10px 14px 12px;margin-bottom:14px}
+.crq4-filters-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px}
+.crq4-filters .pfb{display:contents}
+.crq4-filters .lph-facet{flex:1 1 96px;min-width:90px;max-width:210px}
+.crq4-filters .pfb-custom{flex-basis:250px;max-width:300px}
+.crq4-filters .lph-facet-lbl{font-size:11px;font-weight:600;color:var(--ink-faint)}
+.crq4-filters select,.crq4-filters input[type="date"]{height:34px;font-size:11.5px;padding:0 20px 0 8px;border-radius:8px;background-position:right 6px center}
+.crq4-filters .pfb-clear{order:9;align-self:flex-end;margin-left:0;height:34px}
+.crq4-search{flex:1 1 130px;min-width:130px;max-width:300px;position:relative;display:flex;align-items:center;order:8}
+.crq4-search input{width:100%;height:34px;padding-left:32px;font-size:12.5px;border-radius:8px}
+.crq4-search-ic{position:absolute;left:10px;color:var(--ink-faint);display:grid;place-items:center;pointer-events:none}
+
+/* --- KPI tiles --------------------------------------------------------------- */
+.crq4-kpis{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.crq4 .ak-kpi{min-height:78px;padding:12px 10px;gap:9px}
+.crq4 .ak-kpi-ic{width:38px;height:38px}
+.crq4 .ak-kpi-label{font-size:11.5px}
+.crq4 .ak-kpi-sub{font-size:11px}
+
+/* --- the main grid: left (overview + list) · right (top clients + selected) -- */
+.crq4-layout{display:grid;grid-template-columns:minmax(0,1fr) 262px;gap:14px;align-items:stretch;margin-bottom:14px}
+.crq4-layout.crq4-noside{grid-template-columns:minmax(0,1fr)}
+.crq4-row4{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(0,1.03fr) minmax(0,1fr) 262px;gap:14px;margin-bottom:14px}
+.crq4-row4 > .ak-panel{min-height:206px}
+.crq4-row4.crq4-three,.crq4-clients .crq4-row4.crq4-three{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr)}
+.crq4-clients .crq4-row4{grid-template-columns:minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1fr) 262px}
+.crq4-row4 > .crq4-stagep .ak-panel-body{padding-top:18px}
+.crq4-row4 .ak-panel-title h3{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crq4-row4 .ak-panel-title,.crq4-row4 .ak-panel-title > span{min-width:0}
+.crq4-row4 .ak-panel-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crq4-x{font-size:18px;line-height:1;color:var(--ink-faint)}
+.crq4-main{min-width:0;display:flex;flex-direction:column;gap:14px}
+.crq4-side{min-width:0;display:flex;flex-direction:column;gap:14px}
+.crq4-row3{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(0,1fr) minmax(0,1fr);gap:14px}
+.crq4-row3 > .ak-panel{min-height:206px}
+.crq4-row3 > .crq4-stagep .ak-panel-body{display:flex;flex-direction:column;justify-content:center;padding-bottom:22px}
+.crq4-side .ak-panel-title h3{font-size:13.5px}
+.crq4-sticky{position:sticky;top:10px}
+@media (max-width:1180px){
+  .crq4-layout{grid-template-columns:minmax(0,1fr)}
+  .crq4-sticky{position:static}
+  .crq4-row4{grid-template-columns:1fr 1fr}
+}
+@media (max-width:980px){
+  .crq4-row3{grid-template-columns:1fr 1fr}
+  .crq4-row3 > :first-child{grid-column:span 2}
+}
+@media (max-width:640px){
+  .crq4-row3,.crq4-row4,.crq4-side{grid-template-columns:1fr}
+  .crq4-row3 > :first-child{grid-column:auto}
+}
+.crq4 .ak-panel-head{padding:12px 14px 8px}
+.crq4 .ak-panel-body{padding:0 14px 12px}
+
+/* --- stage flow (circles + arrows) ----------------------------------------- */
+.crq4-flow{list-style:none;margin:6px 0 0;padding:0;display:flex;align-items:flex-start}
+.crq4-flow-step{flex:1 1 0;min-width:0;position:relative}
+.crq4-flow-step + .crq4-flow-step::before{content:'';position:absolute;top:19px;left:-5px;width:7px;height:7px;
+  border-top:1.6px solid #A9B4C4;border-right:1.6px solid #A9B4C4;transform:rotate(45deg)}
+.crq4-flow-step button{width:100%;display:flex;flex-direction:column;align-items:center;gap:5px;padding:2px 2px 6px;
+  border:0;border-radius:10px;background:none;font:inherit;color:inherit;cursor:pointer}
+.crq4-flow-step button:hover{background:#F5F8FD}
+.crq4-flow-step.is-on button{background:#EEF3FB;box-shadow:inset 0 0 0 1.5px var(--navy)}
+.crq4-flow-dot{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;background:#8A97A8;flex:none}
+.crq4-flow-lbl{font-size:11px;font-weight:600;color:var(--ink-soft);text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crq4-flow-n{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--ink)}
+.crq4-c-slate .crq4-flow-dot{background:#8A97A8}.crq4-c-slate .crq4-flow-n{color:#4A5A70}
+.crq4-c-blue .crq4-flow-dot{background:#2F6FE4}.crq4-c-blue .crq4-flow-n{color:#1F5BD8}
+.crq4-c-violet .crq4-flow-dot{background:#8B5CF6}.crq4-c-violet .crq4-flow-n{color:#6D3FD1}
+.crq4-c-green .crq4-flow-dot{background:#22A06B}.crq4-c-green .crq4-flow-n{color:#14804A}
+.crq4-c-amber .crq4-flow-dot{background:#E59A1A}.crq4-c-amber .crq4-flow-n{color:#B26A00}
+.crq4-c-teal .crq4-flow-dot{background:#1BA3A1}.crq4-c-teal .crq4-flow-n{color:#0E7C7B}
+.crq4-c-navy .crq4-flow-dot{background:#1F4FA8}.crq4-c-navy .crq4-flow-n{color:#1F4FA8}
+
+/* --- needs attention rows --------------------------------------------------- */
+.crq4-attn{list-style:none;margin:0;padding:0}
+.crq4-attn li + li{border-top:1px solid var(--line-soft)}
+.crq4-attn button{width:100%;display:flex;align-items:center;gap:10px;padding:6px 0;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.crq4-attn button:disabled{cursor:default}
+.crq4-attn button:not(:disabled):hover .crq4-attn-label{color:#1F5BD8}
+.crq4-attn button[aria-pressed="true"] .crq4-attn-label{color:var(--navy);text-decoration:underline}
+.crq4-attn-n{min-width:42px;height:30px;padding:0 6px;border-radius:7px;display:grid;place-items:center;font-size:14.5px;font-weight:800;font-variant-numeric:tabular-nums;flex:none}
+.crq4-attn-txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.crq4-attn-label{font-size:12.5px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crq4-attn-sub{font-size:11px;color:var(--ink-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crq4-attn-go{color:var(--ink-faint);font-size:18px;flex:none}
+
+/* --- share bars (label · value · % over a bar) ------------------------------ */
+.crq4-share{list-style:none;margin:0;padding:0}
+.crq4-share li > button,.crq4-share li > div{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto 34px;
+  grid-template-areas:"l v p" "b b b";column-gap:8px;row-gap:4px;align-items:center;padding:4px 0;border:0;background:none;font:inherit;color:inherit;text-align:left}
+.crq4-share li > button{cursor:pointer}
+.crq4-share li > button:hover .crq4-share-lbl,.crq4-share li.is-on .crq4-share-lbl{color:#1F5BD8}
+.crq4-share-lbl{grid-area:l;font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crq4-share-val{grid-area:v;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.crq4-share-pct{grid-area:p;font-size:11.5px;color:var(--ink-faint);text-align:right}
+.crq4-share-track{grid-area:b;height:6px;border-radius:6px;background:#EEF2F7;overflow:hidden}
+.crq4-share-fill{display:block;height:100%;border-radius:6px}
+.crq4-more{font-size:11.5px;color:var(--ink-faint);padding-top:4px}
+
+/* --- ranked list (top clients) ---------------------------------------------- */
+.crq4-rank{list-style:none;margin:0;padding:0}
+.crq4-rank li > *{width:100%;display:flex;align-items:center;gap:9px;padding:6px 0;border:0;background:none;font:inherit;color:inherit;text-align:left;text-decoration:none;cursor:pointer}
+.crq4-rank li > div{cursor:default}
+.crq4-rank li + li > *{border-top:1px solid var(--line-soft)}
+.crq4-rank li > *:hover .crq4-rank-name,.crq4-rank li.is-on .crq4-rank-name{color:#1F5BD8}
+.crq4-rank-i{width:16px;font-size:11.5px;color:var(--ink-faint);font-weight:600;text-align:center;flex:none}
+.crq4-rank-name{flex:1;min-width:0;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crq4-rank-v{font-size:12.5px;font-weight:700;color:var(--ink-soft);font-variant-numeric:tabular-nums}
+
+/* --- the list panel ------------------------------------------------------------ */
+.crq4-list .ak-panel-body{padding:0 0 10px}
+.crq4-list-tools{padding:0 14px 8px;display:flex;flex-direction:column;gap:6px}
+.crq4-list-tools .lph-tabs{margin:0}
+.crq4-list-tools .lph-tabs .tabs{margin:0;border-bottom:0;gap:6px;flex-wrap:wrap}
+.crq4-list-tools .lph-tabs .tab{margin:0;padding:4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:600;background:#fff;color:var(--ink-soft)}
+.crq4-list-tools .lph-tabs .tab.active{background:var(--navy);border-color:var(--navy);color:#fff}
+.crq4-list-tools .lph-tabs .tab .n{margin-left:5px;font-weight:700;opacity:.85}
+.crq4-list-tools .reqq-chips{margin:0}
+.crq4-list-tools .lph-bar{margin:0}
+.crq4-list-tools .lph-row{gap:8px}
+.crq4-list-tools .lph-row .btn,.crq4-list-tools .lph-sort select{height:30px;font-size:12px}
+.crq4-list-tools .clrole-daily{margin:0}
+.crq4-list .reqbulk-bar{margin:0 14px 8px}
+.crq4-list .notice{margin:0 14px 8px}
+.crq4-list .att-wide{margin:0}
+.crq4-list .tbl-wrap{border-left:0;border-right:0;border-radius:0;box-shadow:none;margin:0}
+.crq4-list .pager,.crq4-list .lph-foot{padding:8px 14px 0;margin:0}
+.crq4-mpager{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-soft);white-space:nowrap}
+.crq4-mpager-nav{display:inline-flex;align-items:center;gap:3px}
+.crq4-mpager-nav button{min-width:24px;height:24px;padding:0 5px;border:1px solid transparent;border-radius:6px;background:none;font:inherit;font-size:12px;color:var(--ink-soft);cursor:pointer}
+.crq4-mpager-nav button:hover:not(:disabled){border-color:var(--line);color:var(--ink)}
+.crq4-mpager-nav button.on{border-color:#1F5BD8;color:#1F5BD8;font-weight:700}
+.crq4-mpager-nav button:disabled{opacity:.4;cursor:default}
+.crq4-mpager-nav .gap{padding:0 2px}
+
+/* dense table (Jobs + Clients): the kit's table look on the existing markup */
+.crq4-list table{font-size:12.5px}
+.crq4-list thead th{font-size:11px;font-weight:600;color:var(--ink-faint);text-transform:none;letter-spacing:0;
+  background:#F7F9FC;padding-top:8px;padding-bottom:8px;border-bottom:1px solid var(--line-soft)}
+.crq4-list tbody td{padding-top:7px;padding-bottom:7px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+.crq4-list tbody tr.row-link:hover td{background:#F5F8FD}
+.crq4-list tbody tr.crq4-current td{background:#EEF3FB}
+.crq4-list tbody tr.crq4-current td:first-child{box-shadow:inset 3px 0 0 #1F5BD8}
+.crq4-jobs .jobsws-table th,.crq4-jobs .jobsws-table td{padding-left:9px;padding-right:9px}
+.crq4-jobs .jobsws-table td.cell-muted{min-width:0;max-width:170px}
+.crq4-jobs .jobsws-table th.sticky-col,.crq4-jobs .jobsws-table td.sticky-col{min-width:0;max-width:220px}
+.crq4-jobs .jobsws-table td.pos{min-width:150px;max-width:230px}
+.crq4-jobs .jobsws-table .req-code{font-size:12px;color:var(--ink)}
+.crq4-jobs .jobsws-table .rr-type{font-size:10px}
+.crq4-jobs .jobsws-rowact{gap:2px}
+/* Next action: "what is waiting" text, then the actions as links — one line */
+.crq4-jobs .jobsws-rowact{display:flex;flex-wrap:wrap;align-items:center;column-gap:4px;row-gap:0}
+.crq4-jobs .jobsws-next{display:contents}
+.crq4-jobs .jobsws-next .who{order:-1;flex-basis:100%}
+.crq4-jobs .jobsws-rowact .btn{height:20px;padding:0 3px;font-size:12px;border-color:transparent;background:none;color:#1F5BD8;box-shadow:none}
+.crq4-jobs .jobsws-rowact .btn:hover{text-decoration:underline;background:none}
+.crq4-jobs .jobsws-rowact .btn-primary{font-weight:700}
+.crq4-jobs .jobsws-next .who{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;font-size:10.5px;color:var(--ink-soft)}
+/* one-line rows: names and titles truncate (full text on hover / in the panel) */
+.crq4-jobs .jobsws-table{font-size:12px}
+.crq4-jobs .jobsws-table th,.crq4-jobs .jobsws-table td{padding-left:7px;padding-right:7px}
+.crq4-list .st-chip{font-size:10.5px;padding:1px 8px}
+.crq4-jobs .jobsws-table td{white-space:nowrap}
+.crq4-jobs .jobsws-table td.cell-muted,.crq4-jobs .jobsws-table td .rr-client-link{white-space:nowrap}
+.crq4-jobs .jobsws-table td.cell-muted{max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.crq4-jobs .jobsws-table td.pos{min-width:120px;max-width:170px}
+.crq4-jobs .jobsws-table td.pos .req-title{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-line-clamp:unset}
+.crq4-jobs .jobsws-table td.pos .req-cell > div{overflow:hidden}
+.crq4-jobs .rr-assignee:empty{display:none}
+.crq4-jobs .jobsws-table .rr-type.client{display:none}
+.crq4-jobs .jobsws-table .req-cell > div{display:flex;flex-wrap:wrap;align-items:center;column-gap:6px}
+.crq4-jobs .jobsws-table .two-line{flex-direction:row;align-items:center;gap:6px}
+.crq4-jobs .jobsws-table td .rr-client-link{display:inline-block;max-width:120px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+
+/* --- selected requirement panel ----------------------------------------------- */
+.crq4-sel{display:flex;flex-direction:column;gap:9px;font-size:12.5px}
+.crq4-sel-top{display:flex;align-items:center;justify-content:space-between;gap:6px 8px;flex-wrap:wrap}
+.crq4-sel-id{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-faint);white-space:nowrap}
+.crq4-sel-id b{font-size:11.5px;color:#14804A;background:#E3F5EC;border-radius:6px;padding:2px 7px}
+.crq4-sel-title{font-size:15px;font-weight:800;color:var(--ink);line-height:1.25;overflow-wrap:anywhere}
+.crq4-sel-line{display:flex;gap:8px;align-items:flex-start}
+.crq4-sel-ic{color:var(--ink-soft);padding-top:1px;flex:none}
+.crq4-sel-main{display:flex;flex-direction:column;min-width:0;font-weight:600}
+.crq4-sel-main a{color:var(--ink)}
+.crq4-sel-sub{font-size:11px;color:var(--ink-faint);font-weight:500}
+.crq4-sel-kvs{border-top:1px solid var(--line-soft);padding-top:6px}
+.crq4-sel-kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+.crq4-sel-kv > span:first-child{color:var(--ink-faint);flex:none}
+.crq4-sel-kv > span:last-child{text-align:right;font-weight:600;overflow-wrap:anywhere}
+.crq4-sla.overdue{color:#C2362B}.crq4-sla.pending{color:#B26A00}.crq4-sla.active{color:#14804A}
+.crq4-sel-next{display:flex;gap:9px;background:#F5F8FD;border:1px solid #E1E9F6;border-radius:10px;padding:9px 10px}
+.crq4-sel-nextic{width:26px;height:26px;border-radius:50%;background:#1F5BD8;color:#fff;display:grid;place-items:center;flex:none}
+.crq4-sel-nextbody{display:flex;flex-direction:column;gap:2px;min-width:0;align-items:flex-start}
+.crq4-sel-nextbody .btn{margin-top:5px;height:28px;font-size:12px}
+.crq4-sel-nexthead{font-size:11px;font-weight:700;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.03em}
+.crq4-sel-btns{display:flex;gap:6px;flex-wrap:wrap}
+.crq4-sel-btns .btn{height:28px;font-size:12px;padding:0 10px;display:inline-flex;align-items:center;text-decoration:none}
+.crq4-sel-trail ul{list-style:none;margin:6px 0 0;padding:0 0 0 14px;border-left:2px solid #DCE5F3}
+.crq4-sel-trail li{position:relative;padding:0 0 8px;display:flex;flex-direction:column;font-size:11.5px}
+.crq4-sel-trail li::before{content:'';position:absolute;left:-19px;top:3px;width:8px;height:8px;border-radius:50%;background:#1F5BD8}
+.crq4-sel-trail .when{color:var(--ink-faint);font-size:10.5px}
+.crq4-sel-trail .by{color:var(--ink-faint)}
+
+/* --- the existing quick drawer, in the panel look ---------------------------- */
+.crq4 .reqdrw-big{border:1px solid var(--line)}
+.crq4 .reqdrw-big .reqdrw-head{background:#F7F9FC;border-bottom:1px solid var(--line-soft)}
+.crq4 .reqdrw-code{display:inline-block;font-size:11.5px;color:#14804A;background:#E3F5EC;border-radius:6px;padding:2px 8px;margin-bottom:4px}
+.crq4 .reqdrw-big .reqdrw-title{font-size:18px;font-weight:800}
+.crq4 .reqdrw-col .req360-sec{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.crq4 .reqdrw-col .req360-sec h4,.crq4 .reqdrw-h{font-size:13px;font-weight:700;margin:0 0 6px}
+.crq4 .reqdrw-kv{padding:4px 0;border-bottom:1px solid var(--line-soft)}
+.crq4 .reqdrw-kv:last-child{border-bottom:0}
+.crq4 .reqdrw-kv > span:last-child{font-weight:600}
+
+/* --- moved-down extras ---------------------------------------------------------- */
+.crq4-below{margin-top:2px}
+.crq4-below .hiw,.crq4-below > *{margin-bottom:10px}
+
+/* --- Agreements tab header ------------------------------------------------------- */
+.crq4-agr .crq4-kpis{margin-bottom:12px}
+
+/* --- FIT (2026-10-08 follow-up): the default list (<= 10 columns) fits beside
+   the Selected Requirement panel with no sideways scroll at 1366 / 1440 / 1536.
+   Fixed layout: every column has a width, Job title takes what is left; long
+   text truncates with an ellipsis (full text in the cell's tooltip). A list
+   with more columns (Columns ⚙) keeps the normal scrolling table. */
+.crq4-jobs .crq4-fit table{table-layout:fixed;width:100%;min-width:0}
+.crq4-jobs .crq4-fit th,.crq4-jobs .crq4-fit td{padding-left:6px;padding-right:6px;min-width:0;max-width:none;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crq4-jobs .crq4-fit th.sticky-col,.crq4-jobs .crq4-fit td.sticky-col{min-width:0;max-width:none}
+
+.crq4-fit [data-col="requirement"]{width:92px}
+.crq4-fit [data-col="client"]{width:92px}
+.crq4-fit [data-col="department"]{width:78px}
+.crq4-fit [data-col="location"]{width:84px}
+.crq4-fit [data-col="tl"]{width:70px}
+.crq4-fit [data-col="recruiter"]{width:72px}
+.crq4-fit [data-col="bde"]{width:76px}
+.crq4-fit [data-col="section"]{width:76px}
+.crq4-fit [data-col="openings"]{width:64px}
+.crq4-fit [data-col="status"]{width:80px}
+.crq4-fit [data-col="sla"]{width:64px}
+.crq4-fit [data-col="nextAction"]{width:136px}
+.crq4-fit [data-col="priority"]{width:72px}
+.crq4-fit [data-col="daysOpen"]{width:60px}
+.crq4-fit [data-col="deadline"]{width:104px}
+.crq4-fit [data-col="created"]{width:80px}
+.crq4-fit [data-col="lastActivity"]{width:96px}
+.crq4-fit [data-col="skills"]{width:100px}
+.crq4-fit [data-col="myPipeline"]{width:84px}
+.crq4-fit [data-col="pipeline"]{width:100px}
+.crq4-fit [data-col="submittedRequired"]{width:84px}
+.crq4-fit [data-col="submissions"],.crq4-fit [data-col="interviews"],.crq4-fit [data-col="selected"],.crq4-fit [data-col="joined"]{width:64px}
+.crq4-fit [data-col="candidates"],.crq4-fit [data-col="pendingReview"]{width:72px}
+.crq4-fit [data-col="fee"]{width:56px}
+.crq4-fit [data-col="guarantee"]{width:76px}
+.crq4-fit [data-col="invoice"]{width:96px}
+.crq4-fit [data-col="stage"]{width:96px}
+.crq4-jobs .crq4-fit td.pos,.crq4-jobs .crq4-fit td.pos .req-cell > div{min-width:0;max-width:none}
+.crq4-jobs .crq4-fit .req-cell{gap:5px}
+.crq4-jobs .crq4-fit .req-code{font-size:11.5px}
+.crq4-jobs .crq4-fit td .rr-client-link{display:inline;max-width:none}
+.crq4-jobs .crq4-fit td[data-col="status"] .st-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;padding:1px 7px}
+.crq4-jobs .crq4-fit td[data-col="sla"] .two-line{flex-direction:column;align-items:flex-start;gap:1px}
+.crq4-jobs .crq4-fit td[data-col="sla"] .st-chip{padding:0 6px}
+.crq4-jobs .crq4-fit td[data-col="nextAction"]{white-space:normal}
+.crq4-jobs .crq4-fit td[data-col="openings"]{text-align:left}
+/* 1366-class windows with the panel open: Department (also in the panel and
+   the By Department card) is the one column that gives way. */
+@media (min-width:1181px) and (max-width:1400px){
+  .crq4-layout:not(.crq4-noside) .crq4-fit [data-col="department"]{display:none}
+}
+/* The heading tips move into the heading's tooltip in the fitted table. */
+.crq4-jobs .crq4-fit th .gd-help{display:none}

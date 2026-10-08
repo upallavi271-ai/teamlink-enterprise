@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { cloneElement, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
@@ -33,14 +33,21 @@ import {
 import '../components/jobs/jobs.css';
 import '../components/jobs/reqrole.css';
 import { ClientPausedBadge } from '../components/clients/ClientLifecycle.jsx';
-import ListPageHeader, {
+import {
   StatusTabs, ListToolbar, FacetSelect, PanelField, useFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import { deadlineInfo, DEADLINE_LABEL } from '../components/jobs/deadline.js';
 import { useSpecTree, specName, qualName } from '../utils/specMaster'; // spec D
 // ATS layout v3 — filters bar → cards (max 6) → charts (max 3) → table.
 import PageFilterBar, { rangeDates } from '../components/ui/PageFilterBar.jsx';
-import JobsSummary from '../components/jobs/JobsSummary.jsx';
+// Clients & Requirements v4 (2026-10-08) — the reference layout: KPI tiles,
+// stage flow, needs attention, by department, top clients, the list and the
+// "Selected requirement" panel. Same data (GET /requirements/summary + the list).
+import {
+  useJobsSummary, JobsKpis, StageFlow, AttentionRows, jobsAttention, ShareBars, RankList, Panel,
+} from '../components/clientsreq-v4/JobsOverview.jsx';
+import SelectedRequirement from '../components/clientsreq-v4/SelectedRequirement.jsx';
+import { CrqHead, MiniPager, FilterCard } from '../components/clientsreq-v4/ListBits.jsx';
 import { JobStatusChip, jobStatusByKey } from '../components/jobs/reqStatus.jsx';
 // "A new person gets it in 20–30 s" (user, 2026-10-05).
 import {
@@ -87,10 +94,10 @@ const plainWords = (s) => String(s || '')
 // ---------------------------------------------------------------------------
 
 const COLUMNS = [
-  { key: 'requirement', label: 'Job ID' },
+  { key: 'requirement', label: 'Req ID' },
   { key: 'client', label: 'Client' },
   { key: 'department', label: 'Department' },
-  { key: 'position', label: 'Job' },
+  { key: 'position', label: 'Job title' },
   { key: 'location', label: 'Location' },
   { key: 'tl', label: 'Team lead' },
   { key: 'recruiter', label: 'Recruiter' },
@@ -109,14 +116,14 @@ const COLUMNS = [
   { key: 'guarantee', label: 'Guarantee', commercial: true },
   { key: 'invoice', label: 'Invoice', commercial: true },
   { key: 'status', label: 'Status' },
-  { key: 'nextAction', label: 'Next step' },
+  { key: 'nextAction', label: 'Next action' },
   // Columns ⚙ — available, not shown by default.
   { key: 'section', label: 'Section' },
   { key: 'bde', label: 'Client manager (BDE)' },
   { key: 'candidates', label: 'Candidates', sort: 'candidates' },
   { key: 'pendingReview', label: 'Waiting for check' },
   { key: 'stage', label: 'Step' },
-  { key: 'sla', label: 'Late?', sort: 'sla' },
+  { key: 'sla', label: 'Age / SLA', sort: 'sla' },
   { key: 'lastActivity', label: 'Last activity' },
   { key: 'created', label: 'Posted', sort: 'created' },
   // User 2026-10-03: "12 Oct · 5 days left" (Target date, else Closing date).
@@ -158,14 +165,16 @@ const ROLE_COLS = {
     def: ['position', 'client', 'joined', 'fee', 'guarantee', 'invoice', 'nextAction'],
     extra: ['requirement', 'department', 'openings', 'status', 'created', 'deadline'],
   },
-  // Admin / Management: 7 by default; Department, TL, BDE, Posted, Priority, Days open,
-  // Progress and Fee % are one tick away in Columns ⚙.
+  // Admin / Management (v4 reference list, 2026-10-08): Req ID · Job title ·
+  // Client · Department · Team lead · Recruiter · Openings · Status · Age / SLA ·
+  // Next action. BDE, Posted, Priority, Deadline, Progress and Fee % are one
+  // tick away in Columns ⚙.
   admin: {
-    def: ['position', 'client', 'recruiter', 'openings', 'deadline', 'status', 'nextAction'],
+    def: ['requirement', 'position', 'client', 'department', 'tl', 'recruiter', 'openings', 'status', 'sla', 'nextAction'],
     extra: ALL_KEYS,
   },
   other: {
-    def: ['position', 'client', 'recruiter', 'openings', 'deadline', 'status', 'nextAction'],
+    def: ['requirement', 'position', 'client', 'department', 'tl', 'recruiter', 'openings', 'status', 'sla', 'nextAction'],
     extra: ALL_KEYS.filter((k) => !['myPipeline'].includes(k)),
   },
 };
@@ -213,6 +222,12 @@ function readSize() {
   try { const v = Number(window.localStorage.getItem('tl.requirements.pageSize')); return [25, 50, 100].includes(v) ? v : 25; } catch { return 25; }
 }
 const sameState = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// v4 dense table: "Imran Qureshi" -> "Imran Q." (the full name is the cell's tooltip).
+const shortName = (n) => {
+  const parts = String(n || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return parts[0] || '';
+  return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
+};
 const money = (v) => (v === undefined || v === null ? '—' : `₹${nf(Math.round(Number(v) || 0))}`);
 
 // One row's file, straight from the server's scoped export.
@@ -248,7 +263,9 @@ export default function Requirements() {
     .filter((k) => commercial || !COLUMNS.find((c) => c.key === k)?.commercial), [role, commercial]); // eslint-disable-line react-hooks/exhaustive-deps
   const defaultCols = roleCols.def.filter((k) => allowedCols.includes(k));
   // v6 key: defaults cut to ≤ 9 per role (simplicity checklist 2026-10-03).
-  const [cols, setCols] = useColumns(`tl.reqcols7.${user?.id || 'anon'}.${role}`, allowedCols, defaultCols);
+  // v8 for the roles whose defaults changed with the v4 list (Admin, Management, other).
+  const colsVer = ['admin', 'mgmt', 'other'].includes(role) ? 8 : 7;
+  const [cols, setCols] = useColumns(`tl.reqcols${colsVer}.${user?.id || 'anon'}.${role}`, allowedCols, defaultCols);
   const chooserColumns = COLUMNS.filter((c) => allowedCols.includes(c.key));
   const show = (k) => cols.includes(k) && allowedCols.includes(k);
 
@@ -352,6 +369,8 @@ export default function Requirements() {
   const [showRequest, setShowRequest] = useState(false);
   const mayRequestJob = !canRaiseRequirement(user) && can(user, 'ats', 'requirements', 'Requirement Request', 'create');
   const [drawer, setDrawer] = useState(null);
+  // The row shown in the "Selected requirement" panel: '' = the first row, 'none' = cleared.
+  const [pickId, setPickId] = useState('');
   const [bulk, setBulk] = useState(null); // { kind, items }
   const [selected, setSelected] = useState(() => new Map());
   const [rowError, setRowError] = useState('');
@@ -489,9 +508,12 @@ export default function Requirements() {
   // neighbours on a sideways scroll (user, 2026-10-03: "ee window ni proper ga
   // fit cheyyu… mainly Job column").
   const FIRST = ['requirement', 'position'];
+  // v4: Next action is always the last column (after Status and Age / SLA).
+  const LAST = ['nextAction'];
   const visible = [
     ...FIRST.map((k) => COLUMNS.find((c) => c.key === k)).filter((c) => c && show(c.key)),
-    ...COLUMNS.filter((c) => !FIRST.includes(c.key) && show(c.key)),
+    ...COLUMNS.filter((c) => !FIRST.includes(c.key) && !LAST.includes(c.key) && show(c.key)),
+    ...LAST.map((k) => COLUMNS.find((c) => c.key === k)).filter((c) => c && show(c.key)),
   ];
   const counts = data.counts || {};
   const views = data.views || [];
@@ -604,9 +626,11 @@ export default function Requirements() {
     </span>
   ) : <span className="small-muted">—</span>);
 
+  // v4: with the Recruiter column on screen the "Assigned to" line repeats it,
+  // so only the Needs badge stays under the title (the name is in its column).
   const assigneeLine = (r) => (
     <div className="rr-assignee">
-      {r.assignedTo ? <span>{`Assigned to: ${r.assignedTo}`}</span>
+      {show('recruiter') ? null : r.assignedTo ? <span>{`Assigned to: ${r.assignedTo}`}</span>
         : r.workedBy ? <span title="Worked from the tracker, not formally assigned">{`Worked by: ${r.workedBy}`}</span> : null}
       {r.needs && <span className="rr-unassigned" title={r.needs === 'tl' ? 'No team lead on this job yet' : 'Has a team lead, no recruiter yet'}>{r.needs === 'tl' ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
     </div>
@@ -645,7 +669,7 @@ export default function Requirements() {
         return (
           <td key={c.key} className="cell-muted">
             {r.clientLink && r.clientId
-              ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} onClick={(e) => e.stopPropagation()} title="Open client">{r.client?.name || '—'}</Link>
+              ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} onClick={(e) => e.stopPropagation()} title={`${r.client?.name || ''} — open client`}>{r.client?.name || '—'}</Link>
               : (r.client?.name || '—')}
             {/* Spec 2026-10-03 §A — open job of a paused client: warn. */}
             <ClientPausedBadge lifecycle={r.client?.lifecycle} />
@@ -669,16 +693,16 @@ export default function Requirements() {
       case 'location': return <td key={c.key} className="cell-muted">{r.location || '—'}</td>;
       case 'skills': return <td key={c.key} className="cell-muted" title={r.skills || ''}>{r.skills ? String(r.skills).split(',').slice(0, 3).join(', ') : '—'}</td>;
       case 'section': return <td key={c.key} className="cell-muted">{r.section || '—'}</td>;
-      case 'tl': return <td key={c.key} className="cell-muted">{r.tlName || '—'}</td>;
+      case 'tl': return <td key={c.key} className="cell-muted" title={r.tlName || undefined}>{r.tlName ? shortName(r.tlName) : '—'}</td>;
       case 'recruiter':
         return (
-          <td key={c.key}>
-            {r.workedBy || <span className="small-muted">—</span>}
+          <td key={c.key} title={[r.workedBy, ...(r.coRecruiterNames || [])].filter(Boolean).join(', ') || undefined}>
+            {r.workedBy ? shortName(r.workedBy) : <span className="small-muted">—</span>}
             {r.coRecruiterNames?.length ? <span className="small-muted">{` +${r.coRecruiterNames.length}`}</span> : null}
             {role !== 'recruiter' && r.workedByPosition && <div className="small-muted" style={{ fontSize: 11 }}>{r.workedByPosition}</div>}
           </td>
         );
-      case 'bde': return <td key={c.key} className="cell-muted">{r.bde?.name || '—'}</td>;
+      case 'bde': return <td key={c.key} className="cell-muted" title={r.bde?.name || undefined}>{r.bde?.name ? shortName(r.bde.name) : '—'}</td>;
       case 'priority': return <td key={c.key}><PriorityChip value={r.priority} /></td>;
       case 'daysOpen':
         return (
@@ -739,9 +763,10 @@ export default function Requirements() {
         const tone = s ? ({ overdue: 'red', pending: 'amber', active: 'blue' }[s.cls] || 'grey') : null;
         return (
           <td key={c.key}>
-            <div className="two-line">
-              <span>{ageText(r.ageDays)}</span>
-              {s ? <StatusChip tone={tone} title={s.title}>{s.text}</StatusChip> : <span className="small-muted">No deadline</span>}
+            {/* v4: "5d · Due in 12d" — the same numbers, shorter (full words on hover). */}
+            <div className="two-line" title={`${ageText(r.ageDays)}${s ? ` · ${s.text}` : ' · No deadline'}`}>
+              <span>{r.ageDays === null || r.ageDays === undefined ? '—' : `${nf(r.ageDays)}d`}</span>
+              {s ? <StatusChip tone={tone} title={s.title}>{s.text.replace(/^Due in /, 'Due ').replace(/ days?\b/g, 'd')}</StatusChip> : <span className="small-muted">No deadline</span>}
             </div>
           </td>
         );
@@ -841,15 +866,12 @@ export default function Requirements() {
   };
   const panel = (
     <>
-      {/* Most used first: Department, Client, Status, Priority, Deadline. */}
-      {/* Department, Client, Recruiter / BDE and the date range are on the filter bar above. */}
-      {role !== 'accounts' && <FacetSelect label="Status" allLabel="All statuses" value={filters.status} options={fo('status')} onChange={(v) => setDraftFilter({ status: v })} />}
-      <FacetSelect label="Priority" allLabel="All priorities" value={filters.priority} options={priorityOptions} onChange={(v) => setDraftFilter({ priority: v })} />
+      {/* Department, Date range, Client, Recruiter / BDE, Status, Priority,
+          Location, Agreement and Search are on the filter card above (v4). */}
       <FacetSelect label="Deadline" allLabel="Any deadline" value={filters.deadline} options={fo('deadline')} onChange={(v) => setDraftFilter({ deadline: v })} />
       {canFilter.hierarchy && role !== 'bde' && (
         <HierarchyFilter value={draft.h} onChange={setDraftH} data={tree.data} show={{ department: false, section: true, tl: false, recruiter: false }} />
       )}
-      {role !== 'accounts' && <FacetSelect label="Location" allLabel="All locations" value={filters.location} options={fo('location')} onChange={(v) => setDraftFilter({ location: v })} />}
       {/* spec D: cascade from Department (shown once a department is picked,
           or for a role without the Department filter, or while one is set). */}
       {role !== 'accounts' && (!canFilter.hierarchy || h.department || filters.qualificationId || filters.specialisationId) && (
@@ -863,29 +885,70 @@ export default function Requirements() {
           onChange={(v) => setDraftH({ ...h, tl: v ? `id:${v}` : '' })} />
       )}
       {canFilter.hiring && <FacetSelect label="Client / Internal" allLabel="Client and internal" value={filters.type} options={fo('type')} onChange={(v) => setDraftFilter({ type: v })} />}
+    </>
+  );
+  // v4 — the filters that sit on the one filter card (after the page filter bar).
+  const topFilters = (
+    <>
+      {role !== 'accounts' && <FacetSelect label="Status" allLabel="All status" value={filters.status} options={fo('status')} onChange={(v) => setDraftFilter({ status: v })} />}
+      <FacetSelect label="Priority" allLabel="All priority" value={filters.priority} options={priorityOptions} onChange={(v) => setDraftFilter({ priority: v })} />
+      {role !== 'accounts' && <FacetSelect label="Location" allLabel="All locations" value={filters.location} options={fo('location')} onChange={(v) => setDraftFilter({ location: v })} />}
       {canFilter.agreement && (
         <PanelField label="Agreement">
           <select value={filters.agreement} onChange={(e) => setDraftFilter({ agreement: e.target.value })}>
-            <option value="">Any agreement</option>
+            <option value="">All agreements</option>
             <option value="pending">Waiting for agreement</option>
           </select>
         </PanelField>
       )}
     </>
   );
+  // "Filters (n)" counts what the panel itself holds (the card shows the rest).
+  const panelCount = ['deadline', 'type', 'qualificationId', 'specialisationId', 'mine', 'sla', 'closing', 'nocand']
+    .filter((k) => filters[k]).length + (h.section ? 1 : 0) + (h.tl ? 1 : 0);
+
+  // v4 overview — the same GET /requirements/summary the cards used.
+  const { sum, loading: sumLoading } = useJobsSummary(params, notice);
+  const onOverviewView = (k) => { setView(k); if (k === 'open' && filters.dstatus) removeFilter({ dstatus: '' }); };
+  const onDepartment = canFilter.hierarchy ? (d) => setDraftH({ ...EMPTY_HIERARCHY, department: h.department === d ? '' : d }) : null;
+  const deptRows = ((sum && sum.byDepartment) || []).map((d) => ({
+    key: d.name || '__none__',
+    label: d.name || 'No department',
+    value: d.count,
+    active: !!d.name && h.department === d.name,
+    onClick: onDepartment && d.name ? () => onDepartment(d.name) : undefined,
+  }));
+  const clientRows = ((sum && sum.byClient) || []).map((x) => ({
+    key: x.id, name: x.name, value: x.count, active: filters.clientId === x.id,
+    onClick: () => removeFilter({ clientId: filters.clientId === x.id ? '' : x.id }),
+  }));
+  const mayClients = can(user, 'ats', 'clients', 'Client List', 'view');
+  const current = pickId === 'none' ? null : (data.rows.find((r) => r.id === pickId) || data.rows[0] || null);
+  // Row click: the "Selected requirement" panel beside the list; when the
+  // window is too narrow for that column, the quick drawer as before.
+  const pickRow = (r) => {
+    if (typeof window !== 'undefined' && window.innerWidth <= 1180) { setDrawer(r); return; }
+    setPickId(r.id);
+  };
 
 
   return (
-    <div className="reqrole">
-      {/* Spec 2026-10-03 §B — title · question · Import / Export / History · ONE primary button. */}
-      <ListPageHeader
-        title="Jobs"
-        question="Every job we are hiring for, and how far each one has got."
-        sub={<ScopeLine user={user} count={counts.scopeTotal ?? '…'} noun="job" />}
-        data={<AtsDataTools module="requirements" kinds={['requirements']} onImported={load} body={exportBody} />}
-        primary={canRaiseRequirement(user)
-          ? <button type="button" className="btn btn-primary" onClick={() => openForm()}>+ Add job</button>
-          : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request job</button> : null}
+    <div className="reqrole crq4 crq4-jobs">
+      {/* v4 — the module header (the Shell's Clients | Jobs | Agreements strip is
+          drawn under it), then ONE filter card, the KPI tiles, the overview
+          row, and the list with the "Selected requirement" panel beside it. */}
+      <CrqHead
+        sub="Every job we are hiring for, and how far each one has got."
+        scope={<ScopeLine user={user} count={counts.scopeTotal ?? '…'} noun="job" />}
+        tools={(
+          <>
+            <AtsDataTools module="requirements" kinds={['requirements']} onImported={load} body={exportBody} />
+            {canRaiseRequirement(user)
+              ? <button type="button" className="btn btn-primary" onClick={() => openForm()}>+ Add Requirement</button>
+              : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request job</button> : null}
+            <SavedViews storageKey="req" current={savedState} onApply={applySaved} presets={presets} label="Saved filters" />
+          </>
+        )}
       />
 
       {notice && (
@@ -901,163 +964,233 @@ export default function Requirements() {
       )}
 
       <FirstTips uid={user?.id} page="jobs" tips={JOB_TIPS} />
-      <HowItWorks uid={user?.id} page="jobs" counts={hiwCounts} active={view === 'open' ? 'job' : ''} onPick={pickStep} />
 
-      {/* ATS layout v3 — the same filters bar as every page (cascading,
-          server-counted), then the cards and charts, then the table. */}
-      <PageFilterBar
-        value={barValue}
-        onChange={setBar}
-        facetParams={facetParams}
-        show={{ department: canFilter.hierarchy, dateRange: true, client: true, people: canFilter.hierarchy }}
-      />
-      <JobsSummary
-        params={params}
-        views={views.map((v) => v.key)}
-        onView={(k) => { setView(k); if (k === 'open' && filters.dstatus) removeFilter({ dstatus: '' }); }}
+      {/* One filter card: the page filter bar (Department · Date range · Client ·
+          Recruiter / BDE, cascading, server-counted) + Status · Priority ·
+          Location · Agreement + Search. */}
+      <FilterCard
+        search={{
+          value: draft.filters.search,
+          onChange: (v) => setDraftFilter({ search: v }),
+          onSubmit: applyDraft,
+          placeholder: 'Search by job title, client, req ID…',
+        }}
+      >
+        <PageFilterBar
+          value={barValue}
+          onChange={setBar}
+          facetParams={facetParams}
+          show={{ department: canFilter.hierarchy, dateRange: true, client: true, people: canFilter.hierarchy }}
+        />
+        {topFilters}
+      </FilterCard>
+
+      <JobsKpis
+        sum={sum}
+        loading={sumLoading}
+        views={viewKeys}
+        view={view}
+        filters={filters}
+        onView={onOverviewView}
         onFilter={(patch) => removeFilter(patch)}
-        onDepartment={canFilter.hierarchy ? (d) => setDraftH({ ...EMPTY_HIERARCHY, department: h.department === d ? '' : d }) : null}
-        activeStatus={filters.dstatus}
-        reloadKey={notice}
       />
 
-      {/* Status tabs with counts — a 0 tab is hidden for everyone. */}
-      <StatusTabs
-        label="Jobs"
-        tabs={views.map((v) => ({ key: v.key, label: plainWords(v.label), count: counts[v.key], hint: plainWords(v.hint) }))}
-        value={view}
-        onChange={setView}
-        hideZero
-        extra={role === 'recruiter' && (
-          <label className="rr-showclosed">
-            <input type="checkbox" checked={showClosed} onChange={(e) => { setShowClosed(e.target.checked); if (!e.target.checked && view === 'closed') setView('mine'); }} />
-            Show closed
-          </label>
-        )}
-      />
-
-      {/* Up to 4 one-click chips (the saved-view presets). Click again to clear. */}
-      <div className="reqq-chips" role="group" aria-label="Quick views">
-        {presets.map((pr) => (
-          <button key={pr.name} type="button" title={pr.hint} aria-pressed={presetOn(pr)} className={`reqq-chip${presetOn(pr) ? ' is-on' : ''}`} onClick={() => pickPreset(pr)}>
-            {pr.name}
-          </button>
-        ))}
-      </div>
-
-      {/* [ Search ] [ Filters (n) ] [ Sort ] — chips + Clear all below.
-          Saved views and Columns ⚙ live in the Filters panel footer. */}
-      <ListToolbar
-        search={draft.filters.search}
-        onSearch={(v) => setDraftFilter({ search: v })}
-        onSearchSubmit={applyDraft}
-        placeholder="Search jobs…"
-        filterCount={activeCount - (filters.search ? 1 : 0)}
-        panel={panel}
-        sort={sort}
-        sortOptions={SORTS}
-        onSort={(v) => { setSort(v); setDir('desc'); }}
-        sortExtra={(
-          <button type="button" className="btn btn-sm btn-ghost" title="Reverse the order" onClick={() => setDir((d) => (d === 'desc' ? 'asc' : 'desc'))}>
-            {dir === 'desc' ? '↓' : '↑'}
-          </button>
-        )}
-        panelFooter={(
-          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginRight: 'auto' }}>
-            <SavedViews storageKey="req" current={savedState} onApply={applySaved} presets={presets} />
-            <ColumnChooser columns={chooserColumns} value={cols.filter((k) => allowedCols.includes(k))} onChange={setCols} defaults={defaultCols} />
-          </span>
-        )}
-        chips={chips}
-        onClearAll={activeCount ? clearFilters : undefined}
-      />
-
-      {loadError && <div className="notice red">{loadError}</div>}
-      {rowError && <div className="notice red" style={{ display: 'flex', justifyContent: 'space-between' }}>{rowError}<button type="button" className="btn btn-sm btn-ghost" onClick={() => setRowError('')}>×</button></div>}
-
-      {canSelect && selected.size > 0 && (
-        <div className="reqbulk-bar" role="region" aria-label="Bulk actions">
-          <span className="count">{`${nf(selected.size)} selected`}</span>
-          {/* "Needs a TL" → Assign TL is the one main action; "Needs a recruiter" → Assign recruiter. */}
-          {bulkActions.assign && view !== 'needstl' && <button type="button" className={`btn btn-sm${view === 'unassigned' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-recruiter', items: selectedItems })}>Assign recruiter</button>}
-          {bulkActions.assign && view !== 'unassigned' && <button type="button" className={`btn btn-sm${view === 'needstl' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-tl', items: selectedItems })}>Assign team lead</button>}
-          {bulkActions.priority && <button type="button" className="btn btn-sm" onClick={() => setBulk({ kind: 'priority', items: selectedItems })}>Change priority</button>}
-          {bulkActions.export && (
-            <ExportMenu
-              url="/ats-io/export/requirements"
-              body={() => ({ params: { ids: selectedItems.map((x) => x.id).join(',') }, view: 'all', ids: selectedItems.map((x) => x.id) })}
-              label={`Export (${selected.size})`}
-              note="Only the jobs you picked."
+      {sum && sum.total > 0 && (
+        <div className="crq4-row4">
+          <Panel className="crq4-stagep" title="Requirements by stage" sub="Click a stage to show its jobs">
+            <StageFlow
+              chain={sum.chain || []}
+              active={filters.dstatus}
+              onPick={(k) => removeFilter({ dstatus: filters.dstatus === k ? '' : k })}
             />
-          )}
-          <span className="spacer" />
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSelected(new Map())}>Clear selection</button>
+          </Panel>
+          <Panel title="Needs Attention" icon="alert" iconTone="red">
+            <AttentionRows items={jobsAttention(sum, { views: viewKeys, onView: onOverviewView, onFilter: (patch) => removeFilter(patch), filters })} />
+          </Panel>
+          <Panel title="Requirements by Department" sub={onDepartment ? 'Open jobs · click one' : 'Open jobs in your area'}>
+            <ShareBars rows={deptRows} max={5} empty="No open jobs" />
+          </Panel>
+          <Panel title="Top Clients by Open Jobs" action={mayClients ? { label: 'View all', to: '/clients' } : undefined}>
+            <RankList rows={clientRows} max={5} empty="No open jobs" />
+          </Panel>
         </div>
       )}
 
-      <div style={{ opacity: loading ? 0.6 : 1 }}>
-        <ScrollTable maxHeight={null} bodyClassName="tbl-fit jobsws-table">
-          <table>
-            <thead>
-              <tr>
-                {visible.map((c) => {
-                  const sticky = c.key === checkKey ? ' sticky-col' : '';
-                  const head = (
-                    <>
-                      {c.key === checkKey && canSelect && (
-                        <input
-                          type="checkbox"
-                          aria-label="Select all on this page"
-                          checked={pageAllSelected}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={togglePage}
-                          style={{ width: 'auto', marginRight: 8, verticalAlign: 'middle' }}
-                        />
+      {/* The list, and the "Selected requirement" panel beside it (× hides it
+          and gives the table the full width; a row click brings it back). */}
+      <div className={`crq4-layout${current ? '' : ' crq4-noside'}`}>
+        <div className="crq4-main">
+          <Panel
+            className="crq4-list"
+            title="Requirements List"
+            sub={tabLabel !== 'Requirements' ? plainWords(tabLabel) : undefined}
+            extra={<MiniPager page={pageObj} />}
+          >
+            <div className="crq4-list-tools">
+              {/* Status tabs with counts — a 0 tab is hidden for everyone. */}
+              <StatusTabs
+                label="Jobs"
+                tabs={views.map((v) => ({ key: v.key, label: plainWords(v.label), count: counts[v.key], hint: plainWords(v.hint) }))}
+                value={view}
+                onChange={setView}
+                hideZero
+                extra={role === 'recruiter' && (
+                  <label className="rr-showclosed">
+                    <input type="checkbox" checked={showClosed} onChange={(e) => { setShowClosed(e.target.checked); if (!e.target.checked && view === 'closed') setView('mine'); }} />
+                    Show closed
+                  </label>
+                )}
+              />
+              {/* [ Filters (n) ] [ Sort ] [ quick views ] — chips + Clear all below.
+                  Search is on the filter card; Columns ⚙ in the Filters panel footer. */}
+              <ListToolbar
+                filterCount={panelCount}
+                panel={panel}
+                sort={sort}
+                sortOptions={SORTS}
+                onSort={(v) => { setSort(v); setDir('desc'); }}
+                sortExtra={(
+                  <button type="button" className="btn btn-sm btn-ghost" title="Reverse the order" onClick={() => setDir((d) => (d === 'desc' ? 'asc' : 'desc'))}>
+                    {dir === 'desc' ? '↓' : '↑'}
+                  </button>
+                )}
+                savedViews={(
+                  /* Up to 4 one-click chips (the saved-view presets). Click again to clear. */
+                  <div className="reqq-chips" role="group" aria-label="Quick views">
+                    {presets.map((pr) => (
+                      <button key={pr.name} type="button" title={pr.hint} aria-pressed={presetOn(pr)} className={`reqq-chip${presetOn(pr) ? ' is-on' : ''}`} onClick={() => pickPreset(pr)}>
+                        {pr.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                panelFooter={(
+                  <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginRight: 'auto' }}>
+                    <ColumnChooser columns={chooserColumns} value={cols.filter((k) => allowedCols.includes(k))} onChange={setCols} defaults={defaultCols} />
+                  </span>
+                )}
+                chips={chips}
+                onClearAll={activeCount ? clearFilters : undefined}
+              />
+            </div>
+
+              {loadError && <div className="notice red">{loadError}</div>}
+              {rowError && <div className="notice red" style={{ display: 'flex', justifyContent: 'space-between' }}>{rowError}<button type="button" className="btn btn-sm btn-ghost" onClick={() => setRowError('')}>×</button></div>}
+
+              {canSelect && selected.size > 0 && (
+                <div className="reqbulk-bar" role="region" aria-label="Bulk actions">
+                  <span className="count">{`${nf(selected.size)} selected`}</span>
+                  {/* "Needs a TL" → Assign TL is the one main action; "Needs a recruiter" → Assign recruiter. */}
+                  {bulkActions.assign && view !== 'needstl' && <button type="button" className={`btn btn-sm${view === 'unassigned' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-recruiter', items: selectedItems })}>Assign recruiter</button>}
+                  {bulkActions.assign && view !== 'unassigned' && <button type="button" className={`btn btn-sm${view === 'needstl' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-tl', items: selectedItems })}>Assign team lead</button>}
+                  {bulkActions.priority && <button type="button" className="btn btn-sm" onClick={() => setBulk({ kind: 'priority', items: selectedItems })}>Change priority</button>}
+                  {bulkActions.export && (
+                    <ExportMenu
+                      url="/ats-io/export/requirements"
+                      body={() => ({ params: { ids: selectedItems.map((x) => x.id).join(',') }, view: 'all', ids: selectedItems.map((x) => x.id) })}
+                      label={`Export (${selected.size})`}
+                      note="Only the jobs you picked."
+                    />
+                  )}
+                  <span className="spacer" />
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSelected(new Map())}>Clear selection</button>
+                </div>
+              )}
+
+              <div style={{ opacity: loading ? 0.6 : 1 }}>
+                <ScrollTable maxHeight={null} bodyClassName={`tbl-fit jobsws-table${visible.length <= 10 ? ' crq4-fit' : ''}`}>
+                  <table>
+                    <thead>
+                      <tr>
+                        {visible.map((c) => {
+                          const sticky = c.key === checkKey ? ' sticky-col' : '';
+                          const head = (
+                            <>
+                              {c.key === checkKey && canSelect && (
+                                <input
+                                  type="checkbox"
+                                  aria-label="Select all on this page"
+                                  checked={pageAllSelected}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={togglePage}
+                                  style={{ width: 'auto', marginRight: 8, verticalAlign: 'middle' }}
+                                />
+                              )}
+                              {c.label}
+                              {COL_TIPS[c.key] && <Help text={COL_TIPS[c.key]} />}
+                              {c.sort && sort === c.sort && <span className="arrow">{dir === 'desc' ? '▼' : '▲'}</span>}
+                            </>
+                          );
+                          return c.sort
+                            ? <th key={c.key} data-col={c.key} className={`jobsws-sort${sticky}`} onClick={() => clickSort(c.sort)} title={`Sort by ${c.label}${COL_TIPS[c.key] ? ` — ${COL_TIPS[c.key]}` : ''}`}>{head}</th>
+                            : <th key={c.key} data-col={c.key} className={sticky.trim() || undefined} title={COL_TIPS[c.key] ? `${c.label}: ${COL_TIPS[c.key]}` : c.label}>{head}</th>;
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.rows.map((r) => (
+                        <tr
+                          key={r.id}
+                          className={`row-link${selected.has(r.id) ? ' is-selected' : ''}${current && current.id === r.id ? ' crq4-current' : ''}`}
+                          onClick={() => pickRow(r)}
+                          onDoubleClick={() => setDrawer(r)}
+                          title="Click to see it on the right · double-click for the quick view"
+                        >
+                          {visible.map((c) => cloneElement(cell(c, r), { 'data-col': c.key }))}
+                        </tr>
+                      ))}
+                      {!loading && data.rows.length === 0 && (
+                        <tr>
+                          <td colSpan={visible.length}>
+                            {activeCount ? (
+                              <EmptyState compact title="No jobs match." hint="Clear filters to see all jobs." action={<button type="button" className="btn btn-sm" onClick={clearFilters}>Clear filters</button>} />
+                            ) : view === 'mine' && role === 'recruiter' ? (
+                              <EmptyState compact icon="💼" title="No jobs for you yet." hint="Ask your team lead to give you a job. It shows here as soon as you are named on it." />
+                            ) : (
+                              <EmptyState
+                                compact
+                                icon="💼"
+                                title="No jobs here yet."
+                                hint={canRaiseRequirement(user) ? 'Press + Add job to add the first one.' : mayRequestJob ? 'Press + Request job, or ask your team lead.' : 'Ask your team lead or the client manager to add one.'}
+                                action={canRaiseRequirement(user) ? <button type="button" className="btn btn-sm btn-primary" onClick={() => openForm()}>+ Add job</button> : undefined}
+                              />
+                            )}
+                          </td>
+                        </tr>
                       )}
-                      {c.label}
-                      {COL_TIPS[c.key] && <Help text={COL_TIPS[c.key]} />}
-                      {c.sort && sort === c.sort && <span className="arrow">{dir === 'desc' ? '▼' : '▲'}</span>}
-                    </>
-                  );
-                  return c.sort
-                    ? <th key={c.key} className={`jobsws-sort${sticky}`} onClick={() => clickSort(c.sort)} title={`Sort by ${c.label}`}>{head}</th>
-                    : <th key={c.key} className={sticky.trim() || undefined}>{head}</th>;
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {data.rows.map((r) => (
-                <tr key={r.id} className={`row-link${selected.has(r.id) ? ' is-selected' : ''}`} onClick={() => setDrawer(r)}>
-                  {visible.map((c) => cell(c, r))}
-                </tr>
-              ))}
-              {!loading && data.rows.length === 0 && (
-                <tr>
-                  <td colSpan={visible.length}>
-                    {activeCount ? (
-                      <EmptyState compact title="No jobs match." hint="Clear filters to see all jobs." action={<button type="button" className="btn btn-sm" onClick={clearFilters}>Clear filters</button>} />
-                    ) : view === 'mine' && role === 'recruiter' ? (
-                      <EmptyState compact icon="💼" title="No jobs for you yet." hint="Ask your team lead to give you a job. It shows here as soon as you are named on it." />
-                    ) : (
-                      <EmptyState
-                        compact
-                        icon="💼"
-                        title="No jobs here yet."
-                        hint={canRaiseRequirement(user) ? 'Press + Add job to add the first one.' : mayRequestJob ? 'Press + Request job, or ask your team lead.' : 'Ask your team lead or the client manager to add one.'}
-                        action={canRaiseRequirement(user) ? <button type="button" className="btn btn-sm btn-primary" onClick={() => openForm()}>+ Add job</button> : undefined}
-                      />
-                    )}
-                  </td>
-                </tr>
-              )}
-              {loading && data.rows.length === 0 && (
-                <tr><td colSpan={visible.length} className="small-muted" style={{ padding: 16 }}>Loading jobs…</td></tr>
-              )}
-            </tbody>
-          </table>
-        </ScrollTable>
+                      {loading && data.rows.length === 0 && (
+                        <tr><td colSpan={visible.length} className="small-muted" style={{ padding: 16 }}>Loading jobs…</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </ScrollTable>
+              </div>
+        <Pager page={pageObj} noun="jobs" />
+          </Panel>
+        </div>
+
+        {current && (
+          <aside className="crq4-side" aria-label="The selected requirement">
+            <Panel
+              className="crq4-sticky"
+              title="Selected Requirement"
+              extra={<button type="button" className="ak-panel-link crq4-x" onClick={() => setPickId('none')} aria-label="Close the selected requirement" title="Close">×</button>}
+            >
+              <SelectedRequirement
+                row={current}
+                role={role}
+                onAction={(k) => pickRowAction(current, k)}
+                onQuickView={() => setDrawer(current)}
+              />
+            </Panel>
+          </aside>
+        )}
       </div>
-      <Pager page={pageObj} noun="jobs" />
+
+      {/* Not in the reference: kept, lower down. */}
+      <div className="crq4-below">
+        <HowItWorks uid={user?.id} page="jobs" counts={hiwCounts} active={view === 'open' ? 'job' : ''} onPick={pickStep} />
+      </div>
 
       {/* Row click opens this quick view; "Open job" goes to the full page.
           It carries every row action that is not on the row itself. */}

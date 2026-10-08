@@ -78,7 +78,9 @@ function allowed(card, cat) {
   return !!cat.view;
 }
 
-export default function ReportsHome({ tabs = [], onOpen }) {
+// embedded: drawn under the Reports & Analytics overview (2026-10-08) — the
+// overview carries the page title and the scope, so they are not repeated.
+export default function ReportsHome({ tabs = [], onOpen, embedded = false }) {
   const cat = useReportCatalog();
   const known = new Set(REPORT_GROUPS.flatMap((g) => g.cards.flatMap((c) => (c.views || []).map(([id]) => id))));
   const extra = tabs.filter(([id]) => !known.has(id)).map(([id, label]) => ({ id, icon: '📊', title: label, answers: '', views: [[id, label]] }));
@@ -92,8 +94,8 @@ export default function ReportsHome({ tabs = [], onOpen }) {
 
   return (
     <div className="rphome">
-      <ListPageHeader title="Reports" question="Numbers about our hiring. Pick a question below — each card opens the report that answers it." />
-      {cat && cat.scope && <div className="rphome-scope">Your area: <b>{cat.scope}</b></div>}
+      {!embedded && <ListPageHeader title="Reports" question="Numbers about our hiring. Pick a question below — each card opens the report that answers it." />}
+      {!embedded && cat && cat.scope && <div className="rphome-scope">Your area: <b>{cat.scope}</b></div>}
       {!cat && <div className="small-muted">Loading your reports…</div>}
       {cat && !groups.length && <div className="notice">No reports are part of your role yet. Ask your admin if you need one.</div>}
       {groups.map((g) => (

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { isClientUser, productRole } from '../../permissions';
+import { can, isClientUser, productRole } from '../../permissions';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
-import ListPageHeader, {
+import {
   StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useLocalFacets,
 } from '../../components/ui/ListPageHeader.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
@@ -19,6 +19,13 @@ import FollowUps from './FollowUps.jsx';
 import { ProgressBar } from '../../components/charts';
 import './Team.css';
 import { Help } from '../../components/ui/Guide.jsx';
+// v4 (2026-10-08): the reference layout — an overview dashboard on top (ATS kit
+// + components/team-v4/), every existing tab below it, unchanged.
+import { Icon } from '../../components/atskit/AtsKit.jsx';
+import TeamOverview from '../../components/team-v4/TeamOverview.jsx';
+import {
+  PERIODS, periodRange, dmy, todayLocal,
+} from '../../components/team-v4/teamData.js';
 
 // ---------------------------------------------------------------------------
 // RECRUITER & BDE — the operational control centre for Recruiter / TL / BDE
@@ -1031,6 +1038,44 @@ export default function Team() {
     if (rawView === 'seats' && isAdmin) navigate('/admin/positions?tab=history', { replace: true });
   }, [rawView, isAdmin, navigate]);
   const setView = (v) => setSearchParams(v === 'people' ? {} : { view: v });
+  // v4: the overview's tiles and quick actions open a tab below (and may pick
+  // the People tab's role); the page then scrolls to the tabs.
+  const goView = (v, extra = {}) => setSearchParams({ ...(v === 'people' ? {} : { view: v }), ...extra });
+  const detailsRef = useRef(null);
+  const lastSearch = useRef(null);
+  useEffect(() => {
+    const wanted = searchParams.has('view') || searchParams.has('role') || searchParams.has('tab');
+    // The first run for an address (twice in dev StrictMode) is a page load.
+    const smooth = lastSearch.current !== null && lastSearch.current !== location.search;
+    lastSearch.current = location.search;
+    if (!wanted || view === 'list' || !detailsRef.current) return undefined;
+    requestAnimationFrame(() => {
+      if (detailsRef.current) detailsRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
+    });
+    if (smooth) return undefined;
+    // A link straight to a tab: the overview above it is still filling in, so
+    // the tabs move down — follow them, unless the person has scrolled away.
+    let last = null;
+    const timers = [700, 1600, 3000].map((ms) => setTimeout(() => {
+      const el = detailsRef.current;
+      if (!el || (last !== null && Math.abs(window.scrollY - last) > 4)) return;
+      el.scrollIntoView({ behavior: 'auto', block: 'start' });
+      last = window.scrollY;
+    }, ms));
+    return () => timers.forEach(clearTimeout);
+  }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
+  // v4 header: the period the overview's chart covers.
+  const [period, setPeriod] = useState('this_week');
+  const today = todayLocal();
+  const range = periodRange(period, today);
+  const canAddMember = can(user, 'hrms', 'hrms', 'Employee Management', 'create');
+  const canReports = can(user, null, 'reports', 'ATS Reports', 'view');
+  const canLeave = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'export');
+  // Where "Performance report" / "Daily report" go: a Recruiter / BDE to their
+  // own results when the role has them, everyone else to ATS Reports.
+  const ownResults = selfMode && can(user, null, 'reports', 'My Results', 'view');
+  const reportTo = ownResults ? '/reports/my-results' : canReports ? '/reports/ats?tab=recruiters' : null;
+  const dailyTo = ownResults ? '/reports/my-results' : canReports ? '/reports/ats?tab=daily' : null;
 
   // 360 drawer — closes whenever the address changes (a number was followed).
   const [openPerson, setOpenPerson] = useState(null);
@@ -1130,19 +1175,64 @@ export default function Team() {
 
   return (
     <div className="pw-page">
-      <ListPageHeader
-        title={selfMode ? 'My Workload' : 'Team'}
-        question={selfMode ? 'Your jobs, your numbers and your tasks — all in one place.' : 'Who is on the team, what each person works on, and how busy they are.'}
-        data={isLead && exportTab ? (
-          <AtsDataTools
-            module="team"
-            kinds={['requirement-assignments']}
-            onImported={reload}
-            body={() => ({ tab: exportTab, former: view === 'people' && shown.status !== 'Active' && !!former.rows, ids: exportIds })}
-          />
-        ) : null}
-      />
+      <div className="ak-page-head tv4-head">
+        <div>
+          <h1>{selfMode ? 'My Workload' : 'Team'}</h1>
+          <p>{selfMode ? 'Your jobs, your numbers and your tasks — all in one place.' : 'Manage your team, track performance, workload and stay on top of activities.'}</p>
+        </div>
+        <div className="ak-page-tools">
+          {view !== 'list' && (
+            <>
+              <span className="tv4-range" title="The period the performance chart covers">
+                <Icon name="calendar" size={16} />
+                {dmy(range.from)}
+                <span className="tv4-arrow" aria-hidden="true">→</span>
+                {dmy(range.to)}
+              </span>
+              <select className="tv4-period" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period">
+                {PERIODS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </>
+          )}
+          {isLead && exportTab ? (
+            <AtsDataTools
+              module="team"
+              kinds={['requirement-assignments']}
+              onImported={reload}
+              body={() => ({ tab: exportTab, former: view === 'people' && shown.status !== 'Active' && !!former.rows, ids: exportIds })}
+            />
+          ) : null}
+          {canAddMember && !selfMode && <Link className="btn btn-primary" to="/employees" title="Add Employee — creates their employee record and login (HRMS → Employees)">+ Add Team Member</Link>}
+        </div>
+      </div>
 
+      {view !== 'list' && (
+        <TeamOverview
+          rows={peopleRows}
+          loading={people.loading}
+          selfMode={selfMode}
+          isAdmin={isAdmin}
+          period={period}
+          today={today}
+          user={user}
+          onOpen={setOpenPerson}
+          goView={goView}
+          canAdd={canAddMember}
+          canReports={canReports}
+          canLeave={canLeave}
+          reportTo={reportTo}
+          dailyTo={dailyTo}
+          reloadKey={reloadKey}
+        />
+      )}
+
+      <div className="tv4-details" ref={detailsRef}>
+      {view !== 'list' && (
+        <div className="tv4-details-title">
+          <h2>{selfMode ? 'My work in detail' : 'Team details'}</h2>
+          <span>Lists, assignments, tasks and follow-ups — click any name or number to open it.</span>
+        </div>
+      )}
       <StatusTabs
         label="Section"
         tabs={VIEWS.map(([key, label, count, hint]) => ({ key, label, count, hint }))}
@@ -1168,6 +1258,7 @@ export default function Team() {
       )}
       {view === 'people' && (
         <PeopleTab
+          key={searchParams.get('role') || ''}
           rows={peopleRows}
           loading={people.loading}
           isLead={isLead}
@@ -1194,6 +1285,7 @@ export default function Team() {
           selfMode={selfMode}
         />
       )}
+      </div>
       {openPerson && <Recruiter360 personId={openPerson} onClose={() => setOpenPerson(null)} />}
       {openFormer && <FormerHistory personId={openFormer} onClose={() => setOpenFormer(null)} />}
     </div>

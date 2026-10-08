@@ -6,7 +6,7 @@ import ScopeLine from '../components/ScopeLine.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import AtsDataTools from '../components/AtsDataTools.jsx';
-import ListPageHeader, {
+import {
   ListToolbar, ListFooter, FacetSelect, useLocalFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import '../components/jobs/jobs.css';
@@ -26,9 +26,14 @@ import { useClientsMeta, HEALTH_HINT } from '../components/clients/clientsMeta.j
 import { LifecycleChip, PauseRequestsPanel } from '../components/clients/ClientLifecycle.jsx';
 // Spec 6 — the agreement step badge (Draft → Sent → Viewed → Signed → Active → Expired).
 import { agreementStepLabel, agreementStepOf } from '../components/clients/AgreementStep.jsx';
-// ATS layout v3 — cards → chart → table (shared kit; no chart library).
-import StatCard, { StatRow } from '../components/ui/StatCard.jsx';
-import { DonutChart } from '../components/charts';
+// Clients & Requirements v4 (2026-10-08) — the reference layout on the ATS kit:
+// KPI icon tiles, by department, needs attention, agreement steps, top
+// clients, the dense list. Every number is counted from the loaded GET /clients.
+import { KpiRow, KpiTile } from '../components/atskit/AtsKit.jsx';
+import {
+  Panel, AttentionRows, ShareBars, RankList,
+} from '../components/clientsreq-v4/JobsOverview.jsx';
+import { CrqHead, MiniPager, FilterCard } from '../components/clientsreq-v4/ListBits.jsx';
 import { agreementIsSigned } from '../atsVocab';
 import '../components/clients/ccr.css';
 import PageFilterBar, { usePageFilters, rangeDates } from '../components/ui/PageFilterBar.jsx';
@@ -247,13 +252,19 @@ export default function Clients() {
       && (!q || `${c.name || ''} ${c.legalName || ''} ${c.clientCode || ''} ${c.displayCode || ''} ${c.contactName || ''} ${c.gst || ''}`.toLowerCase().includes(q)));
   }, [clients, filters.search, pfDates.from, pfDates.to]);
   // The view (§1) — the scope itself is already the server's.
-  const viewRows = useMemo(() => searched.filter((c) => inView(c, currentView)), [searched, currentView]);
+  // Picking a Status (Inactive, say) reaches past the view: the All Active
+  // view must not swallow the very clients the filter asks for.
+  const viewRows = useMemo(
+    () => (filters.status ? searched : searched.filter((c) => inView(c, currentView))),
+    [searched, currentView, filters.status],
+  );
   const listRows = useMemo(
     () => (filters.status === 'Archived' ? viewRows : viewRows.filter((c) => statusOf(c) !== 'Archived')),
     [viewRows, filters.status],
   );
   const facets = useLocalFacets(listRows, fields, ef);
-  const statusFacets = useLocalFacets(viewRows, fields, ef);
+  // Every status is offered — Inactive and Archived included — whatever the view.
+  const statusFacets = useLocalFacets(searched, fields, ef);
 
   const filtered = useMemo(() => {
     const sortFn = (SORTS[currentSort] || SORTS.name)[1];
@@ -405,136 +416,188 @@ export default function Clients() {
   const listedCount = filters.status === 'Archived' ? clients.length : clients.filter((c) => statusOf(c) !== 'Archived').length;
   const narrowed = filtered.length !== listedCount;
 
+  // v4 overview — counted over the rows the list shows (filtered), as the cards were.
+  const seeAgreement = allowedCols.includes('agreement');
+  const activeN = filtered.filter((c) => statusOf(c) === 'Active').length;
+  const prospectN = filtered.filter((c) => statusOf(c) === 'Prospect').length;
+  const unsignedN = filtered.filter((c) => !agreementIsSigned(c.agreementStatus)).length;
+  const noOpenN = filtered.filter((c) => !(c.openRequirements > 0)).length;
+  const openJobsN = role === 'accounts' ? null : filtered.reduce((n, c) => n + (Number(c.activeRequirements) || 0), 0);
+  const toTable = () => document.getElementById('ccr-client-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const deptRows = (facets.department || []).map((o) => ({
+    key: o.value, label: o.label, value: o.count, active: pf.department === o.value,
+    onClick: () => setPf({ ...pf, department: pf.department === o.value ? '' : o.value }),
+  })).sort((x, y) => y.value - x.value);
+  const agrRows = (facets.agreement || []).map((o) => ({
+    key: o.value, label: o.label, value: o.count, active: filters.agreement === o.value,
+    onClick: has('agreement') ? () => setFilter({ agreement: filters.agreement === o.value ? '' : o.value }) : undefined,
+  })).sort((x, y) => y.value - x.value);
+  const topClients = role === 'accounts' ? [] : [...filtered]
+    .filter((c) => Number(c.activeRequirements) > 0)
+    .sort((x, y) => (Number(y.activeRequirements) || 0) - (Number(x.activeRequirements) || 0))
+    .slice(0, 5)
+    .map((c) => ({ key: c.id, name: c.name, value: Number(c.activeRequirements), to: `/clients/${c.id}` }));
+  const unassignedN = (facets.unassigned || [])[0]?.count;
+  const attention = [
+    seeAgreement && {
+      key: 'unsigned', count: unsignedN, tone: 'red', label: 'Unsigned agreement', sub: 'Jobs wait for the client to sign', active: filters.signed === 'no',
+      onClick: () => setFilter({ signed: filters.signed === 'no' ? '' : 'no' }),
+    },
+    meta?.expiring?.count > 0 && {
+      key: 'expiring', count: meta.expiring.count, tone: 'red', label: 'Agreement ending soon', sub: `Ends or renews in ${meta.expiring.days} days`, active: filters.expiring === '30',
+      onClick: () => setFilter({ expiring: filters.expiring === '30' ? '' : '30' }),
+    },
+    has('unassigned') && unassignedN > 0 && {
+      key: 'nobde', count: unassignedN, tone: 'red', label: 'No client manager', sub: 'Nobody looks after these clients', active: !!filters.unassigned,
+      onClick: () => setFilter({ unassigned: filters.unassigned ? '' : '1' }),
+    },
+    {
+      key: 'noopen', count: noOpenN, tone: 'red', label: 'No open job', sub: 'Nothing to hire for right now', active: filters.hasOpen === 'no',
+      onClick: () => setFilter({ hasOpen: filters.hasOpen === 'no' ? '' : 'no' }),
+    },
+  ].filter(Boolean);
+
   return (
-    <div>
-      {/* Spec 2026-10-03 §B — the one list layout: title, question,
-          Import / Export / History buttons, ONE primary button. §3 — Import (Admin) · Export (Admin,
-          Management, BDE own, Accounts): /ats-io/access decides, the ats-io
-          routes enforce. The "current view" export sends the ids of the rows
-          shown when narrowed; the server keeps only those of its own scoped
-          GET /clients. */}
-      <ListPageHeader
-        title="Clients"
-        question="Every company we find people for, and how their jobs are going."
-        sub={loaded ? <ScopeLine user={user} count={listedCount} noun="client" inline /> : 'Loading…'}
-        extra={a.merge ? <ClientDuplicatesButton /> : null}
-        data={meta && (a.import || a.export) ? (
-          <AtsDataTools
-            module="clients"
-            kinds={a.import ? ['clients'] : []}
-            onImported={load}
-            body={() => ({ ids: narrowed ? filtered.map((c) => c.id) : null })}
-          />
-        ) : null}
-        primary={a.add ? (
-          <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>+ Add client</button>
-        ) : null}
+    <div className="crq4 crq4-clients">
+      {/* Spec 2026-10-03 §B — title, question, Import / Export / History, ONE
+          primary button (v4: the module header; the Shell's strip sits under it).
+          §3 — Import (Admin) · Export (Admin, Management, BDE own, Accounts):
+          /ats-io/access decides, the ats-io routes enforce. The "current view"
+          export sends the ids of the rows shown when narrowed; the server keeps
+          only those of its own scoped GET /clients. */}
+      <CrqHead
+        sub="Every company we find people for, and how their jobs are going."
+        scope={loaded ? <ScopeLine user={user} count={listedCount} noun="client" inline /> : 'Loading…'}
+        tools={(
+          <>
+            {a.merge ? <span className="crq4-extra"><ClientDuplicatesButton /></span> : null}
+            {meta && (a.import || a.export) ? (
+              <AtsDataTools
+                module="clients"
+                kinds={a.import ? ['clients'] : []}
+                onImported={load}
+                body={() => ({ ids: narrowed ? filtered.map((c) => c.id) : null })}
+              />
+            ) : null}
+            {a.add ? (
+              <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>+ Add client</button>
+            ) : null}
+          </>
+        )}
       />
 
-      {/* The Clients module's own strip: Clients | Agreements. */}
+      {/* ONE filter card: Department · Date range · Client · Client manager (the
+          page filter bar, kept in the URL) + Status · Signed? · Location + Search. */}
+      <FilterCard
+        search={{
+          value: filters.search,
+          onChange: (v) => setFilter({ search: v }),
+          placeholder: role === 'tl' || role === 'accounts' ? 'Search clients…' : 'Search name, code, contact or GST…',
+        }}
+      >
+        <PageFilterBar value={pf} onChange={setPf} options={barOptions} show={{ department: true, dateRange: true, client: true, people: role !== 'tl' && role !== 'accounts' }} />
+        {has('status') && <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={statusFacets.status} allLabel="Any status" />}
+        {(has('agreement') || seeAgreement) && <FacetSelect label="Signed?" value={filters.signed} onChange={(v) => setFilter({ signed: v })} options={facets.signed} allLabel="Signed or not" />}
+        {has('location') && <FacetSelect label="Location" value={filters.location} onChange={(v) => setFilter({ location: v })} options={facets.location} allLabel="All locations" />}
+      </FilterCard>
 
-      {/* ATS layout v3 — filters bar → cards → chart → table. */}
-      <PageFilterBar value={pf} onChange={setPf} options={barOptions} show={{ department: true, dateRange: true, client: true, people: role !== 'tl' && role !== 'accounts' }} />
-      {loaded && clients.length > 0 && (() => {
-        const seeAgreement = allowedCols.includes('agreement');
-        const active = filtered.filter((c) => statusOf(c) === 'Active').length;
-        const unsigned = filtered.filter((c) => !agreementIsSigned(c.agreementStatus)).length;
-        const noOpen = filtered.filter((c) => !(c.openRequirements > 0)).length;
-        const toTable = () => document.getElementById('ccr-client-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        const depts = (facets.department || []).map((o) => ({
-          label: o.label, value: o.count, onClick: () => setPf({ ...pf, department: pf.department === o.value ? '' : o.value }),
-        }));
-        return (
-          <>
-            <StatRow>
-              <StatCard label="Total clients" help="Companies in the list below" value={filtered.length} tone="blue" zeroText="No clients yet" onClick={toTable} hint="In the list below" />
-              <StatCard label="Active" help="Clients we are working with now" value={active} tone="green" zeroText="None active yet" onClick={() => setFilter({ status: filters.status === 'Active' ? '' : 'Active' })} />
-              {seeAgreement && <StatCard label="Unsigned agreement" help="The client has not signed our agreement yet — jobs wait for it" value={unsigned} tone="amber" zeroText="All signed 🎉" upIsGood={false} onClick={() => setFilter({ signed: filters.signed === 'no' ? '' : 'no' })} />}
-              <StatCard label="Clients with no open job" help="Clients with nothing to hire for right now" value={noOpen} tone="grey" zeroText="Every client has a job" onClick={() => setFilter({ hasOpen: filters.hasOpen === 'no' ? '' : 'no' })} />
-            </StatRow>
-            {depts.length > 1 && (
-              <div className="ccr-charts">
-                <div className="ccr-chart">
-                  <h3>Clients by department</h3>
-                  <div className="ccr-sub">Click a department to see its clients.</div>
-                  <DonutChart data={depts} title="Clients by department" centerValue={depts.reduce((n, d) => n + d.value, 0).toLocaleString('en-IN')} centerLabel="clients" />
-                </div>
-              </div>
-            )}
-          </>
-        );
-      })()}
+      {loaded && clients.length > 0 && (
+        <>
+          <KpiRow className="crq4-kpis">
+            <KpiTile icon="building" tone="blue" label="Total Clients" value={filtered.length} sub="In the list below" onClick={toTable} title="Go to the list" />
+            <KpiTile icon="check" tone="green" label="Active" value={activeN} sub="Working with them" active={filters.status === 'Active'} onClick={has('status') ? () => setFilter({ status: filters.status === 'Active' ? '' : 'Active' }) : undefined} />
+            <KpiTile icon="star" tone="violet" label="Prospects" value={prospectN} sub="Not started yet" active={filters.status === 'Prospect'} onClick={has('status') ? () => setFilter({ status: filters.status === 'Prospect' ? '' : 'Prospect' }) : undefined} />
+            {seeAgreement && <KpiTile icon="file" tone="amber" label="Unsigned Agreement" value={unsignedN} sub="Jobs wait for it" active={filters.signed === 'no'} onClick={() => setFilter({ signed: filters.signed === 'no' ? '' : 'no' })} />}
+            <KpiTile icon="pause" tone="slate" label="No Open Job" value={noOpenN} sub="Nothing to hire" active={filters.hasOpen === 'no'} onClick={() => setFilter({ hasOpen: filters.hasOpen === 'no' ? '' : 'no' })} />
+            {openJobsN !== null && <KpiTile icon="briefcase" tone="teal" label="Open Jobs" value={openJobsN} sub="Across these clients" />}
+          </KpiRow>
+
+          <div className={`crq4-row4${seeAgreement ? '' : ' crq4-three'}`}>
+            <Panel title="Clients by Department" sub="Click a department to see its clients">
+              <ShareBars rows={deptRows} max={5} />
+            </Panel>
+            <Panel title="Needs Attention" icon="alert" iconTone="red">
+              <AttentionRows items={attention} />
+            </Panel>
+            {seeAgreement ? (
+              <Panel title="Agreement Steps" sub={has('agreement') ? 'Draft → Sent → Signed → Active · click one' : 'Draft → Sent → Signed → Active'}>
+                <ShareBars rows={agrRows} max={5} />
+              </Panel>
+            ) : null}
+            <Panel title="Top Clients by Open Jobs" action={role === 'accounts' ? undefined : { label: 'Sort list', onClick: () => { setSortBy('activeReqs'); toTable(); } }}>
+              <RankList rows={topClients} max={5} empty={role === 'accounts' ? 'Not part of your role' : 'No open jobs'} />
+            </Panel>
+          </div>
+        </>
+      )}
 
       {metaError && <div className="notice red">{metaError}</div>}
       {loadError && <div className="notice red">{loadError}</div>}
       {flash && <div className="notice">{flash}</div>}
 
-      {/* Simplicity checklist #5 — ONE row of daily chips:
-          "Ending soon (N)" — agreements ending or renewing in 30 days
-          (Admin, BDE; §8.3 / spec 6), and "Pause requests (N)" — Admins / the
-          department Manager approve or reject; a BDE sees the ones they sent
-          (spec 2026-10-03 §A). The panel opens under the chips. */}
-      {(meta?.expiring?.count > 0 || meta?.actions?.pauseRequests) && (
-        <div className="clrole-daily">
-          {meta?.expiring?.count > 0 && (
-            <button
-              type="button"
-              className={`btn btn-sm clrole-daychip${filters.expiring === '30' ? ' on' : ''}`}
-              aria-pressed={filters.expiring === '30'}
-              title={`Agreements that end or renew in ${meta.expiring.days} days`}
-              onClick={() => setFilter({ expiring: filters.expiring === '30' ? '' : '30' })}
-            >
-              {`Ending soon (${meta.expiring.count})`}
-            </button>
+      <Panel className="crq4-list" title="Clients List" extra={<MiniPager page={paged} />}>
+        <div className="crq4-list-tools">
+          {/* Simplicity checklist #5 — ONE row of daily chips:
+              "Ending soon (N)" — agreements ending or renewing in 30 days
+              (Admin, BDE; §8.3 / spec 6), and "Pause requests (N)" — Admins / the
+              department Manager approve or reject; a BDE sees the ones they sent
+              (spec 2026-10-03 §A). The panel opens under the chips. */}
+          {(meta?.expiring?.count > 0 || meta?.actions?.pauseRequests) && (
+            <div className="clrole-daily">
+              {meta?.expiring?.count > 0 && (
+                <button
+                  type="button"
+                  className={`btn btn-sm clrole-daychip${filters.expiring === '30' ? ' on' : ''}`}
+                  aria-pressed={filters.expiring === '30'}
+                  title={`Agreements that end or renew in ${meta.expiring.days} days`}
+                  onClick={() => setFilter({ expiring: filters.expiring === '30' ? '' : '30' })}
+                >
+                  {`Ending soon (${meta.expiring.count})`}
+                </button>
+              )}
+              <PauseRequestsPanel enabled={!!meta?.actions?.pauseRequests} reloadKey={clients} onChanged={(msg) => { setFlash(msg); load(); }} />
+            </div>
           )}
-          <PauseRequestsPanel enabled={!!meta?.actions?.pauseRequests} reloadKey={clients} onChanged={(msg) => { setFlash(msg); load(); }} />
-        </div>
-      )}
 
-      {/* [ Search ] [ Filters (n) ] [ Sort ] — the filters (only those
-          /clients/meta gives this role) sit in ONE panel; chips + Clear all. */}
-      <ListToolbar
-        search={filters.search}
-        onSearch={(v) => setFilter({ search: v })}
-        placeholder={role === 'tl' || role === 'accounts' ? 'Search clients…' : 'Search name, code, contact or GST…'}
-        filterCount={panelFilterCount}
-        panel={(meta?.filters || []).length ? (
-          <>
-            {has('industry') && <FacetSelect label="Industry" value={filters.industry} onChange={(v) => setFilter({ industry: v })} options={facets.industry} allLabel="All industries" />}
-            {/* Department and Client manager are on the filter bar above. */}
-            {(has('agreement') || allowedCols.includes('agreement')) && <FacetSelect label="Signed?" value={filters.signed} onChange={(v) => setFilter({ signed: v })} options={facets.signed} allLabel="Signed or not" />}
-            {has('location') && <FacetSelect label="Location" value={filters.location} onChange={(v) => setFilter({ location: v })} options={facets.location} allLabel="All locations" />}
-            {has('agreement') && <FacetSelect label="Agreement" value={filters.agreement} onChange={(v) => setFilter({ agreement: v })} options={facets.agreement} allLabel="Any agreement step" />}
-            {has('expiring') && <FacetSelect label="Agreement ends" value={filters.expiring} onChange={(v) => setFilter({ expiring: v })} options={facets.expiring} allLabel="Any end date" />}
-            {has('hasOpen') && <FacetSelect label="Has open jobs" value={filters.hasOpen} onChange={(v) => setFilter({ hasOpen: v })} options={facets.hasOpen} />}
-            {has('status') && <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={statusFacets.status} allLabel="Any status" />}
-            {has('outstanding') && <FacetSelect label="Unpaid invoices" value={filters.outstanding} onChange={(v) => setFilter({ outstanding: v })} options={facets.outstanding} />}
-            {has('overdue') && <FacetSelect label="Late" value={filters.overdue} onChange={(v) => setFilter({ overdue: v })} options={facets.overdue} />}
-            {has('unassigned') && (filters.unassigned || (facets.unassigned || []).length > 0) && (
-              <label className="clrole-check">
-                <input type="checkbox" checked={!!filters.unassigned} onChange={(e) => setFilter({ unassigned: e.target.checked ? '1' : '' })} style={{ width: 'auto' }} />
-                {`No client manager${(facets.unassigned || [])[0] ? ` (${facets.unassigned[0].count})` : ''}`}
-              </label>
-            )}
-          </>
-        ) : null}
-        sort={currentSort}
-        sortOptions={Object.entries(SORTS)
-          .filter(([k]) => (!['outstanding', 'overdue'].includes(k) || meta?.invoiceMode === 'amounts')
-            && (k !== 'submitted' || allowedCols.includes('submitted')))
-          .map(([k, [label]]) => [k, label])}
-        onSort={setSortBy}
-        right={allowedCols.length > 0 ? (
-          <ColumnChooser
-            columns={allowedCols.map((k) => ({ key: k, label: labelFor(k, role) }))}
-            value={cols}
-            onChange={setCols}
-            defaults={defaultCols}
+          {/* [ Filters (n) ] [ Sort ] [ Columns ] — the other filters (only those
+              /clients/meta gives this role) sit in ONE panel; chips + Clear all.
+              Search, Status, Signed? and Location are on the filter card above. */}
+          <ListToolbar
+            filterCount={Object.entries(filters).filter(([k, v]) => !['search', 'status', 'signed', 'location'].includes(k) && v).length}
+            panel={(meta?.filters || []).some((k) => ['industry', 'agreement', 'expiring', 'hasOpen', 'outstanding', 'overdue', 'unassigned'].includes(k)) ? (
+              <>
+                {has('industry') && <FacetSelect label="Industry" value={filters.industry} onChange={(v) => setFilter({ industry: v })} options={facets.industry} allLabel="All industries" />}
+                {has('agreement') && <FacetSelect label="Agreement" value={filters.agreement} onChange={(v) => setFilter({ agreement: v })} options={facets.agreement} allLabel="Any agreement step" />}
+                {has('expiring') && <FacetSelect label="Agreement ends" value={filters.expiring} onChange={(v) => setFilter({ expiring: v })} options={facets.expiring} allLabel="Any end date" />}
+                {has('hasOpen') && <FacetSelect label="Has open jobs" value={filters.hasOpen} onChange={(v) => setFilter({ hasOpen: v })} options={facets.hasOpen} />}
+                {has('outstanding') && <FacetSelect label="Unpaid invoices" value={filters.outstanding} onChange={(v) => setFilter({ outstanding: v })} options={facets.outstanding} />}
+                {has('overdue') && <FacetSelect label="Late" value={filters.overdue} onChange={(v) => setFilter({ overdue: v })} options={facets.overdue} />}
+                {has('unassigned') && (filters.unassigned || (facets.unassigned || []).length > 0) && (
+                  <label className="clrole-check">
+                    <input type="checkbox" checked={!!filters.unassigned} onChange={(e) => setFilter({ unassigned: e.target.checked ? '1' : '' })} style={{ width: 'auto' }} />
+                    {`No client manager${(facets.unassigned || [])[0] ? ` (${facets.unassigned[0].count})` : ''}`}
+                  </label>
+                )}
+              </>
+            ) : null}
+            sort={currentSort}
+            sortOptions={Object.entries(SORTS)
+              .filter(([k]) => (!['outstanding', 'overdue'].includes(k) || meta?.invoiceMode === 'amounts')
+                && (k !== 'submitted' || allowedCols.includes('submitted')))
+              .map(([k, [label]]) => [k, label])}
+            onSort={setSortBy}
+            right={allowedCols.length > 0 ? (
+              <ColumnChooser
+                columns={allowedCols.map((k) => ({ key: k, label: labelFor(k, role) }))}
+                value={cols}
+                onChange={setCols}
+                defaults={defaultCols}
+              />
+            ) : null}
+            chips={chips}
+            onClearAll={activeFilterCount ? clearFilters : undefined}
           />
-        ) : null}
-        chips={chips}
-        onClearAll={activeFilterCount ? clearFilters : undefined}
-      />
+        </div>
 
       <div id="ccr-client-table" className="ccr-section" />
       <ScrollTable maxHeight={null} bodyClassName="tbl-fit">
@@ -609,6 +672,7 @@ export default function Clients() {
       <ListFooter from={paged.from} to={paged.to} total={paged.total} noun="clients">
         <Pager page={paged} noun="clients" />
       </ListFooter>
+      </Panel>
 
       {adding && (
         <AddClientWizard

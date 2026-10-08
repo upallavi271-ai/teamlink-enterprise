@@ -14,6 +14,8 @@ import { taskLine } from './TaskPopup.jsx';
 import { FunnelChart } from '../charts';
 import PageFilterBar, { usePageFilters, filterParams } from '../ui/PageFilterBar.jsx';
 import { V3_WIDGETS, Cards } from './AtsHomeV3.jsx';
+import AtsV4 from './ats-v4/AtsV4.jsx';
+import { Icon } from '../atskit/AtsKit.jsx';
 import './atsHome.css';
 
 // ---------------------------------------------------------------------------
@@ -379,6 +381,9 @@ export default function AtsHome() {
   const [error, setError] = useState('');
   const [drill, setDrill] = useState(null);
   const [legacy] = useState(() => !!(sp.get('due') || sp.get('queue') || hash === '#pending'));
+  // Refresh (v4 header): the same read again, nothing cached in between.
+  const [reload, setReload] = useState(0);
+  const [loading, setLoading] = useState(false);
 
   const extra = Object.fromEntries(EXTRA_FILTERS.map(([k]) => [k, sp.get(k) || '']).filter(([, v]) => v));
   const fp = filterParams(f);
@@ -387,11 +392,13 @@ export default function AtsHome() {
   const key = JSON.stringify(params);
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     sharedGet('/dashboard/ats/home', params)
       .then((r) => { if (alive) { setData(r.data); setError(''); } })
-      .catch((e) => { if (alive) setError(e.response?.data?.error || 'Your dashboard could not be loaded. Check your connection and refresh the page.'); });
+      .catch((e) => { if (alive) setError(e.response?.data?.error || 'Your dashboard could not be loaded. Check your connection and refresh the page.'); })
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Old links: ?range=this_month → month; ?tab= … dropped.
   useEffect(() => {
@@ -452,8 +459,12 @@ export default function AtsHome() {
   const tasks = taskLine(alerts);
   const widgets = (data && data.widgets) || [];
   const kpi = widgets.find((w) => w.type === 'kpis');
-  const rest = widgets.filter((w) => w.type !== 'kpis' && !w.more);
-  const moreW = widgets.filter((w) => w.type !== 'kpis' && w.more);
+  // `more: true` marks a widget for the collapsed section. (The recruiter's
+  // task list also carries a NUMBER called `more` — its total — so only a
+  // literal true counts.)
+  const isMore = (w) => w.more === true;
+  const rest = widgets.filter((w) => w.type !== 'kpis' && !isMore(w));
+  const moreW = widgets.filter((w) => w.type !== 'kpis' && isMore(w));
   const MORE_NAMES = { banner: 'Activity not logged', cleanup: 'Data cleanup' };
   const moreNames = moreW.map((w) => w.title || MORE_NAMES[w.type]).filter(Boolean);
   const g = data && data.greeting;
@@ -461,44 +472,124 @@ export default function AtsHome() {
   const cleanupLink = !!(data && data.cleanup && data.cleanup.to && (data.cleanup.stale > 0 || data.cleanup.oldUnassigned > 0)
     && ['superadmin', 'admin'].includes(data.layout));
 
+  // "Good morning, Aarti — 2 late, 3 client feedback pending." Every number opens its list.
+  const hello = (
+    <div className="ah-hello">
+      {g && g.items ? (
+        <>
+          {greeting(user && user.name)} —{' '}
+          {!g.items.length ? 'nothing is late and nothing is waiting.' : (
+            <>
+              {g.items.map((it, i) => (
+                <Fragment key={it.id}>
+                  {i ? ', ' : ''}
+                  <button type="button" className={`ahv3-hello-n t-${it.tone === 'red' ? 'red' : 'yellow'}`} onClick={() => setDrill(it.drill)}>{fmt(it.value)} {it.label}</button>
+                </Fragment>
+              ))}
+              .
+            </>
+          )}
+        </>
+      ) : g ? (
+        <>
+          {greeting(user && user.name)} —{' '}
+          {!g.late && !g.feedback ? 'nothing is late and no feedback is pending.' : (
+            <>
+              {g.late ? <button type="button" className="ahv3-hello-n t-red" onClick={() => setDrill(g.lateDrill)}>{fmt(g.late)} late</button> : 'nothing late'}
+              {', '}
+              {g.feedback ? <button type="button" className="ahv3-hello-n t-yellow" onClick={() => setDrill(g.feedbackDrill)}>{fmt(g.feedback)} feedback pending</button> : 'no feedback pending'}
+              .
+            </>
+          )}
+        </>
+      ) : (
+        <>{greeting(user && user.name)}{tasks ? <> — <span className={`ah-hello-t${tasks.late ? ' t-red' : ''}`}>{tasks.short}</span></> : '.'}</>
+      )}
+    </div>
+  );
+  const extraChips = EXTRA_FILTERS.filter(([k]) => extra[k]).map(([k, l]) => (
+    <StatusChip key={k} tone="blue">
+      {l}: {labelOf(k, extra[k])}{' '}
+      <button type="button" className="link-btn" aria-label={`Remove ${l}`} onClick={() => dropExtra(k)}>✕</button>
+    </StatusChip>
+  ));
+  const drawOne = (w) => {
+    const W = WIDGETS[w.type];
+    return W ? <W key={`${w.id}-${reload}`} w={w} onDrill={setDrill} prevWord={prevWord} onPickDept={pickDept} params={params} tls={tls} onCand={setCand} /> : null;
+  };
+  const overlays = (
+    <>
+      {drill && <HomeDrill listUrl={LIST_URL} params={params} setId={drill} onClose={() => setDrill(null)} />}
+      {cand && <CandidateDrawer candidateId={cand.candidateId} applicationId={cand.applicationId} user={user} onClose={() => setCand(null)} onChanged={() => {}} />}
+      {data && <FirstTour user={user} layout={data.layout} />}
+    </>
+  );
+
+  // ---- THE DASHBOARD (v4 redesign, 2026-10-08) — every role but the opt-in ?v3=1 page ----
+  if (!data || !data.v3) {
+    return (
+      <div className="atsd ahome av4-page">
+        <header className="av4-head">
+          <div className="av4-head-l">
+            <h1>
+              ATS Dashboard
+              {data && <span className="av4-scope">{data.title}{deptName ? ` · ${deptName}` : ''}</span>}
+            </h1>
+            <p className="av4-about">{(data && data.about) || 'Overview of your hiring, candidates, clients and team.'}</p>
+            {hello}
+          </div>
+          <div className="av4-tools">
+            {showDept && (
+              <label className={`lph-facet av4-dept-f${f.department ? ' is-picked' : ''}`}>
+                <span className="lph-facet-lbl">Department</span>
+                <select value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
+                  <option value="">All departments</option>
+                  {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
+                </select>
+              </label>
+            )}
+            <PageFilterBar className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} />
+            <button type="button" className="btn btn-primary av4-refresh" onClick={() => setReload((n) => n + 1)} disabled={loading} title="Load the numbers again">
+              <Icon name="refresh" size={15} /> {loading && data ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+        </header>
+        {(f.department || extraChips.length > 0) && (
+          <div className="av4-chips">
+            {f.department && <button type="button" className="btn btn-sm ah-dept-all" onClick={() => setF({ ...f, department: '' })}>✕ All departments</button>}
+            {f.department && <span className="small-muted">Everything below is {deptName} only.</span>}
+            {extraChips}
+          </div>
+        )}
+        {error && <div className="notice red">{error}</div>}
+        {!data && !error && <div className="small-muted">Loading your dashboard…</div>}
+        {data && (
+          <AtsV4
+            data={data}
+            params={params}
+            reload={reload}
+            tls={tls}
+            user={user}
+            onDrill={setDrill}
+            onPickDept={pickDept}
+            draw={drawOne}
+            cleanupLink={cleanupLink}
+            prevWord={prevWord}
+          />
+        )}
+        {overlays}
+      </div>
+    );
+  }
+
+  // ---- The opt-in ?v3=1 page keeps its own layout. ----
   return (
     <div className={`atsd ahome${data && data.v3 ? ' is-v3' : ''}`}>
       <div className="page-head">
         <div>
           <h1>{data ? data.title : 'Dashboard'}{deptName ? <span className="ah-h1-dept"> · {deptName}</span> : null}</h1>
           {data && data.about && <div className="ah-about">{data.about}</div>}
-          <div className="ah-hello">
-            {g && g.items ? (
-              <>
-                {greeting(user && user.name)} —{' '}
-                {!g.items.length ? 'nothing is late and nothing is waiting.' : (
-                  <>
-                    {g.items.map((it, i) => (
-                      <Fragment key={it.id}>
-                        {i ? ', ' : ''}
-                        <button type="button" className={`ahv3-hello-n t-${it.tone === 'red' ? 'red' : 'yellow'}`} onClick={() => setDrill(it.drill)}>{fmt(it.value)} {it.label}</button>
-                      </Fragment>
-                    ))}
-                    .
-                  </>
-                )}
-              </>
-            ) : g ? (
-              <>
-                {greeting(user && user.name)} —{' '}
-                {!g.late && !g.feedback ? 'nothing is late and no feedback is pending.' : (
-                  <>
-                    {g.late ? <button type="button" className="ahv3-hello-n t-red" onClick={() => setDrill(g.lateDrill)}>{fmt(g.late)} late</button> : 'nothing late'}
-                    {', '}
-                    {g.feedback ? <button type="button" className="ahv3-hello-n t-yellow" onClick={() => setDrill(g.feedbackDrill)}>{fmt(g.feedback)} feedback pending</button> : 'no feedback pending'}
-                    .
-                  </>
-                )}
-              </>
-            ) : (
-              <>{greeting(user && user.name)}{tasks ? <> — <span className={`ah-hello-t${tasks.late ? ' t-red' : ''}`}>{tasks.short}</span></> : '.'}</>
-            )}
-          </div>
+          {hello}
         </div>
         {data && data.main && (data.main.to
           ? <Link className="btn btn-primary" to={data.main.to}>{data.main.label} →</Link>
@@ -521,15 +612,9 @@ export default function AtsHome() {
       {/* Row 2: date range, client, recruiter / BDE (+ chips from old links). */}
       <div className="ah-row2">
         <PageFilterBar value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} />
-        {EXTRA_FILTERS.filter(([k]) => extra[k]).map(([k, l]) => (
-          <StatusChip key={k} tone="blue">
-            {l}: {labelOf(k, extra[k])}{' '}
-            <button type="button" className="link-btn" aria-label={`Remove ${l}`} onClick={() => dropExtra(k)}>✕</button>
-          </StatusChip>
-        ))}
+        {extraChips}
       </div>
       {error && <div className="notice red">{error}</div>}
-      {!data && !error && <div className="small-muted">Loading your dashboard…</div>}
       {data && (() => {
         const extrasRow = data.extras.length > 0 && (
           <div className="ah-extras">
@@ -573,9 +658,7 @@ export default function AtsHome() {
           </>
         );
       })()}
-      {drill && <HomeDrill listUrl={LIST_URL} params={params} setId={drill} onClose={() => setDrill(null)} />}
-      {cand && <CandidateDrawer candidateId={cand.candidateId} applicationId={cand.applicationId} user={user} onClose={() => setCand(null)} onChanged={() => {}} />}
-      {data && <FirstTour user={user} layout={data.layout} />}
+      {overlays}
     </div>
   );
 }

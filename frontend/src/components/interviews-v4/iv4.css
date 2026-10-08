@@ -1,0 +1,216 @@
+/* ===========================================================================
+   INTERVIEW CALENDAR v4 (2026-10-08) — the reference layout. Every class is
+   prefixed iv4- (or scoped under .iv4) so nothing else in the app changes.
+   Colours: the ATS kit's tone palette; TeamLink tokens for ink / lines.
+   =========================================================================== */
+
+/* --- header -------------------------------------------------------------- */
+.iv4 .iv4-head{align-items:center}
+.iv4-range{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--line);
+  border-radius:10px;background:var(--paper-raised,#fff);font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+.iv4-range .ak-icon{color:var(--ink-soft)}
+.iv4-range span[aria-hidden]{color:var(--ink-faint)}
+.iv4-seg{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--paper-raised,#fff)}
+.iv4-seg button{border:0;background:none;border-radius:7px;padding:6px 16px;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-soft);cursor:pointer}
+.iv4-seg button:hover{color:var(--ink)}
+.iv4-seg button.is-on{background:var(--navy);color:#fff}
+.iv4 .iv4-book{display:inline-flex;align-items:center;gap:6px}
+.iv4 .iv4-notice{margin-bottom:14px}
+
+/* --- KPI tiles: a little taller, like the reference --------------------------- */
+.iv4 .iv4-kpis{grid-template-columns:repeat(5,minmax(0,1fr))}
+.iv4 .iv4-kpis .ak-kpi{padding:15px 14px;gap:12px;align-items:center}
+.iv4 .iv4-kpis .ak-kpi-ic{width:44px;height:44px}
+.iv4 .iv4-kpis .ak-kpi-label{white-space:normal;line-height:1.25}
+.iv4 .iv4-kpis .ak-kpi-sub{white-space:normal;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+@media (max-width:1100px){.iv4 .iv4-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:700px){.iv4 .iv4-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* --- filter bar: two PageFilterBars flattened into one row ------------------- */
+.iv4-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 10px;margin:0 0 14px;padding:10px 14px;
+  background:var(--paper-raised,#fff);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(22,32,43,.04)}
+.iv4-filters .iv4-pfb{display:contents}
+.iv4-filters .lph-facet{flex:1 1 112px;min-width:104px;max-width:210px}
+.iv4-filters .pfb .lph-facet{flex:1 1 112px;min-width:104px}
+.iv4-filters .pfb .pfb-range{flex-basis:112px}
+.iv4-filters .pfb .pfb-custom{flex:2 1 240px}
+.iv4-filters .iv4-pfb-a .pfb-clear{display:none}
+.iv4-filters .pfb .pfb-clear{margin-left:0;align-self:flex-end;order:9}
+.iv4-search{flex:1.3 1 170px;min-width:150px;display:flex;align-items:center;gap:7px;height:36px;padding:0 10px;
+  border:1px solid var(--line);border-radius:8px;background:var(--paper-raised,#fff);color:var(--ink-faint);order:8}
+.iv4-search input{border:0 !important;outline:0;box-shadow:none !important;background:transparent;padding:0;height:100%;width:100%;min-width:0;font:inherit;font-size:12.5px;color:var(--ink)}
+.iv4-search:focus-within{border-color:var(--navy);box-shadow:0 0 0 2px var(--brand-ring)}
+
+/* --- main: left column | calendar | details ----------------------------------- */
+.iv4-main{display:grid;grid-template-columns:216px minmax(0,1fr) 286px;gap:14px;margin-bottom:14px;align-items:stretch}
+@media (max-width:1366px){.iv4-main{grid-template-columns:200px minmax(0,1fr) 264px;gap:12px}}
+@media (max-width:1100px){
+  .iv4-main{grid-template-columns:minmax(0,1fr) 270px}
+  .iv4-main .iv4-left{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap}
+  .iv4-main .iv4-left > *{flex:1 1 240px}
+}
+@media (max-width:760px){.iv4-main{grid-template-columns:minmax(0,1fr)}}
+
+/* left: mini month + quick filters */
+.iv4-left{padding:12px 12px 10px;gap:14px}
+.iv4-mini-head{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:var(--ink)}
+.iv4-mini-head button{border:0;background:none;cursor:pointer;width:24px;height:24px;border-radius:6px;font-size:16px;color:var(--ink-soft);line-height:1}
+.iv4-mini-head button:hover{background:#F1F4F8;color:var(--ink)}
+.iv4-mini-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px 0;margin-top:6px}
+.iv4-mini-dow{font-size:10.5px;font-weight:600;color:var(--ink-faint);text-align:center;padding:2px 0 4px}
+.iv4-mini-d{position:relative;border:0;background:none;cursor:pointer;font:inherit;font-size:11.5px;height:26px;color:var(--ink);
+  border-radius:0;padding:0;font-variant-numeric:tabular-nums}
+.iv4-mini-d:hover{background:#EEF2F7}
+.iv4-mini-d.is-out{color:var(--ink-faint);opacity:.55}
+.iv4-mini-d.is-range{background:#EEF4FE}
+.iv4-mini-d.is-today{color:#1F5BD8;font-weight:800}
+.iv4-mini-d.is-anchor{background:#1F5BD8;color:#fff;border-radius:7px;font-weight:700}
+.iv4-mini-d i{position:absolute;left:50%;bottom:2px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:#2F6FE4}
+.iv4-mini-d.is-anchor i{background:#fff}
+.iv4-qf{border-top:1px solid var(--line-soft);padding-top:10px}
+.iv4-qf h4{margin:0 0 4px;font-family:var(--font-ui);font-size:13.5px;font-weight:700;color:var(--ink)}
+.iv4-qf ul{list-style:none;margin:0;padding:0}
+.iv4-qf button{width:100%;display:flex;align-items:center;gap:9px;border:0;background:none;cursor:pointer;font:inherit;
+  padding:6px 6px;border-radius:8px;text-align:left;color:var(--ink-soft)}
+.iv4-qf button:hover{background:#F5F8FD;color:var(--ink)}
+.iv4-qf button.is-on{background:#EEF4FE;color:var(--ink);box-shadow:inset 0 0 0 1px #CFE0FB}
+.iv4-qf button span{flex:1;min-width:0;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iv4-qf button b{font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+.iv4-qf .iv4-qf-all span{color:#1F5BD8;font-weight:600}
+.iv4-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none}
+
+/* centre: the calendar card */
+.iv4-gridcard{min-height:0;overflow:hidden}
+.iv4-grid-head{display:flex;align-items:center;gap:10px;padding:11px 14px 10px;flex-wrap:wrap}
+.iv4-grid-head h3{margin:0;font-family:var(--font-ui);font-size:15px;font-weight:700;color:var(--ink)}
+.iv4-grid-count{font-size:12px;color:var(--ink-faint);margin-right:auto}
+.iv4-grid-nav{display:flex;gap:6px}
+.iv4-btn{display:inline-flex;align-items:center;gap:5px;height:30px;border:1px solid var(--line);background:var(--paper-raised,#fff);
+  border-radius:8px;padding:0 10px;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer}
+.iv4-btn:hover{border-color:var(--navy)}
+.iv4-btn.iv4-ico{width:30px;justify-content:center;padding:0;font-size:16px}
+.iv4-tgrid-wrap{flex:1 1 0;min-height:380px;overflow:auto;border-top:1px solid var(--line-soft)}
+.iv4-tgrid{display:grid;grid-template-columns:52px repeat(var(--cols),minmax(0,1fr))}
+.iv4-trow{display:contents}
+.iv4-thead{position:sticky;top:0;z-index:2;background:#F7F9FC;border-bottom:1px solid var(--line-soft);border-left:1px solid var(--line-soft);text-align:center}
+.iv4-thead.iv4-corner{border-left:0}
+.iv4-thead button{border:0;background:none;cursor:pointer;font:inherit;width:100%;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:1px}
+.iv4-thead b{font-size:11.5px;font-weight:700;color:var(--ink)}
+.iv4-thead span{font-size:11px;color:var(--ink-faint)}
+.iv4-thead.is-today b,.iv4-thead.is-today span{color:#1F5BD8}
+.iv4-thead.is-today{box-shadow:inset 0 -2px 0 #2F6FE4}
+.iv4-hour{font-size:10.5px;color:var(--ink-faint);padding:5px 7px 0 0;text-align:right;border-top:1px solid var(--line-soft);white-space:nowrap}
+.iv4-tcell{border-top:1px solid var(--line-soft);border-left:1px solid var(--line-soft);padding:4px;min-height:54px;
+  display:flex;flex-direction:column;gap:4px;min-width:0}
+.iv4-tcell.is-today{background:#FAFCFF}
+.iv4-tgrid.is-day .iv4-tcell{flex-direction:row;flex-wrap:wrap;align-content:flex-start}
+.iv4-tgrid.is-day .iv4-ev{flex:0 1 220px}
+
+/* event cards — status colours */
+.iv4-ev{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;text-align:left;cursor:pointer;
+  font:inherit;border:1px solid;border-left-width:3px;border-radius:6px;padding:4px 6px;line-height:1.25}
+.iv4-ev:hover{filter:brightness(.98);box-shadow:0 2px 8px rgba(31,56,100,.10)}
+.iv4-ev.is-sel{box-shadow:0 0 0 2px var(--navy)}
+.iv4-ev-job,.iv4-ev-line{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iv4-ev-name{font-size:11.5px;font-weight:700;color:var(--ink);max-width:100%;overflow:hidden;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.iv4-ev-job{font-size:10.5px;color:var(--ink-soft)}
+.iv4-ev-st{font-size:10px;font-weight:700;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.iv4-ev.is-compact{flex-direction:row;padding:2px 5px;border-left-width:3px}
+.iv4-ev-line{font-size:11px;color:var(--ink)}
+.iv4-ev-line b{font-weight:700}
+.iv4-tone-blue{background:#EEF4FE;border-color:#D3E2FB;border-left-color:#2F6FE4}.iv4-tone-blue .iv4-ev-st{color:#1F5BD8}
+.iv4-tone-amber{background:#FEF5E6;border-color:#F5DFB7;border-left-color:#E59A1A}.iv4-tone-amber .iv4-ev-st{color:#B26A00}
+.iv4-tone-teal{background:#E8F6F6;border-color:#C4E7E6;border-left-color:#1BA3A1}.iv4-tone-teal .iv4-ev-st{color:#0E7C7B}
+.iv4-tone-green{background:#EAF7F0;border-color:#C7E9D5;border-left-color:#22A06B}.iv4-tone-green .iv4-ev-st{color:#14804A}
+.iv4-tone-violet{background:#F4EFFE;border-color:#DFD3FB;border-left-color:#8B5CF6}.iv4-tone-violet .iv4-ev-st{color:#6D3FD1}
+.iv4-tone-red{background:#FDEEEC;border-color:#F6D0CB;border-left-color:#D9483B}.iv4-tone-red .iv4-ev-st{color:#C2362B}
+.iv4-tone-red .iv4-ev-name{text-decoration:line-through;text-decoration-color:rgba(194,54,43,.5)}
+.iv4-ev.is-late{border-color:#D9483B}
+.iv4-late{display:inline-block;width:13px;height:13px;line-height:13px;margin-right:4px;border-radius:50%;background:#D9483B;
+  color:#fff;font-size:9.5px;font-weight:800;font-style:normal;text-align:center;vertical-align:1px}
+.iv4-more{border:0;background:none;cursor:pointer;font:inherit;font-size:11px;font-weight:700;color:#1F5BD8;padding:1px 4px;text-align:left}
+.iv4-more:hover{text-decoration:underline}
+
+/* month */
+.iv4-month{flex:1 1 0;min-height:380px;overflow:auto;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:auto;grid-auto-rows:minmax(86px,auto);align-content:start;
+  border-top:1px solid var(--line-soft)}
+.iv4-mhead{position:sticky;top:0;z-index:1;background:#F7F9FC;font-size:11.5px;font-weight:700;color:var(--ink-soft);text-align:center;
+  padding:6px 0;border-bottom:1px solid var(--line-soft);min-height:0}
+.iv4-month .iv4-mhead{grid-row:auto;height:auto}
+.iv4-mcell{border-left:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);padding:4px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.iv4-mcell:nth-child(7n+1){border-left:0}
+.iv4-mcell.is-out{background:#FAFBFD}
+.iv4-mcell.is-out .iv4-mday{color:var(--ink-faint)}
+.iv4-mday{border:0;background:none;cursor:pointer;font:inherit;align-self:flex-start;font-size:11.5px;font-weight:700;color:var(--ink);
+  min-width:22px;height:22px;border-radius:50%;padding:0 4px}
+.iv4-mday:hover{background:#EEF2F7}
+.iv4-mcell.is-today .iv4-mday{background:#1F5BD8;color:#fff}
+
+.iv4-legend{display:flex;flex-wrap:wrap;gap:4px 14px;padding:8px 14px;border-top:1px solid var(--line-soft);font-size:11px;color:var(--ink-soft)}
+.iv4-legend span{display:inline-flex;align-items:center;gap:5px}
+.iv4-sw-blue{background:#2F6FE4}.iv4-sw-amber{background:#E59A1A}.iv4-sw-teal{background:#1BA3A1}
+.iv4-sw-green{background:#22A06B}.iv4-sw-violet{background:#8B5CF6}.iv4-sw-red{background:#D9483B}
+
+/* right: interview details */
+.iv4-details{min-width:0}
+.iv4-det-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px 8px}
+.iv4-det-head h3{margin:0;font-family:var(--font-ui);font-size:14.5px;font-weight:700;color:var(--ink)}
+.iv4-det-auto{font-size:11px;color:var(--ink-faint);white-space:nowrap}
+.iv4-x{border:0;background:none;cursor:pointer;font-size:19px;line-height:1;color:var(--ink-faint);padding:0 2px}
+.iv4-x:hover{color:var(--ink)}
+.iv4-det-who{display:flex;gap:10px;align-items:flex-start;padding:2px 14px 10px}
+.iv4-det-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.iv4-link{border:0;background:none;padding:0;cursor:pointer;font:inherit;font-size:14px;font-weight:700;color:var(--ink);text-align:left;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.iv4-link:hover{color:#1F5BD8;text-decoration:underline}
+.iv4-det-sub{font-size:11.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iv4-det-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.iv4-det-tabs{display:flex;gap:18px;padding:0 14px;border-bottom:1px solid var(--line-soft)}
+.iv4-det-tabs button{border:0;background:none;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-soft);
+  padding:7px 0;border-bottom:2px solid transparent;margin-bottom:-1px}
+.iv4-det-tabs button.is-on{color:#1F5BD8;border-bottom-color:#1F5BD8}
+.iv4-det-list{list-style:none;margin:0;padding:10px 14px 8px;display:flex;flex-direction:column;gap:8px}
+.iv4-df{display:flex;gap:10px;align-items:flex-start;min-width:0}
+.iv4-df-ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex:none;background:#F3F6FA;color:var(--ink-soft)}
+.iv4-df-txt{display:flex;flex-direction:column;min-width:0}
+.iv4-df-lbl{font-size:10.5px;color:var(--ink-faint);font-weight:600}
+.iv4-df-val{font-size:12.5px;color:var(--ink);font-weight:600;overflow-wrap:anywhere}
+.iv4-df-val a{color:#1F5BD8}
+.iv4-muted{color:var(--ink-faint);font-weight:500;font-size:11.5px}
+.iv4-det-hist{list-style:none;margin:0;padding:10px 14px;display:flex;flex-direction:column;gap:9px;font-size:12.5px;max-height:380px;overflow:auto}
+.iv4-det-hist li{border-left:2px solid var(--line);padding-left:9px}
+.iv4-det-actions{margin-top:auto;padding:10px 14px 14px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:7px}
+.iv4-det-acts{display:flex;flex-wrap:wrap;gap:6px}
+.iv4-det-acts .btn{flex:1 1 auto;justify-content:center;text-align:center}
+.iv4-det-more{display:flex;gap:6px}
+.iv4-det-more .btn{flex:1;justify-content:center;text-align:center}
+
+/* --- below: Today's interviews | Quick actions | Upcoming ---------------------- */
+.iv4-row3{display:grid;grid-template-columns:minmax(0,1.32fr) minmax(0,.9fr) minmax(0,1.05fr);gap:14px;margin-bottom:14px;align-items:stretch}
+@media (max-width:1100px){.iv4-row3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.iv4-row3 .iv4-today{grid-column:1 / -1}}
+@media (max-width:760px){.iv4-row3{grid-template-columns:minmax(0,1fr)}}
+.iv4-today .ak-table td,.iv4-today .ak-table th{padding:8px 10px}
+.iv4-trunc{max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iv4-nowrap{white-space:nowrap;font-variant-numeric:tabular-nums}
+.iv4-go{color:#1F5BD8;font-weight:700;text-align:right}
+.iv4-nextlist{list-style:none;margin:0;padding:0}
+.iv4-nextlist button{width:100%;display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:none;
+  cursor:pointer;font:inherit;text-align:left;padding:8px 2px;border-bottom:1px solid var(--line-soft);color:var(--ink)}
+.iv4-nextlist li:last-child button{border-bottom:0}
+.iv4-nextlist button:hover .iv4-next-who b{color:#1F5BD8}
+.iv4-next-when{font-size:11.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums}
+.iv4-next-who{display:flex;flex-direction:column;min-width:0}
+.iv4-next-who b,.iv4-next-who span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iv4-next-who b{font-size:12.5px}
+.iv4-next-who span{font-size:11px;color:var(--ink-faint)}
+
+/* --- charts + the full list ---------------------------------------------------- */
+.iv4-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+@media (max-width:900px){.iv4-charts{grid-template-columns:minmax(0,1fr)}}
+.iv4-listcard{padding:0 16px 12px;margin-bottom:14px}
+.iv4-list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 0 8px}
+.iv4-list-head h3{margin:0;font-family:var(--font-ui);font-size:14.5px;font-weight:700;color:var(--ink)}
+.iv4-list-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+.iv4-filters .lph-facet select{padding-left:8px;padding-right:22px;font-size:12.5px}

@@ -1,0 +1,151 @@
+/* ===========================================================================
+   ATS KIT — the reference look (2026-10-08): white cards on the light paper,
+   subtle borders, a soft shadow, round tinted icon badges, compact type.
+   Built on the TeamLink tokens in styles.css (navy brand, Public Sans), so
+   it stays TeamLink. Every class is prefixed ak- and nothing global is
+   restyled: HRMS and Accounts screens are untouched.
+   =========================================================================== */
+.ak-icon{flex:none;display:block}
+
+/* tone palettes: ak-t-* = tinted disc + ink; ak-tx-* = ink only; ak-f-* = fill */
+.ak-t-blue{background:#E8F0FE;color:#1F5BD8}
+.ak-t-green{background:#E3F5EC;color:#14804A}
+.ak-t-amber{background:#FDF1DE;color:#B26A00}
+.ak-t-violet{background:#F0EAFD;color:#6D3FD1}
+.ak-t-red{background:#FDE8E6;color:#C2362B}
+.ak-t-teal{background:#E0F4F4;color:#0E7C7B}
+.ak-t-pink{background:#FCE7F1;color:#B8327A}
+.ak-t-slate{background:#EEF1F5;color:#4A5A70}
+.ak-tx-blue{color:#1F5BD8}.ak-tx-green{color:#14804A}.ak-tx-amber{color:#B26A00}.ak-tx-violet{color:#6D3FD1}
+.ak-tx-red{color:#C2362B}.ak-tx-teal{color:#0E7C7B}.ak-tx-pink{color:#B8327A}.ak-tx-slate{color:#4A5A70}
+.ak-f-blue{background:#2F6FE4}.ak-f-green{background:#22A06B}.ak-f-amber{background:#E59A1A}.ak-f-violet{background:#8B5CF6}
+.ak-f-red{background:#D9483B}.ak-f-teal{background:#1BA3A1}.ak-f-pink{background:#D9488F}.ak-f-slate{background:#8A97A8}
+
+/* --- KPI row --------------------------------------------------------------- */
+.ak-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-bottom:14px}
+.ak-kpi{display:flex;align-items:center;gap:12px;min-width:0;text-align:left;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(22,32,43,.04);padding:13px 14px;font:inherit;color:inherit}
+.ak-kpi.ak-click{cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.ak-kpi.ak-click:hover{border-color:#B9C8E0;box-shadow:0 6px 18px rgba(31,56,100,.08)}
+.ak-kpi.ak-active{border-color:var(--navy);box-shadow:0 0 0 2px var(--brand-ring)}
+.ak-kpi-ic{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;flex:none}
+.ak-kpi-body{display:flex;flex-direction:column;min-width:0}
+.ak-kpi-label{font-size:12px;font-weight:600;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ak-kpi-value{font-size:24px;line-height:1.15;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;margin-top:2px}
+.ak-kpi-sub{font-size:11.5px;color:var(--ink-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.ak-kpi-delta{font-size:11.5px;font-weight:700;margin-top:2px;white-space:nowrap}
+.ak-kpi-delta.up{color:#14804A}.ak-kpi-delta.down{color:#C2362B}.ak-kpi-delta.flat{color:var(--ink-faint)}
+.ak-kpi-dlabel{font-weight:500;color:var(--ink-faint)}
+
+/* --- Panels ------------------------------------------------------------------- */
+.ak-panel{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(22,32,43,.04);display:flex;flex-direction:column;min-width:0}
+.ak-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px 10px}
+.ak-panel-title{display:flex;align-items:center;gap:9px;min-width:0}
+.ak-panel-title h3{font-family:var(--font-ui);font-size:14.5px;font-weight:700;margin:0;color:var(--ink);line-height:1.3}
+.ak-panel-sub{display:block;font-size:11.5px;color:var(--ink-faint);font-weight:500}
+.ak-panel-ic{display:grid;place-items:center}
+.ak-panel-actions{display:flex;align-items:center;gap:10px;flex:none}
+.ak-panel-link{font-size:12px;font-weight:600;color:#1F5BD8;background:none;border:0;padding:0;cursor:pointer;text-decoration:none;white-space:nowrap}
+.ak-panel-link:hover{text-decoration:underline}
+.ak-panel-body{padding:0 16px 14px;flex:1;min-width:0}
+.ak-panel-body.ak-flush{padding:0 0 4px}
+.ak-empty{padding:18px 4px;text-align:center;color:var(--ink-faint);font-size:12.5px}
+
+/* tables inside panels */
+.ak-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.ak-table th{font-size:11px;font-weight:600;color:var(--ink-faint);text-align:left;padding:7px 12px;
+  background:#F7F9FC;border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);white-space:nowrap}
+.ak-table td{padding:8px 12px;border-bottom:1px solid var(--line-soft);color:var(--ink);vertical-align:middle}
+.ak-table tr:last-child td{border-bottom:0}
+.ak-table .num{text-align:right;font-family:var(--font-ui);font-variant-numeric:tabular-nums}
+.ak-table th.num{text-align:right}
+.ak-table tbody tr.ak-row-click{cursor:pointer}
+.ak-table tbody tr.ak-row-click:hover td{background:#F5F8FD}
+.ak-bad{color:#C2362B;font-weight:700}
+.ak-person{display:flex;align-items:center;gap:8px;min-width:0}
+.ak-person span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* --- Dashboard grid --------------------------------------------------------- */
+.ak-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px;margin-bottom:14px;align-items:stretch}
+.ak-span-3{grid-column:span 3}.ak-span-4{grid-column:span 4}.ak-span-5{grid-column:span 5}
+.ak-span-6{grid-column:span 6}.ak-span-7{grid-column:span 7}.ak-span-8{grid-column:span 8}
+.ak-span-9{grid-column:span 9}.ak-span-12{grid-column:span 12}
+@media (max-width:1280px){
+  .ak-span-3{grid-column:span 6}.ak-span-4{grid-column:span 6}.ak-span-5{grid-column:span 6}
+  .ak-span-7{grid-column:span 6}
+}
+@media (max-width:900px){
+  .ak-grid > *{grid-column:span 12 !important}
+}
+
+/* --- Stage strip ------------------------------------------------------------- */
+.ak-stages{list-style:none;margin:0;padding:0;display:flex;gap:6px;overflow-x:auto}
+.ak-stage{flex:1 1 0;min-width:118px;position:relative}
+.ak-stage > button,.ak-stage > div{width:100%;display:flex;align-items:center;gap:10px;padding:11px 18px 11px 12px;
+  border:1px solid transparent;border-radius:10px;font:inherit;text-align:left;color:inherit;background:transparent;
+  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,0 0)}
+.ak-stage > button{cursor:pointer}
+.ak-stage.ak-bg-blue > *{background:#EEF4FE}.ak-stage.ak-bg-violet > *{background:#F4EFFE}.ak-stage.ak-bg-green > *{background:#EAF7F0}
+.ak-stage.ak-bg-amber > *{background:#FEF5E6}.ak-stage.ak-bg-pink > *{background:#FDEEF5}.ak-stage.ak-bg-teal > *{background:#E8F6F6}
+.ak-stage.ak-bg-red > *{background:#FDEEEC}.ak-stage.ak-bg-slate > *{background:#F1F4F8}
+.ak-stage.ak-active > *{box-shadow:inset 0 0 0 2px var(--navy)}
+.ak-stage-ic{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:none;background:#fff !important}
+.ak-stage-txt{display:flex;flex-direction:column;min-width:0}
+.ak-stage-label{font-size:11.5px;font-weight:600;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ak-stage-value{font-size:19px;font-weight:700;color:var(--ink);line-height:1.2;font-variant-numeric:tabular-nums}
+.ak-stages.ak-compact .ak-stage-value{font-size:16px}
+
+/* --- Attention list ------------------------------------------------------------ */
+.ak-attn{list-style:none;margin:0;padding:0}
+.ak-attn li{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.ak-attn li:last-child{border-bottom:0}
+.ak-attn-n{min-width:46px;height:34px;padding:0 8px;border-radius:8px;display:grid;place-items:center;
+  font-size:17px;font-weight:800;font-variant-numeric:tabular-nums}
+.ak-attn-txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.ak-attn-label{font-size:13px;font-weight:600;color:var(--ink)}
+.ak-attn-sub{font-size:11.5px;color:var(--ink-faint)}
+.ak-btn-sm{flex:none;font-size:12px;font-weight:600;color:var(--ink);background:#fff;border:1px solid var(--line);
+  border-radius:8px;padding:5px 10px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.ak-btn-sm:hover{border-color:var(--navy);color:var(--navy)}
+
+/* --- Bar list ------------------------------------------------------------------ */
+.ak-bars{list-style:none;margin:0;padding:0}
+.ak-bars li > button,.ak-bars li > div{width:100%;display:grid;grid-template-columns:minmax(80px,1.1fr) 2fr auto 38px;
+  align-items:center;gap:10px;padding:7px 0;border:0;background:none;font:inherit;color:inherit;text-align:left}
+.ak-bars li > button{cursor:pointer;border-radius:6px}
+.ak-bars li > button:hover .ak-bar-label{color:#1F5BD8}
+.ak-bar-label{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ak-bar-track{height:7px;border-radius:7px;background:#EEF2F7;overflow:hidden}
+.ak-bar-fill{display:block;height:100%;border-radius:7px}
+.ak-bar-val{font-size:12.5px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.ak-bar-pct{font-size:11.5px;color:var(--ink-faint);text-align:right}
+
+/* --- Quick actions ------------------------------------------------------------- */
+.ak-quick{list-style:none;margin:0;padding:0}
+.ak-quick li > a,.ak-quick li > button{width:100%;display:flex;align-items:center;gap:11px;padding:8px 4px;border:0;
+  border-bottom:1px solid var(--line-soft);background:none;font:inherit;color:inherit;text-align:left;text-decoration:none;cursor:pointer}
+.ak-quick li:last-child > *{border-bottom:0}
+.ak-quick li > *:hover .ak-quick-label{color:#1F5BD8}
+.ak-quick-ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none}
+.ak-quick-txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.ak-quick-label{font-size:13px;font-weight:600;color:var(--ink)}
+.ak-quick-sub{font-size:11.5px;color:var(--ink-faint)}
+.ak-quick-go{color:var(--ink-faint);font-size:18px}
+
+/* --- bits ------------------------------------------------------------------------ */
+.ak-avatar{border-radius:50%;display:inline-grid;place-items:center;font-weight:700;flex:none;letter-spacing:.02em}
+.ak-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;white-space:nowrap}
+
+/* page head used by the redesigned screens */
+.ak-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.ak-page-head h1{font-family:var(--font-ui);font-size:23px;font-weight:800;letter-spacing:-.01em;margin:0;color:var(--ink)}
+.ak-page-head p{margin:3px 0 0;font-size:13px;color:var(--ink-soft)}
+.ak-page-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* Use the laptop's width on the redesigned ATS screens only: the shared
+   .content / main cap (1220px, styles.css) stays for HRMS and Accounts —
+   :has() matches only a page that renders the ATS kit. */
+.content:has(.ak-kpis),main:has(.ak-kpis),
+.content:has(.ak-page-head),main:has(.ak-page-head){max-width:1680px}

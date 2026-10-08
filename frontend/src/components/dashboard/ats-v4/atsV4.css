@@ -1,0 +1,181 @@
+/* ===========================================================================
+   ATS DASHBOARD v4 (2026-10-08) — the reference layout on the shared ATS kit.
+   Everything is scoped under .av4-page / .av4 so no other screen changes.
+   =========================================================================== */
+
+/* ---- header: title + subtitle left · filters + Refresh right ---------------- */
+.av4-page .av4-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin:2px 0 14px}
+.av4-page .av4-head-l{min-width:0;flex:1 1 320px}
+.av4-page .av4-head h1{font-family:var(--font-ui);font-size:23px;font-weight:800;letter-spacing:-.01em;margin:0;color:var(--ink);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.25}
+.av4-page .av4-scope{font-size:11.5px;font-weight:700;letter-spacing:.01em;color:var(--navy);background:var(--brand-tint);border-radius:999px;padding:3px 10px}
+.av4-page .av4-about{margin:3px 0 0;font-size:13px;color:var(--ink-soft)}
+.av4-page .av4-head .ah-hello{font-size:12.5px;font-weight:500;color:var(--ink-soft);margin:4px 0 0}
+.av4-page .av4-head .ah-hello button{font-size:12.5px}
+.av4-page .av4-tools{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex:0 1 auto;margin-left:auto}
+.av4-page .av4-tools .pfb{margin:0;padding:0;border:0;background:none;box-shadow:none;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.av4-page .av4-tools .lph-facet{flex:0 0 auto;width:138px;min-width:0}
+.av4-page .av4-tools .pfb .pfb-custom{width:auto;flex:0 0 auto}
+.av4-page .av4-tools .lph-facet-lbl{font-size:11px;color:var(--ink-faint);font-weight:600}
+.av4-page .av4-tools select,.av4-page .av4-tools input[type=date]{height:36px;border-radius:8px;font-size:13px;background:var(--paper-raised)}
+.av4-page .av4-dept-f{width:168px !important}
+.av4-page .av4-dept-f.is-picked select{background:var(--brand-tint);border-color:var(--navy)}
+.av4-page .av4-tools .pfb-clear{margin-left:0;align-self:flex-end;height:36px;padding:0 4px;font-size:12px}
+.av4-page .av4-refresh{height:36px;display:inline-flex;align-items:center;gap:7px;padding:0 16px;border-radius:8px;font-weight:600;white-space:nowrap}
+.av4-page .av4-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:-4px 0 12px}
+
+/* ---- KPI row: six tiles ---------------------------------------------------------- */
+.av4 .av4-kpis{gap:12px;margin-bottom:14px}
+.av4 .av4-kpis-6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.av4 .av4-kpis-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.av4 .av4-kpis-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.av4 .ak-kpi{padding:13px 12px;min-height:84px;gap:11px}
+.av4 .ak-kpi-ic{width:42px;height:42px}
+.av4 .ak-kpi-value{font-size:23px}
+.av4 .ak-kpi-label{white-space:normal;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.av4 .ak-kpi-sub{white-space:normal;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+/* ---- rows of panels (flex: an absent panel lets the others grow) ---------------- */
+.av4 .av4-row{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px;align-items:stretch}
+.av4 .av4-row > *{min-width:0;flex:1 1 0}
+.av4 .av4-row2 > .av4-att{flex:4 1 300px}
+.av4 .av4-row2 > .av4-reqs{flex:4.6 1 340px}
+.av4 .av4-row2 > .av4-quick{flex:3.1 1 240px}
+.av4 .av4-row3 > *{flex:1 1 420px}
+.av4 .av4-row3 > .av4-dept{flex:1.12 1 460px}
+.av4 .av4-row4 > *{flex:1 1 230px}
+.av4 .av4-row4 > .av4-chart{flex:1.3 1 270px}
+.av4 .av4-row4 > .av4-activity{flex:1.15 1 250px}
+.av4 .av4-slot{display:flex;flex-direction:column}
+.av4 .av4-slot > *{flex:1}
+
+/* the kit panels, a little denser */
+.av4 .ak-panel-head{padding:12px 16px 9px}
+.av4 .ak-panel-title h3{font-size:14.5px}
+.av4 .ak-panel-body{padding:0 16px 12px}
+.av4 .ak-panel-body.ak-flush{padding:0 0 6px}
+.av4 .av4-pad{margin:8px 16px}
+.av4 .av4-note{font-size:11.5px;color:var(--ink-faint);padding:6px 0 0}
+.av4 .av4-note.is-ok{color:var(--green,#1e7e46);font-weight:600}
+.av4 .ak-attn li{padding:8px 0}
+.av4 .ak-attn-n{min-width:44px;height:32px;font-size:16px}
+.av4 .ak-quick li > a,.av4 .ak-quick li > button{padding:5px 2px}
+.av4 .ak-quick-ic{width:28px;height:28px;border-radius:8px}
+.av4 .ak-quick-label{font-size:12.5px}
+
+/* legacy widgets drawn in a slot / a folded section: the same card look */
+.av4 .ah-panel,.av4 .hs-box,.av4 .ahv3-box{margin:0 !important;border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(22,32,43,.04);background:var(--paper-raised);min-width:0}
+.av4 .av4-slot .ah-panel{height:100%}
+.av4 .ah-panel .panel-head{padding:12px 16px 9px;border-bottom:0}
+.av4 .ah-panel .panel-head h3,.av4 .hs-head h3{font-family:var(--font-ui);font-size:14.5px;font-weight:700}
+.av4 .ah-list li,.av4 .ah-todo li{padding:8px 16px}
+.av4 .ah-empty{padding:16px;text-align:center;color:var(--ink-faint);font-size:12.5px}
+
+/* tables */
+.av4 .av4-tbl th{padding:7px 7px;font-size:10.5px;text-transform:none;letter-spacing:0;white-space:normal;line-height:1.2;vertical-align:bottom}
+.av4 .av4-tbl td{padding:7px 7px;font-size:12.5px}
+.av4 .av4-tbl th:first-child,.av4 .av4-tbl td:first-child{padding-left:16px}
+.av4 .av4-tbl th:last-child,.av4 .av4-tbl td:last-child{padding-right:16px}
+/* the requirements table: fixed columns so the Late column never falls off */
+.av4 .av4-reqs .av4-tbl{table-layout:fixed}
+.av4 .av4-reqs .av4-tbl td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.av4 .av4-reqs .av4-c1{width:96px}.av4 .av4-reqs .av4-c3{width:26%}.av4 .av4-reqs .av4-c4{width:104px}
+.av4 .av4-reqs .av4-tbl .av4-ellip{max-width:none}
+.av4 .av4-mid .av4-tbl{table-layout:auto}
+.av4 .av4-mid .av4-tbl .av4-ellip{max-width:260px}
+/* legacy target widget: the zero words are not a big number */
+.av4 .ah-target-n.ah-none{font-size:16px}
+.av4 .av4-scroll{overflow-x:auto}
+.av4 .av4-code{font-family:var(--font-ui);font-weight:600;color:var(--ink-soft);white-space:nowrap}
+.av4 .av4-ellip{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.av4 .av4-strong{font-weight:600;color:var(--ink)}
+.av4 .av4-link{text-decoration:none}
+.av4 .av4-link:hover{color:#1F5BD8;text-decoration:underline}
+.av4 .av4-sub{display:block;font-size:11px;color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis}
+.av4 .av4-muted{color:var(--ink-faint)}
+.av4 .av4-dash{color:var(--ink-faint)}
+.av4 .av4-n{font:inherit;font-weight:600;color:var(--ink);background:none;border:0;padding:0;cursor:pointer;font-variant-numeric:tabular-nums}
+.av4 .av4-n:hover{color:#1F5BD8;text-decoration:underline}
+.av4 .av4-n.is-red{color:#C2362B;font-weight:700}
+.av4 .av4-n.is-green{color:#14804A}
+.av4 .av4-picked td{background:var(--brand-tint)}
+.av4 .av4-dept-pick{font:inherit;font-weight:600;color:var(--ink);background:none;border:0;padding:0;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.av4 .av4-dept-pick:hover{color:#1F5BD8;text-decoration:underline}
+.av4 .av4-dot{width:9px;height:9px;border-radius:50%;flex:none}
+
+/* team snapshot tabs (in the panel head) */
+.av4 .av4-tabs{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.av4 .av4-tabs button{font:inherit;font-size:11.5px;font-weight:600;padding:3px 9px;border:0;background:var(--paper-raised);color:var(--ink-soft);cursor:pointer}
+.av4 .av4-tabs button + button{border-left:1px solid var(--line)}
+.av4 .av4-tabs button.on{background:var(--brand-tint);color:var(--navy)}
+
+/* money */
+.av4 .av4-money-list{list-style:none;margin:0;padding:0}
+.av4 .av4-money-list li{display:flex;align-items:flex-start;gap:11px;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.av4 .av4-money-list li:last-child{border-bottom:0}
+.av4 .av4-mic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex:none}
+.av4 .av4-mtxt{flex:1;min-width:0;display:flex;flex-direction:column}
+.av4 .av4-mlabel{font-size:11.5px;color:var(--ink-faint)}
+.av4 .av4-mval{font:inherit;font-size:15px;font-weight:700;color:var(--ink);background:none;border:0;padding:0;cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
+.av4 button.av4-mval:hover{color:#1F5BD8;text-decoration:underline}
+.av4 .av4-mval.is-none{font-size:12.5px;font-weight:600;color:var(--ink-faint);cursor:default}
+.av4 .av4-money-list li.is-red .av4-mval{color:#C2362B}
+.av4 .av4-msub{font-size:11px;color:var(--ink-faint)}
+.av4 .av4-mdelta{font-size:11px;font-weight:600;line-height:1.3}
+.av4 .av4-mdelta.up{color:#14804A}.av4 .av4-mdelta.down{color:#C2362B}
+
+/* hiring progress */
+.av4 .av4-hiring .tlk-donut{margin-top:2px}
+.av4 .av4-steps{list-style:none;margin:8px 0 0;padding:8px 10px;border:1px solid var(--line-soft);border-radius:8px;background:#F9FBFD}
+.av4 .av4-steps li{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-soft);padding:2px 0}
+
+/* recent activity */
+.av4 .av4-feed{list-style:none;margin:0;padding:0}
+.av4 .av4-feed li{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px}
+.av4 .av4-feed li:last-child{border-bottom:0}
+.av4 .av4-fic{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none}
+.av4 .av4-ftxt{flex:1;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.av4 .av4-banner{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:12px;color:var(--ink-soft);margin-top:8px;padding:8px 10px;
+  border:1px solid var(--line-soft);border-radius:8px;background:#FFFBF3}
+
+/* ---- the rest of the dashboard: one collapsed section each ------------------------- */
+.av4 .av4-below{margin-top:4px}
+.av4 .av4-below-h{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin:6px 2px 8px}
+.av4 .av4-fold{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;box-shadow:0 1px 2px rgba(22,32,43,.04);scroll-margin-top:70px}
+.av4 .av4-fold-h{width:100%;display:flex;align-items:center;gap:10px;padding:10px 16px;font:inherit;background:none;border:0;cursor:pointer;text-align:left;color:var(--ink)}
+.av4 .av4-fold-h:hover .av4-fold-t{color:#1F5BD8}
+.av4 .av4-fold-c{width:14px;color:var(--ink-faint);font-size:12px}
+.av4 .av4-fold-t{font-size:14px;font-weight:700}
+.av4 .av4-fold-n{font-size:11.5px;font-weight:700;color:var(--navy);background:var(--brand-tint);border-radius:999px;padding:1px 8px}
+.av4 .av4-fold-x{margin-left:auto;font-size:12px;font-weight:600;color:#1F5BD8}
+.av4 .av4-fold-b{padding:0 0 4px;border-top:1px solid var(--line-soft)}
+/* inside a fold the section header carries the title: the widget's own h3 is hidden, its tools stay */
+.av4 .av4-fold-b > .ah-panel,.av4 .av4-fold-b > .hs-box,.av4 .av4-fold-b > .ahv3-box,.av4 .av4-fold-b > .ah-banner{border:0 !important;box-shadow:none;border-radius:0 0 12px 12px}
+.av4 .av4-fold-b > .ah-panel > .panel-head h3,.av4 .av4-fold-b > .hs-box > .hs-head h3{display:none}
+.av4 .av4-fold-b > .hs-box > .hs-head,.av4 .av4-fold-b > .ah-panel > .panel-head{justify-content:flex-end;min-height:0}
+.av4 .av4-fold-b > .ah-banner{padding:12px 16px}
+
+.av4 .av4-foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px 16px;font-size:11.5px;color:var(--ink-faint);
+  border-top:1px solid var(--line);margin-top:16px;padding-top:10px}
+
+@media (max-width:1500px){
+  .av4 .ak-kpi{padding:12px 10px;gap:9px}
+  .av4 .ak-kpi-ic{width:36px;height:36px}
+  .av4 .ak-kpi-value{font-size:21px}
+}
+/* ---- laptop / tablet ------------------------------------------------------------------ */
+@media (max-width:1200px){
+  .av4 .av4-kpis-6{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .av4 .av4-kpis-5{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:640px){
+  .av4 .av4-kpis-6,.av4 .av4-kpis-5,.av4 .av4-kpis-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .av4-page .av4-tools{justify-content:flex-start}
+  .av4-page .av4-tools .lph-facet,.av4-page .av4-dept-f{width:100% !important}
+  .av4 .av4-row > *{flex-basis:100% !important}
+}
+
+/* legacy short lists in a narrow slot: wrap the chip + button under the name */
+.av4 .av4-slot .ah-list li{flex-wrap:wrap;gap:4px 10px}
+.av4 .av4-slot .ah-list-m{flex:1 1 150px}
