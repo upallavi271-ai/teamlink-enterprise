@@ -121,12 +121,14 @@ the **department** supplies the data scope. There is no compound role such as
 | `ittl@teamlink.com` | IT / TL | TL | IT · Section A |
 | `manufacturingtl@teamlink.com` | Manufacturing / TL | TL | Manufacturing |
 | `edutl@teamlink.com` | Educational / TL | TL | Educational |
-| `bdetl@teamlink.com` | BDE / TL | TL | BDE |
+| `bdetl@teamlink.com` | BDE / TL | TL | BDE — every client and agreement (view) |
 | `medical1@teamlink.com` | Medical / Recruiter | Recruiter | the Medical requirements assigned to them |
 | `itrecruiter1@teamlink.com` | IT / Recruiter | Recruiter | the IT requirements assigned to them |
 | `manufacturingrecruiter1@teamlink.com` | Manufacturing / Recruiter | Recruiter | the Manufacturing requirements assigned to them |
 | `edu1@teamlink.com` | Educational / Recruiter | Recruiter | the Education requirements assigned to them |
 | `bde1@teamlink.com` | BDE / BDE | BDE | assigned clients — Vertex, Nalanda, Orbit |
+| `mfgbde@teamlink.com` | BDE / BDE, team `BDE MFG` | BDE | every Manufacturing client (+ own) |
+| `edubde@teamlink.com` | BDE / BDE, team `BDE (Education)` | BDE | every Education client (+ own) |
 | `accounts@teamlink.com` | Accounts / Accountant | Accountant | Accounts + HRMS self-service |
 | `employee@teamlink.com` | Medical / Employee | Employee | HRMS self-service only |
 | `client@teamlink.com` | Client A — Orbit Software | Client | own company only |
@@ -136,6 +138,19 @@ the **department** supplies the data scope. There is no compound role such as
 Each desk has work of its own — Medical, IT, Manufacturing, Education and BDE
 all carry requirements, candidates and a live pipeline, so a Manufacturing
 recruiter signing in sees Manufacturing work rather than an empty table.
+
+**Clients and agreements for the BDE desk** (`backend/src/utils/bdeDesk.js`):
+
+| Who | Sees |
+|---|---|
+| BDE TL (a TL in the BDE department) | every client and its agreement — view only |
+| BDE on the BDE desk | their own clients: assigned on Users, Owner BDE, or a requirement they are the BDE on |
+| BDE on a department desk (MFG, MED, EDU …) | every client of that department, plus their own |
+
+The desk is read from the BDE's team, designation or current seat code
+(`BDE MFG`, `BDE (Education)`, `BDE MFG-2`, `EDU BDE 1`) or from a scope
+department set on Administration → Users. Spellings such as
+Education / Educational and MFG / Manufacturing are treated as one desk.
 
 **Administration is Super Admin and Admin only.** Recruiter, TL, STL, Manager,
 BDE, Accountant, Employee, Client and Candidate get no Administration menu and

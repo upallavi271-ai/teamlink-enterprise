@@ -1155,6 +1155,11 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   //    login's HRMS or ATS role is.
   const roles = rolesFor(user, isProduct ? owningProduct : null);
   if (!roles.length) return false;
+  // THE BDE TL (user, 2026-10-08) READS the client book — clients and their
+  // agreements — as a BDE does; utils/scope.js clientWhere() gives them all of
+  // it. Viewing only: adding, editing and the agreement actions stay as set.
+  if (moduleId === 'clients' && action === 'view' && !roles.includes('BDE')
+    && require('./scope').isBdeTl(user)) roles.push('BDE'); // eslint-disable-line global-require
 
   // 4. module permission + 5. action permission
   const key = isProduct ? owningProduct : '*';
@@ -1533,6 +1538,16 @@ async function effectiveMatrix(user) {
       });
       return { ...acc, features };
     }));
+    // The BDE TL's client-book read — the same widening can() applies.
+    if (m.id === 'clients' && !roles.includes('BDE') && require('./scope').isBdeTl(user)) { // eslint-disable-line global-require
+      const acc = await accessFor('BDE', m.id, key); // eslint-disable-line no-await-in-loop
+      const features = {};
+      Object.entries(acc.features || {}).forEach(([f, actions]) => {
+        features[f] = {};
+        Object.entries(actions).forEach(([a, v]) => { features[f][a] = !!v && a === 'view'; });
+      });
+      list.push({ ...acc, features });
+    }
     out[m.id] = list.length ? unionAccess(m.id, list) : defaultAccessForRole(NO_SUCH_ROLE, m.id);
     // Client login type (spec B1) — the same clamp can() applies.
     if (user.portalType) {

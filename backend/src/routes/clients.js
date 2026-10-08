@@ -4,7 +4,7 @@ const { requireAuth, requirePerm, requireProduct, can } = require('../middleware
 const {
   // atsScopeOf: a Manager / Asst Manager is held to their departments in ATS
   // (per-role spec 2026-10-03), so `global` here is Super Admin / Admin only.
-  clientWhere, requirementWhere, applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE, atsViewRole, teamRequirementWhere,
+  clientWhere, requirementWhere, applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE, clientViewRole, teamRequirementWhere,
 } = require('../utils/scope');
 const { logAudit, logFieldChanges } = require('../utils/audit');
 const { redactClientFor, clientLevelFor } = require('../utils/clientRedact');
@@ -147,7 +147,7 @@ async function shapeFor(req, client, opts = {}) {
 // ('stl') names / basics, so both get their own answer here; a Manager stays
 // 'mgmt' (their departments, full read, notes).
 const roleOf = (user) => {
-  const v = atsViewRole(user);
+  const v = clientViewRole(user);
   if (v === 'mgmt' && scopeOf(user).atsRole === 'ASSISTANT_MANAGER') return 'am';
   return v;
 };
@@ -419,7 +419,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
     canSeeInvoices
       ? prisma.invoice.findMany({
         where: { AND: [role === 'accounts' ? invoiceWhere(user) : {}, clientIn ? { clientId: clientIn } : {}] },
-        select: { clientId: true, amount: true, gst: true, tds: true, receivedAmount: true, status: true, dueDate: true },
+        select: { id: true, clientId: true, amount: true, gst: true, tds: true, receivedAmount: true, status: true, dueDate: true },
       })
       : null,
     lastActivityRows(allClients ? null : ids),

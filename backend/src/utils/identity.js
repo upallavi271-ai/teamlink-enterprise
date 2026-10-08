@@ -28,6 +28,7 @@
 const prisma = require('../db');
 const { resolvePositionScope } = require('./positionScope');
 const { scopeAliasFor } = require('./roleRegistry');
+const { bdeDesks, canonicalDepartment } = require('./bdeDesk');
 const { isSystemAccount } = require('./systemAccounts');
 
 // Seeded fallback for the designation -> ATS role mapping, used only when the
@@ -301,12 +302,38 @@ async function resolveIdentity(userId, preloaded = null) {
   //               assigned on Users (atsScopeClients).
   //   ACCOUNTANT  the requirements that have a JOINED candidate — the only
   //               requirements the billing desk sees.
+  //   BDE desk    the Client.ownerDepartment values of the desk(s) the BDE
+  //               works (utils/bdeDesk.js) — a Manufacturing BDE sees
+  //               Manufacturing's clients. Exact stored spellings, so
+  //               scope.js can filter with a plain `in`.
   let atsOwnedClientIds = null;
   let atsJoinedRequirementIds = null;
+  let atsBdeDeskDepartments = null;
   if (named(atsScopeRole) === 'BDE' && user.name) {
+    // Owner BDE is typed free text: match it trimmed and case-blind (SQLite
+    // LIKE narrows, the exact compare decides).
+    const me = String(user.name).trim().toLowerCase();
     atsOwnedClientIds = (await prisma.client.findMany({
-      where: { bdeOwner: String(user.name).trim() }, select: { id: true },
-    }).catch(() => [])).map((c) => c.id);
+      where: { bdeOwner: { contains: String(user.name).trim() } }, select: { id: true, bdeOwner: true },
+    }).catch(() => [])).filter((c) => String(c.bdeOwner || '').trim().toLowerCase() === me).map((c) => c.id);
+  }
+  if (named(atsScopeRole) === 'BDE') {
+    const seats = employee ? await prisma.positionAssignment.findMany({
+      where: { employeeId: employee.id, toDate: null },
+      select: { position: { select: { code: true, name: true, team: true, department: true } } },
+    }).catch(() => []) : [];
+    const desks = bdeDesks({
+      departments: departments,
+      texts: [
+        user.team, employee && employee.team, employee && employee.designation, ...csv(user.atsScopeTeams),
+        ...seats.flatMap((a) => [a.position.code, a.position.name, a.position.team, a.position.department]),
+      ],
+    });
+    if (desks.length) {
+      const owners = await prisma.client.groupBy({ by: ['ownerDepartment'], where: { ownerDepartment: { not: null } } }).catch(() => []);
+      atsBdeDeskDepartments = owners.map((o) => o.ownerDepartment)
+        .filter((d) => desks.includes(canonicalDepartment(d)));
+    }
   }
   if (named(atsScopeRole) === 'ACCOUNTANT') {
     atsJoinedRequirementIds = (await prisma.application.findMany({
@@ -357,6 +384,7 @@ async function resolveIdentity(userId, preloaded = null) {
     atsPositionScope,
     atsScopeClients: user.atsScopeClients || '',
     atsOwnedClientIds,
+    atsBdeDeskDepartments,
     atsJoinedRequirementIds,
     landingWorkspace: user.landingWorkspace || (mapping ? mapping.landing : null) || null,
   };
