@@ -99,6 +99,7 @@ function scopeOf(user) {
     // A desk BDE's Client.ownerDepartment values (utils/identity.js, from
     // utils/bdeDesk.js): a Manufacturing BDE sees Manufacturing's clients.
     bdeDeskDepartments: Array.isArray(u.atsBdeDeskDepartments) ? u.atsBdeDeskDepartments : [],
+    bdeDeskRequirementDepartments: Array.isArray(u.atsBdeDeskRequirementDepartments) ? u.atsBdeDeskRequirementDepartments : [],
     // ACCOUNTS (role spec 2026-09-29): the requirements that have a joined
     // candidate — resolved once per request by utils/identity.js.
     joinedRequirementIds: Array.isArray(u.atsJoinedRequirementIds) ? u.atsJoinedRequirementIds : null,
@@ -265,6 +266,9 @@ function requirementWhere(user, opts = {}) {
     case 'BDE': {
       const or = [{ bdeId: s.userId }];
       if (s.clientIds.length) or.push({ clientId: { in: s.clientIds } });
+      // A desk BDE (Manufacturing, Medical, Education …) sees that
+      // department's requirements, as they see its clients (utils/bdeDesk.js).
+      if (s.bdeDeskRequirementDepartments.length) or.push({ department: { in: s.bdeDeskRequirementDepartments } });
       return { OR: or };
     }
     case 'TL': {

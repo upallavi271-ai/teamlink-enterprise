@@ -305,10 +305,12 @@ async function resolveIdentity(userId, preloaded = null) {
   //   BDE desk    the Client.ownerDepartment values of the desk(s) the BDE
   //               works (utils/bdeDesk.js) — a Manufacturing BDE sees
   //               Manufacturing's clients. Exact stored spellings, so
-  //               scope.js can filter with a plain `in`.
+  //               scope.js can filter with a plain `in`. Requirement.department
+  //               values likewise: the desk's jobs come with its clients.
   let atsOwnedClientIds = null;
   let atsJoinedRequirementIds = null;
   let atsBdeDeskDepartments = null;
+  let atsBdeDeskRequirementDepartments = null;
   if (named(atsScopeRole) === 'BDE' && user.name) {
     // Owner BDE is typed free text: match it trimmed and case-blind (SQLite
     // LIKE narrows, the exact compare decides).
@@ -330,8 +332,13 @@ async function resolveIdentity(userId, preloaded = null) {
       ],
     });
     if (desks.length) {
-      const owners = await prisma.client.groupBy({ by: ['ownerDepartment'], where: { ownerDepartment: { not: null } } }).catch(() => []);
+      const [owners, reqDepts] = await Promise.all([
+        prisma.client.groupBy({ by: ['ownerDepartment'], where: { ownerDepartment: { not: null } } }).catch(() => []),
+        prisma.requirement.groupBy({ by: ['department'], where: { department: { not: null } } }).catch(() => []),
+      ]);
       atsBdeDeskDepartments = owners.map((o) => o.ownerDepartment)
+        .filter((d) => desks.includes(canonicalDepartment(d)));
+      atsBdeDeskRequirementDepartments = reqDepts.map((o) => o.department)
         .filter((d) => desks.includes(canonicalDepartment(d)));
     }
   }
@@ -385,6 +392,7 @@ async function resolveIdentity(userId, preloaded = null) {
     atsScopeClients: user.atsScopeClients || '',
     atsOwnedClientIds,
     atsBdeDeskDepartments,
+    atsBdeDeskRequirementDepartments,
     atsJoinedRequirementIds,
     landingWorkspace: user.landingWorkspace || (mapping ? mapping.landing : null) || null,
   };

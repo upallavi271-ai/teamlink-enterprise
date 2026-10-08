@@ -1107,17 +1107,6 @@ async function main() {
     team: 'Business Development', designation: 'BDE', location: 'Bengaluru',
     scopeClients: `${vertex.id},${nalanda.id},${orbit.id}`,
   });
-  // DESK BDEs (2026-10-08): still in the BDE department, but working one
-  // department's desk — the desk is in their team (utils/bdeDesk.js), and
-  // they see every client of that department.
-  await staffLogin({
-    email: 'mfgbde@teamlink.com', name: 'Vinod Patil', department: 'BDE',
-    team: 'BDE MFG', designation: 'BDE', location: 'Pune',
-  });
-  await staffLogin({
-    email: 'edubde@teamlink.com', name: 'Lakshmi Menon', department: 'BDE',
-    team: 'BDE (Education)', designation: 'BDE', location: 'Bengaluru',
-  });
 
   // --- Accounts and plain HRMS self-service ---------------------------------
   const cAccountant = await staffLogin({
@@ -1437,8 +1426,6 @@ async function main() {
   console.log('  manufacturingrecruiter1@teamlink.com  Manufacturing / Recruiter -> RECRUITER, assigned Manufacturing reqs');
   console.log('  edu1@teamlink.com                     Educational / Recruiter   -> RECRUITER, assigned Education reqs');
   console.log('  bde1@teamlink.com                     BDE / BDE                 -> BDE, assigned clients (Vertex, Nalanda, Orbit)');
-  console.log('  mfgbde@teamlink.com                   BDE / BDE (team BDE MFG)  -> BDE, every Manufacturing client');
-  console.log('  edubde@teamlink.com                   BDE / BDE (BDE Education) -> BDE, every Education client');
   console.log('  accounts@teamlink.com                 Accounts / Accountant     -> ACCOUNTANT, Accounts + HRMS self-service');
   console.log('  employee@teamlink.com                 Medical / Employee        -> EMPLOYEE, HRMS self-service only');
   console.log('  hr@teamlink.com                       HR / HR                   -> HR, HRMS only, EVERY employee, no ATS/Accounts');
