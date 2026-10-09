@@ -68,6 +68,7 @@ import Profile from './pages/admin/Profile.jsx';
 // (backend utils/jobPortalEmbed.js). The morning's built-in /careers pages
 // (pages/careers/) are no longer routed: /careers* forwards to /jobs.
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
+import JobPortalLaunch from './pages/JobPortalLaunch.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
 import AgreementView from './pages/AgreementView.jsx';
@@ -153,6 +154,8 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
+        {/* "Job Portal" in the sidebar: single sign-on to the TeamLink Job Portal. */}
+        <Route path="sso/job-portal" element={<JobPortalLaunch />} />
 
         {/* HRMS — matches the prototype's 6-item sidebar; the long tail of
             sub-features lives as tabs inside Performance & Development and

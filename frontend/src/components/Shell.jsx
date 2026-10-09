@@ -148,6 +148,16 @@ export default function Shell() {
               </div>
             </div>
           ))}
+          {/* Single sign-on to the Job Portal: Recruiter and Admin only (the
+              server decides — user.jobPortal from /auth/me). Same tab. */}
+          {user?.jobPortal?.allowed && (
+            <div
+              className="sb-item"
+              onClick={() => navTo('/sso/job-portal')}
+            >
+              <Ico char="💼" />Job Portal
+            </div>
+          )}
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
               nothing to do with the job portal). */}
           {user?.products?.ats && (

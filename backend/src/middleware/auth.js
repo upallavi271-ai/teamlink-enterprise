@@ -3,6 +3,9 @@ const { resolveIdentity } = require('../utils/identity');
 const { can, requirePerm, requireProduct, DENIED } = require('../utils/permissions');
 // Super Admin "View as" (read-only) — utils/viewAs.js.
 const viewAs = require('../utils/viewAs');
+// Sign-in sessions: server-side Sign Out and the 30-minute inactivity timeout
+// HRMS shares with the Job Portal (utils/authSessions.js).
+const authSessions = require('../utils/authSessions');
 
 // Coarse capabilities derived from the permission matrix. These are NOT a
 // second permission system: each one is a can() call, and every one of them
@@ -54,6 +57,18 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
   try {
+    // SIGN-IN SESSION. A token with a sid is only as good as its session:
+    // signed out (here or in the Job Portal) or idle too long ends it.
+    if (claims.sid && !claims.viewAs) {
+      const s = await authSessions.checkAndTouch(claims.sid, authSessions.activityAt(req));
+      if (!s.ok) {
+        return res.status(401).json({
+          error: s.reason === 'idle' ? 'Your session timed out after inactivity. Please sign in again.' : 'Your session has ended. Please sign in again.',
+          code: 'SESSION_EXPIRED',
+        });
+      }
+      req.authSid = claims.sid;
+    }
     const identity = await resolveIdentity(claims.id);
     if (!identity) return res.status(401).json({ error: 'Invalid or expired token' });
     if (identity.status && identity.status !== 'Active') {

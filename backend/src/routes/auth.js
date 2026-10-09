@@ -7,6 +7,8 @@ const { resolveIdentity, tokenPayload } = require('../utils/identity');
 const { effectiveMatrix, allowedStagesFor, STAGE_WORKFLOW_ACTIONS } = require('../utils/permissions');
 const { departmentsOf, scopeOf, hrmsGlobal, scopeLabel } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
+const authSessions = require('../utils/authSessions');
+const jobPortalSso = require('../utils/jobPortalSso');
 const {
   strengthError, passwordEventData, isLocked, passwordStatusOf, MAX_FAILED_LOGINS, LOCK_MINUTES,
 } = require('../utils/passwordPolicy');
@@ -52,6 +54,9 @@ async function sessionPayload(identity) {
     ...identity,
     access,
     passwordStatus,
+    // The sidebar's "Job Portal" item (single sign-on): Recruiter and Admin
+    // only, and only once HRMS_SSO_SECRET is set (utils/jobPortalSso.js).
+    jobPortal: jobPortalSso.accessFor(identity),
     workflow: { allowedStages, stageActions: STAGE_WORKFLOW_ACTIONS },
     // WHAT THIS LOGIN MAY FILTER BY, computed by utils/scope.js — the same
     // helper that decides what the lists actually return.
@@ -137,8 +142,36 @@ router.post('/login', async (req, res) => {
   // sign-in counter.
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), failedLoginCount: 0, lockedUntil: null } });
 
-  const token = jwt.sign(tokenPayload(identity), process.env.JWT_SECRET, { expiresIn: '8h' });
+  // One AuthSession per sign-in: Sign Out ends it on the server, inactivity
+  // ends it after SESSION_IDLE_MINUTES, and the Job Portal shares it.
+  const sid = await authSessions.create(user.id);
+  const token = jwt.sign({ ...tokenPayload(identity), sid }, process.env.JWT_SECRET, { expiresIn: '8h' });
   res.json({ token, user: await sessionPayload(identity) });
+});
+
+// SIGN OUT, ON THE SERVER. Ends this sign-in's session (so the token is dead
+// even if a copy survives) and the Job Portal sessions opened from it. An
+// already-expired or unknown token is still answered 200: the browser drops
+// it either way.
+router.post('/logout', async (req, res) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  let claims = null;
+  try { claims = token ? jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true }) : null; } catch { claims = null; }
+  if (claims && claims.sid && !claims.viewAs) {
+    await authSessions.revoke(claims.sid, 'signed out').catch(() => 0);
+    await jobPortalSso.notifyPortalLogout(claims.sid);
+  }
+  res.json({ ok: true });
+});
+
+// Is this sign-in still alive? The browser asks once a minute (with how long
+// the user has been idle, so the question itself is not activity) and goes to
+// the login screen on a 401 — which is how signing out of the Job Portal, or
+// the shared inactivity timeout, reaches an HRMS tab that is just sitting open.
+router.get('/session', requireAuth, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true, idleMinutes: Math.round(authSessions.idleMs() / 60000) });
 });
 
 // The resolved identity plus the permission matrix the frontend renders its

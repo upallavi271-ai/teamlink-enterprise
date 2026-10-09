@@ -159,6 +159,8 @@ app.use([
   '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats', '/api/assistant', '/api/agent',
 ], require('./utils/clientRedact').clientFieldGuard);
 app.use('/api/auth', authRoutes);
+// Single sign-on to the TeamLink Job Portal (routes/sso.js, utils/jobPortalSso.js).
+app.use('/api/sso', require('./routes/sso'));
 app.use('/api/clients', clientRoutes);
 app.use('/api/client-merge', require('./routes/clientMerge')); // Duplicate clients (SA/Admin)
 // JOB PORTAL MIRROR. After any successful write to one requirement (edit,

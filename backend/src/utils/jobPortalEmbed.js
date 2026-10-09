@@ -129,6 +129,12 @@ function portalEnv() {
     TEAMLINK_API_URL: `http://127.0.0.1:${process.env.PORT || 4010}`,
     JOB_PORTAL_SYNC_TOKEN: process.env.JOB_PORTAL_SYNC_TOKEN || '',
     JOB_PORTAL_PUSH_SECRET: process.env.JOB_PORTAL_PUSH_SECRET || '',
+    // Single sign-on from HRMS (utils/jobPortalSso.js): the same secret, this
+    // site for "Back to HRMS", and the shared inactivity timeout.
+    HRMS_SSO_SECRET: process.env.HRMS_SSO_SECRET || '',
+    HRMS_URL: env.HRMS_URL || site,
+    HRMS_API_URL: `http://127.0.0.1:${process.env.PORT || 4010}`,
+    HRMS_SSO_IDLE_MINUTES: process.env.SESSION_IDLE_MINUTES || '30',
   });
   return env;
 }

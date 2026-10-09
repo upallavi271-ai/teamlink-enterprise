@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { idleMs } from './utils/activity';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -13,7 +14,26 @@ export function viewAsToken() {
 api.interceptors.request.use((config) => {
   const token = viewAsToken() || localStorage.getItem('tl_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // How long the person has been idle, so a screen refreshing itself is not
+  // "activity" for the 30-minute timeout (utils/activity.js).
+  config.headers['X-TL-Idle-Ms'] = String(idleMs());
   return config;
+});
+
+// SIGN-IN ENDED (signed out in the Job Portal, or 30 minutes without
+// activity): drop the token and go to the login, which brings the person back
+// to this page afterwards.
+export function loginUrlFor(path, extra = '') {
+  return `/login?returnTo=${encodeURIComponent(path || '/')}${extra}`;
+}
+api.interceptors.response.use(undefined, (error) => {
+  const data = error.response?.data || {};
+  if (error.response?.status === 401 && data.code === 'SESSION_EXPIRED' && !viewAsToken()
+      && window.location.pathname !== '/login') {
+    localStorage.removeItem('tl_token');
+    window.location.assign(loginUrlFor(window.location.pathname + window.location.search, '&expired=1'));
+  }
+  throw error;
 });
 
 // A READ THAT MEETS A RESTARTING SERVER TRIES AGAIN. While the backend

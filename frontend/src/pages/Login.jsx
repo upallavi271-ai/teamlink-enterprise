@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { TeamLinkMark } from '../components/Logo.jsx';
 
@@ -9,9 +9,19 @@ import { TeamLinkMark } from '../components/Logo.jsx';
 // client dropdown and a candidate dropdown. It is gone, here and everywhere
 // else: a person's role is derived from their employee record (department +
 // designation), never chosen at sign-in. No demo password is displayed.
+// Where to go after signing in: ?returnTo=, a path on THIS site only
+// (never another origin, never "//host").
+function safeReturnTo(v) {
+  const s = String(v || '');
+  return s.startsWith('/') && !s.startsWith('//') && !s.startsWith('/\\') && !s.startsWith('/login') ? s : '';
+}
+
 export default function Login() {
-  const { login } = useAuth();
+  const { login, user, loading } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const returnTo = safeReturnTo(params.get('returnTo'));
+  const expired = params.get('expired') === '1';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -24,13 +34,16 @@ export default function Login() {
     setError('');
     try {
       const user = await login(email, password);
-      navigate(user?.landingPath || '/', { replace: true });
+      navigate(returnTo || user?.landingPath || '/', { replace: true });
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {
       setBusy(false);
     }
   }
+
+  // Already signed in and sent here to come back somewhere: go straight there.
+  if (!loading && user && returnTo) return <Navigate to={returnTo} replace />;
 
   return (
     <div className="login-shell">
@@ -44,6 +57,11 @@ export default function Login() {
           <div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div>
         </div>
 
+        {expired && (
+          <div className="small-muted" role="status" style={{ marginBottom: 10 }}>
+            Your session ended. Please sign in again to continue.
+          </div>
+        )}
         <div className="small-muted" style={{ marginBottom: 16 }}>
           Sign in with your email. One login covers everything you have access to —
           your access follows your role.

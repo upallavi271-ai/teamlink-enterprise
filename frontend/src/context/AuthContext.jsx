@@ -47,9 +47,28 @@ export function AuthProvider({ children }) {
       import('../components/ViewAs.jsx').then((m) => m.exitViewAs());
       return;
     }
+    // Ends the sign-in on the server too, and with it the Job Portal session
+    // opened from it. The token is dropped here whatever the answer — so it
+    // is handed to the call explicitly: axios adds the header asynchronously,
+    // after the removeItem below.
+    const token = localStorage.getItem('tl_token');
+    if (token) api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
     localStorage.removeItem('tl_token');
     setUser(null);
   }
+
+  // Once a minute (and when the tab comes back into view), ask whether this
+  // sign-in is still alive. A 401 — signed out in the Job Portal, or the
+  // shared 30-minute inactivity timeout — goes to the login (api.js). The
+  // question carries the idle time, so it never counts as activity itself.
+  useEffect(() => {
+    if (!user || viewAsToken()) return undefined;
+    const check = () => { api.get('/auth/session').catch(() => {}); };
+    const t = setInterval(check, 60000);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+  }, [user]);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, switchWorkspace }}>

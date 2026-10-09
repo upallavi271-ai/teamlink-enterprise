@@ -749,6 +749,23 @@ model InterviewPanelist {
   @@index([userId])
 }
 
+// ONE SIGN-IN = ONE AuthSession (2026-10-09, single sign-on to the Job Portal).
+// The JWT carries its id as `sid`; middleware/auth.js refuses a token whose
+// session is revoked (Sign Out, the Job Portal signing out) or idle for longer
+// than SESSION_IDLE_MINUTES (default 30). The Job Portal shares the same
+// timer through routes/sso.js. No relation field: the table is CREATE-only,
+// so the migration never rebuilds User (see README, SQLite migration rule).
+model AuthSession {
+  id            String    @id
+  userId        String
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@index([userId])
+}
+
 model AuditLog {
   id             String    @id @default(cuid())
   userId         String?

@@ -316,6 +316,8 @@ export default function HrmsDashboard() {
           <Link className="btn btn-sm" to="/employee-services">Employee Services</Link>
           {isHR && <Link className="btn btn-sm" to="/employees">Employee Management</Link>}
           {!isHR && <Link className="btn btn-sm" to="/my-profile">My Profile</Link>}
+          {/* Single sign-on: Recruiter and Admin only, as in the sidebar. */}
+          {user?.jobPortal?.allowed && <Link className="btn btn-sm" to="/sso/job-portal">💼 Job Portal</Link>}
         </QaRow>
       </PanelPad>
     </div>

@@ -274,6 +274,44 @@ scoped, permission-guarded queues the dashboard renders and needs no model.
 With no key, `/api/ai/status` reports it, the Ask tab says so plainly, and the
 rest of the panel keeps working.
 
+### Job Portal single sign-on — real, optional
+
+**Job Portal** (💼) in the sidebar, and on the HRMS dashboard's Quick Actions,
+opens the TeamLink Job Portal already signed in. It is shown to **Super Admin,
+Admin and ATS Recruiters only**. Anyone else who opens `/sso/job-portal`
+directly gets *Access denied* with a **Back to HRMS** button.
+
+How it works:
+
+- `POST /api/sso/job-portal/launch` signs a **60-second, single-use** HS256
+  token with `HRMS_SSO_SECRET`. The token carries id, name, email, role and this
+  sign-in's session id.
+- The browser goes to `<portal>/hrms-sso.html#token=…`. The token is in the
+  URL fragment, and the portal removes it from the address bar at once.
+- The portal checks the signature, the expiry and the single use. It then
+  opens its own session for the portal account with the **same email**.
+  Nothing is created; a portal admin adds the recruiter once.
+- The portal writes **Login (via HRMS)** to its audit log, once per HRMS
+  sign-in.
+
+Every sign-in is now an `AuthSession` row (`utils/authSessions.js`), and the
+token carries its `sid`:
+
+- **Sign Out** ends the session on the server.
+- **30 minutes without user activity** ends it (`SESSION_IDLE_MINUTES`).
+  Activity is the browser's `x-tl-idle-ms`, so screens that refresh themselves
+  do not keep it alive.
+- The Job Portal **shares** that session through `routes/sso.js`.
+  - Activity in either app keeps both alive.
+  - Signing out of either app signs out of both.
+  - Opening a portal page while signed out goes to the HRMS login, then back
+    to that page.
+
+Set `HRMS_SSO_SECRET` here and the same value in the portal's `.env`. The
+embedded portal gets it automatically. Without the secret, the item is hidden.
+The full contract is `docs/HRMS-SSO.md` in the job portal repository. The API
+test is `node backend/scripts/test-job-portal-sso.js <isolated backend url>`.
+
 ## Notes
 
 - Invoice money is `amount + GST − TDS`; GST and TDS rates come from the client record.
