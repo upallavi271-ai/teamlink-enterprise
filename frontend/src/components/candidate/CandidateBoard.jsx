@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { DupChip } from '../duplicates/DupChip.jsx'; // dup_
 import api from '../../api';
 import { initials } from '../../atsVocab';
 import { workflowStages } from '../../permissions';
@@ -229,6 +230,7 @@ export default function CandidateBoard({
                     <div className="cboard-card-top">
                       <span className="avatarsm">{initials(card.name)}</span>
                       <b className="cboard-name">{card.name}</b>
+                      <DupChip dup={card.dup} candidateId={card.candidateId} />
                       {card.onHold && <span className="cboard-hold" title={card.heldAt ? `Paused at ${card.heldAt}` : 'On hold'}>On hold</span>}
                     </div>
                     <div className={`cboard-days is-${card.tone || 'blue'}`}>
@@ -239,6 +241,9 @@ export default function CandidateBoard({
                     <div className="cboard-meta">
                       {card.recruiter ? `Recruiter: ${card.recruiter}` : 'No recruiter named'}
                     </div>
+                    {card.sourceKey && card.sourceKey !== 'Imported sheet (unknown origin)' && (
+                      <div className="cboard-meta small-muted" title={card.sourceRaw && card.sourceRaw !== card.sourceKey ? `Recorded as: ${card.sourceRaw}` : undefined}>{`From ${card.sourceKey}`}</div>
+                    )}
                     {!jobId && (
                       <div className="cboard-job small-muted">
                         {card.requirementTitle || 'No job'}

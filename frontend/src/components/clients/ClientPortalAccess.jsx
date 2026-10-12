@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
+import PortalTickList from './PortalTickList.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import './portalAccess.css';
 
@@ -10,7 +11,7 @@ import './portalAccess.css';
 // sign in to the client portal, and the one main button: Add user.
 //   BDE (client owner)      Add user = a REQUEST; "Ask to switch off".
 //   SA / Admin / Manager    Add user = created at once; approve / decline
-//   (their departments)     requests; send a new link; change type; switch
+//   (their departments)     requests; send a new link; change the ticks; switch
 //                           off / on; "Still needed" (quarterly check).
 // Everything is decided on the server (routes/portalLogins.js); this screen
 // only draws what GET /api/portal/logins/client/:id says this login may do.
@@ -35,7 +36,9 @@ export default function ClientPortalAccess({ clientId }) {
   const [error, setError] = useState('');
   const [done, setDone] = useState(null); // { message, link }
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', portalType: '', reason: '' });
+  const [form, setForm] = useState({ name: '', email: '', portalPerms: [], reason: '' });
+  const [formError, setFormError] = useState('');
+  const [editing, setEditing] = useState(null); // { id, name, perms, reason }
   const [asking, setAsking] = useState(null); // { kind: 'decline'|'off', id, name }
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -58,14 +61,34 @@ export default function ClientPortalAccess({ clientId }) {
   if (error && !data) return <div className="notice red"><span>{error}</span></div>;
   if (!data) return <div className="small-muted">Loading…</div>;
 
-  const { agreement, rights, logins, requests, history, types } = data;
+  const { agreement, rights, logins, requests, history, types, permList = [], needsView = [] } = data;
   const canAdd = (rights.request || rights.approve) && agreement.active && data.seatsLeft > 0;
   const on = logins.filter((l) => !l.off);
   const off = logins.filter((l) => l.off);
 
   function openAdd() {
-    setForm({ name: on.length ? '' : (data.client.suggestedName || ''), email: on.length ? '' : (data.client.suggestedEmail || ''), portalType: '', reason: '' });
+    setForm({ name: on.length ? '' : (data.client.suggestedName || ''), email: on.length ? '' : (data.client.suggestedEmail || ''), portalPerms: [], reason: '' });
+    setFormError('');
     setAdding(true); setDone(null); setError('');
+  }
+
+  // Older logins (no ticks stored) start from the Reviewer boxes: that is what they could do.
+  const reviewerPerms = (types.find((t) => t.value === 'REVIEWER') || {}).perms || [];
+  function openEdit(l) {
+    setEditing({ id: l.id, name: l.name, perms: l.perms || reviewerPerms, reason: '' });
+    setFormError(''); setDone(null); setError('');
+  }
+  function submitAdd() {
+    if (!form.name.trim()) { setFormError('Enter the person\'s name.'); return; }
+    if (!form.email.trim()) { setFormError('Enter their work email.'); return; }
+    if (!form.portalPerms.length) { setFormError('Tick at least one box, so this person can do something.'); return; }
+    setFormError('');
+    act(`/client/${clientId}/users`, form, () => setAdding(false));
+  }
+  function submitEdit() {
+    if (!editing.perms.length) { setFormError('Tick at least one box, so this person can do something.'); return; }
+    setFormError('');
+    act(`/client/${clientId}/users/${editing.id}/perms`, { portalPerms: editing.perms, reason: editing.reason }, () => setEditing(null));
   }
 
   return (
@@ -109,15 +132,16 @@ export default function ClientPortalAccess({ clientId }) {
           {requests.map((r) => (
             <div className="tlpa-row" key={r.id}>
               <div className="tlpa-who">
-                <b>{r.kind === 'CLIENT_DISABLE' ? `Switch off: ${r.name}` : r.name}</b>
+                <b>{r.kind === 'CLIENT_DISABLE' ? `Switch off: ${r.name}` : (r.kind === 'CLIENT_PERMS' ? `Change what ${r.name} can do` : r.name)}</b>
                 <span className="small-muted">{r.email}{r.typeWords ? ` · ${r.typeWords}` : ''}</span>
+                {r.chips?.length > 0 && <span className="tlpa-chips">{r.chips.map((c) => <StatusChip key={c} status={c} tone="blue" />)}</span>}
                 <span className="small-muted">Asked by {r.requestedBy} on {when(r.createdAt)}{r.reason ? ` — "${r.reason}"` : ''}</span>
               </div>
               <div className="tlpa-actions">
                 {rights.approve ? (
                   <>
                     <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => act(`/requests/${r.id}/approve`)}>
-                      {r.kind === 'CLIENT_DISABLE' ? 'Switch off' : 'Approve'}
+                      {r.kind === 'CLIENT_DISABLE' ? 'Switch off' : (r.kind === 'CLIENT_PERMS' ? 'Approve change' : 'Approve')}
                     </button>
                     <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setAsking({ kind: 'decline', id: r.id, name: r.name }); setNote(''); }}>Decline</button>
                   </>
@@ -148,6 +172,10 @@ export default function ClientPortalAccess({ clientId }) {
                 <StatusChip status={l.state.label} tone={TONE[l.state.tone]} />
                 {l.flags.map((f) => <StatusChip key={f.key} status={f.label} tone={TONE[f.tone]} />)}
                 {l.pendingDisable && <StatusChip status="Switch-off asked" tone="amber" />}
+                {l.pendingPerms && <StatusChip status="Change asked" tone="amber" />}
+              </span>
+              <span className="tlpa-chips" aria-label="What they can do">
+                {l.perms ? l.chips.map((c) => <span className="tlpa-pill" key={c}>{c}</span>) : <span className="tlpa-pill">Full access (older login)</span>}
               </span>
             </div>
             <div className="tlpa-actions">
@@ -159,15 +187,12 @@ export default function ClientPortalAccess({ clientId }) {
                   {l.flags.some((f) => f.key === 'review') && (
                     <button type="button" className="btn btn-sm" disabled={busy} onClick={() => act(`/client/${clientId}/users/${l.id}/keep`)}>Still needed</button>
                   )}
-                  <label className="tlpa-type">
-                    <span className="small-muted">Type</span>
-                    <select value={l.type || ''} disabled={busy} onChange={(e) => e.target.value && act(`/client/${clientId}/users/${l.id}/type`, { portalType: e.target.value })}>
-                      {!l.type && <option value="">Full access (older login)</option>}
-                      {types.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
-                  </label>
+                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => openEdit(l)}>Change what they can do</button>
                   <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => window.confirm(`Switch off ${l.name}? They will not be able to sign in.`) && act(`/client/${clientId}/users/${l.id}/disable`, {})}>Switch off</button>
                 </>
+              )}
+              {!rights.approve && rights.request && !l.pendingPerms && (
+                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => openEdit(l)}>Ask to change what they can do</button>
               )}
               {!rights.approve && rights.request && !l.pendingDisable && (
                 <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setAsking({ kind: 'off', id: l.id, name: l.name }); setNote(''); }}>Ask to switch off</button>
@@ -201,7 +226,7 @@ export default function ClientPortalAccess({ clientId }) {
           <summary className="tlpa-label">Earlier requests ({history.length})</summary>
           {history.map((r) => (
             <div className="small-muted tlpa-hist" key={r.id}>
-              {when(r.decidedAt || r.createdAt)} · {r.kind === 'CLIENT_DISABLE' ? 'Switch off' : 'New login'} {r.name} ({r.email}) — {r.status === 'Approved' ? 'approved' : 'declined'}{r.decidedBy ? ` by ${r.decidedBy}` : ''}{r.decisionNote ? `: ${r.decisionNote}` : ''}
+              {when(r.decidedAt || r.createdAt)} · {{ CLIENT_DISABLE: 'Switch off', CLIENT_PERMS: 'Change of ticks' }[r.kind] || 'New login'} {r.name} ({r.email}) — {r.status === 'Approved' ? 'approved' : 'declined'}{r.decidedBy ? ` by ${r.decidedBy}` : ''}{r.decisionNote ? `: ${r.decisionNote}` : ''}
             </div>
           ))}
         </details>
@@ -224,8 +249,8 @@ export default function ClientPortalAccess({ clientId }) {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || !form.name.trim() || !form.email.trim() || !form.portalType}
-                onClick={() => act(`/client/${clientId}/users`, form, () => setAdding(false))}
+                disabled={busy}
+                onClick={submitAdd}
               >
                 {busy ? 'Saving…' : (rights.approve ? 'Add and send invite' : 'Send request')}
               </button>
@@ -236,24 +261,33 @@ export default function ClientPortalAccess({ clientId }) {
             <label>Person's full name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
             <label>Their own work email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
             <div className="tlpa-label">What can they do?</div>
-            <div className="tlpa-types">
-              {types.map((t) => (
-                <button
-                  type="button"
-                  key={t.value}
-                  className={`tlpa-typecard${form.portalType === t.value ? ' on' : ''}`}
-                  onClick={() => setForm({ ...form, portalType: t.value })}
-                  aria-pressed={form.portalType === t.value}
-                >
-                  <b>{t.label}</b>
-                  <span>{t.hint}</span>
-                </button>
-              ))}
-            </div>
+            <PortalTickList list={permList} presets={types} needsView={needsView} value={form.portalPerms} onChange={(v) => { setForm({ ...form, portalPerms: v }); setFormError(''); }} />
             {!rights.approve && (
               <label>Why (optional)<input value={form.reason} placeholder="e.g. hiring manager for the Java jobs" onChange={(e) => setForm({ ...form, reason: e.target.value })} /></label>
             )}
-            {error && <div className="notice red"><span>{error}</span></div>}
+            {(formError || error) && <div className="notice red" role="alert"><span>{formError || error}</span></div>}
+          </div>
+        </Modal>
+      )}
+
+      {editing && (
+        <Modal
+          title={`${rights.approve ? 'Change what' : 'Ask to change what'} ${editing.name} can do`}
+          note={rights.approve ? 'Saved at once. The change shows the next time they open the portal.' : 'An Admin approves the change.'}
+          onClose={() => setEditing(null)}
+          footer={(
+            <>
+              <button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button>
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={submitEdit}>{busy ? 'Saving…' : (rights.approve ? 'Save' : 'Send request')}</button>
+            </>
+          )}
+        >
+          <div className="tlpa-form">
+            <PortalTickList list={permList} presets={types} needsView={needsView} value={editing.perms} onChange={(v) => { setEditing({ ...editing, perms: v }); setFormError(''); }} />
+            {!rights.approve && (
+              <label>Why (optional)<input value={editing.reason} placeholder="e.g. now handles the hiring" onChange={(e) => setEditing({ ...editing, reason: e.target.value })} /></label>
+            )}
+            {(formError || error) && <div className="notice red" role="alert"><span>{formError || error}</span></div>}
           </div>
         </Modal>
       )}

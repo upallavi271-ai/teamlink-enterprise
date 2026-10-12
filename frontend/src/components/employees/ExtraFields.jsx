@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { Fragment, forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import api from '../../api';
 import './ExtraFields.css';
 
@@ -104,6 +104,17 @@ const ExtraFields = forwardRef(function ExtraFields({ employeeId, editable = fal
   }
 
   if (!data || !fields.length) return null;
+  // Fields HR put under a heading of their own (Manage Fields -> Group) are shown under it.
+  const groupsOf = (list) => {
+    const out = [];
+    list.forEach((f) => {
+      const name = f.group || '';
+      let g = out.find((x) => x.name === name);
+      if (!g) { g = { name, items: [] }; out.push(g); }
+      g.items.push(f);
+    });
+    return out;
+  };
 
   const set = (k, v) => { setVals((s) => ({ ...s, [k]: v })); setErrs((e) => ({ ...e, [k]: '' })); };
 
@@ -111,17 +122,22 @@ const ExtraFields = forwardRef(function ExtraFields({ employeeId, editable = fal
     return (
       <div className="card section xfields">
         <h3>Extra details</h3>
-        <div className="xf-view">
-          {fields.map((f) => (
-            <div className="kv" key={f.key}>
-              <span className="k">{f.label}</span>
-              <span>
-                {shown(f)}
-                {f.type === 'FILE' && f.value && <> <button type="button" className="btn btn-sm" onClick={() => openFile(f)}>Download</button></>}
-              </span>
+        {groupsOf(fields).map((g) => (
+          <div key={g.name || '_'}>
+            {g.name && <h4 style={{ margin: '10px 0 6px', fontSize: 12.5 }}>{g.name}</h4>}
+            <div className="xf-view">
+              {g.items.map((f) => (
+                <div className="kv" key={f.key}>
+                  <span className="k">{f.label}</span>
+                  <span>
+                    {shown(f)}
+                    {f.type === 'FILE' && f.value && <> <button type="button" className="btn btn-sm" onClick={() => openFile(f)}>Download</button></>}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -131,7 +147,7 @@ const ExtraFields = forwardRef(function ExtraFields({ employeeId, editable = fal
       <h3 style={{ marginTop: 14 }}>Extra details</h3>
       {msg && <div className="notice" style={{ marginBottom: 8 }}>{msg}</div>}
       <div className="xf-grid">
-        {fields.map((f) => {
+        {groupsOf(fields).flatMap((g) => g.items).map((f, idx, ordered) => {
           const v = vals[f.key];
           const label = <span>{f.label}{f.required && <b className="xf-req"> ✱</b>}</span>;
           let input;
@@ -172,13 +188,17 @@ const ExtraFields = forwardRef(function ExtraFields({ employeeId, editable = fal
               </div>
             );
           }
+          const heading = f.group && (idx === 0 || ordered[idx - 1].group !== f.group);
           return (
-            <div className={`field xf-field${['MULTISELECT', 'FILE'].includes(f.type) ? ' xf-wide' : ''}`} key={f.key}>
-              {label}
-              {input}
-              {f.helpText && <small className="cell-muted">{f.helpText}</small>}
-              {errs[f.key] && <small className="error-text">{errs[f.key]}</small>}
-            </div>
+            <Fragment key={f.key}>
+              {heading && <h4 className="xf-wide" style={{ margin: '10px 0 0', fontSize: 12.5 }}>{f.group}</h4>}
+              <div className={`field xf-field${['MULTISELECT', 'FILE'].includes(f.type) ? ' xf-wide' : ''}`}>
+                {label}
+                {input}
+                {f.helpText && <small className="cell-muted">{f.helpText}</small>}
+                {errs[f.key] && <small className="error-text">{errs[f.key]}</small>}
+              </div>
+            </Fragment>
           );
         })}
       </div>

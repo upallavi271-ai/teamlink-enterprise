@@ -298,7 +298,8 @@ router.get('/jobs/:id', readLimit, async (req, res) => {
     ...cardOf(r),
     // B9.5: null = no widget (honeypot + rate limit only); else { provider, siteKey, field }.
     botProtection: await BOT.publicConfig(),
-    description: clean(r.jobDescription) || clean(r.description),
+    // A job with no description of its own shows the generated Master JD (utils/jobText.js; the client stays hidden).
+    description: clean(r.jobDescription) || clean(r.description) || (await require('../utils/jobText').masterForCareers(r)), // eslint-disable-line global-require
     responsibilities: lines(r.responsibilities),
     requirements: lines(r.qualifications),
     goodToHave: csv(r.goodToHaveSkills),
@@ -325,7 +326,8 @@ function validate(fields) {
     location: g('location', 120) || null,
     currentCompany: g('currentCompany', 120) || null,
     noticePeriod: g('noticePeriod', 40) || null,
-    expectedSalary: g('expectedSalary', 40) || null,
+    currentSalary: null,
+    expectedSalary: null,
     skills: g('skills', 400) || null,
     experienceYears: null,
   };
@@ -339,6 +341,13 @@ function validate(fields) {
     if (!Number.isFinite(n) || n < 0 || n > 60) return { error: 'Experience must be a number of years between 0 and 60.' };
     out.experienceYears = Math.round(n * 10) / 10;
   }
+  // Current + expected salary are required (user note 2026-10-10); stored as a clean "4.5 LPA".
+  const sal = require('../utils/salaryFit').validateSalaries({ // eslint-disable-line global-require
+    currentSalary: g('currentSalary', 40), expectedSalary: g('expectedSalary', 40), currentSalaryUnit: g('currentSalaryUnit', 8), expectedSalaryUnit: g('expectedSalaryUnit', 8),
+  });
+  if (!sal.ok) return { error: sal.message, errors: sal.errors };
+  out.currentSalary = sal.values.currentSalary;
+  out.expectedSalary = sal.values.expectedSalary;
   if (!/^(yes|true|on|1)$/i.test(g('consent', 5))) return { error: 'Please tick the box to agree that TeamLink may use your resume for this job.' };
   return { value: out };
 }
@@ -379,7 +388,7 @@ router.post('/jobs/:id/apply', async (req, res) => {
   if (!bot.ok) return res.status(400).json({ error: bot.error, code: 'BOT_CHECK' });
 
   const v = validate(fields);
-  if (v.error) return res.status(400).json({ error: v.error });
+  if (v.error) return res.status(400).json({ error: v.error, ...(v.errors ? { code: 'SALARY_REQUIRED', errors: v.errors } : {}) });
   const data = v.value;
   if (!parsed.file) return res.status(400).json({ error: 'Please attach your resume (PDF or Word file).' });
   try {
@@ -417,6 +426,7 @@ router.post('/jobs/:id/apply', async (req, res) => {
           experienceYears: data.experienceYears,
           skills: data.skills,
           noticePeriod: data.noticePeriod || undefined,
+          currentSalary: data.currentSalary,
           expectedSalary: data.expectedSalary,
         },
       });
@@ -430,6 +440,9 @@ router.post('/jobs/:id/apply', async (req, res) => {
       const fill = {};
       if (!candidate.email) fill.email = data.email;
       if (!candidate.phone) fill.phone = data.phone;
+      // The salaries they just gave complete an old record that had none (a value already on file is never overwritten).
+      if (!String(candidate.currentSalary || '').trim()) fill.currentSalary = data.currentSalary;
+      if (!String(candidate.expectedSalary || '').trim()) fill.expectedSalary = data.expectedSalary;
       if (Object.keys(fill).length) {
         candidate = await prisma.candidate.update({ where: { id: candidate.id }, data: fill });
         try { require('../utils/candidateListCache').markCandidateDirty(candidate.id); } catch { /* optional */ } // eslint-disable-line global-require

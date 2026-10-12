@@ -26,7 +26,7 @@ router.use(requireAuth);
 
 async function getConfig() {
   let config = await prisma.hrConfig.findFirst();
-  if (!config) config = await prisma.hrConfig.create({ data: {} });
+  if (!config) config = await prisma.hrConfig.create({ data: { graceTime: attendancePolicy.LATE_AFTER, weeklyOffDays: attendancePolicy.WEEKLY_OFF } });
   return config;
 }
 
@@ -143,9 +143,13 @@ function kpisOf(t) {
     noRecord: t.noRecord,
     notYet: t.notYet,
     upcoming: t.upcoming,
-    late: t.late,
-    missingCheckIn: t.missingCheckIn,
-    missingCheckOut: t.missingCheckOut,
+    notes: t.notes, // inside Present: late / early logout / missing check-in / missing check-out
+    tileNotes: t.tileNotes, // the same notes for Present, Half day and On leave (never tiles, never in the equation)
+    late: t.notes.late,
+    lateStates: t.lateStates, // Late = Approved + Pending + Rejected + Not explained (late-coming requests)
+    lateExcused: t.lateExcused,
+    missingCheckIn: t.notes.missingCheckIn,
+    missingCheckOut: t.notes.missingCheckOut,
     checkedIn: t.checkedIn,
     checkedOut: t.checkedOut,
     punched: t.punched,
@@ -392,7 +396,7 @@ router.put('/checkin-methods', async (req, res) => {
 // kept beside it (utils/attendancePolicy.js), as one object.
 router.get('/policy', async (req, res) => {
   let config = await prisma.hrConfig.findFirst();
-  if (!config) config = await prisma.hrConfig.create({ data: {} });
+  if (!config) config = await prisma.hrConfig.create({ data: { graceTime: attendancePolicy.LATE_AFTER, weeklyOffDays: attendancePolicy.WEEKLY_OFF } });
   res.json(await attendancePolicy.withExtras(config));
 });
 
@@ -586,19 +590,12 @@ function rangeSummary(rep, from, to) {
   const days = idx.map((i) => rep.byDate[i]);
   const people = rep.employees.map((e) => {
     const all = rep.rowsOf.get(e.id) || [];
-    const c = { present: 0, halfDay: 0, absent: 0, onLeave: 0, offDay: 0, noRecord: 0, notYet: 0, upcoming: 0, late: 0, days: 0 };
-    idx.forEach((i) => {
-      const d = all[i];
-      const b = bucketOf(d);
-      if (!b) return;
-      c.days += 1;
-      c[b] += 1;
-      if (d.late || d.status === 'Late') c.late += 1;
-    });
+    // ONE definition with the Monthly Summary row: attendanceDays.tallyPerson (bucketOf + the notes inside Present).
+    const c = dayKpi.tallyPerson(idx.map((i) => all[i]));
     return {
       employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, role: e.designation,
       hrStatus: hrStatusOf(e.employmentStatus, e.user && e.user.status),
-      ...c, workingDays: c.days - c.offDay - c.upcoming,
+      ...c,
     };
   }).filter((p) => p.days > 0);
   const n = days.length || 1;
@@ -606,9 +603,13 @@ function rangeSummary(rep, from, to) {
   const avg = (k) => Math.round((sum(k) / n) * 10) / 10;
   const anyOf = (k) => people.filter((p) => p[k] > 0).length;
   const keys = ['headcount', 'present', 'halfDay', 'absent', 'onLeave', 'offDay', 'noRecord', 'notYet', 'late', 'checkedIn', 'checkedOut'];
+  // The period in PERSON-DAYS, the same tile counts as the Monthly Summary totals (and its equation).
+  const tiles = dayKpi.addTallies(people);
   return {
     days: days.length,
     people: people.length,
+    tiles,
+    equation: dayKpi.equationText(tiles),
     presentAny: anyOf('present'),
     presentAll: people.filter((p) => p.workingDays > 0 && p.present === p.workingDays).length,
     halfDayAny: anyOf('halfDay'),
@@ -782,17 +783,19 @@ router.get('/dashboard', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
     records: monthRecords.filter((x) => x.employeeId === e.id),
     punches: monthPunches.filter((p) => p.employeeId === e.id),
     cfg: rep.cfg,
+    // an approved late coming is not a late arrival (the same rule payroll reads)
+    excusedDates: new Set((rep.rowsOf.get(e.id) || []).filter((d) => d && d.lateExcused).map((d) => d.date)),
   }).halfDayCut, 0);
 
   // Check-ins / check-outs by method: PEOPLE, by the method of their first
   // check-in / last check-out (attendanceMath.daySplit), not raw punches.
   const byMethod = {};
-  CHECKIN_METHODS.forEach((m) => { byMethod[m] = { method: m, in: 0, out: 0 }; });
+  dayKpi.HOW_ORDER.forEach((m) => { byMethod[m] = { method: m, in: 0, out: 0 }; }); // the plain labels (Biometric (device), Web check-in, ...)
   punchesOf.forEach((ps) => {
     const day = daySplit(ps);
     [['in', day.checkIn], ['out', day.checkOut]].forEach(([k, p]) => {
       if (!p) return;
-      const m = p.source === 'PulseHRM import' && p.method !== 'Biometric' ? 'Imported (no device log)' : p.method;
+      const m = dayKpi.methodOfPunch(p) || p.method;
       if (!byMethod[m]) byMethod[m] = { method: m, in: 0, out: 0 };
       byMethod[m][k] += 1;
     });
@@ -823,6 +826,7 @@ router.get('/dashboard', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
         status: rec ? rec.status : null, // as marked (what the Mark buttons change)
         dayStatus: d.status || null, // as computed from punches, marks, leave, holidays
         bucket: bucketOf(d),
+        notes: dayKpi.NOTE_TILES.includes(bucketOf(d)) ? dayKpi.notesOf(d, bucketOf(d)) : [],
         late: !!(d.late || d.status === 'Late'),
         punchRows: ps.length,
         checkIn: d.checkIn || null,
@@ -848,7 +852,24 @@ router.get('/dashboard', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
 // offDay (week off / holiday, nothing worked) is a card too, so the cards add
 // up to the HEADCOUNT — every person on the rolls on every day of the period.
 const KPI_CARD_KEYS = ['present', 'absent', 'halfDay', 'earlyLogout', 'late', 'missingCheckIn', 'missingCheckOut', 'onLeave', 'inOffice', 'notYet', 'noData', 'offDay'];
+// THE TILE SET (user, 2026-10-09): Present / Absent / Half day / On leave / Week off-Holiday
+// (+ No device data / Not checked in yet when somebody is in them). Present includes
+// Late, Early logout, Missing check-in and Missing check-out - those are notes inside it.
+const TILE_OF_BUCKET = { present: 'present', absent: 'absent', halfDay: 'halfDay', onLeave: 'onLeave', offDay: 'offDay', noRecord: 'noData', notYet: 'notYet' };
+const TILE_KEYS = ['present', 'absent', 'halfDay', 'onLeave', 'offDay', 'noData', 'notYet'];
+const TILE_LABEL = { present: 'Present', absent: 'Absent', halfDay: 'Half day', onLeave: 'On leave', offDay: 'Week off / Holiday', noData: 'No device data', notYet: 'Not checked in yet' };
 const dayKpi = require('../utils/attendanceDays');
+const halfLeave = require('../utils/halfDayLeave');
+// The tile filter: ?tile=present|absent|halfDay|onLeave|offDay|noData|notYet and, inside
+// Present only, ?note=late|earlyLogout|missingCheckIn|missingCheckOut.
+function tileRowMatches(x, tile, note, part) {
+  if (!tile) return true;
+  if (x.tile !== tile) return false;
+  if (note) return x.notes.includes(note);
+  if (tile === 'halfDay' && part) return part === 'first' ? x.session === 'First half' : part === 'second' ? x.session === 'Second half' : !x.session;
+  if (tile === 'onLeave' && part) return x.leaveKind === part;
+  return true;
+}
 function kpiRowMatches(x, kpi, part) {
   if (!kpi) return true;
   if (kpi === 'late') return x.lateDay;
@@ -867,62 +888,111 @@ router.get('/kpi-report', requirePerm(null, 'hrms', 'Attendance & Time', 'export
   const all = [];
   rep.employees.forEach((e) => {
     (rep.rowsOf.get(e.id) || []).forEach((d) => {
-      if (!d || !d.kpi || d.date < from || d.date > to) return;
+      // One row per person per day that is on the rolls (the same rule as every
+      // attendance tile); a date still to come is not listed.
+      const bk = d ? bucketOf(d) : null;
+      if (!d || !bk || d.status === 'Upcoming' || d.date < from || d.date > to) return;
       all.push({
+        // Notes ride on Present, Half day and On leave: a person with a leave who still has a missing
+        // check-in / check-out (or punched on a leave day) must stay visible to HR.
+        tile: TILE_OF_BUCKET[bk] || null, notes: dayKpi.NOTE_TILES.includes(bk) ? dayKpi.notesOf(d, bk) : [],
+        noteText: dayKpi.NOTE_TILES.includes(bk) ? dayKpi.notesOf(d, bk).map((k) => dayKpi.NOTE_LABEL[k]).join(' · ') : '',
         employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department || '',
         date: d.date, weekday: weekdayOf(d.date), checkIn: d.checkIn || null, checkOut: d.checkOut || null,
-        hours: d.hours ?? null, kpi: d.kpi, kpiLabel: dayKpi.KPI_LABEL[d.kpi], status: d.status, reason: d.reason || '',
+        hours: d.hours ?? null, kpi: d.kpi || bk, kpiLabel: dayKpi.KPI_LABEL[d.kpi] || BUCKET_LABEL[bk] || '', status: d.status, reason: d.reason || '',
         session: d.kpi === 'halfDay' ? (d.session || null) : null,
-        leaveKind: dayKpi.leaveKindOf(d), late: !!d.late, lateDay: dayKpi.isLateDay(d), colour: d.colour || '',
+        leaveKind: dayKpi.leaveKindOf(d), late: !!(d.late || d.lateExcused), lateDay: dayKpi.isLateDay(d), colour: d.colour || '',
+        // LATE COMING: where the person's request for this late day stands (approved ones are excused, not a policy late).
+        lateState: (d.late || d.lateExcused) ? (d.lateState || 'none') : '', lateExcused: !!d.lateExcused, latePermissionText: d.latePermissionText || '',
         workedOnOff: d.workedOnOff || null,
+        how: d.how || '', howOut: d.howOut || '', howText: d.howText || '', dayStatus: d.status,
+        _day: bk === 'halfDay' ? d : null,
       });
     });
   });
-  // Cascading filters: each option list is counted with the OTHER filter applied.
+  // HALF DAY: where the leave for the other half stands (Approved / Pending / Rejected / No leave applied).
+  const halfInfo = await halfLeave.annotate(prisma, all.filter((x) => x._day).map((x) => ({ employeeId: x.employeeId, date: x.date, day: x._day })));
+  all.forEach((x) => {
+    if (x._day) {
+      const i = halfInfo.get(`${x.employeeId}|${x.date}`);
+      x.halfLeave = i ? i.state : 'None'; x.halfLeaveText = i ? i.text : ''; x.halfLeaveBy = i ? i.by : ''; x.halfLeaveHalf = i ? i.half : ''; x.halfLeaveTone = i ? i.tone : 'red';
+    }
+    delete x._day;
+  });
+  // Cascading filters: each option list is counted with the OTHER filters applied.
   const dept = String(req.query.department || '');
   const empId = String(req.query.employeeId || '');
+  const howQ = String(req.query.how || '');
+  const lateQ = ['approved', 'pending', 'rejected', 'none'].includes(String(req.query.lateState || '')) ? String(req.query.lateState) : '';
+  const howOf = (x) => x.how || 'Nothing recorded';
   const people = (rows) => new Set(rows.map((x) => x.employeeId)).size;
   const deptOpts = new Map();
-  all.filter((x) => !empId || x.employeeId === empId).forEach((x) => {
+  all.filter((x) => (!empId || x.employeeId === empId) && (!howQ || howOf(x) === howQ)).forEach((x) => {
     if (!x.department) return;
     if (!deptOpts.has(x.department)) deptOpts.set(x.department, new Set());
     deptOpts.get(x.department).add(x.employeeId);
   });
   const empOpts = new Map();
-  all.filter((x) => !dept || x.department === dept).forEach((x) => {
+  all.filter((x) => (!dept || x.department === dept) && (!howQ || howOf(x) === howQ)).forEach((x) => {
     if (!empOpts.has(x.employeeId)) empOpts.set(x.employeeId, { value: x.employeeId, label: `${x.name} (${x.employeeCode})`, count: 0 });
     empOpts.get(x.employeeId).count += 1;
+  });
+  const howOpts = new Map();
+  all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId)).forEach((x) => {
+    howOpts.set(howOf(x), (howOpts.get(howOf(x)) || 0) + 1);
   });
   const facets = {
     department: [...deptOpts.entries()].map(([v, s]) => ({ value: v, label: v, count: s.size })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
     employeeId: [...empOpts.values()].sort((a, b) => a.label.localeCompare(b.label)),
+    // CHECK-IN METHOD (the old "How marked"): the plain labels, counted in days.
+    how: [...howOpts.entries()].map(([v, n]) => ({ value: v, label: v, count: n }))
+      .sort((a, b) => (dayKpi.HOW_ORDER.indexOf(a.value) + 1 || 99) - (dayKpi.HOW_ORDER.indexOf(b.value) + 1 || 99) || a.label.localeCompare(b.label)),
   };
-  const rows = all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId));
+  const rows = all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId) && (!howQ || howOf(x) === howQ));
+  // Late arrivals by the state of their late-coming request (over the same rows the cards count).
+  const lateStates = { late: 0, approved: 0, pending: 0, rejected: 0, none: 0 };
+  rows.forEach((x) => { if (x.lateDay && x.lateState) { lateStates.late += 1; lateStates[x.lateState] += 1; } });
   const count = (kpi, part) => rows.filter((x) => kpiRowMatches(x, kpi, part)).length;
   const cards = Object.fromEntries(KPI_CARD_KEYS.map((k) => [k, count(k)]));
   const parts = {
     halfDay: { first: count('halfDay', 'first'), second: count('halfDay', 'second'), marked: count('halfDay', 'marked') },
     onLeave: { approved: count('onLeave', 'approved'), pending: count('onLeave', 'pending'), informed: count('onLeave', 'informed') },
   };
-  const kpi = KPI_CARD_KEYS.includes(String(req.query.kpi || '')) ? String(req.query.kpi) : '';
-  const part = kpi ? String(req.query.part || '') : '';
-  const list = rows.filter((x) => kpiRowMatches(x, kpi, part))
+  // THE TILES (2026-10-09): Present / Absent / Half day / On leave / Week off-Holiday
+  // (+ No device data / Not checked in yet when somebody is in them) add up to the
+  // headcount. Late / Early logout / Missing check-in / Missing check-out are notes
+  // INSIDE Present, never tiles.
+  const tile = TILE_KEYS.includes(String(req.query.tile || '')) ? String(req.query.tile) : '';
+  const note = dayKpi.NOTE_TILES.includes(tile) && dayKpi.NOTE_KEYS.includes(String(req.query.note || '')) ? String(req.query.note) : '';
+  const tiles = Object.fromEntries(TILE_KEYS.map((k) => [k, rows.filter((x) => x.tile === k).length]));
+  const notes = Object.fromEntries(dayKpi.NOTE_KEYS.map((k) => [k, rows.filter((x) => x.tile === 'present' && x.notes.includes(k)).length]));
+  const tileNotes = Object.fromEntries(dayKpi.NOTE_TILES.map((tk) => [tk, Object.fromEntries(dayKpi.NOTE_KEYS.map((k) => [k, rows.filter((x) => x.tile === tk && x.notes.includes(k)).length]))]));
+  const halfRows = rows.filter((x) => x.tile === 'halfDay');
+  const halfLeaveCounts = halfLeave.summarise(halfRows.map((x) => ({ state: x.halfLeave, half: x.halfLeaveHalf })));
+  parts.halfDay = { first: rows.filter((x) => x.tile === 'halfDay' && x.session === 'First half').length, second: rows.filter((x) => x.tile === 'halfDay' && x.session === 'Second half').length, marked: rows.filter((x) => x.tile === 'halfDay' && !x.session).length };
+  parts.halfDayLeave = halfLeaveCounts;
+  parts.onLeave = { approved: rows.filter((x) => x.tile === 'onLeave' && x.leaveKind === 'approved').length, pending: rows.filter((x) => x.tile === 'onLeave' && x.leaveKind === 'pending').length, informed: rows.filter((x) => x.tile === 'onLeave' && x.leaveKind === 'informed').length };
+  const kpi = !tile && KPI_CARD_KEYS.includes(String(req.query.kpi || '')) ? String(req.query.kpi) : '';
+  const part = (tile || kpi) ? String(req.query.part || '') : '';
+  const halfState = tile === 'halfDay' ? String(req.query.leave || '') : '';
+  const list = rows.filter((x) => (tile ? tileRowMatches(x, tile, note, part) : kpiRowMatches(x, kpi, part)) && (!halfState || x.halfLeave === halfState) && (!lateQ || x.lateState === lateQ))
     .sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
   const noDataDates = [...new Set(rows.filter((x) => x.kpi === 'noData').map((x) => x.date))].sort();
 
   const format = String(req.query.format || '').toLowerCase();
   if (format === 'csv' || format === 'xlsx') {
     const t12 = (t) => (t ? dayKpi.clock(toMinutes(String(t).slice(0, 5))) : '');
-    const headers = ['Name', 'Employee ID', 'Department', 'Date', 'Day', 'In time', 'Out time', 'Hours', 'Result', 'Half', 'Late', 'Worked on week off / holiday', 'Reason'];
-    const data = list.map((x) => [x.name, x.employeeCode, x.department, x.date, x.weekday, t12(x.checkIn), t12(x.checkOut), x.hours ?? '',
-      x.kpiLabel, x.session === 'First half' ? '1st half' : x.session === 'Second half' ? '2nd half' : '', x.lateDay ? 'Yes' : '', x.workedOnOff ? 'Yes' : '', x.reason]);
-    const tag = `${kpi ? `${dayKpi.KPI_LABEL[kpi].toLowerCase().replace(/\s+/g, '-')}-` : ''}${from === to ? from : `${from}_to_${to}`}`;
+    const headers = ['Name', 'Employee ID', 'Department', 'Date', 'Day', 'In time', 'Out time', 'Check-in method', 'Hours', 'Result', 'Note', 'Half', 'Half day leave', 'Half day leave approved by', 'Late', 'Late coming', 'Worked on week off / holiday', 'Reason'];
+    const data = list.map((x) => [x.name, x.employeeCode, x.department, x.date, x.weekday, t12(x.checkIn), t12(x.checkOut), x.howText || '', x.hours ?? '',
+      TILE_LABEL[x.tile] || x.kpiLabel, x.noteText || '', x.session === 'First half' ? '1st half' : x.session === 'Second half' ? '2nd half' : '', x.halfLeaveText ? `${x.halfLeaveText.replace('Half day leave: ', '')}${x.halfLeaveHalf ? ` (${x.halfLeaveHalf})` : ''}` : '', x.halfLeaveBy || '', x.lateDay ? 'Yes' : '', x.lateDay ? (x.latePermissionText || 'Not explained') : '', x.workedOnOff ? 'Yes' : '', x.reason]);
+    const tagKey = tile ? (note ? dayKpi.NOTE_LABEL[note] : TILE_LABEL[tile]) : (kpi ? dayKpi.KPI_LABEL[kpi] : '');
+    const tag = `${tagKey ? `${tagKey.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-` : ''}${from === to ? from : `${from}_to_${to}`}`;
     return sendTabular(res, format, `attendance-${tag}`, headers, data, 'Attendance');
   }
   res.json({
     from, to, today: rep.today, single: from === to,
     rule: { start: dayKpi.clock(p.start), end: dayKpi.clock(p.end), split: dayKpi.clock(p.split), early: dayKpi.clock(p.early), late: dayKpi.clock(toMinutes(cfg.graceTime)), rulesFrom: cfg.attendanceRulesFrom || '' },
-    people: people(rows), headcount: rows.length, workingDays: rows.filter((x) => x.kpi !== 'offDay').length, workedOnOff: rows.filter((x) => x.workedOnOff).length, cards, parts, kpi, part, total: list.length, rows: list, facets, noDataDates,
+    people: people(rows), headcount: rows.length, workingDays: rows.filter((x) => x.tile !== 'offDay').length, workedOnOff: rows.filter((x) => x.workedOnOff).length, cards, parts, tiles, notes, tileNotes, lateStates, tile, note, kpi, part, total: list.length, rows: list, facets, noDataDates,
   });
 });
 
@@ -983,7 +1053,10 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
         bucket,
         bucketLabel: BUCKET_LABEL[bucket],
         note: d.note || '',
-        late: !!(d.late || d.status === 'Late'),
+        late: !!(d.late || d.lateExcused || d.status === 'Late'),
+        lateState: (d.late || d.lateExcused || d.status === 'Late') ? (d.lateState || 'none') : '', lateExcused: !!d.lateExcused, latePermissionText: d.latePermissionText || '',
+        // Notes on Present / Half day / On leave (a missing punch stays visible when a leave is applied).
+        notes: dayKpi.NOTE_TILES.includes(bucket) ? dayKpi.notesOf(d, bucket) : [],
         earlyLogout: !!d.earlyLogout, colour: d.colour || '',
         // First check-in / last check-out exactly as the day rule saw them (so
         // the list and the KPI counts agree), with the device's seconds.
@@ -994,7 +1067,9 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
         checkOutTimes: disp.outs.length ? disp.outs : (d.checkOut ? [d.checkOut] : []),
         workedSpan: spanSec != null && spanSec >= 0 ? hms(spanSec) : null,
         hours: d.hours ?? null,
-        method: fin || ps[0] ? methodLabel(fin || ps[0]) : (h && h.punchTimes ? 'Imported CSV (old HRMS)' : '—'),
+        // CHECK-IN METHOD: the plain label of the first check-in, and of the check-out when it came another way.
+        method: d.how || (h && h.punchTimes ? dayKpi.HOW.IMPORTED : '—'), methodOut: d.howOut || '', methodText: d.howText || (h && h.punchTimes ? dayKpi.HOW.IMPORTED : '—'),
+        _day: bucket === 'halfDay' ? d : null,
         punches: disp.list.length, // distinct punch times shown
         punchRows: ps.length, // stored punch rows (what the KPI "People with punches" counts)
         imported: disp.imported,
@@ -1004,20 +1079,35 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
       });
     });
   });
-  const totals = single ? kpisOf(rep.byDate[rep.byDate.length - 1]) : null;
+  // HALF DAY: where the leave for the other half stands.
+  const halfInfo = await halfLeave.annotate(prisma, rows.filter((x) => x._day).map((x) => ({ employeeId: x.employeeId, date: x.date, day: x._day })));
+  rows.forEach((x) => {
+    if (x._day) {
+      const i = halfInfo.get(`${x.employeeId}|${x.date}`);
+      x.halfLeave = i ? i.state : 'None'; x.halfLeaveText = i ? i.text : ''; x.halfLeaveBy = i ? i.by : ''; x.halfLeaveHalf = i ? i.half : ''; x.halfLeaveTone = i ? i.tone : 'red';
+    }
+    delete x._day;
+  });
+  const halfDayLeave = halfLeave.summarise(rows.filter((x) => x.bucket === 'halfDay' && x.halfLeave).map((x) => ({ state: x.halfLeave, half: x.halfLeaveHalf })));
+  const totals = single ? { ...kpisOf(rep.byDate[rep.byDate.length - 1]), halfDayLeave } : null;
   const summary = single ? null : rangeSummary(rep, from, to);
   const days = dayTotals(rep, from, to);
   // The card filter applies to the rows; the totals stay the whole period's.
   const want = String(req.query.dayStatus || '');
   const wanted = {
     headcount: (x) => !!x.bucket, // everyone on the rolls that day
-    late: (x) => x.late,
-    missingCheckOut: (x) => x.status === 'Missing Check-Out',
+    // The notes inside Present (and Half day / On leave as 'halfDay:late' ...).
+    late: (x) => x.bucket === 'present' && x.notes.includes('late'),
+    earlyLogout: (x) => x.bucket === 'present' && x.notes.includes('earlyLogout'),
+    missingCheckIn: (x) => x.bucket === 'present' && x.notes.includes('missingCheckIn'),
+    missingCheckOut: (x) => x.bucket === 'present' && x.notes.includes('missingCheckOut'),
     punched: (x) => x.punchRows > 0,
     checkedIn: (x) => !!x.checkIn,
     checkedOut: (x) => !!x.checkOut,
   };
-  if (want) rows = rows.filter((x) => x.bucket === want || x.status === want || (wanted[want] ? wanted[want](x) : false));
+  const [wantTile, wantNote] = want.includes(':') ? want.split(':') : ['', ''];
+  if (wantNote) rows = rows.filter((x) => x.bucket === wantTile && (x.notes || []).includes(wantNote));
+  else if (want) rows = rows.filter((x) => x.bucket === want || x.status === want || (wanted[want] ? wanted[want](x) : false));
   // The filter bar's Status / Method / Source (review #3 §14). The options
   // (facets) are taken before these three narrow the rows, so a dropdown never
   // shrinks to the one value picked.
@@ -1048,6 +1138,7 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
 
   res.json({
     range: !single, date: to, from, to, weekday: weekdayOf(to), month, today: rep.today, latestDataDate: latest, headcount: note,
+    lateAfter: dayKpi.clock(toMinutes(rep.cfg.graceTime)), // the Late note follows the configured grace time
     totals, summary, days, rows, facets, everyone, withoutCheckIn,
   });
 });
@@ -1140,7 +1231,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
       lastOutClock: lout ? clockOf(lout) : null,
       workedSpan: spanSec != null && spanSec >= 0 ? hms(spanSec) : null,
       hours: mins != null ? Number((mins / 60).toFixed(1)) : null,
-      method: ps.length ? methodLabel(fin || ps[0]) : 'Imported CSV (old HRMS)',
+      method: ps.length ? (dayKpi.methodOfPunch(fin || ps[0]) || methodLabel(fin || ps[0])) : dayKpi.HOW.IMPORTED,
       source: sourceOf(ps, null, h),
       location: (fin && fin.location) || '—',
       // HRMS-24 §5 — how the first check-in was verified, and where it was.
@@ -1165,10 +1256,12 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
           hrStatus: hrStatusOf(e.employmentStatus, e.user && e.user.status),
           inLog: false, status: null, dayStatus: bucket === 'noRecord' ? 'No record' : d.status, bucket, bucketLabel: BUCKET_LABEL[bucket],
           note: d.note || '', late: false, checkIn: d.checkIn || null, checkOut: d.checkOut || null,
+          notes: dayKpi.NOTE_TILES.includes(bucket) ? dayKpi.notesOf(d, bucket) : [],
           punches: 0, punchRows: 0, imported: false,
           checkInTimes: d.checkIn ? [d.checkIn] : [], checkOutTimes: d.checkOut ? [d.checkOut] : [], importedTimes: null,
           firstIn: '—', lastOut: '—', firstInClock: null, lastOutClock: null, workedSpan: null, hours: null,
-          method: '—', source: facts.record.get(key) ? 'Marked by HR' : '—', location: '—',
+          method: d.how || '—', methodOut: d.howOut || '', methodText: d.howText || '—', _day: bucket === 'halfDay' ? d : null,
+          source: facts.record.get(key) ? 'Marked by HR' : '—', location: '—',
           verification: '—', verificationScore: null, locationStatus: '—', imagePunchId: null,
         });
       });
@@ -1404,7 +1497,7 @@ router.get('/report', requirePerm(null, 'hrms', 'Attendance & Time', 'export'), 
     halfDayCut: acc.halfDayCut + r.halfDayCut,
   }), { present: 0, absent: 0, late: 0, halfDayCut: 0 });
 
-  res.json({ month, monthLabel: monthLabel(month), workingDays: calendarDays(month), businessDays: businessDays(month), totals, rows });
+  res.json({ month, monthLabel: monthLabel(month), workingDays: calendarDays(month), businessDays: businessDays(month, (await getConfig()).weeklyOffDays), totals, rows });
 });
 
 // HRMS-24 §4/§5/§10/§11 — verified web/mobile check-in, My Attendance, team

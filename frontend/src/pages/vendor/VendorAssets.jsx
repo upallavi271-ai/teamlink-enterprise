@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { TeamLinkMark } from '../../components/Logo.jsx';
 import Modal from '../../components/Modal.jsx';
 import vendorApi, {
@@ -7,6 +7,7 @@ import vendorApi, {
 } from '../../vendorApi';
 import { PW_HINT } from './VendorLogin.jsx';
 import './vendorPortal.css';
+import './vendorPortal2.css';
 
 // /vendor/assets — the vendor's ONLY page (P3, v2). "These are my assigned
 // assets": a top bar, the filters, the table, and a drawer per asset. No
@@ -131,6 +132,12 @@ export default function VendorAssets() {
           <button type="button" className="btn btn-sm" onClick={() => signOut()}>Logout</button>
         </div>
       </header>
+      <nav className="vp-tabs" aria-label="Vendor Portal">
+        <NavLink to="/vendor/invoices" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Bills and payments</NavLink>
+        <NavLink to="/vendor/documents" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Documents</NavLink>
+        <NavLink to="/vendor/assets" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Your assets</NavLink>
+        <NavLink to="/vendor/profile" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Your details</NavLink>
+      </nav>
 
       <main className="vp-main">
         <div className="vp-head">
@@ -248,7 +255,7 @@ export default function VendorAssets() {
 }
 
 // ---------------------------------------------------------------------------
-function PasswordModal({ onClose, onDone }) {
+export function PasswordModal({ onClose, onDone }) {
   const [v, setV] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

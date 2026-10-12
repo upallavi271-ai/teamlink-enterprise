@@ -18,9 +18,18 @@ import Combo from '../Combo.jsx';
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const deptOf = (t) => t.atsDepartment || t.department || '';
 
-export function tlLabel(t) {
-  return `${t.name} — ${t.openJobs ? plural(t.openJobs, 'open job', 'open jobs') : 'no open jobs'}`;
+export function tlLabel(t, note = '') {
+  return `${t.name} — ${t.openJobs ? plural(t.openJobs, 'open job', 'open jobs') : 'no open jobs'}${note}`;
 }
+
+// The job's own department's team leads (the recommended ones), and — when the
+// department has several — the least busy of them (fewest open jobs, then name).
+const sameDept = (t, dept) => !!dept && deptOf(t).trim().toLowerCase() === String(dept).trim().toLowerCase();
+export function recommendedTls(tls, dept) {
+  return (tls || []).filter((t) => sameDept(t, dept)).sort((a, b) => ((a.openJobs || 0) - (b.openJobs || 0)) || a.name.localeCompare(b.name));
+}
+// The one to preselect: the department's only TL, or the least busy of several.
+export const leastBusyTl = (tls, dept) => recommendedTls(tls, dept)[0] || null;
 
 export function recruiterLabel(p) {
   // "Ravi — 4 jobs, 13 in process, 2 late · Least busy" (late only when there is some).
@@ -51,13 +60,15 @@ export function tlGroups(tls, first) {
 // <option>s from its children and cannot see inside a component.
 export function TlOptions({ tls, first, keep }) {
   const groups = tlGroups(tls, first);
+  const rec = recommendedTls(tls, first);
+  const top = rec.length > 1 ? rec[0] : null;
   const missing = keep && keep.id && !(tls || []).some((t) => t.id === keep.id);
   return (
     <>
       {missing && <option value={keep.id}>{keep.name || 'Current team lead'}</option>}
       {groups.map((g) => (
-        <optgroup key={g.dept} label={g.dept === first ? `${g.dept} (this job's department)` : g.dept}>
-          {g.tls.map((t) => <option key={t.id} value={t.id}>{tlLabel(t)}</option>)}
+        <optgroup key={g.dept} label={g.dept === first ? `Recommended — ${g.dept} team leads` : `Other departments — ${g.dept}`}>
+          {(g.dept === first ? rec : g.tls).map((t) => <option key={t.id} value={t.id}>{tlLabel(t, top && top.id === t.id ? ' · Least busy' : '')}</option>)}
         </optgroup>
       ))}
     </>

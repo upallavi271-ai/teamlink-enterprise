@@ -13,8 +13,10 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import Recruiter360, { metricLink } from './Recruiter360.jsx';
 import FormerHistory from './FormerHistory.jsx';
 import PendingWork from '../../components/team/PendingWork.jsx';
+import { RemindButton, useCanRemind } from '../../components/team/pendingWorkKit.jsx'; // "Remind" on a task row (leads)
 import DeptTeamsAdmin from '../../components/team/DeptTeamsAdmin.jsx';
 import FollowUps from './FollowUps.jsx';
+import useUnreadReplies from '../../components/messaging/useUnreadReplies.js'; // unread replies badge on the Follow-ups tab
 // ATS layout v3 §5 — the performance snapshot's progress bars (shared kit).
 import { ProgressBar } from '../../components/charts';
 import './Team.css';
@@ -70,6 +72,15 @@ const LEGACY_TABS = {
 };
 const fmt = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('en-IN'));
 const lc = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const ago = (v) => {
+  const t = new Date(v).getTime();
+  if (!Number.isFinite(t)) return '';
+  const d = Math.floor((Date.now() - t) / 86400000);
+  if (d <= 0) return 'today';
+  if (d === 1) return 'yesterday';
+  if (d < 30) return `${d} days ago`;
+  return new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 // The shared list layout (spec 2026-10-03 §B): every filter lives in the
@@ -146,11 +157,12 @@ const PEOPLE_COLUMNS = {
     ['clients', 'Clients', 'Clients they look after'],
     ['openRequirements', 'Open jobs', 'Open jobs of their clients'],
     ['submitted', 'Sent to client', 'People sent to their clients'],
-    ['feedbackPending', 'Waiting for client', 'Sent and waiting for the client'],
+    ['feedbackPending', 'Client has not replied', 'Sent to the client and the client has not replied yet'],
     ['interviews', 'Interviews', 'Interviews booked or done'],
     ['selected', 'Selected', 'Selected or offered, not joined yet'],
     ['activeClients', 'Active clients', 'Their clients with an open job'],
     ['clientActions', 'Client tasks', 'Client next steps that are theirs'],
+    ['joined', 'Joined', 'People who joined on their clients'],
   ],
   TL: [
     ['recruiters', 'Recruiters', 'Recruiters whose seat reports to them'],
@@ -357,7 +369,7 @@ function PeopleTab({
         </div>
       )}
       {loading
-        ? <div className="small-muted" style={{ padding: 16 }}>Loading…</div>
+        ? <div className="small-muted" style={{ padding: 16 }}>Loading...</div>
         : (
           <>
             {isLead && status !== 'Former' && <PerfSnapshot list={list} onOpen={onOpen} />}
@@ -376,7 +388,7 @@ function PeopleTab({
                 </div>
               )}
             </div>
-            {status !== 'Active' && formerLoading && <div className="small-muted pw-notice">Loading the people who have left…</div>}
+            {status !== 'Active' && formerLoading && <div className="small-muted pw-notice">Loading the people who have left...</div>}
             <div className="tbl-wrap">
               <table className="pw-table">
                 <thead>
@@ -401,6 +413,7 @@ function PeopleTab({
                           {roleWord(r) && <span className="pw-role-word">{roleWord(r)}</span>}
                           {r.role === 'STL' && <span className="small-muted"> · STL</span>}
                           {(r.seatLabel || r.recruiterCode) && <div className="small-muted">{r.seatLabel || r.recruiterCode}</div>}
+                          {r.lastActiveAt && !r.former && <div className="small-muted" title="The last time one of their people moved">{`Last activity ${ago(r.lastActiveAt)}`}</div>}
                           {r.status === 'Left' && !r.former && <div><span className="fh-leftline">Left</span></div>}
                           {r.former && <div><span className="fh-leftline">{r.leftOn ? `Left on ${day(r.leftOn)}` : 'Left · last day not recorded'}</span></div>}
                           {r.former && role === 'BDE' && <div className="small-muted"><Stints r={r} dept={dept} /></div>}
@@ -425,7 +438,14 @@ function PeopleTab({
                             <td>{(r.former ? (r.sections || []).join(', ') : r.section) || <span className="cell-muted">—</span>}</td>
                           </>
                         )}
-                        {r.former
+                        {!r.former && [...showCols, ...extraCols].every(([id]) => !c[id])
+                          ? (
+                            // A person with nothing yet: one plain line, never a row of dashes.
+                            <td colSpan={showCols.length + extraCols.length} className="small-muted pw-nodata">
+                              {role === 'BDE' ? 'No clients yet' : 'No jobs yet'}
+                            </td>
+                          )
+                          : r.former
                           ? (
                             <td colSpan={showCols.length + extraCols.length} className="small-muted">
                               {t.added
@@ -448,7 +468,7 @@ function PeopleTab({
                           compact
                           icon="👥"
                           title={status === 'Former'
-                            ? (formerLoading ? 'Loading the people who have left…' : `No former ${noun}${dept ? ` in ${dept}` : ' in your area'}.`)
+                            ? (formerLoading ? 'Loading the people who have left...' : `No former ${noun}${dept ? ` in ${dept}` : ' in your area'}.`)
                             : (chips.length || q ? 'Nobody matches these filters.' : `No ${noun} in your area yet.`)}
                         />
                       </td>
@@ -483,7 +503,7 @@ const ASSIGN_FIELDS = [
   { key: 'section', get: (r) => r.section },
   { key: 'tl', get: (r) => personKey(r.tl), label: (v, r) => r.tl.name },
   { key: 'recruiter', get: (r) => (r.recruiters || []).map(personKey), label: (v, r) => ((r.recruiters || []).find((p) => personKey(p) === v) || {}).name || v },
-  { key: 'bde', get: (r) => (r.bde ? personKey(r.bde) : r.bdeRequired ? 'none' : null), label: (v, r) => (v === 'none' ? 'BDE missing (client reqs)' : r.bde.name) },
+  { key: 'bde', get: (r) => (r.bde ? personKey(r.bde) : r.bdeRequired ? 'none' : null), label: (v, r) => (v === 'none' ? 'BDE missing (client reqs)' : (r.bde.label || r.bde.name)) },
   { key: 'client', get: (r) => r.client },
   { key: 'type', get: (r) => r.type },
   { key: 'assign', get: (r) => r.assignment },
@@ -517,6 +537,8 @@ function AssignmentsTab({ rows, error, initial }) {
   const [assign, setAssign] = useState(initial.assign || '');
   const [layout, setLayout] = useState('table');
   const all = rows || [];
+  // The BDE team's lists carry no team lead / recruiter at all (the server leaves them out).
+  const noStaff = all.length > 0 && all.every((r) => r.recruiters === undefined && r.tl === undefined);
 
   const [sort, setSort] = useState('');
   const searched = useMemo(() => all.filter((r) => !q || `${r.reqCode || ''} ${r.title} ${r.client}`.toLowerCase().includes(lc(q))), [all, q]);
@@ -575,8 +597,8 @@ function AssignmentsTab({ rows, error, initial }) {
           <>
             <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
             <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
-            <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />
-            <FacetSelect label="Recruiter" value={recruiter} onChange={setRecruiter} options={facets.recruiter} allLabel="All recruiters" />
+            {!noStaff && <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />}
+            {!noStaff && <FacetSelect label="Recruiter" value={recruiter} onChange={setRecruiter} options={facets.recruiter} allLabel="All recruiters" />}
             <FacetSelect label="Client manager (BDE)" value={bde} onChange={setBde} options={facets.bde} allLabel="All client managers" />
             <FacetSelect label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />
             <FacetSelect label="Type" value={type} onChange={setType} options={facets.type} allLabel="Client + Internal" />
@@ -589,7 +611,7 @@ function AssignmentsTab({ rows, error, initial }) {
         <div className="pw-assign-bar">
           <span className="pw-layout" role="group" aria-label="Layout">
             <button type="button" className={layout === 'table' ? 'active' : ''} onClick={() => setLayout('table')}>Table</button>
-            <button type="button" className={layout === 'tree' ? 'active' : ''} onClick={() => setLayout('tree')}>Hierarchy</button>
+            {!noStaff && <button type="button" className={layout === 'tree' ? 'active' : ''} onClick={() => setLayout('tree')}>Hierarchy</button>}
           </span>
           {ASSIGNMENT_STATUSES.filter((s) => tally[s]).map((s) => (
             <button key={s} type="button" className={`pw-tally${assign === s ? ' on' : ''}`} onClick={() => setAssign(assign === s ? '' : s)} title={`Show only ${s}`}>
@@ -598,14 +620,14 @@ function AssignmentsTab({ rows, error, initial }) {
           ))}
         </div>
       )}
-      {rows === null && <div className="small-muted" style={{ padding: 16 }}>Loading…</div>}
+      {rows === null && <div className="small-muted" style={{ padding: 16 }}>Loading...</div>}
       {rows && layout === 'tree' && list.length > 0 && <AssignmentTree rows={list} />}
       {rows && (layout === 'table' || list.length === 0) && (
         <div className="tbl-wrap">
           <table className="pw-table pw-assign">
             <thead>
               <tr>
-                <th>Job</th><th>Client · type</th><th>Department · Section</th><th>Team lead</th><th>Recruiter</th><th>Client manager</th><th>Status</th>
+                <th>Job</th><th>Client · type</th><th>Department · Section</th>{!noStaff && <th>Team lead</th>}{!noStaff && <th>Recruiter</th>}<th>Client manager</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -623,15 +645,15 @@ function AssignmentsTab({ rows, error, initial }) {
                     {r.department || <span className="cell-muted">—</span>}
                     {r.section && <div className="small-muted">{r.section}</div>}
                   </td>
-                  <td>
+                  {!noStaff && <td>
                     {r.tl ? <span title={r.tl.source === 'seat' ? "From the recruiter's seat (not set on the job)" : undefined}>{r.tl.name}{r.tl.source === 'seat' && <span className="small-muted"> (seat)</span>}</span>
                       : <span className="pw-missing">Missing</span>}
-                  </td>
-                  <td>
+                  </td>}
+                  {!noStaff && <td>
                     {(r.recruiters || []).length
                       ? r.recruiters.map((p) => p.name).join(', ')
                       : <span className="pw-missing">Missing</span>}
-                  </td>
+                  </td>}
                   <td>
                     {!r.bdeRequired
                       ? <span className="cell-muted" title="Internal job — no client manager needed">—</span>
@@ -668,7 +690,7 @@ function AssignmentsTab({ rows, error, initial }) {
       )}
       {rows && layout === 'tree' && list.length > 0 && <ListFooter from={1} to={list.length} total={list.length} noun="jobs" />}
       <div className="small-muted pw-legend">
-        <b>Fully Assigned</b> = team lead, recruiter and client manager named. Internal jobs need no client manager.
+        <b>Fully Assigned</b> = {noStaff ? 'the client manager is named.' : 'team lead, recruiter and client manager named. Internal jobs need no client manager.'}
       </div>
     </>
   );
@@ -772,6 +794,7 @@ function pendingPred(r, k, v) {
 
 function PendingTab({ data, error, initial, selfId, selfMode }) {
   const navigate = useNavigate();
+  const mayRemind = useCanRemind(!selfMode); // the server says whether this lead may press Remind
   const rows = data ? data.rows : null;
   const [q, setQ] = useState(initial.q || '');
   const [dept, setDept] = useState(initial.dept || '');
@@ -856,7 +879,7 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
           ))}
         </div>
       )}
-      {rows === null && <div className="small-muted" style={{ padding: 16 }}>Loading…</div>}
+      {rows === null && <div className="small-muted" style={{ padding: 16 }}>Loading...</div>}
       {rows && (
         <div className="tbl-wrap">
           <table className="pw-table">
@@ -879,6 +902,9 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
                       ? <span title={r.ownerSource === 'attributed' ? 'Not named on the job — the person doing this work' : undefined}>{r.owner}</span>
                       : <span className="pw-missing" title="The job names nobody for this step">No {r.ownerRole || 'owner'} named</span>}
                     {r.owner && r.ownerRole && <div className="small-muted">{r.ownerRole}</div>}
+                    {mayRemind && r.ownerUserId && r.ownerUserId !== selfId && r.id && !/team lead|manager$|tl$/i.test(String(r.ownerRole || '')) && (
+                      <div className="pwk-task-remind"><RemindButton recruiterId={r.ownerUserId} applicationId={r.applicationId || r.id} /></div>
+                    )}
                   </td>
                   <td><DueChip status={r.dueStatus} dueAt={r.dueAt} source={r.dueSource} /></td>
                 </tr>
@@ -929,7 +955,7 @@ function MetricList({ personId, metric, onOpen }) {
   const rows = useMemo(() => (d ? d.rows.filter((r) => !q || JSON.stringify([r.candidate, r.requirement, r.title, r.name, r.client, r.reqCode]).toLowerCase().includes(lc(q))) : []), [d, q]);
   const page = usePaged(rows);
   if (error) return <div className="notice red">{error}</div>;
-  if (!d) return <div className="small-muted" style={{ padding: 16 }}>Loading…</div>;
+  if (!d) return <div className="small-muted" style={{ padding: 16 }}>Loading...</div>;
   const kind = d.kind;
   return (
     <>
@@ -1082,11 +1108,11 @@ export default function Team() {
   useEffect(() => { setOpenPerson(null); }, [location.search]);
 
   const [reloadKey, setReloadKey] = useState(0);
-  const [people, setPeople] = useState({ rows: [], loading: true, error: '' });
+  const [people, setPeople] = useState({ rows: [], loading: true, error: '', bdeTl: null });
   useEffect(() => {
     setPeople((p) => ({ ...p, loading: true, error: '' }));
     api.get('/ats/team', { params: { shape: 'v2' } })
-      .then((res) => setPeople({ rows: res.data.rows || [], loading: false, error: '' }))
+      .then((res) => setPeople({ rows: res.data.rows || [], loading: false, error: '', bdeTl: res.data.bdeTl || null }))
       .catch((e) => setPeople({ rows: [], loading: false, error: e.response?.data?.error || 'Could not load this page. Please try again.' }));
   }, [reloadKey]);
   const [assignments, setAssignments] = useState({ rows: null, error: '' });
@@ -1136,9 +1162,10 @@ export default function Team() {
   // Current + former in one list; a login that has left is listed once, as
   // the former person (with their history).
   const peopleRows = useMemo(() => {
-    if (!former.rows || !former.rows.length) return people.rows;
+    const base = people.rows;
+    if (!former.rows || !former.rows.length) return base;
     const leftIds = new Set(former.rows.map((r) => r.userId).filter(Boolean));
-    return [...people.rows.filter((r) => !(r.status === 'Left' && leftIds.has(r.id))), ...former.rows];
+    return [...base.filter((r) => !(r.status === 'Left' && leftIds.has(r.id))), ...former.rows];
   }, [people.rows, former.rows]);
   const [shown, setShown] = useState({ ids: null, status: 'Active' });
   const onShown = useCallback((ids, status) => setShown({ ids, status }), []);
@@ -1162,12 +1189,13 @@ export default function Team() {
   const pendingCount = pending.data
     ? (selfMode ? pending.data.rows.filter((r) => r.ownerUserId === (user && user.id)).length : pending.data.rows.length)
     : null;
+  const [replyBadge] = useUnreadReplies(true);
   const VIEWS = [
-    ['people', selfMode ? 'My Workload' : 'People & Workload', people.loading ? null : people.rows.length, 'Recruiters, client managers and team leads in your area'],
+    ['people', selfMode ? 'My Workload' : 'People & Workload', people.loading ? null : peopleRows.length, 'Recruiters, client managers and team leads in your area'],
     ['assignments', selfMode ? 'My Assignments' : 'Assignments', assignments.rows ? assignments.rows.filter((r) => r.live).length : null, 'Open jobs and who works on them'],
     ['pending', selfMode ? 'My tasks' : 'Tasks', pendingCount, selfMode ? 'Next steps that are yours' : 'Every next step and who does it'],
-    ...(leadView ? [['whohas', 'Who has work waiting', null, 'Waiting, late and follow-ups late, per person']] : []),
-    ['followups', selfMode ? 'My follow-ups' : 'Follow-ups', null, 'Who to contact, why, and by when'],
+    ...(leadView ? [['whohas', 'Pending work', null, 'Who has work waiting, and a Remind button']] : []),
+    ['followups', selfMode ? 'My follow-ups' : 'Follow-ups', replyBadge > 0 ? replyBadge : null, 'Who to contact, why, and by when. Replies from Mail, WhatsApp and SMS are in the Inbox'],
     ...(isAdmin ? [['org', 'Departments & teams', null, 'Give a TL departments, move a recruiter — with history']] : []),
   ];
   const exportTab = view === 'people' ? 'recruiters' : view === 'assignments' ? 'assignments' : null;
@@ -1206,6 +1234,15 @@ export default function Team() {
         </div>
       </div>
 
+      {people.bdeTl && view !== 'list' && (
+        <div className="notice pw-notice" style={{ background: '#eef5ff', borderColor: '#bcd4f7', color: '#173a6b' }}>
+          <b>You lead the BDE team.</b>
+          {' '}
+          {people.bdeTl.clientManagers
+            ? `${fmt(people.bdeTl.clientManagers)} client manager${people.bdeTl.clientManagers === 1 ? '' : 's'} (BDE EDU, MED, MFG ...) work for you. Their clients, jobs and people are below.`
+            : 'No client manager is on the BDE desk yet.'}
+        </div>
+      )}
       {view !== 'list' && (
         <TeamOverview
           rows={peopleRows}
@@ -1223,6 +1260,7 @@ export default function Team() {
           reportTo={reportTo}
           dailyTo={dailyTo}
           reloadKey={reloadKey}
+          bdeTl={!!people.bdeTl}
         />
       )}
 

@@ -1,0 +1,39 @@
+/* PostByHand.jsx — the "Post by hand" helper. Scoped under .pbh. */
+.pbh { display: grid; gap: 10px; font-size: 13.5px; }
+.pbh-step { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; }
+.pbh-n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--blue, #1d4ed8); color: #fff; font-size: 12px; font-weight: 700; }
+.pbh-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pbh-text { width: 100%; font: inherit; font-size: 12.5px; padding: 8px 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 8px; background: var(--surface-2, #f8fafc); resize: vertical; }
+.pbh-fields { display: grid; gap: 6px; max-height: 280px; overflow: auto; }
+.pbh-field { display: grid; grid-template-columns: 150px 1fr auto; gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid var(--line-soft, #f1f5f9); }
+.pbh-k { color: var(--ink-soft, #64748b); font-size: 12px; }
+.pbh-v { white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: auto; }
+.pbh-steps { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
+.pbh-warn { padding: 8px 10px; border-radius: 8px; background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
+.pbh-done { padding: 8px 10px; border-radius: 8px; background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; display: grid; gap: 6px; }
+@media (max-width: 640px) { .pbh-field { grid-template-columns: 1fr auto; } .pbh-k { grid-column: 1 / -1; } }
+
+/* Auto / By hand / Not connected tag on a posting-source row (JobPostingSites.jsx, PostingStatusPanel.jsx) */
+.jps-mode { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line, #e2e8f0); color: var(--ink-soft, #64748b); white-space: nowrap; }
+.jps-mode.is-auto { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
+.jps-mode.is-hand { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
+.jps-mode.is-none { color: #9a3412; border-color: #fed7aa; background: #fff7ed; }
+.jps-late { color: #9a3412; font-weight: 600; }
+
+/* JobBoardIntegration — the Connect card */
+.jbi-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.jbi-why { font-size: 13px; }
+.jbi-headline { margin: 8px 0 6px; font-size: 13.5px; line-height: 1.5; }
+.jbi-guide { display: grid; gap: 8px; margin-top: 8px; font-size: 13px; line-height: 1.5; }
+.jbi-routes { display: grid; gap: 6px; }
+.jbi-route { padding: 8px 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 8px; background: var(--card, #fff); }
+.jbi-route-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 2px; }
+.jbi-steps, .jbi-fields { margin: 2px 0; padding-left: 20px; display: grid; gap: 3px; }
+.jbi-links { display: grid; gap: 8px; }
+.jbi-link-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.jbi-link-row code { word-break: break-all; font-size: 12px; background: #f1f5f9; padding: 3px 6px; border-radius: 6px; }
+
+/* the 5 checks before "I posted it" */
+.pbh-checks { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 8px; background: var(--surface-2, #f8fafc); }
+.pbh-check { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.pbh-check input { width: 18px; height: 18px; }

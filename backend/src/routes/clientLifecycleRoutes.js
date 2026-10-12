@@ -26,6 +26,7 @@ const { findClientDuplicates } = require('../utils/clientDuplicates');
 const {
   lifecycleOf, baseRights, rightsFor, pauseApproverIds,
 } = require('../utils/clientLifecycle');
+const clientLifecycle = require('../utils/clientLifecycle');
 
 const REQUEST_ACTION = 'Client pause requested';
 const MIN_REASON = 3;
@@ -100,7 +101,7 @@ module.exports = function mountClientLifecycle(router, { shapeFor, executionFile
         decisionNote: r.approvalStatus && r.approvalStatus !== 'Pending' ? r.toValue : null,
         mine: r.userId === req.user.id,
         // Approve / Reject: whoever may pause THIS client directly.
-        canDecide: (r.approvalStatus || 'Pending') === 'Pending' && !!(rights && (rights.pause || rights.reactivate)),
+        canDecide: (r.approvalStatus || 'Pending') === 'Pending' && !!(rights && (rights.pause || rights.reactivate)) && !!c && clientLifecycle.mayDecide(req.user, c),
       };
     }).filter((r) => r.mine || r.canDecide);
     return res.json({ canDecide: base.pauseEdit, requests: out });
@@ -122,7 +123,7 @@ module.exports = function mountClientLifecycle(router, { shapeFor, executionFile
       return null;
     }
     const rights = rightsFor(req.user, client, await baseRights(req.user));
-    if (!rights.pause && !rights.reactivate) {
+    if ((!rights.pause && !rights.reactivate) || !clientLifecycle.mayDecide(req.user, client)) {
       res.status(403).json({ error: 'Only an Admin, or the Manager of this client\'s department, can decide a pause request.' });
       return null;
     }
@@ -196,7 +197,9 @@ module.exports = function mountClientLifecycle(router, { shapeFor, executionFile
       return res.status(403).json({
         error: rights.requestPause || (await baseRights(req.user)).pauseRequest
           ? 'You cannot pause a client directly — send a pause request; an Admin or the department Manager approves it.'
-          : 'Pausing a client is for Super Admin, Admin, or the Manager of the client\'s department.',
+          : (clientLifecycle.isDeskBde(req.user) && !clientLifecycle.ownsClient(req.user, client)
+            ? 'You can pause only the clients that are yours. Ask the client\'s BDE, the BDE team lead or an Admin.'
+            : 'Pausing a client is for Super Admin, Admin, the Manager of the client\'s department, or the client\'s own BDE.'),
         code: 'PAUSE_NOT_ALLOWED',
       });
     }
@@ -213,7 +216,7 @@ module.exports = function mountClientLifecycle(router, { shapeFor, executionFile
     if (!rights.reactivate) {
       if (lifecycleOf(client.status) === 'Active') return res.status(409).json({ error: `${client.name} is already active.` });
       if (lifecycleOf(client.status) === 'Archived') return res.status(409).json({ error: `${client.name} is archived — un-archive it instead.` });
-      return res.status(403).json({ error: 'Reactivating a client is for Super Admin, Admin, or the Manager of the client\'s department.' });
+      return res.status(403).json({ error: 'Resuming a client is for Super Admin, Admin, the Manager of the client\'s department, or the client\'s own BDE.' });
     }
     const r = reasonOf(req.body);
     if (r.error) return res.status(400).json({ error: r.error });

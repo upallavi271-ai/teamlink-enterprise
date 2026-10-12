@@ -40,6 +40,10 @@ const SUBJECTS = {
     const r = await prisma.attendanceRegularization.findUnique({ where: { id }, include: { employee: true } });
     return r && { record: r, employee: r.employee, status: r.status, title: `Regularization · ${r.date}` };
   },
+  latePermission: async (id) => {
+    const r = await prisma.latePermission.findUnique({ where: { id }, include: { employee: true } });
+    return r && { record: r, employee: r.employee, status: r.status, title: `Late permission · ${r.date}` };
+  },
   resignation: async (id) => {
     const r = await prisma.employeeRecord.findUnique({ where: { id }, include: { employee: true } });
     if (!r || r.type !== 'RESIGNATION') return null;

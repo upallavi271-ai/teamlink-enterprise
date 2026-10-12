@@ -121,7 +121,7 @@ const api = async (m, p, b) => {
 try {
   const reg = await api('post', '/auth/register', {
     name: 'Proctor Test', email: EMAIL, password: PASSWORD,
-    phone: '+91 90000 00004', location: 'Hyderabad', role: 'candidate',
+    phone: '+91 90000 00004', location: 'Hyderabad', role: 'candidate', preferredLocation: 'Hyderabad', expectedCtc: 4, noticePeriod: 'Immediate', preferredWorkModes: ['Hybrid'],
   });
   candidateId = (reg.candidate && reg.candidate.id) || reg.candidateId || null;
   await api('post', '/auth/login', { email: EMAIL, password: PASSWORD, role: 'candidate' });
@@ -196,21 +196,30 @@ try {
       check(panel.camera, '  and the camera check');
       check(panel.admits, '  and names what it does NOT check');
 
-      /* Now leave the tab. */
-      await page.evaluate(() => {
-        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      /* Now leave the tab: the FIRST time is a warning and the interview carries on. */
+      const hide = (v) => page.evaluate((v) => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => v });
         document.dispatchEvent(new Event('visibilitychange'));
-      });
-      await page.waitForTimeout(900);
+      }, v);
+      await hide(true);
+      await page.waitForTimeout(1200);
+      const warned = await page.evaluate(() => ({ banner: !!document.querySelector('.tlig-warn'),
+        still: /Spoken question|Microphone level|Live transcript/i.test(document.body.textContent || ''),
+        suspended: /Interview suspended/i.test(document.body.innerText || '') }));
+      check(warned.banner && warned.still && !warned.suspended, 'leaving the tab the first time WARNS and the interview carries on ' + JSON.stringify(warned));
+      await hide(false);
+      await page.waitForTimeout(400);
+      await hide(true);
+      await page.waitForTimeout(1500);
 
       const suspended = await page.evaluate(() => {
         const t = document.body.textContent || '';
         return { text: t.slice(0, 0) || '',
                  heading: /Interview suspended/i.test(t),
-                 why: /stopped being the active window/i.test(t),
-                 kept: /answers up to this point were kept/i.test(t) };
+                 why: /The interview window was not in front/i.test(t),
+                 kept: /answers up to this point were saved/i.test(t) };
       });
-      check(suspended.heading, 'leaving the tab SUSPENDS the interview');
+      check(suspended.heading, 'leaving the tab a second time SUSPENDS the interview');
       check(suspended.why, '  and the screen says what happened');
       check(suspended.kept, '  and what it means for their answers');
     }
@@ -275,10 +284,11 @@ check(black.blackLuma < 8 && black.greyLuma > 8,
 const fair = await page.evaluate(() => {
   const src = document.documentElement.innerHTML;
   return /function candidateIsAnswering\(\)\{\s*return\s*!!AIIV\.listening;\s*\}/.test(src)
-    && /if\(!candidateIsAnswering\(\)\s*&&\s*vadAvailable\(\)\)/.test(src);
+    && /if\(!vadAvailable\(\)\s*\|\|\s*!roomShouldBeQuiet\(\)\)/.test(src)
+    && /function roomShouldBeQuiet\(\)/.test(src) && /AIIV\.speaking\s*\|\|\s*AIIV\.saving/.test(src);
 });
 check(fair,
-  'background noise is only counted while the candidate is NOT the one talking');
+  'background noise is only counted in a stretch nothing explains: not while the candidate answers, the interviewer speaks or an answer is being saved');
 
 await page.evaluate(() => {
   try { (window.__probeStream || { getTracks: () => [] }).getTracks().forEach((t) => t.stop()); } catch (e) {}

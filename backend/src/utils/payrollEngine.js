@@ -69,15 +69,18 @@ async function getPolicy(db = prisma) {
 const isMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
 const monthParts = (m) => { const [y, mo] = m.split('-').map(Number); return { year: y, monthNum: mo }; };
 
-// Payroll working days — the pay basis, same rule the month run always used:
-// every calendar day when weekends are paid, otherwise Monday to Friday.
+// Payroll working days — the pay basis: every calendar day when the week-off
+// days are paid ("weekendsPaid", the policy flag), otherwise every day that is
+// not a configured week off. Week off = Sunday only (HrConfig.weeklyOffDays,
+// '0'), so Saturday always counts: Monday to Saturday (user, 2026-10-09).
 function payrollWorkingDays(month, policy) {
   const { year, monthNum } = monthParts(month);
   const days = new Date(year, monthNum, 0).getDate();
+  const offs = D.weeklyOffs(policy);
   let n = 0;
   for (let d = 1; d <= days; d += 1) {
     const dow = new Date(year, monthNum - 1, d).getDay();
-    if (policy.weekendsPaid || (dow !== 0 && dow !== 6)) n += 1;
+    if (policy.weekendsPaid || !offs.has(dow)) n += 1;
   }
   return n;
 }
@@ -325,6 +328,8 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     if (!r.id || !r.incentive) continue;
     // eslint-disable-next-line no-await-in-loop
     await prisma.recruiterJoiningDecision.updateMany({ where: { employeeId: r.employeeId, payMonth: month, decision: 'INCENTIVE' }, data: { payrollEntryId: r.id } }).catch(() => {});
+    // eslint-disable-next-line no-await-in-loop
+    await require('./incentives').linkPayroll(r.employeeId, month, r.id);
   }
   if (rows.length || locked.length) await refreshMonthRun(month, actor ? actor.name : null);
   if (actor && (created || updated)) {
@@ -336,8 +341,9 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
   return { ...result, created, updated, run: await prisma.payrollRun.findUnique({ where: { month } }) };
 }
 
-// Recruiter-joinings incentives paid in `month` (utils/recruiterJoinings.js,
-// Super Admin's decisions): Map(employeeId -> rupees).
+// Incentives paid in `month`: the recruiter-joinings decisions (utils/
+// recruiterJoinings.js) and the approved department-rule awards
+// (utils/incentives.js): Map(employeeId -> rupees).
 async function incentivesFor(employeeIds, month) {
   const out = new Map();
   if (!employeeIds.length) return out;
@@ -346,6 +352,10 @@ async function incentivesFor(employeeIds, month) {
     select: { employeeId: true, amount: true },
   }).catch(() => []);
   rows.forEach((d) => out.set(d.employeeId, (out.get(d.employeeId) || 0) + Math.max(0, Math.round(Number(d.amount) || 0))));
+  // + the department-rule incentives Super Admin APPROVED for this pay month
+  // (utils/incentives.js): the same "Incentive" earning line.
+  const awards = await require('./incentives').approvedFor(employeeIds, month).catch(() => new Map());
+  awards.forEach((amt, id) => out.set(id, (out.get(id) || 0) + amt));
   return out;
 }
 

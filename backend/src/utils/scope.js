@@ -59,7 +59,11 @@ function scopeOf(user) {
   // borrows: identity.js puts that alias on u.scopeRoles. For a system role
   // the alias is the role itself, so nothing changes for them.
   const sr = u.scopeRoles || {};
-  const atsRole = named(sr.ats) || named(u.atsRole) || u.role;
+  // P10: the plain Accounts desk (Accountant, no ATS access) reads clients with
+  // the Accountant's billing scope.
+  const accountsDesk = !named(sr.ats) && !named(u.atsRole) && !!u.products && !u.products.ats && !!u.products.accounts
+    && (named(sr.accounts) || named(u.accountsRole)) === 'ACCOUNTANT';
+  const atsRole = named(sr.ats) || named(u.atsRole) || (accountsDesk ? 'ACCOUNTANT' : u.role);
   const hrmsRole = named(sr.hrms) || named(u.hrmsRole) || u.role;
   const accountsRole = named(sr.accounts) || named(u.accountsRole) || u.role;
   // A login is globally scoped if it is Super Admin / Admin ANYWHERE — in its
@@ -100,6 +104,15 @@ function scopeOf(user) {
     // utils/bdeDesk.js): a Manufacturing BDE sees Manufacturing's clients.
     bdeDeskDepartments: Array.isArray(u.atsBdeDeskDepartments) ? u.atsBdeDeskDepartments : [],
     bdeDeskRequirementDepartments: Array.isArray(u.atsBdeDeskRequirementDepartments) ? u.atsBdeDeskRequirementDepartments : [],
+    // Q3 (user, 2026-10-09): a BDE's OWN clients = assigned / Owner BDE / second
+    // BDE (clientIds) + the clients of their desk that have no BDE yet.
+    bdeOwnClientIds: [...new Set([
+      ...csv(u.atsScopeClients), ...(Array.isArray(u.atsOwnedClientIds) ? u.atsOwnedClientIds : []),
+      ...(Array.isArray(u.atsBdeUnownedClientIds) ? u.atsBdeUnownedClientIds : []),
+    ])],
+    // A TL's / STL's own department as Client.ownerDepartment spellings
+    // (identity.js): they see every client of it (user, 2026-10-09).
+    deptClientDepartments: Array.isArray(u.atsDeptClientDepartments) ? u.atsDeptClientDepartments : [],
     // ACCOUNTS (role spec 2026-09-29): the requirements that have a joined
     // candidate — resolved once per request by utils/identity.js.
     joinedRequirementIds: Array.isArray(u.atsJoinedRequirementIds) ? u.atsJoinedRequirementIds : null,
@@ -246,6 +259,9 @@ function requirementWhere(user, opts = {}) {
   // Administration -> Users carries that atsRole instead and never reaches
   // this branch. applicationWhere() and candidateWhere() inherit this.
   if (s.atsRole === 'HR') return { internal: true };
+  // THE BDE TL (user, 2026-10-09): every client's jobs: the whole BDE book.
+  // Never TeamLink's own internal openings.
+  if (isBdeTl(user)) return { internal: false };
   // A TL / STL / Recruiter who holds a seat is scoped by the seat structure.
   if (s.positions) return seatRequirementWhere(s, { pool: withPool });
   switch (s.atsRole) {
@@ -264,11 +280,12 @@ function requirementWhere(user, opts = {}) {
     case 'RECRUITER':
       return { OR: [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }] };
     case 'BDE': {
+      // Q3 (user, 2026-10-09): THEIR OWN CLIENTS' jobs: the jobs they are named
+      // on, the clients assigned to them / where they are the Owner or second
+      // BDE, and the desk's clients that have no BDE yet. Not the whole
+      // department's jobs any more (the Clients LIST still shows the desk).
       const or = [{ bdeId: s.userId }];
-      if (s.clientIds.length) or.push({ clientId: { in: s.clientIds } });
-      // A desk BDE (Manufacturing, Medical, Education …) sees that
-      // department's requirements, as they see its clients (utils/bdeDesk.js).
-      if (s.bdeDeskRequirementDepartments.length) or.push({ department: { in: s.bdeDeskRequirementDepartments } });
+      if (s.bdeOwnClientIds.length) or.push({ clientId: { in: s.bdeOwnClientIds } });
       return { OR: or };
     }
     case 'TL': {
@@ -286,6 +303,12 @@ function requirementWhere(user, opts = {}) {
         : [{ tlId: s.userId }];
       const pool = withPool ? tlPoolArm(s) : null;
       if (pool) arms.push(pool);
+      // THE BDE TL also sees the NEW JOB REQUESTS nobody has picked up yet
+      // (user, 2026-10-09): a draft client job with no TL and no recruiter on it
+      // — what a client sends from the portal or a BDE asks for. They are not
+      // theirs to activate (that stays with the BDE / Manager / Admin); they
+      // are theirs to follow.
+      if (withPool && isBdeTl(user)) arms.push({ status: 'DRAFT', internal: false, tlId: null, recruiterId: null });
       return arms.length === 1 ? arms[0] : { OR: arms };
     }
     case 'STL': {
@@ -312,8 +335,10 @@ function requirementWhere(user, opts = {}) {
       }
       return s.departments.length ? { department: { in: s.departments } } : { id: '__none__' };
     case 'MANAGER':
-      // PER-ROLE SPEC (2026-10-03): their department(s), with actions.
-      return s.departments.length ? { department: { in: s.departments } } : { id: '__none__' };
+      // Q2 (user, 2026-10-09): the Manager READS every department: jobs,
+      // candidates, interviews, reports and the dashboard. Reading is not editing:
+      // their actions are view + approve only (permissions.js LEAD_ATS_WRITES).
+      return {};
     default:
       // Employees / accountants with no ATS working role see no requirements.
       return { id: '__none__' };
@@ -346,7 +371,10 @@ function isAssignedTo(user, requirement) {
     || requirement.bdeId === s.userId
     // A BDE owns the requirements of THEIR clients (role spec 2026-09-29:
     // "full access to own clients"), not only the ones naming them as BDE.
-    || (s.atsRole === 'BDE' && !!requirement.clientId && s.clientIds.includes(requirement.clientId));
+    || (s.atsRole === 'BDE' && !!requirement.clientId && s.bdeOwnClientIds.includes(requirement.clientId))
+    // THE BDE TL (user, 2026-10-09) works EVERY client's job request: open it,
+    // complete it, post it — never TeamLink's own internal hiring.
+    || (!requirement.internal && isBdeTl(user));
 }
 
 // --- Job Portal ------------------------------------------------------------
@@ -380,6 +408,11 @@ function clientWhere(user) {
   const s = atsScopeOf(user);
   if (s.global) return {};
   if (isBdeTl(user)) return {};
+  // MANAGER (user's visibility matrix, 2026-10-09): "Manager = all departments".
+  // Seeing every client is NOT the right to edit / delete / approve — those stay
+  // separate permissions (permissions.js; the Manager is view + approve).
+  // An Assistant Manager stays with their assigned departments (below).
+  if (s.atsRole === 'MANAGER') return {};
   // HR — Internal Hiring only: the one internal client record, nothing else.
   if (s.atsRole === 'HR') return { clientType: 'Internal' };
   // AN ATS LOGIN WITH NO ATS WORKING ROLE SEES NO ATS RECORDS.
@@ -399,10 +432,22 @@ function clientWhere(user) {
   }
   // TL (clients role spec §1): "only clients that have my team's
   // requirements" — not the department's directory, not the unassigned pool.
-  if (s.atsRole === 'TL') return { requirements: { some: teamRequirementWhere(user) } };
-  // STL (per-role spec 2026-10-03): VIEW only, "only where needed" — the
-  // clients their section's requirements are for.
-  if (s.atsRole === 'STL') return { requirements: { some: requirementWhere(user) } };
+  // USER RULE 2026-10-09 ("EDU clients andaru EDU TL login lo kanipinchali; same
+  // for MED, MFG, IT"): a TL / STL sees ALL clients of THEIR OWN DEPARTMENT in
+  // the Clients list / detail / pickers — view only (the field level stays
+  // 'names only' for a TL, 'basics' for an STL: clientRedact.js). Jobs and
+  // candidates of a TL stay their team's / chain's. A TL / STL whose department
+  // is unknown keeps the old arm (the clients their work is for).
+  if (s.atsRole === 'TL') {
+    return s.deptClientDepartments.length
+      ? { ownerDepartment: { in: s.deptClientDepartments } }
+      : { requirements: { some: teamRequirementWhere(user) } };
+  }
+  if (s.atsRole === 'STL') {
+    return s.deptClientDepartments.length
+      ? { ownerDepartment: { in: s.deptClientDepartments } }
+      : { requirements: { some: requirementWhere(user) } };
+  }
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
   if (s.atsRole === 'CANDIDATE') return { id: '__none__' };
   // A BDE sees their own clients — assigned on Users or Owner BDE, and any
@@ -413,7 +458,10 @@ function clientWhere(user) {
       OR: [
         ...(s.clientIds.length ? [{ id: { in: s.clientIds } }] : []),
         ...(s.bdeDeskDepartments.length ? [{ ownerDepartment: { in: s.bdeDeskDepartments } }] : []),
-        { requirements: { some: requirementWhere(user) } },
+        // A client the BDE is named on a job for. NOT the desk's jobs (a Medical
+        // job for an Education client does not make that client Medical's):
+        // "each department's BDE sees THAT department's clients" (2026-10-09).
+        { requirements: { some: { bdeId: s.userId } } },
       ],
     };
   }
@@ -435,6 +483,10 @@ function clientWhere(user) {
   // atsDepartmentsOf(): a Manager / Assistant Manager is department-held here.
   const departments = atsDepartmentsOf(user);
   if (departments === undefined) return {};
+  // ASSISTANT MANAGER (visibility matrix 2026-10-09): "assigned departments
+  // only" — a client of another department stays hidden even when one of its
+  // jobs is filed under their department.
+  if (s.atsRole === 'ASSISTANT_MANAGER') return { ownerDepartment: { in: departments } };
   return {
     OR: [
       { ownerDepartment: { in: departments } },
@@ -456,10 +508,35 @@ function applicationWhere(user) {
   // SEAT SCOPE IS PER APPLICATION, not per requirement: one Education opening
   // can be worked by Team A and Team B, and each TL sees their own team's
   // candidates on it, not the other's.
-  if (s.positions) return seatApplicationWhere(s);
+  // Q2: the Manager reads every department (view + approve only).
+  if (s.atsRole === 'MANAGER') return {};
+  if (s.positions && !isBdeTl(user)) return seatApplicationWhere(s);
+  // THE BDE TEAM (BDE and BDE TL, user 2026-10-09): only the candidates that are
+  // relevant to a client (BDE_CANDIDATE_STAGES: with the BDE or later), on their
+  // own clients' jobs. Recruiter review, TL review and the AI interview steps are
+  // the recruiters' business.
+  if (s.atsRole === 'BDE' || isBdeTl(user)) {
+    return { AND: [{ requirement: teamRequirementWhere(user) }, bdeStageWhere()] };
+  }
   // teamRequirementWhere: a TL's department pool of UNASSIGNED requirements
   // widens their requirement list only — never their candidates.
   return { requirement: teamRequirementWhere(user) };
+}
+
+// The steps at which a candidate concerns a BDE's client: with the BDE, shared
+// with the client, and everything after. A held candidate counts when they had
+// already been put in front of the client.
+const BDE_CANDIDATE_STAGES = [
+  'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED',
+  'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED', 'REJECTED',
+];
+function bdeStageWhere() {
+  return {
+    OR: [
+      { stage: { in: BDE_CANDIDATE_STAGES } },
+      { stage: 'HOLD', stageEvents: { some: { toStage: { in: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED'] } } } },
+    ],
+  };
 }
 
 // CLIENT NAMES FOR A PICKER (GET /requirements/client-options — the Add
@@ -477,7 +554,7 @@ function clientPickerWhere(user) {
     if (departments === undefined) return {};
     return {
       OR: [
-        { ownerDepartment: { in: departments } },
+        { ownerDepartment: { in: [...new Set([...departments, ...(s.deptClientDepartments || [])])] } },
         { requirements: { some: requirementWhere(user) } },
       ],
     };
@@ -514,18 +591,60 @@ function clientViewRole(user) {
 // Record-level twin of applicationWhere() for an application already loaded
 // WITH its requirement (candidate detail, etc.). Same rule, evaluated in
 // memory — matches() cannot follow the `requirement` relation by itself.
-function applicationInScope(user, application) {
+// PERF (Batch 1, 2026-10-09): this runs once per application on a 20k-row list
+// (18-24k calls per login). The scope, the BDE-TL test and the team `where`
+// depend only on the login, so they are worked out ONCE per login object and
+// reused (6-9 s of the 12-17 s a BDE / TL waited for the Candidates list was
+// rebuilding them for every application). The memo is dropped the moment any
+// field of the login that the scope reads is a different value.
+const APP_SCOPE_FIELDS = [
+  'atsScopeDepartments', 'department', 'atsScopeTeams', 'team', 'scopeRoles', 'atsRole', 'hrmsRole', 'accountsRole', 'role',
+  'products', 'id', 'clientId', 'atsScopeClients', 'atsOwnedClientIds', 'atsBdeDeskDepartments', 'atsBdeDeskRequirementDepartments',
+  'atsBdeUnownedClientIds', 'atsDeptClientDepartments', 'atsJoinedRequirementIds', 'candidateId', 'employeeId', 'atsTeamUserIds',
+  'hrmsTeamScope', 'atsPositionScope',
+];
+const APP_SCOPE_MEMO = new WeakMap();
+function appScopeCtx(user) {
+  if (!user || typeof user !== 'object') return null;
+  let e = APP_SCOPE_MEMO.get(user);
+  if (e) {
+    let same = true;
+    for (let i = 0; i < APP_SCOPE_FIELDS.length; i += 1) if (user[APP_SCOPE_FIELDS[i]] !== e.sig[i]) { same = false; break; }
+    if (same) return e;
+  }
   const s = atsScopeOf(user);
+  e = { sig: APP_SCOPE_FIELDS.map((f) => user[f]), s, bdeTl: isBdeTl(user), teamWhere: null, arms: null, pool: undefined };
+  APP_SCOPE_MEMO.set(user, e);
+  return e;
+}
+// The login's ATS scope, worked out once per login (see appScopeCtx). READ ONLY: the same object is handed out every time.
+function atsScopeCached(user) {
+  const ctx = appScopeCtx(user);
+  return ctx ? ctx.s : atsScopeOf(user);
+}
+function applicationInScope(user, application) {
+  const ctx = appScopeCtx(user);
+  const s = ctx.s;
   if (s.global) return true;
   if (!application) return false;
   if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;
   const r = application.requirement;
-  if (!s.positions) return !!r && matches(r, teamRequirementWhere(user));
+  if (s.atsRole === 'BDE' || ctx.bdeTl) {
+    // (the HOLD-after-sharing arm needs the stage history: not known here)
+    if (!ctx.teamWhere) ctx.teamWhere = teamRequirementWhere(user);
+    return !!r && matches(r, ctx.teamWhere) && BDE_CANDIDATE_STAGES.includes(application.stage);
+  }
+  if (s.atsRole === 'MANAGER') return true;
+  if (!s.positions) {
+    if (!ctx.teamWhere) ctx.teamWhere = teamRequirementWhere(user);
+    return !!r && matches(r, ctx.teamWhere);
+  }
   const p = s.positions;
   if (idSet(p, 'workApplicationIds').has(application.id)) return true;
   if (!r) return false;
-  if (matches(r, { OR: seatAssignedArms(s) })) return true;
-  const pool = seatPoolArm(s);
+  if (!ctx.arms) { ctx.arms = { OR: seatAssignedArms(s) }; ctx.pool = seatPoolArm(s); }
+  if (matches(r, ctx.arms)) return true;
+  const pool = ctx.pool;
   return !!pool && matches(r, pool) && !idSet(p, 'foreignApplicationIds').has(application.id);
 }
 // Set views of the seat scope's id lists, built once per request object —
@@ -562,6 +681,7 @@ function candidateWhere(user) {
   if (s.global) return {};
   // HR falls through to applicationWhere(): internal-hiring candidates only.
   if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
+  if (s.atsRole === 'MANAGER') return {};
   return { applications: { some: applicationWhere(user) } };
 }
 
@@ -838,6 +958,7 @@ function scopeLabel(user, product) {
   if (s.global) return 'All Company';
   if (ats && s.atsRole === 'HR') return 'Internal Hiring';
   if (ats && s.atsRole === 'ACCOUNTANT') return 'Billing — joined candidates';
+  if (ats && s.atsRole === 'MANAGER') return 'All Company';
   if (!ats && hrmsGlobal(user)) return 'All Employees';
   const departments = ats ? atsDepartmentsOf(user) : scopeDepartments(user);
   if (departments === undefined) return 'All Company';
@@ -847,7 +968,12 @@ function scopeLabel(user, product) {
   switch (s.atsRole || s.hrmsRole) {
     case 'CLIENT': return 'My Company';
     case 'CANDIDATE': return 'My Profile';
-    case 'BDE': return s.departments.length ? `${s.departments.join(', ')} → My Clients` : 'My Clients';
+    case 'BDE': {
+      // The desk comes from the seat (BDE-EDU-1 -> Education), not from the BDE
+      // department every BDE sits in.
+      const desk = (s.bdeDeskDepartments || [])[0];
+      return desk ? `${desk} clients` : 'My Clients';
+    }
     case 'RECRUITER': return under('My Work');
     case 'TL': return under('My Team');
     case 'ASSISTANT_MANAGER':
@@ -936,8 +1062,10 @@ module.exports = {
   isBdeTl,
   applicationWhere,
   applicationInScope,
+  atsScopeCached,
   candidateWhere,
   CLIENT_SHARED_STAGES,
+  BDE_CANDIDATE_STAGES,
   invoiceWhere,
   employeeWhere,
   scopeDepartments,

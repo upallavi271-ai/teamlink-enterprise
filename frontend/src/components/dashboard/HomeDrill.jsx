@@ -36,7 +36,7 @@ const dateTime = (v) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 };
 const FACET_ALL = {
-  d_client: 'All clients', d_job: 'All jobs', d_rec: 'All recruiters', d_tl: 'All team leads', d_step: 'All steps', d_due: 'Any', d_dept: 'All departments',
+  d_client: 'All clients', d_job: 'All jobs', d_rec: 'All recruiters', d_tl: 'All team leads', d_bde: 'All client managers', d_step: 'All steps', d_due: 'Any', d_dept: 'All departments',
 };
 
 function DueCell({ r }) {
@@ -45,6 +45,24 @@ function DueCell({ r }) {
   if (r.dueKey === 'due_today') return <StatusChip tone="amber">Due today</StatusChip>;
   if (r.dueKey === 'upcoming' && r.due) return <StatusChip tone="blue">Due {shortDate(r.due)}</StatusChip>;
   if (r.dueKey === 'closed') return <StatusChip tone="green">Done</StatusChip>;
+  return <span className="cell-muted">—</span>;
+}
+
+// The lists behind the Joined numbers: the joining day that was used, and where it came from.
+// Plain words: a date someone typed is just the date; the others say what is wrong or odd.
+const longDay = (v) => { const d = new Date(`${String(v).slice(0, 10)}T00:00:00`); return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); };
+function JoinCell({ r }) {
+  if (r.joinWrong) {
+    return (
+      <>
+        <StatusChip tone="red" title="This is not a real joining date.">Date looks wrong: {r.joinWrong}</StatusChip>
+        {r.joinDay && <div className="hd-sub">Counted in {longDay(r.joinDay)}</div>}
+      </>
+    );
+  }
+  if (r.joinHow === 'none') return <StatusChip tone="amber" title="Nobody has typed a joining date.">No joining date</StatusChip>;
+  if (r.joinHow === 'moved') return <><span>{longDay(r.joinDay)}</span><div className="hd-sub" title="No joining date was typed, so the day they were moved to Joined is used.">day moved to Joined</div></>;
+  if (r.joinDay) return <span>{longDay(r.joinDay)}</span>;
   return <span className="cell-muted">—</span>;
 }
 
@@ -71,16 +89,18 @@ function Rows({ data, onClose }) {
   const rows = data.rows || [];
   const k = data.kind;
   if (k === 'app') {
+    const joinList = rows.some((r) => r.joinHow);
+    const bdeView = rows.some((r) => 'bde' in r);
     return (
       <table className="hd-tbl">
-        <thead><tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Due</th><th>Updated</th><th aria-label="Open" /></tr></thead>
+        <thead><tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th><th>Updated</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
-            <td><b className="hd-name">{r.candidate}</b>{r.recruiter && <div className="hd-sub">{r.recruiter}</div>}</td>
+            <td><b className="hd-name">{r.candidate}</b>{(r.recruiter || (bdeView && r.bde)) && <div className="hd-sub">{r.recruiter || r.bde}</div>}</td>
             <td>{r.requirement}{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
             <td>{r.client || '—'}</td>
             <td><StatusChip status={r.step} /></td>
-            <td><DueCell r={r} /></td>
+            <td>{joinList ? <JoinCell r={r} /> : <DueCell r={r} />}</td>
             <td className="hd-sub">{shortDate(r.updatedAt)}</td>
             <td><OpenLink to={`/candidates/${r.candidateId}`} onClose={onClose} /></td>
           </tr>
@@ -89,15 +109,16 @@ function Rows({ data, onClose }) {
     );
   }
   if (k === 'req') {
+    const bdeView = rows.some((r) => 'bde' in r);
     return (
       <table className="hd-tbl">
-        <thead><tr><th>Job</th><th>Client</th><th>Department</th><th>Recruiter</th><th>Status</th><th className="num">Openings</th><th aria-label="Open" /></tr></thead>
+        <thead><tr><th>Job</th><th>Client</th><th>Department</th><th>{bdeView ? 'Client manager (BDE)' : 'Recruiter'}</th><th>Status</th><th className="num">Openings</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
             <td><b className="hd-name">{r.title}</b>{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
             <td>{r.client || '—'}</td>
             <td>{r.department || '—'}</td>
-            <td>{r.recruiter || <StatusChip tone="amber">No recruiter</StatusChip>}</td>
+            <td>{bdeView ? (r.bde || '—') : (r.recruiter || <StatusChip tone="amber">No recruiter</StatusChip>)}</td>
             <td><StatusChip status={r.status} /></td>
             <td className="num">{fmt(r.openings)}</td>
             <td><OpenLink to={`/requirements/${r.id}`} onClose={onClose} /></td>

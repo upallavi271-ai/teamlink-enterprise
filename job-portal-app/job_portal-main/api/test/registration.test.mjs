@@ -266,16 +266,22 @@ test('consent is stored with its date, version and status', async () => {
   assert.equal(all.n, 2);
 });
 
-test('declined consent is refused; when configured, missing consent is refused too', async () => {
-  const no = await register({ consent: { terms: true, communication: false } });
-  assert.equal(no.res.status, 400);
-  assert.ok(no.res.body.error.details['consent.communication']);
+test('Terms are required; recruitment communication is optional (declining it is recorded, not refused)', async () => {
+  const noTerms = await register({ consent: { terms: false, communication: true } });
+  assert.equal(noTerms.res.status, 400);
+  assert.ok(noTerms.res.body.error.details['consent.terms']);
+
+  const decline = await register({ consent: { terms: true, communication: false } });
+  assert.equal(decline.res.status, 201, JSON.stringify(decline.res.body));
+  const rows = (await raw(`select kind, status from candidate_consents where candidate_id = $1 order by kind, id`, [decline.id])).rows;
+  assert.ok(rows.some((r) => r.kind === 'terms' && r.status === 'granted'));
+  assert.ok(!rows.some((r) => r.kind === 'communication' && r.status === 'granted'), 'declined communication must not be recorded as granted');
 
   process.env.REGISTRATION_CONSENT_REQUIRED = 'true';
   const missing = await register({ consent: undefined });
   assert.equal(missing.res.status, 400);
   assert.ok(missing.res.body.error.details['consent.terms']);
-  assert.ok(missing.res.body.error.details['consent.communication']);
+  assert.ok(!missing.res.body.error.details['consent.communication'], 'communication is never required');
   const ok = await register();
   assert.equal(ok.res.status, 201);
   process.env.REGISTRATION_CONSENT_REQUIRED = '';
@@ -292,9 +298,14 @@ test('the welcome email carries the Candidate ID and is sent once', async () => 
   assert.match(mail.subject, /Welcome to TeamLink/);
   assert.ok(String(mail.html).includes(c.code) && String(mail.text).includes(c.code), 'the Candidate ID is not in the email');
   assert.ok(!/Client/.test(mail.text), 'the word Client must not appear');
-  const row = await eventually(async () => (await raw(
-    `select status, attempts from candidate_registration_messages where candidate_id = $1 and kind = 'welcome'`, [c.id])).rows[0]);
-  assert.equal(row.status, 'sent');
+  /* the provider has the mail; the row is marked sent a moment after it answers - wait for the outcome,
+     not for the row (which exists, as pending, from the claim) */
+  const row = await eventually(async () => {
+    const r = (await raw(
+      `select status, attempts from candidate_registration_messages where candidate_id = $1 and kind = 'welcome'`, [c.id])).rows[0];
+    return r && r.status !== 'pending' ? r : null;
+  });
+  assert.equal(row && row.status, 'sent');
 
   const again = await msgs.sendRegistrationMessage(c.id, 'welcome');
   assert.equal(again.status, 'duplicate');

@@ -212,3 +212,12 @@ main:has(> .cv4){max-width:none}
 /* denser rows (reference): the job · client line under the name stays on one line */
 .cv4 .cv4-listpanel .cpl-table .cpl-cand .cviews-code{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
 .cv4 .cv4-listpanel .cviews-skills{display:table-cell}
+
+/* The tally under the pipeline strip: Hold / Rejected apart from Active, and the sum line (2026-10-10). */
+.cv4 .cv4-outcomes{display:flex;align-items:center;gap:10px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line,#dfe5ec)}
+.cv4 .cv4-outcomes-h{font-size:11.5px;font-weight:600;color:var(--ink-soft);white-space:nowrap}
+.cv4 .cv4-outcomes .ak-stages{flex:1}
+.cv4 .cv4-eq{margin:8px 2px 0;font-size:12.5px;line-height:1.5;color:var(--ink-soft);overflow-wrap:anywhere}
+.cv4 .cv4-eq b{color:var(--ink)}
+.cv4 .cv4-eq-note{color:#a15c00}
+@media (max-width:640px){.cv4 .cv4-outcomes{flex-direction:column;align-items:stretch;gap:4px}}

@@ -1,0 +1,43 @@
+/* Journal / Ledger import dialog. Scoped under .bi (Accounts fixes, 2026-10-09). */
+.bi { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bi-steps { margin: 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.bi-steps li { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 10px; line-height: 1.5; }
+.bi-steps li.locked { opacity: .55; }
+.bi-row { display: flex; gap: 10px 14px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.bi-chk { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; margin: 0; }
+.bi-chk input { width: 16px; height: 16px; margin: 0; }
+.bi-file { position: relative; overflow: hidden; cursor: pointer; display: inline-flex; align-items: center; }
+.bi-file input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.bi-file.disabled { opacity: .6; pointer-events: none; }
+.bi-file-line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.bi-msg { margin: 0; }
+.bi-sum { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+.bi-pill { padding: 3px 10px; border-radius: 999px; font-size: 12.5px; background: #eef0f3; color: #5b6472; }
+.bi-pill.green { background: #e3f4ea; color: #1e7a46; }
+.bi-pill.red { background: #fde8e8; color: #b42318; }
+.bi-tblwrap { max-height: max(200px, calc(100vh - 480px)); overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.bi-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.bi-tbl th { position: sticky; top: 0; z-index: 3; background: var(--card2, #f1f4f9); padding: 8px 8px; white-space: nowrap; box-shadow: inset 0 -1px 0 var(--line); }
+.bi-tbl td { padding: 4px 6px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.bi-tbl tbody tr:nth-child(even) td { background: transparent; }
+.bi-numh, .bi-numc { text-align: right; }
+.bi-ln { width: 44px; color: var(--ink-soft); text-align: center; }
+.bi-grp td { background: #f3f6fa !important; padding: 8px 10px; font-size: 13px; }
+.bi-grp .bi-add { float: right; }
+.bi-gmsg { color: #b42318; font-size: 12.5px; margin-top: 2px; }
+.bi-diff { color: #b42318; font-weight: 700; }
+.bi-in { width: 100%; font: inherit; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.bi-in.num { text-align: right; font-variant-numeric: tabular-nums; }
+.bi-in.err { border-color: #d92d20; background: #fff5f4; }
+.bi-in:focus { outline: 2px solid #9db8e8; outline-offset: 0; }
+.bi-res { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+.bi-why { color: #b42318; font-size: 12px; min-width: 170px; max-width: 280px; white-space: normal; }
+.bi-okc { color: #1e7a46; font-weight: 700; }
+.bi-dup .bi-why { color: #5b6472; }
+.bi-x { border: 0; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; color: #8a94a3; padding: 2px 6px; }
+.bi-x:hover { color: #b42318; }
+.bi-banner { padding: 10px 14px; border-radius: 10px; font-size: 14px; }
+.bi-banner.green { background: #e3f4ea; color: #1e7a46; }
+.bi-banner.amber { background: #fdf0dc; color: #8a5200; }
+.bi-done { display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 720px) { .bi-tblwrap { max-height: max(200px, calc(100vh - 520px)); } .bi-why { min-width: 150px; } }

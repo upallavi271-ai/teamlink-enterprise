@@ -45,6 +45,8 @@ const { nextFrom, checkFormat } = require('../utils/employeeCode');
 const exportFields = require('../utils/employeeExportFields');
 const { hrStatusOf } = require('../utils/hrStatus');
 const { REQUIRED_DOCUMENT_TYPES } = require('../utils/employeeExportFields');
+// Manage Fields: a paused field's column leaves the template and the export.
+const fieldDefs = require('../utils/employeeFieldDefs');
 
 const FEATURE = 'Employee Management';
 const DEFAULT_ONBOARDING_TASKS = [
@@ -116,6 +118,12 @@ const COLUMNS = [
   { key: 'ctc', label: 'CTC (annual)', readOnly: true, s: 'salary', type: 'number', note: 'Only for roles that can see salary. Salary is changed on Payroll, never by this import.' },
 ];
 const WRITABLE = COLUMNS.filter((c) => c.field && !c.readOnly);
+// PAUSED FIELDS (Employee Management > Manage Fields). The column is left out
+// of the sample and of new exports, and a file that still carries it is read
+// as before — the paused column is simply ignored, with a note on the preview.
+const pausedColumns = () => { const p = fieldDefs.pausedCols(); return COLUMNS.filter((c) => c.field && p.has(c.field)); };
+const activeColumns = () => { const p = fieldDefs.pausedCols(); return COLUMNS.filter((c) => !(c.field && p.has(c.field))); };
+const activeWritable = () => activeColumns().filter((c) => c.field && !c.readOnly);
 const DATE_FIELDS = new Set(['dateOfJoining', 'dateOfBirth']);
 
 const d10 = (v) => (v ? new Date(v).toISOString().slice(0, 10) : '');
@@ -149,6 +157,7 @@ function sameName(a, b) {
 }
 
 async function caps(user, base) {
+  await fieldDefs.refresh();
   const [create, edit] = await Promise.all([
     can(user, 'hrms', 'hrms', FEATURE, 'create'),
     can(user, 'hrms', 'hrms', FEATURE, 'edit'),
@@ -186,6 +195,7 @@ async function lists() {
 
 // ---- export ---------------------------------------------------------------
 async function exportRows(ctx, { employeeIds, filters }) {
+  await fieldDefs.refresh();
   const user = ctx.user;
   const may = (s) => exportFields.mayExportSensitivity(user, s);
   const fullBank = mayFullBank(user);
@@ -240,6 +250,7 @@ async function exportRows(ctx, { employeeIds, filters }) {
 
 // ---- validate ---------------------------------------------------------------
 async function validate(rows, ctx) {
+  await fieldDefs.refresh();
   const m = await masterLists();
   const desigMaster = (await designationRows()).map((r) => r.designation);
   const scopeDepts = scopeDepartments(ctx.user); // undefined = every department
@@ -263,6 +274,7 @@ async function validate(rows, ctx) {
   rows.forEach((r) => { const c = io.str(r.employeeCode).toUpperCase(); if (c && !fileCodes.has(c)) fileCodes.set(c, r.line); });
   const seenCode = new Map(); const seenEmail = new Map();
 
+  const reportingRules = await require('../utils/reportingLine').eligibility();
   return rows.map((r) => {
     const errors = io.requiredErrors(module.exports, r);
     const fail = (field, message) => errors.push({ field, message });
@@ -293,7 +305,7 @@ async function validate(rows, ctx) {
 
     // Normalise every writable value; blank = "leave as it is".
     const want = {};
-    WRITABLE.forEach((c) => {
+    activeWritable().forEach((c) => {
       const raw = io.str(r[c.key]);
       if (!raw) return;
       if (c.type === 'date') {
@@ -375,14 +387,21 @@ async function validate(rows, ctx) {
       const hit = ctx.employees.resolve(mgrRaw);
       if (hit.employee) {
         if (existing && hit.employee.id === existing.id) fail('Reporting Manager (Employee ID)', 'An employee cannot report to themselves.');
-        else manager = { id: hit.employee.id, code: hit.employee.employeeCode };
+        else {
+          manager = { id: hit.employee.id, code: hit.employee.employeeCode };
+          // Only a CHANGED (or new) manager is checked: a legacy line on file is left alone.
+          if (isNew || hit.employee.id !== (existing && existing.reportingManagerId)) {
+            const why = reportingRules.problem({ department: want.department || cur('department'), designation: want.designation || cur('designation'), id: existing && existing.id }, hit.employee.id);
+            if (why) fail('Reporting Manager (Employee ID)', `${hit.employee.name}: ${why}`);
+          }
+        }
       } else if (fileCodes.has(mgrRaw.toUpperCase()) && mgrRaw.toUpperCase() !== codeU) manager = { fileCode: mgrRaw.toUpperCase() };
       else fail('Reporting Manager (Employee ID)', hit.error);
     }
 
     if (errors.length) return { line: r.line, label, errors, action: 'error' };
     const changes = [];
-    WRITABLE.forEach((c) => {
+    activeWritable().forEach((c) => {
       if (c.field === 'employeeCode') return;
       if (want[c.field] === undefined) return;
       if (isNew || !same(c.field, want[c.field], cur(c.field))) changes.push({ field: c.label, key: c.field, from: isNew ? '' : cur(c.field), to: want[c.field] });
@@ -434,6 +453,7 @@ async function apply(valid, ctx) {
           },
         });
         createdByCode.set(employeeCode.toUpperCase(), emp.id);
+        require('../utils/stationeryKit').onActive(emp.id); // default stationery kit, once (utils/stationeryKit.js)
         if (manager && manager.fileCode) pendingManagers.push({ id: emp.id, fileCode: manager.fileCode, line: v.line });
         // eslint-disable-next-line no-await-in-loop
         await prisma.auditLog.create({
@@ -522,7 +542,10 @@ module.exports = {
   entity: 'Employee',
   sheet: 'Employees',
   allowRequest: true,
-  columns: COLUMNS.map(({ s, field, ...c }) => c),
+  // Live: a paused field's column is not in the sample or a new export.
+  get columns() { return activeColumns().map(({ s, field, ...c }) => c); },
+  get pausedColumns() { return pausedColumns().map(({ s, field, ...c }) => c); },
+  prepare: () => fieldDefs.refresh(),
   instructions: [
     'Every field of the Add / Edit employee form is a column, in the form\'s order. An export of Employee Management uses exactly these columns, so an export can be edited and imported back.',
     'Employee ID: an existing ID UPDATES that employee (the name must still match); a blank ID creates a NEW employee with the next TL### ID. New employees get no login — create one on Employee Management.',

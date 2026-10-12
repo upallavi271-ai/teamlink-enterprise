@@ -21,6 +21,24 @@
 // Everything is prefixed ZZROLE and removed at the end. --keep leaves it.
 // ---------------------------------------------------------------------------
 
+// SAFETY (security review, 2026-10-09): this test CREATES and DELETES rows (and signs in with a
+// default admin password). It refuses the real server (port 4010) and the real database (dev.db)
+// unless TL_ALLOW_REAL=1 is set on purpose. Test against the sandbox instead:
+//   cd backend && npm run sandbox -- --detach      (API on :4011, database prisma/sandbox.db)
+//   TL_API=http://localhost:4011/api DATABASE_URL=file:./sandbox.db node scripts/<this file>
+(() => {
+  // eslint-disable-next-line global-require
+  require('dotenv').config();
+  const base = process.env.TL_API || 'http://127.0.0.1:4010/api';
+  const db = String(process.env.DATABASE_URL || 'file:./dev.db').replace(/["']/g, '');
+  const real = /:4010(\/|$)/.test(base) || /(^|[\/:])dev\.db(\?.*)?$/i.test(db);
+  if (real && process.env.TL_ALLOW_REAL !== '1') {
+    console.error('REFUSED: this would run against the REAL server / database (' + base + ', ' + db + ').');
+    console.error('Use the sandbox (see the note at the top of this file), or set TL_ALLOW_REAL=1 if you really mean it.');
+    process.exit(2);
+  }
+})();
+
 const bcrypt = require('bcryptjs');
 const prisma = require('../src/db');
 

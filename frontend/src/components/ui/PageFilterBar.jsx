@@ -133,8 +133,13 @@ export function usePageFilters(defaults) {
   return [value, setValue];
 }
 
+// Optional extras (the ATS dashboard, 2026-10-09): ranges = a different Date
+// range list ([[value, label], …]); children = more filters drawn inside the bar
+// (e.g. Team lead) before "Clear filters"; extraSet = true when one of those is
+// set (so Clear shows); onClear = what Clear does when it must also reset them.
 export default function PageFilterBar({
   value: valueProp, onChange: onChangeProp, show, options, facetModule = 'requirements', facetParams, className = '',
+  ranges, children, extraSet = false, onClear,
 }) {
   const { user } = useAuth() || {};
   const [urlValue, setUrlValue] = usePageFilters();
@@ -174,7 +179,7 @@ export default function PageFilterBar({
     const [kind, id] = [v.slice(0, 3), v.slice(4)];
     return set(kind === 'rec' ? { recruiterId: id, bdeId: '' } : { bdeId: id, recruiterId: '' });
   };
-  const anySet = !!(value.department || value.range || value.clientId || value.recruiterId || value.bdeId);
+  const anySet = !!(value.department || value.range || value.clientId || value.recruiterId || value.bdeId || extraSet);
   const peopleList = peopleOpts.filter((o) => Number(o.count) > 0 || o.value === personValue);
   const groups = [...new Set(peopleList.map((o) => o.group || ''))];
 
@@ -187,7 +192,7 @@ export default function PageFilterBar({
         <label className="lph-facet pfb-range">
           <span className="lph-facet-lbl">Date range</span>
           <select value={value.range || ''} onChange={(e) => set({ range: e.target.value, ...(e.target.value === 'custom' ? {} : { from: '', to: '' }) })}>
-            {DATE_RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            {(ranges || DATE_RANGES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </label>
       )}
@@ -217,8 +222,9 @@ export default function PageFilterBar({
           </select>
         </label>
       )}
+      {children}
       {anySet && (
-        <button type="button" className="btn btn-sm btn-ghost pfb-clear" onClick={() => onChange({ ...EMPTY_FILTERS })}>
+        <button type="button" className="btn btn-sm btn-ghost pfb-clear" onClick={() => (onClear ? onClear() : onChange({ ...EMPTY_FILTERS }))}>
           Clear filters
         </button>
       )}

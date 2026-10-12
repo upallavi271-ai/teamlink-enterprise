@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
+import VendorManagement from './VendorManagement.jsx';
 import '../vendor/vendorPortal.css';
 import './VendorLogins.css';
 
@@ -13,6 +14,7 @@ import './VendorLogins.css';
 // emails" switch, the feature flag, the policy). Server: routes/vendorLogins.js.
 // ---------------------------------------------------------------------------
 const TABS = [
+  { key: 'vendors', label: 'Vendors' },
   { key: 'logins', label: 'Logins' },
   { key: 'link', label: 'Link assets to vendors' },
   { key: 'audit', label: 'History' },
@@ -22,11 +24,10 @@ const errText = (e, f) => (e?.response ? e.response.data?.error || f : 'Cannot r
 const two = (n) => String(n).padStart(2, '0');
 const when = (s) => { if (!s) return 'Never'; const d = new Date(s); return `${two(d.getDate())}-${two(d.getMonth() + 1)}-${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}`; };
 const TONE = { Active: 'green', Locked: 'red', 'Switched off': 'grey', 'Vendor switched off': 'grey' };
-const PW_HINT = 'At least 10 characters, with a capital letter, a small letter, a number and a symbol.';
 
 export default function VendorLogins() {
   const [params, setParams] = useSearchParams();
-  const tab = TABS.some((t) => t.key === params.get('tab')) ? params.get('tab') : 'logins';
+  const tab = TABS.some((t) => t.key === params.get('tab')) ? params.get('tab') : 'vendors';
   const [data, setData] = useState(null);
   const [opts, setOpts] = useState(null);
   const [filter, setFilter] = useState({ q: '', vendorId: '', status: '', locked: '' });
@@ -35,8 +36,7 @@ export default function VendorLogins() {
   const [denied, setDenied] = useState(false);
   const [saved, setSaved] = useState('');
   const [edit, setEdit] = useState(null); // { row | null, assetsOnly? }
-  const [reset, setReset] = useState(null);
-  const [secret, setSecret] = useState(null); // { email, password, emailed }
+  const [secret, setSecret] = useState(null); // { email, link, expiresAt, emailed } | { email, password } (older)
   const [auditFor, setAuditFor] = useState(null);
 
   useEffect(() => { const t = setTimeout(() => setQDeb(filter.q), 250); return () => clearTimeout(t); }, [filter.q]);
@@ -67,6 +67,13 @@ export default function VendorLogins() {
       setSaved(res.data.message); load();
     } catch (e) { setError(errText(e, 'Could not do that.')); }
   }
+  async function sendLink(r) {
+    try {
+      const res = await api.post(`/vendor-logins/${r.id}/invite`, {});
+      setSecret({ email: r.email, link: res.data.inviteLink, expiresAt: res.data.inviteExpiresAt, emailed: res.data.emailed });
+      setSaved(res.data.message); load();
+    } catch (e) { setError(errText(e, 'Could not make the link.')); }
+  }
   const rows = data?.rows || [];
   const fc = data?.facets || {};
   const filtered = !!(filter.q || filter.vendorId || filter.status || filter.locked);
@@ -75,8 +82,8 @@ export default function VendorLogins() {
     <div className="vl-page">
       <div className="page-head">
         <div>
-          <h1>Vendor logins</h1>
-          <div className="page-sub">Give a vendor its own login. They see only the assets you pick here, and can send bills to Accounts.</div>
+          <h1>Vendors</h1>
+          <div className="page-sub">Your vendor list, their logins, their bills and payments, and the documents you share with them.</div>
         </div>
         {tab === 'logins' && <button type="button" className="btn btn-primary" onClick={() => setEdit({ row: null })}>+ Add vendor login</button>}
       </div>
@@ -90,16 +97,28 @@ export default function VendorLogins() {
 
       {saved && <div className="notice green" style={{ marginBottom: 10 }}><span>{saved}</span></div>}
       {error && <div className="notice red" style={{ marginBottom: 10 }}><span>{error}</span></div>}
-      {secret && (
+      {secret && secret.link && (
         <div className="notice amber vl-secret">
           <span>
-            Password for <strong>{secret.email}</strong>: <code>{secret.password}</code>{' '}
-            <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(secret.password)}>Copy</button>{' '}
-            Shown only now{secret.emailed ? ' (also emailed to the vendor)' : ''}. It works for 7 days. They must change it when they first sign in at <code>/vendor-login</code>.{' '}
+            Secure link for <strong>{secret.email}</strong>: <code className="vl-link">{secret.link}</code>{' '}
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => navigator.clipboard?.writeText(secret.link)}>Copy link</button>{' '}
+            Shown only now{secret.emailed ? ' (also emailed to the vendor)' : ''}. It works once and runs out on {when(secret.expiresAt)}. The vendor chooses their own password, so nobody — not even you — ever sees it.{' '}
             <button type="button" className="link-btn" onClick={() => setSecret(null)}>Hide</button>
           </span>
         </div>
       )}
+      {secret && secret.password && (
+        <div className="notice amber vl-secret">
+          <span>
+            Password for <strong>{secret.email}</strong>: <code>{secret.password}</code>{' '}
+            <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(secret.password)}>Copy</button>{' '}
+            Shown only now and never emailed. It works for 7 days. Better next time: use “Send secure link”.{' '}
+            <button type="button" className="link-btn" onClick={() => setSecret(null)}>Hide</button>
+          </span>
+        </div>
+      )}
+
+      {tab === 'vendors' && <VendorManagement onSaved={setSaved} onError={setError} onOpenLogins={() => setParams({ tab: 'logins' }, { replace: true })} onLink={(x) => setSecret(x)} />}
 
       {tab === 'logins' && (
         <>
@@ -140,7 +159,7 @@ export default function VendorLogins() {
                       <td>{r.name}</td>
                       <td>
                         {r.email}
-                        {r.mustChangePassword && <div className={`cell-muted${r.tempPasswordExpired ? ' vl-red' : ''}`}>{r.tempPasswordExpired ? 'Temporary password expired — reset it' : `Must set a new password${r.tempPasswordExpiresAt ? ` (by ${when(r.tempPasswordExpiresAt).slice(0, 10)})` : ''}`}</div>}
+                        {r.mustChangePassword && <div className={`cell-muted${r.tempPasswordExpired ? ' vl-red' : ''}`}>{r.tempPasswordExpired ? 'Link expired — send a new one' : (r.linkOpen ? `Waiting for the vendor to open the link (until ${when(r.linkExpiresAt)})` : `Must set a new password${r.tempPasswordExpiresAt ? ` (by ${when(r.tempPasswordExpiresAt).slice(0, 10)})` : ''}`)}</div>}
                       </td>
                       <td><span className={`vp-tag vp-${TONE[r.statusText] || 'grey'}`}>{r.statusText}</span>{r.locked && <div className="cell-muted">until {when(r.lockedUntil)}</div>}</td>
                       <td>{when(r.lastLoginAt)}{r.lastLoginIp && <div className="cell-muted">{r.lastLoginIp}</div>}</td>
@@ -151,7 +170,7 @@ export default function VendorLogins() {
                         <button type="button" className="btn btn-sm" onClick={() => setEdit({ row: r })}>Edit</button>
                         <button type="button" className="btn btn-sm" onClick={() => setEdit({ row: r, assetsOnly: true })}>Assets</button>
                         {r.locked && <button type="button" className="btn btn-sm btn-primary" onClick={() => act(r, 'unlock')}>Unlock</button>}
-                        <button type="button" className="btn btn-sm" onClick={() => setReset(r)}>Reset password</button>
+                        {r.status === 'Active' && <button type="button" className="btn btn-sm btn-primary" onClick={() => sendLink(r)}>{r.lastLoginAt ? 'Send reset link' : 'Send invite link'}</button>}
                         {r.status === 'Active'
                           ? <button type="button" className="btn btn-sm btn-danger" onClick={() => act(r, 'deactivate')}>Deactivate</button>
                           : <button type="button" className="btn btn-sm" onClick={() => act(r, 'activate')}>Activate</button>}
@@ -179,19 +198,7 @@ export default function VendorLogins() {
           onSaved={(res) => {
             setEdit(null);
             setSaved(res.message || 'Saved.');
-            if (res.tempPassword) setSecret({ email: res.login?.email, password: res.tempPassword, emailed: res.emailed });
-            load();
-          }}
-        />
-      )}
-      {reset && (
-        <ResetModal
-          row={reset}
-          onClose={() => setReset(null)}
-          onSaved={(res) => {
-            setReset(null);
-            setSaved(res.message);
-            if (res.tempPassword) setSecret({ email: reset.email, password: res.tempPassword, emailed: res.emailed });
+            if (res.inviteLink) setSecret({ email: res.login?.email, link: res.inviteLink, expiresAt: res.inviteExpiresAt, emailed: res.emailed });
             load();
           }}
         />
@@ -214,7 +221,7 @@ function LoginModal({ row, assetsOnly, opts, onClose, onSaved }) {
   const isNew = !row;
   const [v, setV] = useState({
     vendorId: row?.vendorId || '', name: row?.name || '', email: row?.email || '', status: row?.status || 'Active',
-    canEdit: !!row?.canEdit, canViewCost: !!row?.canViewCost, autoPassword: true, emailPassword: false, password: '',
+    canEdit: !!row?.canEdit, canViewCost: !!row?.canViewCost, emailLink: false,
   });
   const [mode, setMode] = useState(row && row.categories.length && !row.assetIds.length ? 'categories' : 'assets');
   const [assetIds, setAssetIds] = useState(new Set(row?.assetIds || []));
@@ -241,14 +248,13 @@ function LoginModal({ row, assetsOnly, opts, onClose, onSaved }) {
     if (!assetsOnly) {
       if (!v.name.trim()) { setError('Enter the contact name.'); return; }
       if (!v.email.trim()) { setError('Enter the email.'); return; }
-      if (isNew && !v.autoPassword && v.password.length < 10) { setError(`Type a password. ${PW_HINT} Or let the app make one.`); return; }
     }
     setBusy(true);
     const body = {
       ...(assetsOnly ? {} : { vendorId: v.vendorId, name: v.name, email: v.email, status: v.status, canEdit: v.canEdit, canViewCost: v.canViewCost }),
       assetIds: mode === 'assets' ? [...assetIds] : [], categories: mode === 'categories' ? [...cats] : [],
       linkUnlinked: mode === 'assets' && pickedUnlinked.length > 0,
-      ...(isNew ? { autoPassword: v.autoPassword, emailPassword: v.autoPassword && v.emailPassword, password: v.autoPassword ? undefined : v.password } : {}),
+      ...(isNew ? { invite: true, emailLink: v.emailLink } : {}),
     };
     try {
       const res = isNew ? await api.post('/vendor-logins', body) : await api.patch(`/vendor-logins/${row.id}`, body);
@@ -300,14 +306,9 @@ function LoginModal({ row, assetsOnly, opts, onClose, onSaved }) {
             </div>
             {isNew && (
               <>
-                <div className="vp-lbl">Temporary password</div>
-                <div className="vp-choice">
-                  <button type="button" className={`vp-chip${v.autoPassword ? ' on' : ''}`} onClick={() => setV({ ...v, autoPassword: true })}>Make one for me</button>
-                  <button type="button" className={`vp-chip${!v.autoPassword ? ' on' : ''}`} onClick={() => setV({ ...v, autoPassword: false })}>I will type it</button>
-                </div>
-                {!v.autoPassword && <input type="password" autoComplete="new-password" value={v.password} placeholder={PW_HINT} onChange={(e) => setV({ ...v, password: e.target.value })} style={{ marginTop: 6 }} />}
-                {v.autoPassword && <Switch checked={v.emailPassword} onChange={(x) => setV({ ...v, emailPassword: x })} label="Email it to the vendor" hint="Only works when Vendor emails are ON (Settings tab). The password is also shown to you once." />}
-                <div className="cell-muted" style={{ fontSize: 12, marginTop: 4 }}>It works for 7 days. The vendor must change it the first time they sign in.</div>
+                <div className="vp-lbl">How do they get in?</div>
+                <div className="small-muted">When you press Create you get a <b>secure link</b>. Send it to the vendor: they choose their own password. The link works once and runs out in 3 days. Nobody ever sees or emails a password.</div>
+                <Switch checked={v.emailLink} onChange={(x) => setV({ ...v, emailLink: x })} label="Also email the link to the vendor" hint="Only works when Vendor emails are ON (Settings tab). You still get the link here." />
               </>
             )}
           </>
@@ -359,44 +360,6 @@ function LoginModal({ row, assetsOnly, opts, onClose, onSaved }) {
             <Switch checked={v.canViewCost} onChange={(x) => setV({ ...v, canViewCost: x })} label="Show purchase value" hint="Off = they never see what the company paid (nor the purchase invoice no.). On = only the purchase value and invoice no. are shown." />
           </>
         )}
-        {error && <div className="error-text" style={{ marginTop: 8 }}>{error}</div>}
-      </div>
-    </Modal>
-  );
-}
-
-function ResetModal({ row, onClose, onSaved }) {
-  const [auto, setAuto] = useState(true);
-  const [emailIt, setEmailIt] = useState(false);
-  const [pw, setPw] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  async function go() {
-    setBusy(true); setError('');
-    try {
-      const res = await api.post(`/vendor-logins/${row.id}/reset-password`, auto ? { autoPassword: true, emailPassword: emailIt } : { autoPassword: false, password: pw });
-      onSaved(res.data);
-    } catch (e) { setError(errText(e, 'Could not reset.')); } finally { setBusy(false); }
-  }
-  return (
-    <Modal
-      title={`Reset password · ${row.email}`}
-      onClose={onClose}
-      footer={(
-        <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={go} disabled={busy}>{busy ? 'Resetting…' : 'Reset password'}</button>
-        </>
-      )}
-    >
-      <div className="vp-form">
-        <div className="small-muted">They are signed out now, the lock (if any) is cleared, and they must set a new password when they sign in (within 7 days).</div>
-        <div className="vp-choice" style={{ marginTop: 10 }}>
-          <button type="button" className={`vp-chip${auto ? ' on' : ''}`} onClick={() => setAuto(true)}>Make one for me</button>
-          <button type="button" className={`vp-chip${!auto ? ' on' : ''}`} onClick={() => setAuto(false)}>I will type it</button>
-        </div>
-        {!auto && <input type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder={PW_HINT} style={{ marginTop: 8 }} />}
-        {auto && <Switch checked={emailIt} onChange={setEmailIt} label="Email it to the vendor" hint="Only works when Vendor emails are ON (Settings tab)." />}
         {error && <div className="error-text" style={{ marginTop: 8 }}>{error}</div>}
       </div>
     </Modal>

@@ -4,7 +4,8 @@
 // review list read and write only through here.
 //
 //   GET  /client/:clientId                         the tab: logins, requests, limit, rights
-//   POST /client/:clientId/users                   Add user {name,email,portalType,reason}
+//   POST /client/:clientId/users                   Add user {name,email,portalPerms:[ticks] (or portalType preset),reason}
+//   POST /client/:clientId/users/:userId/perms     change the ticks {portalPerms:[...]} — approver now, BDE as a request
 //                                                    BDE -> a request; SA/Admin/Manager -> created
 //   POST /requests/:id/approve | /reject           SA / Admin / Manager (their departments)
 //   POST /client/:clientId/users/:userId/disable   BDE -> a request; approver -> switched off
@@ -29,7 +30,7 @@ const { notifyUsers } = require('../utils/notify');
 const { sendMail } = require('../utils/mailer');
 const { issueSetPasswordToken, unguessablePasswordHash, appBaseUrl, SET_PASSWORD_TTL_HOURS } = require('../utils/employeeInvite');
 const { departmentOk, pauseApproverIds } = require('../utils/clientLifecycle');
-const { PORTAL_TYPES, PORTAL_TYPE_LABELS } = require('../utils/clientPortalTypes');
+const T = require('../utils/clientPortalTypes');
 const { portalSettings, savePortalSettings } = require('../utils/portalSettings');
 const L = require('../utils/portalLogins');
 
@@ -40,8 +41,36 @@ router.use(requireAuth);
 const FEATURE = 'Client Portal Logins';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const norm = (e) => String(e || '').trim().toLowerCase();
-const SHORT_TYPE = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing' };
-const typeWords = (t) => (t ? SHORT_TYPE[t] || t : 'Full access (older login)');
+const REQUEST_KINDS = ['CLIENT_LOGIN', 'CLIENT_DISABLE', 'CLIENT_PERMS'];
+const SHORT_TYPE = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', CUSTOM: 'Custom' };
+// The display label of a login / request: Reviewer / Viewer / Billing / Custom (ticks equal a preset or not).
+const typeWords = (x) => T.labelFor(x && typeof x === 'object' ? x : { portalType: x });
+const PERM_HELP = 'Tick at least one thing this person may do.';
+
+// The ticks asked for in a request body: a list of keys (or a comma string),
+// or — for an older caller — one of the three preset names. Returns { caps } or { error }.
+function capsFromBody(b) {
+  const given = b && (b.portalPerms !== undefined ? b.portalPerms : b.perms);
+  let caps;
+  if (given !== undefined && given !== null && given !== '') caps = T.normalise(given);
+  else if (b && T.PRESET_CAPS[String(b.portalType || '').toUpperCase()]) caps = T.normalise(T.PRESET_CAPS[String(b.portalType).toUpperCase()]);
+  else caps = [];
+  if (!caps.length) return { error: PERM_HELP };
+  if (T.typeFor(caps) === 'CUSTOM' && !(L.HAS_PERMS && L.HAS_REQUEST_PERMS)) {
+    return { error: 'Custom ticks need a one-time system update first. Until then pick Reviewer, Viewer or Billing.' };
+  }
+  return { caps };
+}
+// What goes in the User columns for a tick set (the old portalType stays as the label).
+const userTickData = (caps) => ({
+  portalType: T.typeFor(caps),
+  ...(L.HAS_PERMS ? { portalPerms: T.serialise(caps) } : {}),
+  accountsRole: caps.includes('INVOICES') ? 'CLIENT' : 'NONE',
+  accountsAccess: caps.includes('INVOICES'),
+});
+const requestTickData = (caps) => ({ portalType: T.typeFor(caps), ...(L.HAS_REQUEST_PERMS ? { portalPerms: T.serialise(caps) } : {}) });
+const capsOfRow = (r) => T.capsOf(r) || [];
+const youCan = (caps) => T.chipsOf(caps).join(', ');
 const held = (u) => [u.role, u.atsRole, u.hrmsRole, u.accountsRole, ...(Object.values(u.scopeRoles || {}))].filter(Boolean);
 const isAdmin = (u) => held(u).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r));
 
@@ -72,11 +101,19 @@ async function loadClient(req, res, clientId) {
   return { client, rights: { view: base.view || approve, request: base.request && !approve, approve } };
 }
 
-function inviteMail({ name, company, link, expiresAt, type }) {
+const MAIL_WORDS = {
+  VIEW: 'see your jobs and the candidates we send you', DECIDE: 'shortlist, hold or reject candidates', INTERVIEW: 'ask for an interview',
+  FEEDBACK: 'give feedback after an interview', REQUEST: 'ask for a new job', AGREEMENT: 'see your agreement', INVOICES: 'see your invoices',
+};
+function inviteMail({ name, company, link, expiresAt, caps }) {
   const when = expiresAt.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
-  const what = type === 'BILLING'
-    ? 'see your invoices'
-    : `see your jobs, the candidates we send you${type === 'VIEWER' ? '' : ' (and shortlist or reject them)'}, interviews and feedback`;
+  const parts = (caps || []).map((k) => MAIL_WORDS[k]).filter(Boolean);
+  const what = parts.length
+    ? (parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`)
+    : 'see your jobs, the candidates we send you, interviews and feedback';
+  const first = (caps || []).includes('VIEW') || !(caps || []).length
+    ? 'First time? After you sign in you will see "Your jobs" and "Candidates for review" — open a candidate to see the resume and give your decision.'
+    : 'First time? After you sign in, the buttons you can use are shown on the first page.';
   return [
     `Hello ${name || 'there'},`,
     '',
@@ -86,7 +123,7 @@ function inviteMail({ name, company, link, expiresAt, type }) {
     '',
     link,
     '',
-    'First time? After you sign in you will see "Your jobs" and "Candidates for review" — open a candidate to see the resume and give your decision.',
+    first,
     '',
     'We never send passwords by email, WhatsApp or chat. If you did not expect this, ignore this message.',
     '',
@@ -108,7 +145,7 @@ async function sendInvite(user, req) {
   const r = await sendMail({
     to: user.email,
     subject: `${company} — your client portal login`,
-    text: inviteMail({ name: user.name, company, link, expiresAt, type: user.portalType }),
+    text: inviteMail({ name: user.name, company, link, expiresAt, caps: T.capsOf(user) }),
     useEmployeeFrom: false,
     fromName: '',
   }).catch((e) => ({ ok: false, error: e.message }));
@@ -122,10 +159,10 @@ async function sendInvite(user, req) {
 }
 
 // Every rule a NEW client login must pass. Returns an error string or null.
-async function whyNot({ client, email, portalType, forRequest }) {
+async function whyNot({ client, email, caps, permError, forRequest }) {
   const gate = L.agreementGate(client);
   if (!gate.active) return `Client logins open only when the agreement is Active. This client's agreement: ${gate.words}.`;
-  if (!PORTAL_TYPES.includes(portalType)) return 'Choose the type: Reviewer, Viewer or Billing.';
+  if (!caps || !caps.length) return permError || PERM_HELP;
   if (!EMAIL_RE.test(email)) return 'Enter a valid email address.';
   const [taken] = await prisma.$queryRaw`SELECT id FROM User WHERE lower(trim(email)) = ${email} LIMIT 1`;
   if (taken) return 'This email already has a TeamLink login. Each person needs their own email.';
@@ -138,7 +175,7 @@ async function whyNot({ client, email, portalType, forRequest }) {
   return null;
 }
 
-async function createLogin({ client, name, email, portalType, req }) {
+async function createLogin({ client, name, email, caps, req }) {
   const user = await prisma.user.create({
     data: {
       name: String(name || email).trim().slice(0, 120),
@@ -148,14 +185,12 @@ async function createLogin({ client, name, email, portalType, req }) {
       role: 'CLIENT',
       atsRole: 'CLIENT',
       hrmsRole: 'NONE',
-      // Billing reads invoices (accounts / Invoices / view is the CLIENT
-      // role's); the other two types never reach Accounts.
-      accountsRole: portalType === 'BILLING' ? 'CLIENT' : 'NONE',
+      // The "See invoices" tick reads invoices (accounts / Invoices / view is
+      // the CLIENT role's); without it a login never reaches Accounts.
       atsAccess: true,
       hrmsAccess: false,
-      accountsAccess: portalType === 'BILLING',
       clientId: client.id,
-      portalType,
+      ...userTickData(caps),
       portalReviewedAt: new Date(),
       status: 'Active',
     },
@@ -170,12 +205,15 @@ function shapeLogin(u, gate) {
   if (!L.isOff(u) && !gate.active) flags.push({ key: 'agreement', label: `Agreement ${gate.words.toLowerCase()} — switch off?`, tone: 'red' });
   if (L.reviewDue(u)) flags.push({ key: 'review', label: 'Quarterly check due', tone: 'orange' });
   return {
-    id: u.id, name: u.name, email: u.email, type: u.portalType || null, typeWords: typeWords(u.portalType),
+    id: u.id, name: u.name, email: u.email, type: u.portalType || null, typeWords: typeWords(u),
+    // the ticks (null = an older full-access login) and the same in short words, for the chips
+    perms: T.capsOf(u), chips: T.capsOf(u) ? T.chipsOf(T.capsOf(u)) : [],
     state: st, off: L.isOff(u), lastLoginAt: u.lastLoginAt, createdAt: u.createdAt, reviewedAt: u.portalReviewedAt, flags,
   };
 }
 const shapeRequest = (r) => ({
-  id: r.id, kind: r.kind, status: r.status, name: r.name, email: r.email, type: r.portalType, typeWords: r.portalType ? typeWords(r.portalType) : null,
+  id: r.id, kind: r.kind, status: r.status, name: r.name, email: r.email, type: r.portalType, typeWords: r.portalType || r.portalPerms ? typeWords(r) : null,
+  perms: T.capsOf(r), chips: T.capsOf(r) ? T.chipsOf(T.capsOf(r)) : [],
   userId: r.userId, reason: r.reason, requestedBy: r.requestedByName, createdAt: r.createdAt,
   decidedBy: r.decidedByName, decidedAt: r.decidedAt, decisionNote: r.decisionNote,
 });
@@ -188,7 +226,7 @@ router.get('/client/:clientId', wrap(async (req, res) => {
   const gate = L.agreementGate(client);
   const [logins, requests, settings] = await Promise.all([
     L.clientLogins(client.id),
-    prisma.portalRequest.findMany({ where: { clientId: client.id, kind: { in: ['CLIENT_LOGIN', 'CLIENT_DISABLE'] } }, orderBy: { createdAt: 'desc' }, take: 30 }),
+    prisma.portalRequest.findMany({ where: { clientId: client.id, kind: { in: REQUEST_KINDS } }, orderBy: { createdAt: 'desc' }, take: 30 }),
     portalSettings(),
   ]);
   const pending = requests.filter((r) => r.status === 'Pending');
@@ -201,10 +239,18 @@ router.get('/client/:clientId', wrap(async (req, res) => {
     used,
     waiting: waitingAdd,
     seatsLeft: Math.max(0, settings.maxClientLogins - used - waitingAdd),
-    logins: logins.map((u) => ({ ...shapeLogin(u, gate), pendingDisable: pending.some((r) => r.kind === 'CLIENT_DISABLE' && r.userId === u.id) })),
+    logins: logins.map((u) => ({
+      ...shapeLogin(u, gate),
+      pendingDisable: pending.some((r) => r.kind === 'CLIENT_DISABLE' && r.userId === u.id),
+      pendingPerms: pending.some((r) => r.kind === 'CLIENT_PERMS' && r.userId === u.id),
+    })),
     requests: pending.map(shapeRequest),
     history: requests.filter((r) => r.status !== 'Pending').slice(0, 10).map(shapeRequest),
-    types: PORTAL_TYPES.map((t) => ({ value: t, label: SHORT_TYPE[t], hint: PORTAL_TYPE_LABELS[t].split('— ')[1] || '' })),
+    types: T.PORTAL_TYPES.map((t) => ({ value: t, label: SHORT_TYPE[t], hint: T.PORTAL_TYPE_LABELS[t].split('— ')[1] || '', perms: T.normalise(T.PRESET_CAPS[t]) })),
+    // the tick list the Add / Edit popup draws (plain words; VIEW is the base the "Do" ticks need)
+    permList: T.CAPS,
+    needsView: ['DECIDE', 'INTERVIEW', 'FEEDBACK'],
+    canCustom: L.HAS_PERMS && L.HAS_REQUEST_PERMS,
     rights,
   });
 }));
@@ -218,37 +264,38 @@ router.post('/client/:clientId/users', wrap(async (req, res) => {
   const b = req.body || {};
   const email = norm(b.email);
   const name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
-  const portalType = String(b.portalType || '').toUpperCase();
+  const parsed = capsFromBody(b);
+  const caps = parsed.caps || [];
   const reason = String(b.reason || '').trim().slice(0, 500) || null;
   if (!name) return res.status(400).json({ error: 'Enter the person\'s name.' });
-  const no = await whyNot({ client, email, portalType, forRequest: true });
+  const no = await whyNot({ client, email, caps, permError: parsed.error, forRequest: true });
   if (no) return res.status(409).json({ error: no });
   const u = req.user;
 
   if (rights.approve) {
-    const out = await createLogin({ client, name, email, portalType, req });
+    const out = await createLogin({ client, name, email, caps, req });
     await prisma.portalRequest.create({
       data: {
-        kind: 'CLIENT_LOGIN', status: 'Approved', clientId: client.id, userId: out.user.id, name, email, portalType, reason,
+        kind: 'CLIENT_LOGIN', status: 'Approved', clientId: client.id, userId: out.user.id, name, email, ...requestTickData(caps), reason,
         requestedById: u.id, requestedByName: u.name, decidedById: u.id, decidedByName: u.name, decidedAt: new Date(), decisionNote: 'Added directly',
       },
     });
-    await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login created (${typeWords(portalType)})`, entity: 'Client', entityId: client.id, toValue: `${email} · ${out.invite.sent ? 'invite mailed' : 'invite not mailed'}` });
+    await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login created (${SHORT_TYPE[T.typeFor(caps)]})`, entity: 'Client', entityId: client.id, fromValue: null, toValue: `${email} · can: ${youCan(caps)} · ${out.invite.sent ? 'invite mailed' : 'invite not mailed'}` });
     return res.status(201).json({ created: true, message: `Login added for ${name}. ${out.invite.message}`, link: out.invite.link, expiresAt: out.invite.expiresAt });
   }
 
   const r = await prisma.portalRequest.create({
-    data: { kind: 'CLIENT_LOGIN', status: 'Pending', clientId: client.id, name, email, portalType, reason, requestedById: u.id, requestedByName: u.name },
+    data: { kind: 'CLIENT_LOGIN', status: 'Pending', clientId: client.id, name, email, ...requestTickData(caps), reason, requestedById: u.id, requestedByName: u.name },
   });
-  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login requested (${typeWords(portalType)})`, entity: 'Client', entityId: client.id, toValue: email });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login requested (${SHORT_TYPE[T.typeFor(caps)]})`, entity: 'Client', entityId: client.id, toValue: `${email} · can: ${youCan(caps)}` });
   const approvers = (await pauseApproverIds(client)).filter((id) => id !== u.id);
-  await notifyUsers(approvers, { title: 'Client login waiting for your approval', message: `${u.name} asks for a ${typeWords(portalType)} login for ${name} (${client.name}).` });
+  await notifyUsers(approvers, { title: 'Client login waiting for your approval', message: `${u.name} asks for a login for ${name} (${client.name}) that can: ${youCan(caps)}.` });
   return res.status(201).json({ requested: true, id: r.id, message: `Request sent. The Admin will approve it, then ${name} gets an invite email.` });
 }));
 
 async function loadRequest(req, res) {
   const r = await prisma.portalRequest.findUnique({ where: { id: req.params.id } });
-  if (!r || !['CLIENT_LOGIN', 'CLIENT_DISABLE'].includes(r.kind)) { res.status(404).json({ error: 'Request not found.' }); return null; }
+  if (!r || !REQUEST_KINDS.includes(r.kind)) { res.status(404).json({ error: 'Request not found.' }); return null; }
   const got = await loadClient(req, res, r.clientId);
   if (!got) return null;
   if (!got.rights.approve) { res.status(403).json({ error: 'Only the Admin (or the department Manager) can decide this.' }); return null; }
@@ -270,12 +317,22 @@ router.post('/requests/:id/approve', wrap(async (req, res) => {
     await notifyUsers([r.requestedById], { title: 'Client login switched off', message: `${target ? target.name : 'The login'} (${client.name}) is switched off, as you asked.`, exceptUserId: u.id });
     return res.json({ ok: true, message: `${target ? target.name : 'The login'} is switched off.` });
   }
-  const no = await whyNot({ client, email: norm(r.email), portalType: r.portalType, forRequest: false });
+  if (r.kind === 'CLIENT_PERMS') {
+    const target = await prisma.user.findFirst({ where: { id: r.userId, clientId: client.id, OR: [{ role: 'CLIENT' }, { atsRole: 'CLIENT' }] } });
+    const asked = T.capsOf(r) || [];
+    if (!target || !asked.length) return res.status(409).json({ error: 'That login or the ticks asked for are no longer there.' });
+    await applyPerms({ target, caps: asked, actor: u, client, via: 'request approved' });
+    await prisma.portalRequest.update({ where: { id: r.id }, data: { status: 'Approved', ...decided } });
+    await notifyUsers([r.requestedById], { title: 'Client login ticks changed', message: `${target.name} (${client.name}) can now: ${youCan(asked)}.`, exceptUserId: u.id });
+    return res.json({ ok: true, message: `Saved. ${target.name} can now: ${youCan(asked)}.` });
+  }
+  const caps = capsOfRow(r);
+  const no = await whyNot({ client, email: norm(r.email), caps, forRequest: false });
   if (no) return res.status(409).json({ error: no });
-  const out = await createLogin({ client, name: r.name, email: norm(r.email), portalType: r.portalType, req });
+  const out = await createLogin({ client, name: r.name, email: norm(r.email), caps, req });
   await prisma.portalRequest.update({ where: { id: r.id }, data: { status: 'Approved', userId: out.user.id, ...decided } });
-  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login approved + created (${typeWords(r.portalType)})`, entity: 'Client', entityId: client.id, toValue: `${r.email} · requested by ${r.requestedByName}` });
-  await notifyUsers([r.requestedById], { title: 'Client login approved', message: `${r.name} (${client.name}) now has a ${typeWords(r.portalType)} login. An invite email has gone to them.`, exceptUserId: u.id });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login approved + created (${typeWords(r)})`, entity: 'Client', entityId: client.id, toValue: `${r.email} · can: ${youCan(caps)} · requested by ${r.requestedByName}` });
+  await notifyUsers([r.requestedById], { title: 'Client login approved', message: `${r.name} (${client.name}) now has a login that can: ${youCan(caps)}. An invite email has gone to them.`, exceptUserId: u.id });
   return res.json({ ok: true, message: `Approved. ${out.invite.message}`, link: out.invite.link });
 }));
 
@@ -287,7 +344,7 @@ router.post('/requests/:id/reject', wrap(async (req, res) => {
   const note = String((req.body && req.body.note) || '').trim().slice(0, 500);
   if (!note) return res.status(400).json({ error: 'Say why, so the BDE knows.' });
   await prisma.portalRequest.update({ where: { id: r.id }, data: { status: 'Rejected', decidedById: u.id, decidedByName: u.name, decidedAt: new Date(), decisionNote: note } });
-  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal request declined (${r.kind === 'CLIENT_DISABLE' ? 'switch off' : 'new login'})`, entity: 'Client', entityId: client.id, toValue: note });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal request declined (${{ CLIENT_DISABLE: 'switch off', CLIENT_PERMS: 'change of ticks' }[r.kind] || 'new login'})`, entity: 'Client', entityId: client.id, toValue: note });
   await notifyUsers([r.requestedById], { title: 'Client login request declined', message: `${client.name}: ${note}`, exceptUserId: u.id });
   return res.json({ ok: true, message: 'Declined. The BDE has been told why.' });
 }));
@@ -357,15 +414,55 @@ router.post('/client/:clientId/users/:userId/resend', wrap(async (req, res) => {
   return res.json({ ok: true, message: invite.message, link: invite.link });
 }));
 
+// Writes a new tick set on a login and logs old -> new (words, not codes).
+async function applyPerms({ target, caps, actor, client, via }) {
+  const before = T.capsOf(target);
+  await prisma.user.update({ where: { id: target.id }, data: userTickData(caps) });
+  await logAudit({
+    userId: actor.id, actorName: actor.name, action: `Client portal login ticks changed${via ? ` (${via})` : ''}`, entity: 'Client', entityId: client.id,
+    fromValue: before ? youCan(before) || '—' : 'Full access (older login)', toValue: `${target.email} → ${youCan(caps)}`,
+  });
+}
+
+// Change what a login may do. The Admin (or the department Manager) changes it
+// at once; the BDE asks and the Admin approves, as for every other login change.
+router.post('/client/:clientId/users/:userId/perms', wrap(async (req, res) => {
+  const got = await loadLogin(req, res);
+  if (!got) return undefined;
+  const { client, rights, target } = got;
+  const u = req.user;
+  const parsed = capsFromBody(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const caps = parsed.caps;
+  const before = T.capsOf(target);
+  if (before && before.join(',') === caps.join(',')) return res.status(409).json({ error: 'Nothing changed — these are the same ticks.' });
+  if (rights.approve) {
+    await applyPerms({ target, caps, actor: u, client });
+    await prisma.portalRequest.updateMany({ where: { kind: 'CLIENT_PERMS', status: 'Pending', userId: target.id }, data: { status: 'Rejected', decidedById: u.id, decidedByName: u.name, decidedAt: new Date(), decisionNote: 'Replaced by a direct change' } });
+    return res.json({ ok: true, message: `Saved. ${target.name} can now: ${youCan(caps)}.` });
+  }
+  if (!rights.request) return res.status(403).json({ error: 'Only the client manager (BDE) or the Admin can change what a login may do.' });
+  const dupe = await prisma.portalRequest.findFirst({ where: { kind: 'CLIENT_PERMS', status: 'Pending', userId: target.id } });
+  if (dupe) return res.status(409).json({ error: 'A change for this login is already waiting for the Admin.' });
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500) || null;
+  const r = await prisma.portalRequest.create({
+    data: { kind: 'CLIENT_PERMS', status: 'Pending', clientId: client.id, userId: target.id, name: target.name, email: target.email, ...requestTickData(caps), reason, requestedById: u.id, requestedByName: u.name },
+  });
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Client portal login ticks change requested', entity: 'Client', entityId: client.id, fromValue: before ? youCan(before) : 'Full access (older login)', toValue: `${target.email} → ${youCan(caps)}` });
+  const approvers = (await pauseApproverIds(client)).filter((id) => id !== u.id);
+  await notifyUsers(approvers, { title: 'Change what a client login can do?', message: `${u.name} asks to change ${target.name} (${client.name}) to: ${youCan(caps)}.` });
+  return res.status(201).json({ requested: true, id: r.id, message: 'Request sent. The Admin will approve the change.' });
+}));
+
+// Older callers: pick one of the three presets (same effect as ticking its boxes).
 router.post('/client/:clientId/users/:userId/type', wrap(async (req, res) => {
   const got = await loadLogin(req, res);
   if (!got || !approverOnly(got, res)) return undefined;
   const { client, target } = got;
   const t = String((req.body && req.body.portalType) || '').toUpperCase();
-  if (!PORTAL_TYPES.includes(t)) return res.status(400).json({ error: 'Choose Reviewer, Viewer or Billing.' });
-  await prisma.user.update({ where: { id: target.id }, data: { portalType: t, accountsRole: t === 'BILLING' ? 'CLIENT' : 'NONE', accountsAccess: t === 'BILLING' } });
-  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Client portal login type changed', entity: 'Client', entityId: client.id, fromValue: typeWords(target.portalType), toValue: `${target.email} → ${typeWords(t)}` });
-  return res.json({ ok: true, message: `${target.name} is now ${typeWords(t)}.` });
+  if (!T.PORTAL_TYPES.includes(t)) return res.status(400).json({ error: 'Choose Reviewer, Viewer or Billing.' });
+  await applyPerms({ target, caps: T.normalise(T.PRESET_CAPS[t]), actor: req.user, client, via: 'type' });
+  return res.json({ ok: true, message: `${target.name} is now ${SHORT_TYPE[t]}.` });
 }));
 
 router.post('/client/:clientId/users/:userId/keep', wrap(async (req, res) => {
@@ -393,6 +490,7 @@ router.get('/review', wrap(async (req, res) => {
     select: {
       id: true, name: true, email: true, status: true, portalType: true, portalReviewedAt: true, lastLoginAt: true,
       createdAt: true, setPasswordTokenHash: true, setPasswordExpiresAt: true, passwordChangedAt: true, clientId: true,
+      ...(L.HAS_PERMS ? { portalPerms: true } : {}),
     },
     orderBy: { createdAt: 'asc' },
   }) : [];
@@ -401,7 +499,7 @@ router.get('/review', wrap(async (req, res) => {
     return { ...shapeLogin(x, L.agreementGate(c)), client: { id: c.id, name: c.name } };
   });
   const requests = clients.length ? await prisma.portalRequest.findMany({
-    where: { clientId: { in: [...byId.keys()] }, status: 'Pending', kind: { in: ['CLIENT_LOGIN', 'CLIENT_DISABLE'] } }, orderBy: { createdAt: 'asc' },
+    where: { clientId: { in: [...byId.keys()] }, status: 'Pending', kind: { in: REQUEST_KINDS } }, orderBy: { createdAt: 'asc' },
   }) : [];
   // Requests for clients that have no login yet (a first BDE request).
   const firstRequests = base.approve ? (await prisma.portalRequest.findMany({

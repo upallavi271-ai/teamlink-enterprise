@@ -27,7 +27,7 @@ const { can, requireAuth } = require('../middleware/auth');
 const signing = require('../utils/agreementSigning');
 const lifecycle = require('../utils/agreementLifecycle');
 const settingsStore = require('../utils/agreementSettings');
-const { nextAgreementId } = require('../utils/agreement');
+const { nextAgreementId, madeOnPatch } = require('../utils/agreement');
 
 const LINKABLE = ['DRAFT', 'SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'];
 const ACT = {
@@ -96,8 +96,16 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
   async function loadForLink(req, res) {
     const loaded = await loadForView(req, res);
     if (!loaded) return null;
-    if (loaded.access.as === 'client' || !(await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'create'))) {
-      res.status(403).json({ error: 'Only a Super Admin or Admin can make or share the agreement link.' });
+    if (loaded.access.as === 'client') {
+      res.status(403).json({ error: "Only a Super Admin, an Admin or the client's own BDE can make or share the agreement link." });
+      return null;
+    }
+    // THE CLIENT-REQUEST FLOW (user, 2026-10-09): the BDE team gets the agreement
+    // ready and SENDS it - the client's own BDE (own client, or a desk client
+    // with no BDE yet) and the BDE TL (any client). Editing the agreement and the
+    // TeamLink seal stay with the Admin.
+    if (!(await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'create')) && !(await lifecycle.bdeMayLink(req.user, loaded.client))) {
+      res.status(403).json({ error: "Only a Super Admin, an Admin or the client's own BDE can make or share the agreement link." });
       return null;
     }
     return loaded.client;
@@ -126,10 +134,13 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
       if (!Number.isInteger(days) || days < 1 || days > 90) return res.status(400).json({ error: 'The link must work for 1 to 90 days.' });
       const staleFiles = [client.agreementClientSignFile, client.agreementClientStampFile].filter(Boolean);
       const { data } = signing.newLinkData(client.id, { days, manual: true });
+      // A draft made before 2026-10-10 may still print "**-**-****": date it as the link is made.
+      const dating = st === 'DRAFT' ? madeOnPatch(client) : null;
       const updated = await prisma.client.update({
         where: { id: client.id },
         data: {
           ...data,
+          ...(dating ? dating.data : {}),
           agreementStatus: st === 'DRAFT' ? 'SENT' : client.agreementStatus,
           agreementId: client.agreementId || (await nextAgreementId()),
           // A new link starts clean: anything half-done on the old one goes.
@@ -148,7 +159,7 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
       await logAudit({
         userId: req.user.id, action: ACT.created, entity: 'Client', entityId: client.id,
         fromValue: st, toValue: signing.statusOf(updated),
-        reason: `Works for ${days} day${days === 1 ? '' : 's'}${client.esignToken ? ' · the earlier link no longer works' : ''}`,
+        reason: `Works for ${days} day${days === 1 ? '' : 's'}${client.esignToken ? ' · the earlier link no longer works' : ''}${dating ? ` · the text had no date: dated ${require('../utils/vendorAgreement').ddmmyyyy(dating.ymd)}` : ''}`,
       });
       return res.json({ ...(await shape(req, await prisma.client.findUnique({ where: { id: client.id } }))), made: true });
     } catch (err) { return next(err); }

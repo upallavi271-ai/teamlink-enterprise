@@ -568,12 +568,12 @@ const READ_TOOLS = [
 
   {
     name: 'attendance_on_date',
-    description: 'Who was present, absent or on half day on a given date, for the employees this user may see. Defaults to today. Use for "who is absent today", "attendance yesterday", "was X in on 12 August".',
+    description: 'Who was present, absent, on half day, on leave or on a week off / holiday on a given date, for the employees this user may see. Defaults to today. Present INCLUDES people who were late, left early or have a check-in / check-out missing (those are only notes). Use for "who is absent today", "attendance yesterday", "was X in on 12 August".',
     input_schema: {
       type: 'object',
       properties: {
         date: { type: 'string', description: 'YYYY-MM-DD. Defaults to today.' },
-        status: { type: 'string', description: 'Optional: Present, Absent or Half Day.' },
+        status: { type: 'string', description: 'Optional: Present, Absent, Half Day, On Leave or Week Off.' },
       },
       additionalProperties: false,
     },
@@ -589,32 +589,45 @@ const READ_TOOLS = [
       // then hide it, which is not the same thing.
       const visible = await prisma.employee.findMany({
         where: employeeWhere(user),
-        select: { id: true, name: true, employeeCode: true, department: true },
+        select: { id: true, name: true, employeeCode: true, department: true, dateOfJoining: true, employmentStatus: true },
       });
       const ids = visible.map((e) => e.id);
       if (!ids.length) return { date, total: 0, records: [], note: 'No employees are within your access.' };
       const byId = new Map(visible.map((e) => [e.id, e]));
-      const rows = await prisma.attendance.findMany({
-        where: { employeeId: { in: ids }, date, ...(input.status ? { status: input.status } : {}) },
-        select: { employeeId: true, status: true, checkIn: true, checkOut: true },
-      });
-      const counts = {};
-      rows.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+      // THE ONE DAY RULE (utils/attendanceDays.js), the same as the dashboard and the
+      // Attendance page: each person on the rolls is in exactly ONE tile, so
+      // Present + Absent + Half day + On leave + Week off / Holiday = Headcount.
+      // Present includes late, early logout, missing check-in and missing check-out.
+      const D = require('./attendanceDays');
+      const cfg = (await prisma.hrConfig.findFirst()) || { graceTime: '09:15', weeklyOffDays: '0' };
+      const roll = await D.rollOf(prisma, visible);
+      const onDay = roll.employees.filter((e) => D.onRolls(e, date, date, roll.lastDayOf));
+      const dayLoad = await D.loadDays(prisma, { employees: onDay, from: date, to: date, cfg, lastDayOf: roll.lastDayOf, preview: true });
+      const TILE = { present: 'Present', absent: 'Absent', halfDay: 'Half Day', onLeave: 'On Leave', offDay: 'Week Off / Holiday', noRecord: 'No device data', notYet: 'Not checked in yet', upcoming: 'Upcoming day' };
+      const dayRows = onDay.map((e) => ({ e, day: dayLoad.days(e)[0] })).filter((x) => x.day && D.bucketOf(x.day));
+      const tally = D.tally(dayRows.map((x) => x.day));
+      const want = String(input.status || '').toLowerCase().replace(/[^a-z]/g, '');
+      const wantKey = { present: 'present', absent: 'absent', halfday: 'halfDay', onleave: 'onLeave', weekoff: 'offDay', holiday: 'offDay', weekoffholiday: 'offDay' }[want] || '';
+      const picked = dayRows.filter((x) => !want || D.bucketOf(x.day) === wantKey);
       return {
         date,
         employeesInScope: ids.length,
-        // A day with no rows is not a day everybody was absent — it is a
-        // weekend, a holiday, or a day nobody marked. Say which.
-        recorded: rows.length,
-        noRecord: ids.length - rows.length,
-        counts,
-        records: rows.slice(0, LIMIT).map((r) => ({
-          name: byId.get(r.employeeId)?.name,
-          employeeCode: byId.get(r.employeeId)?.employeeCode,
-          department: byId.get(r.employeeId)?.department,
-          status: r.status,
-          checkIn: r.checkIn || null,
-          checkOut: r.checkOut || null,
+        headcountOnTheRolls: tally.headcount,
+        // Present + Absent + Half Day + On Leave + Week Off / Holiday = headcount (No device data /
+        // Not checked in yet / Upcoming appear only when somebody is in them).
+        counts: Object.fromEntries(Object.entries(TILE).map(([k, label]) => [label, tally[k]]).filter(([label, n]) => n > 0 || ['Present', 'Absent', 'Half Day', 'On Leave', 'Week Off / Holiday'].includes(label))),
+        // Small notes INSIDE Present - these people are already counted as Present.
+        presentIncludes: { late: tally.notes.late, earlyLogout: tally.notes.earlyLogout, missingCheckIn: tally.notes.missingCheckIn, missingCheckOut: tally.notes.missingCheckOut },
+        lateAfter: D.clock(require('./attendanceMath').toMinutes(String(cfg.graceTime || '09:15'))),
+        notOnTheRollsThatDay: ids.length - tally.headcount,
+        records: picked.slice(0, LIMIT).map(({ e, day }) => ({
+          name: byId.get(e.id)?.name,
+          employeeCode: byId.get(e.id)?.employeeCode,
+          department: byId.get(e.id)?.department,
+          status: TILE[D.bucketOf(day)],
+          notes: D.bucketOf(day) === 'present' ? D.notesOf(day).map((k) => D.NOTE_LABEL[k]) : [],
+          checkIn: day.checkIn || null,
+          checkOut: day.checkOut || null,
         })),
       };
     },

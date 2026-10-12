@@ -45,7 +45,7 @@ const V = require('./atsVocab');
 const NA = require('./nextAction');
 const AS = require('./atsAlertSettings');
 const {
-  applicationWhere, requirementWhere, clientWhere, atsScopeOf: scopeOf, employeeWhere, invoiceWhere,
+  applicationWhere, requirementWhere, clientWhere, atsScopeOf: scopeOf, employeeWhere, invoiceWhere, isBdeTl,
 } = require('./scope');
 const A = require('./accounts');
 const dateRange = require('./dateRange');
@@ -122,6 +122,9 @@ function layoutOf(user) {
   if (r === 'MANAGER') return 'manager';
   if (r === 'ASSISTANT_MANAGER') return 'asstmanager';
   if (r === 'STL') return 'stl';
+  // THE BDE TL (user, 2026-10-09) leads the BDE team: the client-manager page,
+  // across ALL the BDE clients, not a recruiter team's page of zeros.
+  if (r === 'TL' && isBdeTl(user)) return 'bde';
   if (r === 'TL') return 'tl';
   if (r === 'BDE') return 'bde';
   if (r === 'HR') return 'hr';
@@ -208,7 +211,11 @@ const WORLD_MAX = 24;
 const WORLD_MAX_AGE_MS = 10 * 60 * 1000;
 // While a fresher copy is being read, a copy this young is still served
 // (and the page says "as of HH:MM").
-const WORLD_STALE_OK_MS = 120 * 1000;
+// PERF (Batch 1, 2026-10-09): 120 s -> 180 s. A scoped copy takes 1-15 s to read
+// (a BDE's is the slowest), and every write by anybody changes the stamp, so on
+// a busy day a 2-minute window meant most dashboard opens waited for a rebuild.
+// The page already says "as of HH:MM"; a bulk action asks for ?fresh=1.
+const WORLD_STALE_OK_MS = 180 * 1000;
 
 let STAMP = { at: 0, v: '', snap: '' };
 async function dataStamp() {
@@ -333,6 +340,13 @@ async function worldFor(user, { fresh = false } = {}) {
     WORLDS.set(key, { ...entry, key, building: p });
     return p;
   };
+  // Nothing was written since this copy was read (same stamp) and it is only
+  // "old": serve it and read a new one behind it, never make a person wait for
+  // a rebuild that would come back identical.
+  if (!fresh && hit && hit.w && hit.stamp === stamp) {
+    start().catch((err) => console.error('[atsHome] world refresh failed:', err.message)); // eslint-disable-line no-console
+    return hit.w;
+  }
   // Changed since: serve the young copy and read a fresh one behind it.
   if (!fresh && hit && hit.w && age < WORLD_STALE_OK_MS) {
     start().catch((err) => console.error('[atsHome] world refresh failed:', err.message)); // eslint-disable-line no-console
@@ -373,7 +387,39 @@ function warmCompanyWorld() {
     })).find((u) => !/zztest|example\.test/i.test(`${u.name} ${u.email}`));
     // eslint-disable-next-line global-require
     const user = sa ? await require('./identity').resolveIdentity(sa.id) : null;
-    if (user) await buildHome(user, { query: { range: 'this_month' } });
+    // The page asks for range=month by default: keep THAT board (same cache key) and its
+    // Team leads list, so the first dashboard after a restart is served from memory.
+    if (user) {
+      const b0 = await buildHomeCached(user, { query: { range: 'month' } });
+      await homeList(user, b0, '__tls').catch(() => null); // reads the team world (4-15 s the first time)
+    }
+    // Batch 1 perf: the copies of the people who signed in lately (a BDE's or a
+    // Manager's copy is the slow one: 7-15 s). Read one at a time, a few at most,
+    // behind the company copy, so their first dashboard after a restart is quick.
+    // Same worldFor() the dashboard uses; a test login is never warmed.
+    const recent = await prisma.user.findMany({
+      where: { status: 'Active', atsAccess: true, lastLoginAt: { gte: new Date(Date.now() - 3 * DAY) } },
+      select: { id: true, name: true, email: true }, orderBy: { lastLoginAt: 'desc' }, take: 12,
+    }).catch(() => []);
+    const seen = new Set();
+    for (const u of recent) {
+      if (seen.size >= 6) break;
+      if (isTest(`${u.name} ${u.email}`)) continue;
+      // eslint-disable-next-line no-await-in-loop, global-require
+      const idn = await require('./identity').resolveIdentity(u.id).catch(() => null);
+      if (!idn) continue;
+      const wk = JSON.stringify([applicationWhere(idn), requirementWhere(idn)]);
+      if (seen.has(wk)) continue;
+      seen.add(wk);
+      // eslint-disable-next-line no-await-in-loop
+      await worldFor(idn).catch(() => null);
+      // eslint-disable-next-line no-await-in-loop
+      const bw = await buildHomeCached(idn, { query: { range: 'month' } }).catch(() => null);
+      // eslint-disable-next-line no-await-in-loop
+      if (bw) await homeList(idn, bw, '__tls').catch(() => null);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   })().catch((err) => console.error('[atsHome] warm-up failed:', err.message)); // eslint-disable-line no-console
   return WARM;
 }
@@ -395,6 +441,9 @@ const HIDDEN_FILTERS = {
   hr: ['recruiter', 'tl', 'bde', 'clientId'],
   bde: ['bde'],
   tl: ['tl'],
+  // THE BDE TL (user, 2026-10-10) leads the client managers: no Recruiter / Team lead pickers,
+  // and she may pick a client manager (BDE).
+  bdetl: ['recruiter', 'tl'],
 };
 function readFilters(layout, q) {
   const s = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -447,7 +496,7 @@ const recruiterOf = (r) => (r && (r.recruiterId || String(r.recruiterIds || '').
 const ids = (list) => list.map((x) => (x.a ? x.a.id : x.id));
 
 function filterOptions(c, base) {
-  const hidden = HIDDEN_FILTERS[c.layout] || [];
+  const hidden = HIDDEN_FILTERS[c.filterLayout || c.layout] || [];
   const facet = (key, valueOf, labelOf, { limit = 300 } = {}) => {
     if (hidden.includes(key)) return null;
     const m = new Map();
@@ -525,7 +574,8 @@ async function context(user, req) {
   const layout = layoutOf(user);
   const q = (req && req.query) || {};
   const today = NA.todayIst();
-  const f = readFilters(layout, q);
+  const filterLayout = isBdeTl(user) ? 'bdetl' : layout;
+  const f = readFilters(filterLayout, q);
   // The v3 filter bar's ranges: week / month / 30d / custom / all ("Any time").
   const RANGE_ALIAS = { week: 'this_week', month: 'this_month' };
   const qRange = RANGE_ALIAS[q.range] || q.range;
@@ -547,7 +597,7 @@ async function context(user, req) {
     can(user, null, 'dashboard', 'System Alerts', 'view'),
   ]);
   return {
-    user, s, layout, today, f, dept: f.department || '', period, prev, noPrev, clientDesk, mayMoney, systemAlerts,
+    user, s, layout, filterLayout, today, f, dept: f.department || '', period, prev, noPrev, clientDesk, mayMoney, systemAlerts,
     word: PERIOD_WORD[key] || `in ${period.label || `${period.from} – ${period.to}`}`, prevWord: PREV_WORD[key] || 'the period before',
     screening: SCREENING.includes(layout),
     monthStart: `${today.slice(0, 7)}-01`, yearStart: `${today.slice(0, 4)}-01-01`,
@@ -563,12 +613,44 @@ const inPeriod = (ms, p) => {
   return ms >= bd[0] && ms < bd[1];
 };
 const liveInterview = (a) => !DEAD_INTERVIEW.includes(a.interviewStatus);
-const joinedSince = (a, dayFrom, dayTo) => {
-  if (!JOINED.includes(a.stage)) return false;
-  const jd = String(a.joiningDate || '').slice(0, 10);
-  if (jd) return jd >= dayFrom && jd <= dayTo;
-  return a.joinedAt ? NA.istDay(a.joinedAt) >= dayFrom && NA.istDay(a.joinedAt) <= dayTo : false;
+// THE JOIN DAY — one rule for the whole product (2026-10-06 reconciliation):
+// the same as utils/reportsPlus.js joinDayOf (ATS Reports: Joining, Time to
+// fill, Targets; Recruiter joinings): the joining date (a year outside
+// 2015–2100 is a typing slip, not a date), else joinedAt, else the first
+// recorded move into Joined. 'Any time' counts every joined person, dated or not.
+const joinDay = (x) => {
+  const { a } = x;
+  const m = /^(\d{4})-\d{2}-\d{2}/.exec(String(a.joiningDate || ''));
+  if (m && +m[1] >= 2015 && +m[1] <= 2100) return String(a.joiningDate).slice(0, 10);
+  if (a.joinedAt) return NA.istDay(a.joinedAt);
+  const evs = x.evs || [];
+  const ev = evs.find((e) => JOINED.includes(e.to) && !JOINED.includes(e.from)) || [...evs].reverse().find((e) => JOINED.includes(e.to));
+  return ev && ev.at ? NA.istDay(ev.at) : null;
 };
+const joinedSince = (x, dayFrom, dayTo, any = false) => {
+  if (!JOINED.includes(x.a.stage)) return false;
+  if (any) return true;
+  const d = joinDay(x);
+  return !!d && d >= dayFrom && d <= dayTo;
+};
+// WHERE A JOINED PERSON'S DAY COMES FROM (2026-10-10, "why is Joined empty?"):
+//   entered  a joining date someone typed (year 2015–2100)
+//   stamp    the joinedAt stamp
+//   moved    only the day somebody moved the person to Joined (a guess from history)
+//   none     no day at all — counted in the TOTAL, in no month
+//   wrong    a joining date WAS typed but it is not a date (2203-05-12, 1954-10-03);
+//            such a row only has a day when joinedAt / the move gives one
+const joinFacts = (x) => {
+  const { a } = x;
+  const raw = String(a.joiningDate || '').trim();
+  const m = /^(\d{4})-\d{2}-\d{2}/.exec(raw);
+  const entered = !!m && +m[1] >= 2015 && +m[1] <= 2100;
+  const day = joinDay(x);
+  const how = entered ? 'entered' : a.joinedAt ? 'stamp' : day ? 'moved' : 'none';
+  return { day, how, wrong: !!raw && !entered ? raw.slice(0, 10) : null };
+};
+// The extra the lists behind the Joined numbers carry: the day used and where it came from.
+const joinExtraOf = (list) => new Map(list.map((x) => { const f = joinFacts(x); return [x.a.id, { joinDay: f.day, joinHow: f.how, joinWrong: f.wrong }]; }));
 const enteredIn = (x, stages, p) => x.evs.some((e) => stages.includes(e.to) && !(e.from && stages.includes(e.from)) && inPeriod(e.at, p));
 
 // ▲▼ against the period before ("▲ 12 vs last month").
@@ -588,6 +670,28 @@ function isBacklogJob(r) {
   return msOf(r.createdAt) < Date.now() - 30 * DAY || bulk.has(NA.istDay(r.createdAt));
 }
 
+// Everyone marked Joined in `rows`, split by where their joining day comes from.
+// Makes the lists: joined-total, joined-nodate, joined-wrongdate.
+function joinedFigures(b, rows) {
+  const joined = rows.filter((x) => JOINED.includes(x.a.stage));
+  const facts = joined.map((x) => ({ x, f: joinFacts(x) }));
+  const noDate = facts.filter(({ f }) => !f.day && !f.wrong).map(({ x }) => x);
+  const wrong = facts.filter(({ f }) => f.wrong).map(({ x }) => x);
+  const moved = facts.filter(({ f }) => f.how === 'moved').map(({ x }) => x);
+  const noMonth = facts.filter(({ f }) => !f.day).length;
+  const set = (id, title, list) => addSet(b, id, { kind: 'app', title, ids: ids(list), extra: joinExtraOf(list) });
+  set('joined-total', 'Joined in total', joined);
+  set('joined-nodate', 'Marked Joined, but no joining date', noDate);
+  set('joined-wrongdate', 'Marked Joined, joining date looks wrong', wrong);
+  set('joined-history', 'Marked Joined, day taken from when they were moved', moved);
+  const out = {
+    total: joined.length, noDate: noDate.length, wrong: wrong.length, moved: moved.length, noMonth,
+    drills: { total: 'joined-total', noDate: noDate.length ? 'joined-nodate' : null, wrong: wrong.length ? 'joined-wrongdate' : null, moved: moved.length ? 'joined-history' : null },
+  };
+  b.joinFigures = out;
+  return out;
+}
+
 // ---- the cleanup bucket (Administration → Company Setup → Data cleanup) ---------------
 // The old backlog is OFF the dashboard (review #2): nothing happening for
 // 30+ days (Stale) and jobs open 30+ days with no recruiter. The sets are
@@ -600,10 +704,14 @@ function cleanupSets(c, b, k) {
   addSet(b, 'stale', { kind: 'app', title: `Not moving (${days}+ days)`, ids: ids(stale), extra: extraOf(stale) });
   const oldUnassigned = k.jobsNoRecruiter.filter(isBacklogJob);
   addSet(b, 'old-unassigned', { kind: 'req', title: 'Old jobs with no recruiter (imported or open 30+ days)', ids: oldUnassigned.map((r) => r.id) });
+  // Joined people whose joining date is missing / not a date: in the Joined TOTAL,
+  // but in no month (the lists open from the department table's note and from here).
+  const jf = joinedFigures(b, k.sel);
   b.cleanup = {
     stale: stale.length,
     days,
     oldUnassigned: oldUnassigned.length,
+    joinedNoDate: jf.noDate, joinedWrongDate: jf.wrong, joinedFromHistory: jf.moved, joinedTotal: jf.total,
     stages: [...byStage.entries()].sort((x, y) => y[1] - x[1]).map(([stage, n]) => ({ stage, label: stepWord(stage), count: n })),
     canClose: COMPANY.includes(c.layout),
     targets: Object.entries(STALE_TARGETS).map(([id, label]) => ({ id, label })),
@@ -627,6 +735,9 @@ async function moneyPanel(c, b) {
       payments: { select: { id: true, date: true, amount: true, method: true, reference: true } },
     },
   });
+  // After issued credit / debit notes — the same reading as the Accounts Dashboard and the Invoices page.
+  const CNU = require('./creditNotes'); // eslint-disable-line global-require
+  await CNU.decorateNet(invs);
   const payById = new Map(invs.flatMap((i) => (i.payments || []).map((p) => [p.id, p])));
   const pays = invs.flatMap((i) => MF.receiptsOf(i).map((r) => {
     const p = payById.get(r.id) || {};
@@ -634,28 +745,29 @@ async function moneyPanel(c, b) {
   })).sort((x, y) => String(y.date).localeCompare(String(x.date)));
   const live = invs.filter((i) => A.deriveInvoiceStatus(i) !== 'Cancelled');
   const day = (v) => String(v || '').slice(0, 10);
-  const within = (v, p) => day(v) >= p.from && day(v) <= p.to;
+  // 'Any time' is everything on record — a receipt with a mistyped future date still counts.
+  const within = (v, p) => (p === c.period && c.period.key === 'all') || (day(v) >= p.from && day(v) <= p.to);
   const inRange = live.filter((i) => within(i.invoiceDate, c.period));
   const prevInv = live.filter((i) => within(i.invoiceDate, c.prev));
   const paid = pays.filter((p) => within(p.date, c.period));
   const prevPaid = pays.filter((p) => within(p.date, c.prev));
-  const pending = live.filter((i) => A.invoiceOutstanding(i) > 0.5);
+  const pending = live.filter((i) => CNU.pendingOf(i) > 0.5);
   const late = pending.filter((i) => i.dueDate && A.daysOverdue(i.dueDate) > 0);
-  const invRow = (i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, client: i.client ? i.client.name : '—', invoiceDate: i.invoiceDate, dueDate: i.dueDate, amount: A.ROUND(Number(i.amount || 0)), outstanding: A.invoiceOutstanding(i), status: A.deriveInvoiceStatus(i), daysOverdue: A.daysOverdue(i.dueDate), to: `/invoices/${i.id}` });
+  const invRow = (i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, client: i.client ? i.client.name : '—', invoiceDate: i.invoiceDate, dueDate: i.dueDate, amount: A.ROUND(CNU.billedOf(i)), outstanding: A.ROUND(CNU.pendingOf(i)), status: A.deriveInvoiceStatus(i), daysOverdue: A.daysOverdue(i.dueDate), to: `/invoices/${i.id}` });
   addSet(b, 'money-invoiced', { kind: 'inv', title: `Invoiced ${c.word}`, rows: inRange.map(invRow).sort((x, y) => String(y.invoiceDate).localeCompare(String(x.invoiceDate))) });
   addSet(b, 'money-received', { kind: 'pay', title: `Received ${c.word}`, rows: paid.map((p) => ({ id: p.id, date: p.date, amount: p.amount, method: p.method, reference: p.reference, invoiceId: p.invoiceId, invoiceNumber: p.invoice ? p.invoice.invoiceNumber : null, client: p.invoice && p.invoice.client ? p.invoice.client.name : null, to: `/invoices/${p.invoiceId}` })) });
   addSet(b, 'money-pending', { kind: 'inv', title: 'Pending payments', rows: pending.map(invRow).sort((x, y) => (y.daysOverdue || 0) - (x.daysOverdue || 0)) });
   const sum = (list, f) => A.ROUND(list.reduce((s, x) => s + Number(f(x) || 0), 0));
   const markedPaid = new Set(paid.filter((p) => String(p.id).startsWith('inv:')).map((p) => p.invoiceId)).size;
   const tracked = invs.length > 0;
-  const inv = sum(inRange, (i) => i.amount);
+  const inv = sum(inRange, (i) => CNU.billedOf(i));
   const rec = sum(paid, (p) => p.amount);
-  const pend = sum(pending, (i) => A.invoiceOutstanding(i));
+  const pend = sum(pending, (i) => CNU.pendingOf(i));
   const moneyDelta = (cur, prev) => { const d = delta(c, Math.round(cur), Math.round(prev)); if (d && d.dir !== 'same') d.text = `${d.dir === 'up' ? '▲' : '▼'} ₹${Math.abs(Math.round(cur - prev)).toLocaleString('en-IN')} vs ${c.prevWord}`; return d; };
   return {
     id: 'money', type: 'money', size: 'narrow', title: 'Money',
     rows: [
-      { id: 'invoiced', label: `Invoiced ${c.word}`, value: inv, money: true, drill: 'money-invoiced', delta: moneyDelta(inv, sum(prevInv, (i) => i.amount)), zero: tracked ? `No invoices ${c.word}` : 'Not tracked yet' },
+      { id: 'invoiced', label: `Invoiced ${c.word}`, value: inv, money: true, drill: 'money-invoiced', delta: moneyDelta(inv, sum(prevInv, (i) => CNU.billedOf(i))), zero: tracked ? `No invoices ${c.word}` : 'Not tracked yet' },
       { id: 'received', label: `Received ${c.word}`, value: rec, money: true, drill: 'money-received', delta: moneyDelta(rec, sum(prevPaid, (p) => p.amount)), zero: tracked ? `Nothing received ${c.word}` : 'Not tracked yet', sub: markedPaid ? `Includes ${plural(markedPaid, 'invoice', 'invoices')} marked paid without a payment entry` : null },
       { id: 'pending', label: 'Pending', value: pend, money: true, drill: 'money-pending', sub: late.length ? `${plural(late.length, 'invoice', 'invoices')} past due` : null, tone: late.length ? 'red' : null, zero: tracked ? 'Nothing pending' : 'Not tracked yet' },
     ],
@@ -684,12 +796,38 @@ async function healthRows() {
 // Joined). Shown in the "All departments" view only (deptsWidget — user,
 // 2026-10-05: a picked department shows ONLY that department); the rows are
 // every department in the login's area, the counts follow the other filters.
+//
+// 2026-10-10 ("Joined shows nothing although the joining sheet is loaded"): the
+// table mixed three bases without saying so. Now every column names its basis in
+// plain words (second line of the header):
+//   as of today  Open jobs · In process · Selected · Late
+//   <the dates>  Interviews · Joined  (follows the date range; default "this month")
+//   in total     Joined  (everyone marked Joined, whatever the date)
+// A last row adds the departments up (= the tiles / the Candidates strip), and the
+// widget carries joinNote: how many joined people have no joining date.
+const NOW_WORD = 'as of today';
+function deptColumns(c) {
+  const all = c.period.key === 'all';
+  return [
+    { key: 'openJobs', label: 'Open jobs', basis: NOW_WORD, kind: 'now', hint: 'Jobs open now that still need people.' },
+    { key: 'active', label: 'In process', basis: NOW_WORD, kind: 'now', hint: 'People on a job now (not rejected, on hold or joined).' },
+    { key: 'interviews', label: 'Interviews', basis: c.word, kind: 'period', hint: `Client interviews ${c.word}.` },
+    { key: 'selected', label: 'Selected', basis: NOW_WORD, kind: 'now', hint: 'Selected or given an offer, not joined yet.' },
+    ...(all ? [] : [{ key: 'joined', label: 'Joined', basis: c.word, kind: 'period', hint: `People whose joining date is ${c.word}.` }]),
+    { key: 'joinedTotal', label: 'Joined', basis: 'in total', kind: 'total', hint: 'Everyone marked Joined, whatever the joining date.' },
+    { key: 'late', label: 'Late', basis: NOW_WORD, kind: 'now', hint: 'Work past its due date.' },
+  ];
+}
+function joinNoteOf(c, k, b) {
+  const jf = b.joinFigures || joinedFigures(b, k.sel);
+  return { total: jf.total, noDate: jf.noDate, wrong: jf.wrong, moved: jf.moved, noMonth: jf.noMonth, drills: jf.drills };
+}
 function departmentsTable(c, b, k) {
   const { w, all, inAts } = k;
   const nd = all.filter((x) => rowMatches(x, c.f, ['department']));
   const ndReqs = w.reqs.filter((r) => reqMatches(w, r, c.f, ['department']));
   const t = new Map();
-  const METRICS = ['openJobs', 'active', 'interviews', 'late', 'selected', 'joined'];
+  const METRICS = ['openJobs', 'active', 'interviews', 'late', 'selected', 'joined', 'joinedTotal'];
   const row = (d) => {
     const key = d || '';
     if (!t.has(key)) t.set(key, { department: key || null, ...Object.fromEntries(METRICS.map((m) => [m, []])) });
@@ -705,41 +843,68 @@ function departmentsTable(c, b, k) {
       if (x.na.dueStatus === 'overdue') row(dep).late.push(x.a.id);
       if (SELECTED_NOT_JOINED.includes(x.a.stage)) row(dep).selected.push(x.a.id);
     }
-    if (joinedSince(x.a, c.period.from, c.period.to)) row(dep).joined.push(x.a.id);
+    if (JOINED.includes(x.a.stage)) row(dep).joinedTotal.push(x.a.id);
+    if (joinedSince(x, c.period.from, c.period.to, c.period.key === 'all')) row(dep).joined.push(x.a.id);
   });
-  const TITLE = { openJobs: 'Open jobs', active: 'People in process', interviews: `Interviews ${c.word}`, late: 'Late', selected: 'Selected, not joined', joined: `Joined ${c.word}` };
-  const out = [...t.values()]
+  const TITLE = {
+    openJobs: 'Open jobs', active: 'People in process', interviews: `Interviews ${c.word}`, late: 'Late', selected: 'Selected, not joined',
+    joined: `Joined ${c.word}`, joinedTotal: 'Joined in total',
+  };
+  const setFor = (id, name, m, idList) => {
+    const apps = m === 'openJobs' ? null : idList.map((id2) => w.byId.get(id2)).filter(Boolean);
+    let extra = null;
+    if (m === 'late') extra = extraOf(apps);
+    if (m === 'joined' || m === 'joinedTotal') extra = joinExtraOf(apps);
+    return addSet(b, id, { kind: m === 'openJobs' ? 'req' : 'app', title: `${name} — ${TITLE[m]}`, ids: idList, extra });
+  };
+  const kept = [...t.values()]
     .filter((r) => !isTest(r.department))
     .filter((r) => r.department || METRICS.some((m) => r[m].length))
-    .sort((x, y) => (!x.department) - (!y.department) || y.active.length - x.active.length || String(x.department).localeCompare(String(y.department)))
-    .map((r, i) => {
-      const name = r.department || 'No department';
-      const drills = {};
-      METRICS.forEach((m) => {
-        drills[m] = addSet(b, `dept-${i}-${m}`, { kind: m === 'openJobs' ? 'req' : 'app', title: `${name} — ${TITLE[m]}`, ids: r[m], extra: m === 'late' ? extraOf(r[m].map((id) => w.byId.get(id)).filter(Boolean)) : null });
-      });
-      return {
-        department: r.department, fixNeeded: !r.department, picked: !!c.f.department && c.f.department === (r.department || '__none__'),
-        ...Object.fromEntries(METRICS.map((m) => [m, r[m].length])), drills,
-      };
-    });
-  return { id: 'departments', type: 'depts', size: 'full', title: "What's happening in the company", joinedWord: c.word, rows: out };
+    .sort((x, y) => (!x.department) - (!y.department) || y.active.length - x.active.length || String(x.department).localeCompare(String(y.department)));
+  const out = kept.map((r, i) => {
+    const name = r.department || 'No department';
+    const drills = {};
+    METRICS.forEach((m) => { drills[m] = setFor(`dept-${i}-${m}`, name, m, r[m]); });
+    return {
+      department: r.department, fixNeeded: !r.department, picked: !!c.f.department && c.f.department === (r.department || '__none__'),
+      ...Object.fromEntries(METRICS.map((m) => [m, r[m].length])), drills,
+    };
+  });
+  // The last row: the departments added up (every person is in ONE department).
+  const totals = {};
+  const totalDrills = {};
+  METRICS.forEach((m) => {
+    const idList = kept.flatMap((r) => r[m]);
+    totals[m] = idList.length;
+    totalDrills[m] = setFor(`dept-all-${m}`, 'All departments', m, idList);
+  });
+  return {
+    id: 'departments', type: 'depts', size: 'full', title: "What's happening in the company", joinedWord: c.word, word: c.word,
+    periodAll: c.period.key === 'all', columns: deptColumns(c), rows: out, totals, totalDrills, joinNote: joinNoteOf(c, k, b),
+  };
 }
 
 // Per-person waiting / due today / late (Stale left out).
-function perPersonLoad(rows, keyOf, b = null, prefix = 'load') {
+// The rows behind those numbers, per person (the pending-work digest / reminders read
+// the SAME groups: utils/pendingWork.js via pendingLoad() below). `testViewer`: a test
+// login (the automated tests) also sees test people.
+function personGroups(rows, keyOf, testViewer = false) {
   const m = new Map();
   rows.forEach((x) => {
     if (x.na.dueStatus === 'stale') return;
     const p = keyOf(x);
-    if (!p || !p.key || isTest(p.label)) return;
+    if (!p || !p.key || (!testViewer && isTest(p.label))) return;
     const e = m.get(p.key) || { key: p.key, userId: p.userId || null, name: p.label, pending: [], overdue: [], dueToday: [] };
     e.pending.push(x);
     if (x.na.dueStatus === 'overdue') e.overdue.push(x);
     if (x.na.dueStatus === 'due_today') e.dueToday.push(x);
     m.set(p.key, e);
   });
-  return [...m.values()].map((e) => {
+  return [...m.values()];
+}
+function perPersonLoad(rows, keyOf, b = null, prefix = 'load') {
+  const testViewer = !!(b && b.testViewer);
+  return personGroups(rows, keyOf, testViewer).map((e) => {
     const drills = {};
     if (b) {
       [['pending', 'waiting'], ['dueToday', 'due today'], ['overdue', 'late']].forEach(([k, word]) => {
@@ -809,9 +974,13 @@ function joinTrend(c, b, sel) {
   return {
     id: 'joinTrend', type: 'line', size: 'half', title: 'Joinings — last 6 months',
     points: months.map((mo, i) => {
-      const list = sel.filter((x) => joinedSince(x.a, mo.from, mo.to));
-      return { label: mo.label, value: list.length, drill: addSet(b, `joins-${i}`, { kind: 'app', title: `Joined in ${mo.label}`, ids: ids(list) }) };
+      const list = sel.filter((x) => joinedSince(x, mo.from, mo.to));
+      return { label: mo.label, value: list.length, drill: addSet(b, `joins-${i}`, { kind: 'app', title: `Joined in ${mo.label}`, ids: ids(list), extra: joinExtraOf(list) }) };
     }),
+    // By JOINING date (the same day rule as the department table): people with no usable date are in no month.
+    sub: 'By joining date',
+    note: b.joinFigures && b.joinFigures.noMonth ? `${fmtN(b.joinFigures.noMonth)} marked Joined have no usable joining date and are in no month.` : null,
+    noMonthDrill: b.joinFigures && b.joinFigures.drills.noDate ? 'joined-nodate' : null,
   };
 }
 
@@ -880,37 +1049,45 @@ async function buildHome(user, req) {
   P.mark('world');
   const b = newBoard(c.layout);
   b.world = w;
+  // A test login (ZZTEST) also sees the test rows (the automated tests), like the Team page does.
+  const testViewer = isTest(`${user.name || ''} ${user.email || ''}`);
+  b.testViewer = testViewer;
   b.clientDesk = c.clientDesk;
   b.scopeChip = SCOPE_CHIP[c.layout] || 'Me';
+  if (c.layout === 'bde' && isBdeTl(user)) { b.title = 'BDE Team'; b.scopeChip = 'All clients'; b.about = 'All the BDE clients: who has work waiting, feedback to chase and open jobs.'; }
+  if (c.layout === 'manager') { b.scopeChip = 'All departments'; b.title = 'Company overview'; b.about = 'Every department: jobs, candidates, team leads and what is late. You view and approve; the work is done by the teams.'; }
   b.department = c.dept ? (c.dept === '__none__' ? 'No department' : c.dept) : null;
   b.period = { from: c.period.from, to: c.period.to, key: c.period.key, word: c.word, prevWord: c.prevWord, noPrev: !!c.noPrev };
   b.periods = PERIODS.map((k) => ({ id: k, label: { today: 'Today', this_week: 'This week', this_month: 'This month' }[k] }));
   b.today = c.today;
   b.asOf = new Date(w.builtAt).toISOString();
   const inAts = (x) => c.screening || !x.pre;
-  const all = w.rows.filter((x) => !isTest(x.cand));
+  const all = w.rows.filter((x) => testViewer || !isTest(x.cand));
   const sel = all.filter((x) => rowMatches(x, c.f)); // filtered, every stage
   const base = all.filter((x) => x.live && inAts(x)); // role scope, live
   const rows = base.filter((x) => rowMatches(x, c.f)); // filtered, live
   const live = rows.filter((x) => x.na.dueStatus !== 'stale');
   b.filters = c.f;
   b.filterOptions = filterOptions(c, base);
-  b.filtersHidden = HIDDEN_FILTERS[c.layout] || [];
+  await require('./bdeSeats').labelBdeOptions(b.filterOptions.bde); // "Name · BDE MED"; the value stays as it is
+  b.filtersHidden = HIDDEN_FILTERS[c.filterLayout || c.layout] || [];
   const reqs = w.reqs.filter((r) => reqMatches(w, r, c.f));
   const openJobs = reqs.filter(isLiveReq);
   const people = sel.filter((x) => !x.pre && !NOT_ACTIVE.includes(x.a.stage));
   const interviewsIn = (p) => sel.filter((x) => !x.pre && x.a.interviewAt && liveInterview(x.a) && inPeriod(msOf(x.a.interviewAt), p))
     .sort((x, y) => msOf(x.a.interviewAt) - msOf(y.a.interviewAt));
   const interviews = interviewsIn(c.period);
-  const joined = sel.filter((x) => joinedSince(x.a, c.period.from, c.period.to));
-  const joinedPrev = sel.filter((x) => joinedSince(x.a, c.prev.from, c.prev.to)).length;
+  const joined = sel.filter((x) => joinedSince(x, c.period.from, c.period.to, c.period.key === 'all'));
+  const joinedPrev = sel.filter((x) => joinedSince(x, c.prev.from, c.prev.to)).length;
   const selected = rows.filter(({ a }) => SELECTED_NOT_JOINED.includes(a.stage));
   const everTracked = sel.some((x) => x.a.interviewAt);
   addSet(b, 'interviews', { kind: 'app', title: `Interviews ${c.word}`, ids: ids(interviews) });
   addSet(b, 'open-jobs', { kind: 'req', title: 'Open jobs', ids: openJobs.map((r) => r.id) });
-  addSet(b, 'people', { kind: 'app', title: 'People in process', ids: ids(people), extra: extraOf(people.filter((x) => x.na)) });
+  addSet(b, 'people', { kind: 'app', title: 'Applications in process', ids: ids(people), extra: extraOf(people.filter((x) => x.na)) });
   addSet(b, 'selected', { kind: 'app', title: 'Selected — not joined yet', ids: ids(selected), extra: extraOf(selected) });
-  addSet(b, 'joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joined) });
+  addSet(b, 'joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joined), extra: joinExtraOf(joined) });
+  // Everyone marked Joined in this view, whatever the date: the tile says so under the number.
+  const joinedEver = sel.filter((x) => JOINED.includes(x.a.stage)).length;
   // "New" / "added" never count a bulk import's own rows (they are not work).
   const bulk = NA.snapshot().bulkDays || new Set();
   const real = (v) => !bulk.has(NA.istDay(v));
@@ -918,11 +1095,15 @@ async function buildHome(user, req) {
   const added = (p) => sel.filter((x) => !x.pre && inPeriod(msOf(x.a.createdAt), p) && real(x.a.createdAt)).length;
   const selectedIn = (p) => sel.filter((x) => x.evs.some((e) => SELECTED_ON.includes(e.to) && !(e.from && SELECTED_ON.includes(e.from)) && inPeriod(e.at, p) && real(e.at))).length;
   const T = {
-    openJobs: (label = 'Open jobs') => tile('open-jobs', label, openJobs.length, 'now', { drill: 'open-jobs', sub: newJobs(c.period) ? `${fmtN(newJobs(c.period))} new ${c.word}` : null, delta: delta(c, newJobs(c.period), newJobs(c.prev)), zero: 'No open jobs' }),
-    people: (label = 'In process') => tile('people', label, people.length, 'now', { drill: 'people', sub: added(c.period) ? `${fmtN(added(c.period))} added ${c.word}` : null, delta: delta(c, added(c.period), added(c.prev)), zero: 'Nobody in process' }),
+    openJobs: (label = 'Open jobs') => tile('open-jobs', label, openJobs.length, 'now', { drill: 'open-jobs', sub: newJobs(c.period) ? `${fmtN(newJobs(c.period))} new ${c.word}` : null, zero: 'No open jobs' }) /* stock tile: NO delta (a count of new jobs is not comparable to the stock) */,
+    people: (label = 'In process') => tile('people', label, people.length, 'now', { drill: 'people', sub: added(c.period) ? `${fmtN(added(c.period))} added ${c.word}` : null, zero: 'Nobody in process' }),
     interviews: (label = `Interviews ${c.word}`) => tile('interviews', label, interviews.length, 'range', { drill: 'interviews', delta: delta(c, interviews.length, interviewsIn(c.prev).length), zero: everTracked ? 'No interviews scheduled' : 'Not tracked yet' }),
-    selected: (label = 'Selected, not joined') => tile('selected', label, selected.length, 'now', { drill: 'selected', sub: selectedIn(c.period) ? `${fmtN(selectedIn(c.period))} selected ${c.word}` : null, delta: delta(c, selectedIn(c.period), selectedIn(c.prev)), zero: 'Nobody waiting to join' }),
-    joined: (label = `Joined ${c.word}`) => tile('joined', label, joined.length, 'range', { drill: 'joined', delta: delta(c, joined.length, joinedPrev), zero: `No joinings ${c.word}` }),
+    selected: (label = 'Selected, not joined') => tile('selected', label, selected.length, 'now', { drill: 'selected', sub: selectedIn(c.period) ? `${fmtN(selectedIn(c.period))} selected ${c.word}` : null, zero: 'Nobody waiting to join' }),
+    joined: (label = `Joined ${c.word}`) => tile('joined', label, joined.length, 'range', {
+      drill: 'joined', delta: delta(c, joined.length, joinedPrev),
+      sub: c.period.key !== 'all' && joinedEver ? `${fmtN(joinedEver)} joined in total` : null,
+      zero: c.period.key !== 'all' && joinedEver ? `None ${c.word} · ${fmtN(joinedEver)} in total` : `No joinings ${c.word}`,
+    }),
   };
 
   // Shared problem sets.
@@ -930,7 +1111,7 @@ async function buildHome(user, req) {
   const newUnassigned = jobsNoRecruiter.filter((r) => !isBacklogJob(r));
   addSet(b, 'new-unassigned', { kind: 'req', title: 'New jobs without a recruiter (last 30 days)', ids: newUnassigned.map((r) => r.id) });
   const clientDecision = live.filter((x) => CLIENT_DECISION.includes(x.a.stage) && !x.internal);
-  addSet(b, 'client-feedback', { kind: 'app', title: 'Client feedback pending', ids: ids(clientDecision), extra: extraOf(clientDecision) });
+  addSet(b, 'client-feedback', { kind: 'app', title: 'Client has not replied', ids: ids(clientDecision), extra: extraOf(clientDecision) });
   const overdueRows = live.filter((x) => x.na.dueStatus === 'overdue');
   addSet(b, 'overdue', { kind: 'app', title: 'Late', ids: ids(overdueRows), extra: extraOf(overdueRows) });
   const reviewWaiting = live.filter(({ a }) => [...REVIEW_STAGES, 'TL_REVIEW'].includes(a.stage));
@@ -950,7 +1131,10 @@ async function buildHome(user, req) {
   // The department chooser on top (shown when the login has 2+ departments).
   b.deptChoices = deptChoices(c, k);
   // While the new page is being built, the old one stays the default (?v3=1 opts in).
-  if (V3.includes(c.layout) && (V3_DEFAULT ? (req && req.query && req.query.v3) !== '0' : (req && req.query && req.query.v3) === '1')) await v3Home(c, b, k);
+  // Q2 (user, 2026-10-09): the Manager's default page IS the company overview
+  // (the v3 layout, every department); ?v3=0 gives the older lead page.
+  const askV3 = req && req.query && req.query.v3;
+  if (V3.includes(c.layout) && (c.layout === 'manager' ? askV3 !== '0' : (V3_DEFAULT ? askV3 !== '0' : askV3 === '1'))) await v3Home(c, b, k);
   else if (COMPANY.includes(c.layout)) await companyHome(c, b, k);
   else if (c.layout === 'manager' || c.layout === 'asstmanager' || c.layout === 'stl' || c.layout === 'tl') await leadHome(c, b, k);
   else if (c.layout === 'bde') await bdeHome(c, b, k);
@@ -1028,15 +1212,17 @@ function deptsWidget(c, b, k) {
 }
 const TILE_HELP = {
   'open-jobs': 'Jobs open now that still need people.',
-  people: 'People on a job right now (not rejected, on hold or joined).',
+  people: 'Applications still moving: not rejected, on hold or joined. The same as "Active" on Candidates & Pipeline (a person on two jobs counts twice).',
   interviews: 'Client interviews in the dates you picked.',
   selected: 'People selected or given an offer who have not joined yet.',
-  joined: 'People who started work in the dates you picked.',
+  joined: 'People whose joining date is in the dates you picked. The department table also shows everyone marked Joined, whatever the date.',
   'my-review': 'People waiting for a team lead check.',
   overdue: 'Work that is past its due date.',
   clients: 'The clients you look after.',
   submitted: 'People sent to your clients who are still in process.',
-  'client-feedback': 'People sent to the client with no reply yet.',
+  'client-feedback': 'People sent to the client with no reply yet (the client has not answered).',
+  feedback: 'Interview done, no feedback: the interview has happened and nobody has recorded the feedback yet. Old imported rows with no recent activity are not counted here; Candidates & Pipeline shows every one.',
+  'feedback-7': 'Interviews done more than 7 days ago with no feedback recorded: the late part of "Interview done, no feedback".',
   positions: 'Open jobs inside TeamLink.',
   'to-review': 'People waiting for your check.',
   'iv-internal': 'Interviews for TeamLink jobs today.',
@@ -1107,7 +1293,7 @@ async function attentionWidget(c, b, k, { unsigned: withUnsigned = true } = {}) 
     line('overdue', 'Late', overdueRows.length, { sub: 'past the due date', button: 'Open', drill: 'overdue', tone: 'red' }),
     line('feedback-7', 'Feedback late (7+ days)', fb7.length, { button: 'Chase', drill: 'feedback-7', tone: 'blue' }),
     line('joining-stuck', 'Waiting to join — past the date', joinStuck.length, { button: 'Confirm', drill: 'joining-stuck', tone: 'blue' }),
-    line('client-feedback', 'Client feedback pending', clientDecision.length, { button: 'Chase', drill: 'client-feedback', tone: 'blue' }),
+    line('client-feedback', 'Client has not replied', clientDecision.length, { button: 'Chase', drill: 'client-feedback', tone: 'blue' }),
     line('new-unassigned', 'New jobs without a recruiter', newUnassigned.length, { sub: 'opened in the last 30 days', button: 'Assign', drill: 'new-unassigned', tone: 'blue' }),
     withUnsigned ? line('unsigned', 'Clients with unsigned agreement', unsigned.length, { button: 'Review', drill: 'unsigned', tone: 'blue' }) : null,
     withUnsigned ? line('signed-waiting', 'Signed agreements waiting to be made Active', b.signedWaiting || 0, { button: 'Make active', drill: 'signed-waiting', tone: 'red' }) : null,
@@ -1121,7 +1307,7 @@ async function companyHome(c, b, k) {
   b.top = [T.openJobs(), T.people(), T.interviews(), T.selected(), T.joined()];
   b.greeting = greetingOf([
     { id: 'late', label: 'late', value: overdueRows.length, drill: 'overdue', tone: 'red' },
-    { id: 'client-feedback', label: 'client feedback pending', value: clientDecision.length, drill: 'client-feedback', tone: 'amber' },
+    { id: 'client-feedback', label: 'waiting for a client reply', value: clientDecision.length, drill: 'client-feedback', tone: 'amber' },
   ]);
   b.moreExtras = true;
   const att = await attentionWidget(c, b, k);
@@ -1140,7 +1326,7 @@ async function companyHome(c, b, k) {
     if (h) addSet(b, 'health', { kind: 'integ', title: 'System problems', rows: h.rows });
     b.widgets = [
       kpis(b.top), att, team, ...happening,
-      ...moreOf([{ id: 'cleanup', type: 'cleanup', size: 'half', title: 'Data cleanup', stale: b.cleanup.stale, oldUnassigned: b.cleanup.oldUnassigned, days: b.cleanup.days, to: b.cleanup.to, health: h ? { problems: h.problems, drill: h.problems ? 'health' : null } : null }]),
+      ...moreOf([{ id: 'cleanup', type: 'cleanup', size: 'half', title: 'Data cleanup', stale: b.cleanup.stale, oldUnassigned: b.cleanup.oldUnassigned, days: b.cleanup.days, joinedNoDate: b.cleanup.joinedNoDate, joinedWrongDate: b.cleanup.joinedWrongDate, to: b.cleanup.to, health: h ? { problems: h.problems, drill: h.problems ? 'health' : null } : null }]),
     ].filter(Boolean);
   }
 }
@@ -1249,7 +1435,7 @@ function departmentsV3(c, b, k) {
   const { w, all, inAts } = k;
   const nd = all.filter((x) => rowMatches(x, c.f, ['department']));
   const ndReqs = w.reqs.filter((r) => reqMatches(w, r, c.f, ['department']));
-  const METRICS = ['openJobs', 'submitted', 'interviews', 'selected', 'joined', 'late'];
+  const METRICS = ['openJobs', 'submitted', 'interviews', 'selected', 'joined', 'joinedTotal', 'late'];
   const t = new Map();
   const row = (d) => {
     const key = d || '';
@@ -1266,18 +1452,22 @@ function departmentsV3(c, b, k) {
       if (x.na.dueStatus === 'overdue') row(dep).late.push(x.a.id);
       if (SELECTED_NOT_JOINED.includes(x.a.stage)) row(dep).selected.push(x.a.id);
     }
-    if (joinedSince(x.a, c.period.from, c.period.to)) row(dep).joined.push(x.a.id);
+    if (JOINED.includes(x.a.stage)) row(dep).joinedTotal.push(x.a.id);
+    if (joinedSince(x, c.period.from, c.period.to, c.period.key === 'all')) row(dep).joined.push(x.a.id);
   });
-  const TITLE = { openJobs: 'Open jobs', submitted: `Sent to client ${c.word}`, interviews: `Interviews ${c.word}`, selected: 'Selected, not joined', joined: `Joined ${c.word}`, late: 'Late' };
-  const out = [...t.values()]
+  const TITLE = { openJobs: 'Open jobs', submitted: `Sent to client ${c.word}`, interviews: `Interviews ${c.word}`, selected: 'Selected, not joined', joined: `Joined ${c.word}`, joinedTotal: 'Joined in total', late: 'Late' };
+  const kept = [...t.values()]
     .filter((r) => !isTest(r.department))
     .filter((r) => r.department || METRICS.some((m) => r[m].length))
-    .sort((x, y) => (!x.department) - (!y.department) || y.openJobs.length - x.openJobs.length || String(x.department).localeCompare(String(y.department)))
+    .sort((x, y) => (!x.department) - (!y.department) || y.openJobs.length - x.openJobs.length || String(x.department).localeCompare(String(y.department)));
+  const out = kept
     .map((r, i) => {
       const name = r.department || 'No department';
       const drills = {};
       METRICS.forEach((m) => {
-        drills[m] = addSet(b, `dept-${i}-${m}`, { kind: m === 'openJobs' ? 'req' : 'app', title: `${name} — ${TITLE[m]}`, ids: r[m], extra: ['late', 'selected'].includes(m) ? extraOf(r[m].map((id) => w.byId.get(id)).filter(Boolean)) : null });
+        const apps = m === 'openJobs' ? [] : r[m].map((id) => w.byId.get(id)).filter(Boolean);
+        const extra = ['late', 'selected'].includes(m) ? extraOf(apps) : ['joined', 'joinedTotal'].includes(m) ? joinExtraOf(apps) : null;
+        drills[m] = addSet(b, `dept-${i}-${m}`, { kind: m === 'openJobs' ? 'req' : 'app', title: `${name} — ${TITLE[m]}`, ids: r[m], extra });
       });
       return {
         department: r.department, fixNeeded: !r.department, picked: !!c.f.department && c.f.department === (r.department || '__none__'),
@@ -1285,10 +1475,27 @@ function departmentsV3(c, b, k) {
       };
     });
   const max = Object.fromEntries(METRICS.map((m) => [m, Math.max(0, ...out.map((r) => r[m]))]));
+  // The departments added up (every person is in ONE department).
+  const totals = Object.fromEntries(METRICS.map((m) => [m, out.reduce((n, r) => n + r[m], 0)]));
+  const totalDrills = {};
+  METRICS.forEach((m) => {
+    const idList = kept.flatMap((r) => r[m]);
+    const apps = m === 'openJobs' ? [] : idList.map((id) => w.byId.get(id)).filter(Boolean);
+    const extra = ['late', 'selected'].includes(m) ? extraOf(apps) : ['joined', 'joinedTotal'].includes(m) ? joinExtraOf(apps) : null;
+    totalDrills[m] = addSet(b, `dept-all-${m}`, { kind: m === 'openJobs' ? 'req' : 'app', title: `All departments — ${TITLE[m]}`, ids: idList, extra });
+  });
   return {
     id: 'departments', type: 'depts3', size: 'full', title: 'Department overview', word: c.word,
-    columns: METRICS.map((m) => ({ key: m, label: { openJobs: 'Open', submitted: 'Submitted', interviews: 'Interviews', selected: 'Selected', joined: 'Joined', late: 'Late' }[m], hint: TITLE[m], tone: m === 'late' ? 'red' : m === 'joined' ? 'green' : m === 'selected' ? 'yellow' : 'blue' })),
-    max, rows: out,
+    periodAll: c.period.key === 'all',
+    columns: METRICS.filter((m) => !(m === 'joined' && c.period.key === 'all')).map((m) => ({
+      key: m,
+      label: { openJobs: 'Open', submitted: 'Submitted', interviews: 'Interviews', selected: 'Selected', joined: 'Joined', joinedTotal: 'Joined', late: 'Late' }[m],
+      basis: { openJobs: NOW_WORD, selected: NOW_WORD, late: NOW_WORD, joinedTotal: 'in total' }[m] || c.word,
+      kind: ['openJobs', 'selected', 'late'].includes(m) ? 'now' : m === 'joinedTotal' ? 'total' : 'period',
+      hint: TITLE[m],
+      tone: m === 'late' ? 'red' : m === 'joined' || m === 'joinedTotal' ? 'green' : m === 'selected' ? 'yellow' : 'blue',
+    })),
+    max, rows: out, totals, totalDrills, joinNote: joinNoteOf(c, k, b),
   };
 }
 
@@ -1392,7 +1599,7 @@ async function v3Home(c, b, k) {
   // before (among the rows that are late now — a lower arrow is better).
   const wentLate = (p) => overdueRows.filter((x) => { if (!x.na.dueAt) return false; const d = addDays(String(x.na.dueAt).slice(0, 10), 1); return d >= p.from && d <= p.to; }).length;
   const lateTile = tile('overdue', 'Late', overdueRows.length, 'now', {
-    drill: 'overdue', tone: overdueRows.length ? 'red' : 'green', delta: delta(c, wentLate(c.period), wentLate(c.prev)),
+    drill: 'overdue', tone: overdueRows.length ? 'red' : 'green',
     sub: wentLate(c.period) ? `${fmtN(wentLate(c.period))} went late ${c.word}` : null, zero: 'Nothing is late', goodWhen: 'down',
   });
   const tone = (t, tn) => ({ ...t, tone: tn });
@@ -1408,7 +1615,7 @@ async function v3Home(c, b, k) {
       { id: 'overdue', label: 'Late', hint: 'Past the due date of their step', value: overdueRows.length, tone: 'red', drill: 'overdue', button: 'Open', zero: 'Nothing is late' },
       { id: 'feedback-7', label: 'Feedback late', hint: 'Interview done 7+ days ago, no feedback yet', value: fb7.length, tone: 'red', drill: 'feedback-7', button: 'Chase', zero: 'No late feedback' },
       { id: 'unsigned', label: 'Unsigned agreement', hint: 'Clients with open jobs and no signed agreement', value: unsigned.length, tone: 'yellow', drill: 'unsigned', button: 'Review', zero: 'All agreements signed' },
-      { id: 'client-feedback', label: 'Client feedback pending', hint: 'Sent to the client, no reply yet', value: clientDecision.length, tone: 'yellow', drill: 'client-feedback', button: 'Chase', zero: 'No feedback pending' },
+      { id: 'client-feedback', label: 'Client has not replied', hint: 'Sent to the client, no reply yet', value: clientDecision.length, tone: 'yellow', drill: 'client-feedback', button: 'Chase', zero: 'Every client has replied' },
     ],
   };
   // The greeting line: the real pending numbers ("19 late, 77 feedback
@@ -1450,6 +1657,17 @@ async function leadHome(c, b, k) {
     T.interviews(), T.selected(),
   ];
   const workload = { ...teamSnapshot(c, b, k, { title: L === 'tl' ? 'My recruiters' : 'Team snapshot' }), size: 'half' };
+  // PENDING ON MY TEAM (user, 2026-10-10): approvals and overdue follow-ups waiting on the people under this lead: who, and since when.
+  let chainW = null;
+  try {
+    // eslint-disable-next-line global-require
+    const view = await require('./chainAlerts').chainView(c.user);
+    chainW = {
+      id: 'chain', type: 'chain', size: 'full', title: 'Pending on my team', total: view.rows.length, mine: view.mine, team: view.team,
+      rows: view.rows.slice(0, 8).map((r) => ({ id: r.id, kind: r.kind, mine: r.mine, text: r.text, waitingOn: r.waitingOn, waited: r.waited, to: r.link })),
+      more: Math.max(0, view.rows.length - 8), zero: 'Nothing is waiting on your team.',
+    };
+  } catch (err) { console.error('[atsHome] pending on my team failed:', err.message); } // eslint-disable-line no-console
   const weekW = listWidget(b, 'week', 'Interviews this week', week, { size: 'half', zero: 'No interviews scheduled this week', setTitle: 'Interviews this week' });
   const fun = funnel(c, b, k.sel, { title: L === 'manager' ? 'My departments — progress' : 'Team progress' });
   if (L === 'tl') {
@@ -1459,18 +1677,18 @@ async function leadHome(c, b, k) {
       { id: 'my-review', label: 'waiting for your check', value: review.length, drill: 'my-review', tone: 'amber' },
     ]);
     const second = { id: 'review', type: 'review', size: 'full', title: 'Waiting for my check', total: review.length, drill: 'my-review', rows: review.slice(0, 5).map(workRow), empty: 'Nothing is waiting for your check.' };
-    b.widgets = [kpis(b.top), second, workload, ...sectionsOf(c, b, k, null, { today: false }), ...moreOf([weekW, fun])];
+    b.widgets = [kpis(b.top), ...(chainW ? [chainW] : []), second, workload, ...sectionsOf(c, b, k, null, { today: false }), ...moreOf([weekW, fun])];
     return;
   }
   // Manager / Asst Manager / STL: the same short first screen as the Super Admin.
   b.greeting = greetingOf([
     { id: 'late', label: 'late', value: k.overdueRows.length, drill: 'overdue', tone: 'red' },
-    { id: 'client-feedback', label: 'client feedback pending', value: k.clientDecision.length, drill: 'client-feedback', tone: 'amber' },
+    { id: 'client-feedback', label: 'waiting for a client reply', value: k.clientDecision.length, drill: 'client-feedback', tone: 'amber' },
   ]);
   b.moreExtras = true;
   // Clients (agreements) are for Manager / Asst Manager only, not an STL.
   const att = await attentionWidget(c, b, k, { unsigned: L !== 'stl' });
-  b.widgets = [kpis(b.top), att, workload, ...sectionsOf(c, b, k, deptsWidget(c, b, k)), ...moreOf([weekW, fun])].filter(Boolean);
+  b.widgets = [kpis(b.top), ...(chainW ? [chainW] : []), att, workload, ...sectionsOf(c, b, k, deptsWidget(c, b, k)), ...moreOf([weekW, fun])].filter(Boolean);
   void rows;
 }
 
@@ -1501,7 +1719,7 @@ async function recruiterHome(c, b, k) {
   const iv = listWidget(b, 'iv-today', 'My interviews today', ivToday, { zero: 'No interviews today' });
   // Feedback pending.
   const feedback = live.filter(({ a }) => NA.isClientFeedbackPending(a));
-  const fb = listWidget(b, 'feedback', 'Feedback pending', feedback, { zero: 'No feedback pending' });
+  const fb = listWidget(b, 'feedback', 'Interview done, no feedback', feedback, { zero: 'Every interview has its feedback' });
   // My jobs by priority.
   const PRI = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
   const perJob = new Map();
@@ -1516,7 +1734,7 @@ async function recruiterHome(c, b, k) {
   };
   // My joins this month vs target.
   const month = c.today.slice(0, 7);
-  let myJoinIds = ids(sel.filter((x) => joinedSince(x.a, `${month}-01`, c.today)));
+  let myJoinIds = ids(sel.filter((x) => joinedSince(x, `${month}-01`, c.today)));
   const tg = await targetFor(c.user, month);
   // Recruiter joinings (utils/recruiterJoinings.js) — the SAME count as the
   // HRMS popup / Recruiter joinings tab, credited to this recruiter, and its
@@ -1536,6 +1754,34 @@ async function recruiterHome(c, b, k) {
 }
 
 // ---- BDE — "are my clients happy?" -------------------------------------------------------
+// THE BDE TEAM (user, 2026-10-10): what the BDE TL sees of her team: the client managers of the
+// BDE desk, by seat ("BDE EDU 1", "BDE MED"), with the client work waiting on each. No recruiters.
+async function bdeTeamWidget(c, b, k) {
+  // eslint-disable-next-line global-require
+  const TW = require('./teamWorkload');
+  const tw = await TW.teamWorld(c.user);
+  const load = new Map(perPersonLoad(k.live, (x) => x.who.bde, b, 'teamb').filter((r) => r.userId).map((r) => [r.userId, r]));
+  const rows = tw.people
+    .filter((p) => p.roleGroup === 'BDE' && p.status === 'Active' && !isTest(p.name))
+    .map((p) => {
+      const l = load.get(p.id);
+      const pending = l ? l.pending : 0;
+      const overdue = l ? l.overdue : 0;
+      return {
+        key: `u:${p.id}`, userId: p.id, name: p.seat ? `${p.name} · ${String(p.seatLabel || p.seat).split(' · ')[0]}` : p.name,
+        pending, overdue, dueToday: l ? l.dueToday : 0, drills: l ? l.drills : {},
+        onTime: pending ? Math.round(((pending - overdue) / pending) * 100) : 100,
+      };
+    })
+    .sort((x, y) => y.overdue - x.overdue || y.pending - x.pending || String(x.name).localeCompare(String(y.name)));
+  return {
+    id: 'team', type: 'team', size: 'full', title: 'BDE team',
+    groups: rows.length ? [{ id: 'bde', title: 'Client managers (BDE desk)', total: rows.length, rows }] : [],
+    to: '/ats/team', toLabel: 'Open the BDE team →',
+    zero: 'No client managers on the BDE desk yet.',
+  };
+}
+
 async function bdeHome(c, b, k) {
   const { rows, sel, openJobs, T, clientDecision } = k;
   // A picked department: only clients of that department (their own department,
@@ -1552,7 +1798,7 @@ async function bdeHome(c, b, k) {
     tile('clients', 'My clients', myClients.length, 'now', { drill: 'my-clients', zero: 'No clients yet' }),
     T.openJobs(),
     tile('submitted', 'Sent to client', submitted.length, 'now', { drill: 'submitted', zero: 'Nobody sent yet' }),
-    tile('client-feedback', 'Client feedback pending', clientDecision.length, 'now', { drill: 'client-feedback', zero: 'No feedback pending' }),
+    tile('client-feedback', 'Client has not replied', clientDecision.length, 'now', { drill: 'client-feedback', zero: 'Every client has replied' }),
     T.selected('Selected'),
   ];
   const liveJobClientIds = new Set(openJobs.filter((r) => !r.internal).map((r) => r.clientId));
@@ -1560,7 +1806,7 @@ async function bdeHome(c, b, k) {
   const jobsPer = new Map();
   openJobs.forEach((r) => { if (r.clientId) jobsPer.set(r.clientId, (jobsPer.get(r.clientId) || []).concat(r.id)); });
   addSet(b, 'agreement-pending', { kind: 'client', title: 'Unsigned agreements (clients with open jobs)', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), openJobs: (jobsPer.get(x.id) || []).length })) });
-  const fbW = listWidget(b, 'client-fb', 'Client feedback pending', clientDecision.sort((x, y) => String(x.na.dueAt || '').localeCompare(String(y.na.dueAt || ''))), { zero: 'No feedback pending', setId: 'client-feedback-list' });
+  const fbW = listWidget(b, 'client-fb', 'Client has not replied', clientDecision.sort((x, y) => String(x.na.dueAt || '').localeCompare(String(y.na.dueAt || ''))), { zero: 'Every client has replied', setId: 'client-feedback-list' });
   const unsignedW = {
     id: 'unsigned', type: 'clients', size: 'half', title: 'Unsigned agreements', total: unsigned.length, drill: 'agreement-pending', zero: 'All agreements are signed',
     rows: unsigned.slice(0, 5).map((x) => ({ id: x.id, name: x.name, sub: V.agreementStatusLabel(x.agreementStatus), to: c.clientDesk ? `/clients/${x.id}` : null })),
@@ -1576,7 +1822,74 @@ async function bdeHome(c, b, k) {
     id: 'leads', type: 'clients', size: 'half', title: `New clients ${c.word}`, total: leads.length, drill: 'new-clients', zero: `No new clients ${c.word}`,
     rows: leads.slice(0, 5).map((x) => ({ id: x.id, name: x.name, sub: V.agreementStatusLabel(x.agreementStatus), to: c.clientDesk ? `/clients/${x.id}` : null })),
   };
-  b.widgets = [kpis(b.top), fbW, unsignedW, perW, leadsW];
+  // FOLLOW-UPS DUE (user, 2026-10-09): the client chases that are due today or
+  // late: their own clients' people, where the next step is the BDE's.
+  const chase = k.live.filter((x) => !x.internal && x.na && x.na.ownerRole === 'BDE' && ['overdue', 'due_today'].includes(x.na.dueStatus))
+    .sort((x, y) => String(x.na.dueAt || '').localeCompare(String(y.na.dueAt || '')));
+  const chaseW = listWidget(b, 'followups-due', 'Follow-ups due', chase, { zero: 'No follow-ups due. All caught up', setId: 'followups-due-list', setTitle: 'Follow-ups due' });
+  // MY MEETINGS: the client interviews coming up on their clients' jobs (today
+  // and the next 7 days), in time order.
+  const meetEnd = addDays(c.today, 7);
+  const meetings = k.sel.filter((x) => !x.pre && !x.internal && x.a.interviewAt && liveInterview(x.a)
+    && x.a.interviewAt && NA.istDay(x.a.interviewAt) >= c.today && NA.istDay(x.a.interviewAt) <= meetEnd)
+    .sort((x, y) => msOf(x.a.interviewAt) - msOf(y.a.interviewAt));
+  const meetW = listWidget(b, 'my-meetings', 'My meetings', meetings, { zero: 'No client interviews in the next 7 days', setId: 'my-meetings-list', setTitle: 'My meetings: client interviews, next 7 days' });
+  // BD PERFORMANCE: the BDE's own business this period: clients won, jobs raised, joinings.
+  const jobsRaised = k.reqs.filter((r) => !r.internal && inPeriod(msOf(r.createdAt), c.period));
+  addSet(b, 'jobs-raised', { kind: 'req', title: `Jobs raised ${c.word}`, ids: jobsRaised.map((r) => r.id) });
+  const joinedNow = k.sel.filter((x) => !x.internal && joinedSince(x, c.period.from, c.period.to, c.period.key === 'all'));
+  addSet(b, 'bd-joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joinedNow) });
+  const perfLines = [
+    line('new-clients', `New clients ${c.word}`, leads.length, { drill: 'new-clients', tone: 'blue', button: 'Open' }),
+    line('jobs-raised', `Jobs raised ${c.word}`, jobsRaised.length, { drill: 'jobs-raised', tone: 'blue', button: 'Open' }),
+    line('bd-joined', `People joined ${c.word}`, joinedNow.length, { drill: 'bd-joined', tone: 'green', button: 'Open' }),
+  ].filter((l) => l.count > 0);
+  const perfW = { id: 'bd-performance', type: 'lines', size: 'half', title: `BD performance ${c.word}`, lines: perfLines, more: 0, empty: `Nothing yet ${c.word}. A new client or a new job shows up here.` };
+  // CLIENT WORK (user, 2026-10-10): everything waiting on the clients in one box, each line opening its list
+  // (the same numbers as the BDE digest — utils/clientWork.js).
+  let cwW = null;
+  try {
+    // eslint-disable-next-line global-require
+    const CW = require('./clientWork');
+    const cw = await CW.bdePending(c.user, { load: { today: c.today, world: k.w, live: k.live, notMoving: new Map() } });
+    const L = cw.lists;
+    addSet(b, 'cw-noreply', { kind: 'app', title: `Client has not replied for ${cw.feedbackDays}+ days`, ids: L.noReply.map((i) => i.applicationId), extra: new Map(L.noReply.map((i) => [i.applicationId, { note: `Waiting ${i.waitedDays} days`, tone: 'amber' }])) });
+    addSet(b, 'cw-feedback', { kind: 'app', title: 'Interview done, no client feedback', ids: L.feedback.map((i) => i.applicationId) });
+    addSet(b, 'cw-shortlisted', { kind: 'app', title: 'Client shortlisted, interview not fixed', ids: L.shortlisted.map((i) => i.applicationId) });
+    addSet(b, 'cw-agreements', { kind: 'client', title: 'Agreements not signed (clients with open jobs)', rows: L.agreement.map((i) => ({ id: i.clientId, name: i.client, agreement: i.notSent ? 'Not sent yet' : i.agreement })) });
+    addSet(b, 'cw-requests', { kind: 'req', title: 'Job requests waiting to be opened', ids: L.requests.map((i) => i.requirementId) });
+    const cwLines = [
+      line('cw-noreply', `Client has not replied for ${cw.feedbackDays}+ days`, cw.counts.noReply, { drill: 'cw-noreply', tone: 'amber', button: 'Chase' }),
+      line('cw-feedback', 'Interview done, no client feedback', cw.counts.feedback, { drill: 'cw-feedback', tone: 'amber', button: 'Ask' }),
+      line('cw-shortlisted', 'Client shortlisted, interview not fixed', cw.counts.shortlisted, { drill: 'cw-shortlisted', tone: 'blue', button: 'Fix' }),
+      line('cw-agreements', 'Agreements not signed', cw.counts.agreement, { drill: 'cw-agreements', tone: 'red', button: 'Open', sub: cw.counts.agreementNotSent ? `${cw.counts.agreementNotSent} not sent yet` : undefined }),
+      line('cw-requests', 'Job requests waiting to be opened', cw.counts.requests, { drill: 'cw-requests', tone: 'blue', button: 'Open' }),
+      line('cw-logins', 'Client logins waiting for approval', cw.counts.logins, { to: L.logins[0] ? `/clients/${L.logins[0].clientId}` : '/clients', tone: 'blue', button: 'Open' }),
+      line('cw-invoices', 'Invoices past due (for your information)', cw.counts.invoices, { to: L.invoices[0] ? `/clients/${L.invoices[0].clientId}?tab=performance` : '/clients', tone: 'grey', button: 'See' }),
+    ].filter((l) => l.count > 0);
+    cwW = { id: 'client-work', type: 'lines', size: 'half', title: 'Client work waiting', lines: cwLines, more: 0, empty: 'Nothing is waiting on your clients. All caught up.' };
+  } catch (err) { console.error('[atsHome] client work failed:', err.message); } // eslint-disable-line no-console
+  // MY BUSINESS WORKSPACE (user spec 2026-10-10): four tiles (my clients, my jobs, follow-ups due, my pending requests)
+  // and the quick-action buttons, from the real records (utils/clientBusiness.js). The BDE TL keeps the team page.
+  let wsW = null;
+  if (!isBdeTl(c.user)) {
+    try {
+      // eslint-disable-next-line global-require
+      const ws = await require('./clientBusiness').workspaceFor(c.user);
+      wsW = {
+        id: 'workspace', type: 'workspace', size: 'full', title: 'My Business Workspace', ws,
+        tiles: [
+          { id: 'clients', label: 'My clients', count: ws.counts.clients, sub: ws.counts.clients ? 'Clients assigned to you' : 'Add your first client', to: '/clients?view=mine' },
+          { id: 'jobs', label: 'My jobs', count: ws.counts.requirements, sub: ws.counts.requirementsPaused ? `${ws.counts.requirementsPaused} paused` : (ws.counts.requirements ? 'Open and waiting' : 'No jobs yet'), to: '/requirements' },
+          { id: 'followups', label: 'Follow-ups due', count: ws.counts.followUpsDue, tone: ws.counts.followUpsDue ? 'amber' : 'green', sub: ws.counts.followUpsDue ? `${ws.counts.followUpsClient} client · ${ws.counts.followUpsPeople} candidate` : 'Nothing due today', to: '/clients?panel=followups' },
+          { id: 'pending', label: 'Pending approvals', count: ws.counts.pending, tone: ws.counts.pending ? 'amber' : 'green', sub: ws.counts.pending ? 'Waiting for a Manager or Admin' : 'Nothing waiting', to: '/clients?panel=requests' },
+        ],
+      };
+    } catch (err) { console.error('[atsHome] workspace failed:', err.message); } // eslint-disable-line no-console
+  }
+  const widgets = [...(wsW ? [wsW] : []), kpis(b.top), ...(cwW ? [cwW] : []), fbW, chaseW, meetW, perfW, unsignedW, perW, leadsW];
+  if (isBdeTl(c.user)) widgets.splice(1, 0, await bdeTeamWidget(c, b, k));
+  b.widgets = widgets;
   void sel;
 }
 
@@ -1677,7 +1990,7 @@ function todayWidget(c, b, k) {
     ['sent', 'Sent to client today', 'People moved to "Sent to client" today.', sel.filter((x) => k.submittedIn(x, day)), 'blue'],
     ['interviews', 'Interviews today', 'Interviews booked for today.', sel.filter((x) => x.a.interviewAt && liveInterview(x.a) && inDay(msOf(x.a.interviewAt), c.today)), 'blue'],
     ['offers', 'Selected / offer today', 'People selected or given an offer today.', sel.filter((x) => enteredIn(x, SELECTED_NOT_JOINED, day)), 'orange'],
-    ['joined', 'Joined today', 'People who joined today.', k.sel.filter((x) => joinedSince(x.a, c.today, c.today)), 'green'],
+    ['joined', 'Joined today', 'People who joined today.', k.sel.filter((x) => joinedSince(x, c.today, c.today)), 'green'],
   ];
   const dept = b.department;
   return {
@@ -1776,13 +2089,15 @@ async function tlsList(user, b) {
       inProcess: { kind: 'app', ids: ids(mine.filter((x) => !NOT_ACTIVE.includes(x.a.stage))), title: 'People in process' },
       interviews: { kind: 'app', ids: ids(mine.filter((x) => x.a.interviewAt && liveInterview(x.a) && inPeriod(msOf(x.a.interviewAt), c.period))), title: `Interviews ${c.word}` },
       selected: { kind: 'app', ids: ids(mine.filter((x) => SELECTED_NOT_JOINED.includes(x.a.stage))), title: 'Selected, not joined' },
-      joined: { kind: 'app', ids: ids(mine.filter((x) => joinedSince(x.a, c.period.from, c.period.to))), title: `Joined ${c.word}` },
+      joined: { kind: 'app', ids: ids(mine.filter((x) => joinedSince(x, c.period.from, c.period.to, c.period.key === 'all'))), title: `Joined ${c.word}` },
+      joinedTotal: { kind: 'app', ids: ids(mine.filter((x) => JOINED.includes(x.a.stage))), title: 'Joined in total' },
       late: { kind: 'app', ids: ids(mine.filter((x) => x.live && x.na && x.na.dueStatus === 'overdue')), title: 'Late' },
     };
     const out = { drills: {} };
     Object.entries(sets).forEach(([m, st]) => {
       out[m] = st.ids.length;
-      const extra = st.kind === 'app' ? extraOf(st.ids.map((id) => b.world.byId.get(id)).filter((x) => x && x.na)) : null;
+      const apps = st.kind === 'app' ? st.ids.map((id) => b.world.byId.get(id)).filter(Boolean) : [];
+      const extra = st.kind !== 'app' ? null : (m === 'joined' || m === 'joinedTotal') ? joinExtraOf(apps) : extraOf(apps.filter((x) => x.na));
       out.drills[m] = addSet(b, `${prefix}-${m}`, { kind: st.kind, title: `${name} — ${st.title}`, ids: st.ids, extra });
     });
     return out;
@@ -1790,6 +2105,7 @@ async function tlsList(user, b) {
   const people = tw.people.filter((p) => p.status === 'Active' && !isTest(p.name));
   const want = c.f.department ? (c.f.department === '__none__' ? '' : c.f.department) : null;
   const rows = people.filter((p) => p.role === 'TL').map((p) => {
+    // (The BDE TL is not a recruiting team lead: utils/teamWorkload.js leaves her out of this list.)
     const team = people.filter((r) => r.roleGroup === 'RECRUITER' && r.tlUserId === p.id);
     const teamIds = new Set(team.map((r) => r.id));
     const reqIds = TW.personSets(tw, p).requirements.ids;
@@ -1801,7 +2117,7 @@ async function tlsList(user, b) {
     })).sort((x, y) => y.late - x.late || y.inProcess - x.inProcess || String(x.name).localeCompare(String(y.name)));
     return { id: p.id, name: p.name, department: p.department || null, teamSize: team.length, ...own, recruiters };
   }).filter((r) => {
-    const busy = r.openJobs + r.inProcess + r.interviews + r.selected + r.joined + r.late > 0;
+    const busy = r.openJobs + r.inProcess + r.interviews + r.selected + r.joined + r.joinedTotal + r.late > 0;
     if (want !== null && (r.department || '') !== want && !busy) return false;
     if (anyOther && !busy) return false;
     return true;
@@ -1813,7 +2129,7 @@ async function tlsList(user, b) {
     if (!g) { g = { department: d, rows: [] }; groups.push(g); }
     g.rows.push(r);
   });
-  b._tls = { id: '__tls', kind: 'tls', title: 'Team leads', total: rows.length, word: c.word, rows, groups, _all: rows };
+  b._tls = { id: '__tls', kind: 'tls', title: 'Team leads', total: rows.length, word: c.word, periodAll: c.period.key === 'all', rows, groups, _all: rows };
   return b._tls;
 }
 
@@ -1897,9 +2213,16 @@ function jobDetail(b, reqId) {
 // is not offered.
 // ===========================================================================
 const DRILL_PAGE = 25;
-const DRILL_KEYS = ['d_client', 'd_job', 'd_rec', 'd_tl', 'd_step', 'd_due', 'd_dept'];
+const DRILL_KEYS = ['d_client', 'd_job', 'd_rec', 'd_tl', 'd_bde', 'd_step', 'd_due', 'd_dept'];
 // Which drill filters a role gets (a recruiter never sees other people).
-const DRILL_HIDDEN = { recruiter: ['d_rec', 'd_tl'], hr: ['d_rec', 'd_tl', 'd_client'], tl: ['d_tl'] };
+// THE BDE TEAM (user, 2026-10-10): the client managers and their lead see client work by CLIENT MANAGER;
+// no recruiter or team-lead column, name or filter anywhere in their lists. Only the BDE team gets d_bde.
+const DRILL_HIDDEN = {
+  recruiter: ['d_rec', 'd_tl', 'd_bde'], hr: ['d_rec', 'd_tl', 'd_client', 'd_bde'], tl: ['d_tl', 'd_bde'], bde: ['d_rec', 'd_tl'],
+};
+const DRILL_NO_BDE = ['d_bde'];
+const RECRUITER_FIELDS = ['recruiter', 'recKey', 'tl', 'tlKey'];
+const withoutPeople = (r) => { const o = { ...r }; RECRUITER_FIELDS.forEach((k) => { delete o[k]; }); return o; };
 
 function appRowOf(x, extra, clientDesk) {
   const r = x.a.requirement || {};
@@ -1918,6 +2241,8 @@ function appRowOf(x, extra, clientDesk) {
     recKey: x.who.recruiter ? x.who.recruiter.key : null,
     tl: x.who.tl ? x.who.tl.label : null,
     tlKey: x.who.tl ? x.who.tl.key : null,
+    bde: x.who.bde && !x.internal ? x.who.bde.label : null,
+    bdeKey: x.who.bde && !x.internal ? x.who.bde.key : null,
     stage: x.a.stage,
     step: stepWord(x.a.stage),
     stageLabel: V.stageLabelFor(x.a.stage, { internal: x.internal }),
@@ -1941,6 +2266,7 @@ function reqRowOf(w, r, clientDesk) {
     clientId: clientDesk && !internal ? r.clientId : null,
     recruiter: rid ? ((r.recruiter && r.recruiter.name) || users.get(rid) || 'Named') : null,
     recKey: rid ? `u:${rid}` : '__none__',
+    bde: internal ? null : (r.bdeId ? (users.get(r.bdeId) || null) : null) || (r.client && r.client.bdeOwner) || null,
     createdAt: r.createdAt,
   };
 }
@@ -1953,6 +2279,7 @@ function facetDefs(kind) {
       ['d_job', 'Job', (r) => r.requirementId, (r) => r.requirement],
       ['d_rec', 'Recruiter', (r) => r.recKey || '__none__', (r) => r.recruiter || 'Nobody named'],
       ['d_tl', 'Team lead', (r) => r.tlKey || '__none__', (r) => r.tl || 'Nobody named'],
+      ['d_bde', 'Client manager (BDE)', (r) => r.bdeKey || '__none__', (r) => r.bde || 'Nobody named'],
       ['d_step', 'Step', (r) => r.step, (r) => r.step],
       ['d_due', 'Due', (r) => r.dueKey || 'no_due', (r) => DUE_WORDS[r.dueKey || 'no_due']],
     ];
@@ -1968,8 +2295,8 @@ function facetDefs(kind) {
   return [];
 }
 const SEARCH_OF = {
-  app: (r) => [r.candidate, r.requirement, r.reqCode, r.client, r.recruiter, r.tl],
-  req: (r) => [r.title, r.reqCode, r.client, r.recruiter, r.department],
+  app: (r) => [r.candidate, r.requirement, r.reqCode, r.client, r.recruiter, r.tl, r.bde],
+  req: (r) => [r.title, r.reqCode, r.client, r.recruiter, r.department, r.bde],
   client: (r) => [r.name, r.owner, r.agreement],
   inv: (r) => [r.invoiceNumber, r.client, r.status],
   pay: (r) => [r.invoiceNumber, r.client, r.method, r.reference],
@@ -2008,9 +2335,12 @@ async function homeList(user, b, setId, q = {}) {
   const set = b.sets.get(setId);
   if (!set) return null;
   const layout = b.layout;
-  const all = await setRows(user, b, set);
+  const bdeTeam = layout === 'bde';
+  const all0 = await setRows(user, b, set);
+  // The BDE team's lists carry no recruiter / team lead at all (they are not searched either).
+  const all = bdeTeam ? all0.map(withoutPeople) : all0;
   const s = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
-  const hidden = DRILL_HIDDEN[layout] || [];
+  const hidden = DRILL_HIDDEN[layout] || DRILL_NO_BDE;
   const picked = {};
   DRILL_KEYS.forEach((k) => { if (s(q[k]) && !hidden.includes(k)) picked[k] = s(q[k]); });
   const term = s(q.d_q).toLowerCase();
@@ -2044,9 +2374,9 @@ async function homeList(user, b, setId, q = {}) {
   return {
     id: setId, title: set.title, kind: set.kind === 'event' ? 'event' : set.kind,
     total: all.length, filtered: rows.length, page, pageSize: size,
-    rows: rows.slice((page - 1) * size, page * size).map(({ clientKey, recKey, tlKey, ...r }) => r), // eslint-disable-line no-unused-vars
+    rows: rows.slice((page - 1) * size, page * size).map(({ clientKey, recKey, tlKey, bdeKey, ...r }) => (bdeTeam ? r : (({ bde, ...rest }) => rest)(r))), // eslint-disable-line no-unused-vars
     facets, picked, search: term, searchable: !!SEARCH_OF[set.kind],
-    _all: rows,
+    _all: rows, _bdeTeam: bdeTeam,
   };
 }
 
@@ -2066,10 +2396,21 @@ const EXPORT_COLUMNS = {
   integ: [['What', (r) => r.what], ['Detail', (r) => r.detail]],
   jobs: [['Job ID', (r) => r.reqCode || ''], ['Job', (r) => r.title], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Team lead', (r) => r.tl || ''], ['Recruiters', (r) => (r.recruiters || []).join(', ')], ['Opened', (r) => DAYF(r.createdAt)], ['Days open', (r) => r.ageDays ?? ''],
     ...['Added', 'Sent to client', 'Interview', 'Selected', 'Joined'].map((l, i) => [l, (r) => r.steps[i]]), ['In process', (r) => r.inProcess], ['Late', (r) => r.late]],
-  tls: [['Team lead', (r) => r.name], ['Department', (r) => r.department || ''], ['Recruiters', (r) => r.teamSize], ['Open jobs', (r) => r.openJobs], ['In process', (r) => r.inProcess], ['Interviews', (r) => r.interviews], ['Selected', (r) => r.selected], ['Joined', (r) => r.joined], ['Late', (r) => r.late]],
+  tls: [['Team lead', (r) => r.name], ['Department', (r) => r.department || ''], ['Recruiters', (r) => r.teamSize], ['Open jobs', (r) => r.openJobs], ['In process', (r) => r.inProcess], ['Interviews (in the dates picked)', (r) => r.interviews], ['Selected (as of today)', (r) => r.selected], ['Joined (in the dates picked)', (r) => r.joined], ['Joined (in total)', (r) => r.joinedTotal], ['Late (as of today)', (r) => r.late]],
 };
+// How a joined person's day was found (see joinFacts): said in words in the file.
+const JOIN_HOW = { entered: 'Joining date entered', stamp: 'Day recorded when marked Joined', moved: 'Day taken from when moved to Joined (no joining date entered)', none: 'No joining date' };
+const joinNoteOfRow = (r) => (r.joinWrong ? `Date looks wrong: ${r.joinWrong}${r.joinDay ? '' : ' (not in any month)'}` : JOIN_HOW[r.joinHow] || '');
 function exportTable(list) {
-  const cols = EXPORT_COLUMNS[list.kind] || [['Item', (r) => r.name || r.id]];
+  let cols = EXPORT_COLUMNS[list.kind] || [['Item', (r) => r.name || r.id]];
+  if (list._bdeTeam && ['app', 'req'].includes(list.kind)) {
+    cols = cols.filter((c) => !['Recruiter', 'Team lead'].includes(c[0]));
+    cols = [...cols.slice(0, list.kind === 'app' ? 5 : 4), ['Client manager (BDE)', (r) => r.bde || ''], ...cols.slice(list.kind === 'app' ? 5 : 4)];
+  }
+  // The lists behind the Joined numbers: the joining day used, and where it came from.
+  if (list.kind === 'app' && (list._all || []).some((r) => r.joinHow)) {
+    cols = [...cols.filter((c) => !['Due', 'Joining date'].includes(c[0])), ['Joining date as typed', (r) => (r.joiningDate ? String(r.joiningDate).slice(0, 10) : '')], ['Joining day used', (r) => r.joinDay || ''], ['Joining date note', joinNoteOfRow]];
+  }
   return { headers: cols.map((c) => c[0]), rows: (list._all || []).map((r) => cols.map((c) => { const v = c[1](r); return v === undefined || v === null ? '' : v; })) };
 }
 
@@ -2139,8 +2480,75 @@ async function closeStale(user, { target, reason, stages, expected }) {
   return { status: 200, moved: rows.length, target: label };
 }
 
+// ---------------------------------------------------------------------------
+// THE BOARD, KEPT FOR A FEW MINUTES (Batch 1 perf, 2026-10-09).
+// buildHome() recomputes every tile and panel from the world on each request:
+// 1-2.6 s warm for a Super Admin / BDE / Manager, and the dashboard's Team
+// leads / Open jobs panels (homeList "__tls", "__jobs") and the lists behind the
+// numbers each ask for the board again. The board is a pure function of
+//   (this login, the filters in the URL, the world it was drawn from)
+// plus a few small DB reads (money panels, alert settings, permissions), so a
+// finished board is reused while the WORLD IT WAS DRAWN FROM is still the
+// current one (a write makes the world change within worldFor()'s rules) and
+// for at most BOARD_MAX_AGE_MS. ?fresh=1 (right after a bulk action) skips it.
+// The key holds the login id, the "view as" flag and every non-drill query
+// parameter, so one login can never be handed another's board.
+// ---------------------------------------------------------------------------
+const BOARDS = new Map(); // key -> { at, b }
+const BOARD_MAX = 60;
+const BOARD_MAX_AGE_MS = 120 * 1000;
+const DRILL_KEY = (k) => k.startsWith('d_') || ['set', 'limit', 'format', 'fresh'].includes(k);
+function boardKey(user, req) {
+  const q = (req && req.query) || {};
+  const keys = Object.keys(q).filter((k) => !DRILL_KEY(k)).sort();
+  return `${user.id}|${req && req.viewAs ? 'va' : ''}|${JSON.stringify(keys.map((k) => [k, q[k]]))}`;
+}
+async function buildHomeCached(user, req) {
+  const fresh = !!(req && req.query && req.query.fresh === '1');
+  const key = boardKey(user, req);
+  if (!fresh) {
+    const hit = BOARDS.get(key);
+    if (hit && Date.now() - hit.at < BOARD_MAX_AGE_MS) {
+      const w = await worldFor(user);
+      if (w === hit.b.world) return hit.b;
+    }
+  }
+  const b = await buildHome(user, req);
+  BOARDS.delete(key);
+  BOARDS.set(key, { at: Date.now(), b });
+  while (BOARDS.size > BOARD_MAX) BOARDS.delete(BOARDS.keys().next().value);
+  return b;
+}
+
+// ---------------------------------------------------------------------------
+// PENDING WORK per person — the SAME rows and groups as the Team snapshot
+// (Waiting / Due today / Late; Not-moving rows left out) for one viewer's scope.
+// utils/pendingWork.js (the daily digest, the escalation, the "Remind" button and
+// the Pending-work tab) reads this, so those numbers equal the dashboard's.
+//   by: 'recruiter' | 'bde'  — whose work the rows are attributed to.
+// Returns { today, builtAt, people: [{ key, userId, name, pending[], overdue[], dueToday[] }],
+//           notMoving: Map(personKey -> n), live, world }.
+// ---------------------------------------------------------------------------
+async function pendingLoad(user, { by = 'recruiter', fresh = false } = {}) {
+  const w = await worldFor(user, { fresh });
+  const testViewer = isTest(`${user.name || ''} ${user.email || ''}`);
+  const screening = SCREENING.includes(layoutOf(user));
+  const all = w.rows.filter((x) => testViewer || !isTest(x.cand));
+  const base = all.filter((x) => x.live && (screening || !x.pre));
+  const live = base.filter((x) => x.na.dueStatus !== 'stale');
+  const keyOf = (x) => x.who[by];
+  const people = personGroups(live, keyOf, testViewer);
+  const notMoving = new Map();
+  base.filter((x) => x.na.dueStatus === 'stale').forEach((x) => {
+    const p = keyOf(x);
+    if (p && p.key) notMoving.set(p.key, (notMoving.get(p.key) || 0) + 1);
+  });
+  return { today: w.today, builtAt: w.builtAt, people, notMoving, live, world: w };
+}
+
 module.exports = {
-  healthDot, buildHome, homeList, exportTable, publicHome, closeStale, layoutOf, worldFor, STALE_TARGETS, STEP_WORDS, stepWord, DUE_WORDS,
+  pendingLoad, personGroups,
+  healthDot, buildHome, buildHomeCached, homeList, exportTable, publicHome, closeStale, layoutOf, worldFor, STALE_TARGETS, STEP_WORDS, stepWord, DUE_WORDS,
   warmCompanyWorld, // utils/candidateWarmup.js runs after it (the dashboard is the first page)
   // Reports hide test / demo rows by this same rule (routes/atsReports.js, 2026-10-03).
   isTest,

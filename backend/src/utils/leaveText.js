@@ -64,4 +64,22 @@ function parse(text) {
   return out;
 }
 
-module.exports = { compose, parse, HALF_DAYS, COMMENTS, DETAILS };
+// WHICH HALF a leave covers — THE ONE RULE (user, 2026-10-09: "half-day leave is
+// always 0.5, never 1"). A request is a half day when its text says so
+// (Details -> "Half day: First Half | Second Half", written by the leave form),
+// OR when it is a single date applied for 0.5 day: the old-HRMS imports stored
+// days = 0.5 but no marker, and reading only the marker charged those as FULL
+// leave days. The session is then unknown, so it reads 'Half Day'.
+// `l` is anything with { reason, days, fromDate, toDate }.
+const HALF_UNKNOWN = 'Half Day';
+function halfOf(l) {
+  if (!l) return null;
+  const marked = parse(l.reason).halfDay;
+  if (marked) return marked;
+  const from = String(l.fromDate || '').slice(0, 10);
+  const to = String(l.toDate || l.fromDate || '').slice(0, 10);
+  if (from && from === to && Number(l.days) === 0.5) return HALF_UNKNOWN;
+  return null;
+}
+
+module.exports = { compose, parse, halfOf, HALF_UNKNOWN, HALF_DAYS, COMMENTS, DETAILS };

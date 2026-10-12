@@ -94,6 +94,7 @@ async function parseResume(buf, name) {
   return { fields, kind };
 }
 const { pushNotification } = require('../utils/notify');
+const CSRC = require('../utils/candidateSource'); // the clean source list
 
 const {
   readSheet, buildIndex, HANDLERS, isDry, findCandidate,
@@ -363,7 +364,9 @@ const EXPORTS = {
       ['Phone', (c) => c.phone || ''],
       ['Consent', (c) => c.consentLabel || '', NO_PDF],
       ['Location', (c) => c.location || '', NO_PDF],
-      ['Source', (c) => c.source || '', NO_PDF],
+      // Source: the clean list (utils/candidateSource.js); the stored word follows in "Source as recorded".
+      ['Source', (c) => c.sourceKey || CSRC.canonicalSource(c.source), NO_PDF],
+      ['Source as recorded', (c) => (c.sourceRaw && c.sourceRaw !== (c.sourceKey || '') ? c.sourceRaw : ''), NO_PDF],
       ['Skills', (c) => c.skills || '', NO_PDF],
       ['Requirement', (c) => c.requirementTitle || ''],
       ['Client', (c) => c.clientName || ''],
@@ -379,6 +382,13 @@ const EXPORTS = {
       ['Status', (c) => c.lifeStatus || '', NO_PDF],
       ['Rejection', (c) => (c.rejection ? [c.rejection.side, c.rejection.category, c.rejection.detail].filter(Boolean).join(' · ') : ''), NO_PDF],
       ['Applications', (c) => (c.applications || []).length, NO_PDF],
+      // Salary + Salary fit (utils/salaryFit.js). The salary columns are removed for logins without Candidate Contact & Salary
+      // (the BDE team), 'Budget fit' stays: a % (rounded to 10 for them) and a label, never a rupee figure.
+      ['Current salary', (c) => c.currentSalary || '', NO_PDF],
+      ['Expected salary', (c) => c.expectedSalary || '', NO_PDF],
+      ['Budget fit %', (c) => (c.salaryFit && c.salaryFit.pct != null ? `${c.salaryFit.approx ? '~' : ''}${c.salaryFit.pct}%` : ''), NO_PDF],
+      ['Budget fit', (c) => (c.salaryFit ? c.salaryFit.label + (c.salaryFit.belowRange ? ' (below range)' : '') : ''), NO_PDF],
+      ['Salary hike %', (c) => (c.salaryFit && c.salaryFit.salaryHikePct != null ? `${c.salaryFit.salaryHikePct}%` : ''), NO_PDF],
       ['Added', (c) => ymd(c.createdAt)],
     ],
   },
@@ -578,7 +588,7 @@ const EXPORTS = {
       ? [
         ['Candidate', (a) => a.candidate], ['Email', (a) => a.email || ''], ['Phone', (a) => a.phone || '', NO_PDF],
         ['Req Code', (a) => a.reqCode || ''], ['Job', (a) => a.job || ''], ['Client', (a) => a.client || ''],
-        ['Department', (a) => a.department || ''], ['Source', (a) => a.source || '', NO_PDF],
+        ['Department', (a) => a.department || ''], ['Source', (a) => a.sourceKey || a.source || '', NO_PDF],
         ['Stage', (a) => a.stageLabel || ''], ['Applied', (a) => ymd(a.appliedAt)],
         ['Imported to ATS', (a) => (a.imported ? ymd(a.importedAt) || 'Yes' : 'No')],
       ]
@@ -697,6 +707,17 @@ async function runExport(req, res) {
   const state = exportState(req);
   let rows = await def.load(req, state, access);
   if (!Array.isArray(rows)) rows = [];
+  // BDE business workspace (2026-10-10): "export client data - assigned clients only". A desk BDE SEES the desk's clients
+  // but EXPORTS only their own (assigned / Owner / second BDE) clients and the jobs of those clients (or naming them).
+  {
+    const CLc = require('../utils/clientLifecycle'); // eslint-disable-line global-require
+    if (CLc.isDeskBde(req.user) && (moduleId === 'clients' || moduleId === 'requirements')) {
+      const own = new Set(require('../utils/scope').scopeOf(req.user).bdeOwnClientIds || []); // eslint-disable-line global-require
+      rows = moduleId === 'clients'
+        ? rows.filter((r) => own.has(r.id))
+        : rows.filter((r) => own.has(r.clientId) || (r.client && own.has(r.client.id)) || r.bdeId === req.user.id);
+    }
+  }
   // The screen's own browser-side filters: keep what it shows, in its order.
   if (state.ids) {
     const idOf = def.idOf || ((r) => r.id);
@@ -706,6 +727,18 @@ async function runExport(req, res) {
   let columns = typeof def.columns === 'function' ? def.columns(state) : def.columns;
   // PAN / Aadhaar / bank only for HR / Admin / Super Admin; revenue only Admin.
   columns = columns.filter((c) => !(c[2] && c[2].sensitive && !access.sensitive) && !(c[2] && c[2].revenue && !access.revenue));
+  // CANDIDATE CONTACT AND SALARY (Role Catalog switch, user 2026-10-09) and the
+  // BDE team's cut: the columns go, not only the values. (The rows come from the
+  // screens' own endpoints, which already left the fields out.)
+  {
+    // eslint-disable-next-line global-require
+    const flags = require('../utils/clientRedact').privacyFlagsFor(req.user);
+    const CANDIDATE_SHEETS = ['candidates', 'interviews', 'feedback', 'offers', 'joining', 'internal-hiring', 'followups', 'portal', 'dashboard'];
+    if (flags && CANDIDATE_SHEETS.includes(moduleId)) {
+      if (flags.contact) columns = columns.filter((c) => !/^(candidate )?(e-?mail|phone|mobile)$/i.test(c[0]) && !/salary|^(current|expected) ctc/i.test(c[0]));
+      if (flags.bde) columns = columns.filter((c) => !/^(internal feedback|score|ai.*|feedback)$/i.test(c[0]) || (moduleId === 'candidates'));
+    }
+  }
   if (format === 'pdf') {
     if (rows.length > PDF_ROW_CAP) {
       throw new HttpError(400, { error: `${rows.length} rows is too many for a readable PDF (the limit is ${PDF_ROW_CAP}). Use Excel or CSV, or narrow the filters.` });
@@ -781,8 +814,8 @@ const KINDS = {
   candidates: {
     label: 'Candidates', mode: 'create', perm: ['candidates', 'Add Candidate', 'create'],
     examples: [
-      { 'Full Name': 'Sample Candidate One', Email: 'sample.one@example.com', Phone: '9000000001', 'Current Location': 'Hyderabad', 'Total Experience (years)': 2, Source: 'Naukri', 'Mandatory Skills': 'ICU, Patient care', 'Requirement Code': 'SAMPLE-0001', Stage: 'NEW' },
-      { 'Full Name': 'Sample Candidate Two', Email: 'sample.two@example.com', Phone: '9000000002', 'Current Location': 'Vijayawada', Source: 'Referral' },
+      { 'Full Name': 'Sample Candidate One', Email: 'sample.one@example.com', Phone: '9000000001', 'Current Location': 'Hyderabad', 'Total Experience (years)': 2, 'Current Salary': '2.4 LPA', 'Expected Salary': '3 LPA', Source: 'Naukri', 'Mandatory Skills': 'ICU, Patient care', 'Requirement Code': 'SAMPLE-0001', Stage: 'NEW' },
+      { 'Full Name': 'Sample Candidate Two', Email: 'sample.two@example.com', Phone: '9000000002', 'Current Location': 'Vijayawada', 'Current Salary': '0 (fresher)', 'Expected Salary': '25000 per month', Source: 'Referral' },
     ],
   },
   applications: {
@@ -1945,7 +1978,7 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
       // eslint-disable-next-line no-await-in-loop
       const parsed = buf ? await parseResume(buf, meta.fileName) : { error: 'file missing' };
       const f = { ...(parsed.fields || {}) };
-      ['name', 'email', 'phone'].forEach((k) => { if (typeof it[k] === 'string' && it[k].trim()) f[k] = it[k].trim(); });
+      ['name', 'email', 'phone', 'currentSalary', 'expectedSalary'].forEach((k) => { if (typeof it[k] === 'string' && it[k].trim()) f[k] = it[k].trim(); }); // salaries typed on the screen win over what the CV says
       if (f.phone) f.phone = String(f.phone).replace(/[^\d+]/g, '');
       if (!f.name) { results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: 'No name — type the candidate\'s name.' }); continue; }
       if (!f.email && !f.phone) { results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: 'No email or phone — one is needed to tell candidates apart.' }); continue; }
@@ -1956,6 +1989,9 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
       if (dupId && !b.updateExisting) { results.push({ token: it.token, fileName: meta.fileName, action: 'duplicate', message: 'a candidate with this phone / email is already on file — skipped, nothing overwritten' }); continue; }
       const notes = [];
       const note = (m) => notes.push(m);
+      // Where these CVs came from: the clean source list (a picker on the upload screen); blank = Other.
+      const typedSource = String(it.source || b.source || '').trim();
+      const srcPick = typedSource ? CSRC.canonicalSource(typedSource) : CSRC.OTHER;
       try {
         if (dupId && !s.global && !(await prisma.candidate.count({ where: { AND: [{ id: dupId }, candidateWhere(req.user)] } }))) {
           throw new Error('a candidate with this phone / email is on file but outside your scope — not updated');
@@ -1964,14 +2000,14 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
           name: f.name, email: f.email || null, phone: f.phone || null, location: f.location || null,
           experienceYears: typeof f.experienceYears === 'number' ? f.experienceYears : null,
           noticePeriod: f.noticePeriod || null, currentSalary: f.currentSalary || null, expectedSalary: f.expectedSalary || null,
-          skills: f.skills || null, source: dupId ? null : 'Resume upload', resumeName: meta.fileName,
+          skills: f.skills || null, source: dupId ? null : srcPick, resumeName: meta.fileName,
         };
         // eslint-disable-next-line no-await-in-loop
         const action = await HANDLERS.candidate({ data, ix, dry: false, row: 0, note });
         const candidateId = findCandidate(ix, f.email || f.phone);
         if (requirement && candidateId && !(await prisma.application.count({ where: { candidateId, requirementId: requirement.id } }))) {
           // eslint-disable-next-line no-await-in-loop
-          await HANDLERS.application({ data: { _candidate: f.email || f.phone, _requirement: reqCode, stage: 'NEW', source: 'Resume upload' }, ix, dry: false, row: 0, note });
+          await HANDLERS.application({ data: { _candidate: f.email || f.phone, _requirement: reqCode, stage: 'NEW', source: srcPick === CSRC.JOB_PORTAL ? null : srcPick }, ix, dry: false, row: 0, note });
           note(`added to ${reqCode}`);
         }
         // A PDF resume is kept as the candidate's resume document (as the
@@ -2082,3 +2118,4 @@ router.get('/access', require('../middleware/auth').requireProduct('ats'), guard
 module.exports = router;
 module.exports.EXPORTS = EXPORTS;
 module.exports.KINDS = KINDS;
+module.exports.SPEC_EXPORT_ROLES = SPEC_EXPORT_ROLES;

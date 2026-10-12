@@ -3,12 +3,13 @@ const { resolveIdentity } = require('../utils/identity');
 const { can, requirePerm, requireProduct, DENIED } = require('../utils/permissions');
 // Super Admin "View as" (read-only) — utils/viewAs.js.
 const viewAs = require('../utils/viewAs');
+const externalPortal = require('../utils/externalPortalAuth');
 
 // Coarse capabilities derived from the permission matrix. These are NOT a
 // second permission system: each one is a can() call, and every one of them
 // used to be a hard-coded role list inside a route handler.
 async function capsFor(identity) {
-  const [hrmsManage, payrollManage, atsAct, atsOversight, accountsManage, clientDesk, billingDesk] = await Promise.all([
+  const [hrmsManage, payrollManage, atsAct, atsOversight, accountsManage, clientDesk, billingDesk, candidateContact] = await Promise.all([
     can(identity, 'hrms', 'hrms', 'Employee Management', 'view'),
     // EDIT, NOT VIEW. This cap widens the payslip scope to a whole
     // department, so it has to mean "operates payroll" — an employee who may
@@ -25,6 +26,11 @@ async function capsFor(identity) {
     // Terms / view; utils/clientRedact.js decides the per-role level.
     can(identity, 'ats', 'clients', 'Commercial Terms', 'view'),
     can(identity, 'accounts', 'accounts', 'Invoices', 'view'),
+    // The Role Catalog switch "Candidate contact and salary" (separate from
+    // viewing the candidate): utils/clientRedact.js cuts email / phone /
+    // salary for a login without it. The BDE team never holds it (their cut is
+    // also applied by role in clientRedact.privacyFlagsFor).
+    can(identity, 'ats', 'candidates', 'Candidate Contact & Salary', 'view'),
   ]);
   return {
     hrmsManage,
@@ -35,6 +41,9 @@ async function capsFor(identity) {
     atsOversight,
     accountsManage,
     clientDetail: clientDesk || billingDesk,
+    candidateContact,
+    // Role Catalog switch "Contact (Mail / WhatsApp / SMS / Call)" (utils/contactAccess.js).
+    contact: await require('../utils/contactAccess').switchOn(identity).catch(() => false), // eslint-disable-line global-require
   };
 }
 
@@ -59,6 +68,10 @@ async function requireAuth(req, res, next) {
     if (identity.status && identity.status !== 'Active') {
       return res.status(403).json({ error: `This login is ${identity.status.toLowerCase()}` });
     }
+    // CLIENT / CANDIDATE PORTAL WALL, second layer (utils/externalPortalAuth.js):
+    // judged on the identity read from the database, so an older token cannot
+    // keep staff reach after a role change.
+    if (!externalPortal.identityAllowed(identity, req)) return externalPortal.denyIdentity(req, res, identity);
     // VIEW AS: req.user is the TARGET, so every permission and scope rule
     // applies exactly as it does for that person; req.viewAs says who is
     // really looking. Writes are refused by viewAs.viewAsGuard (index.js).

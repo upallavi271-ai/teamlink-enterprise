@@ -42,7 +42,7 @@ export default function AgreementLivePreview({ preview, state, className = '', t
         <Term k="Replacement guarantee" v={t.guaranteeDays != null ? (t.guaranteeDays === 0 ? 'No replacement' : `${t.guaranteeDays} days (${t.guaranteeWords})`) : null} />
         <Term k="Invoice" v={t.invoiceDays != null ? (t.invoiceDays === 0 ? 'On the joining day' : `${t.invoiceDays} days after joining`) : null} />
         <Term k="Payment" v={t.paymentDays != null ? `Within ${t.paymentDays} days of invoice` : null} />
-        <Term k="Effective date" v={day(t.startDate)} />
+        <Term k="Agreement date" v={t.startDate ? `${day(t.startDate)}${t.startDateIsAuto ? ' (today, filled in for you)' : ''}` : null} />
         <Term k="Expiry date" v={t.endDate ? day(t.endDate) : 'Renews by itself'} />
         <Term k="Address" v={t.address} />
         <Term k="Signs for TeamLink" v={t.signatoryName ? `${t.signatoryName}${t.signatoryTitle ? `, ${t.signatoryTitle}` : ''}` : null} />

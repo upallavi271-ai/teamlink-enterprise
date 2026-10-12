@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
+import { PendingStrip } from '../../components/team/pendingWorkKit.jsx'; // lead only: pending work + the Remind button
 import '../../components/CandidateDrawer.css';
 import './Team.css';
 
@@ -83,9 +84,9 @@ function Rows({ sec, empty }) {
             <div key={r.id} className="r360-row">
               <div style={{ minWidth: 0 }}>
                 <b>{r.name}</b>
-                <div className="small-muted r360-ellipsis">{[r.seatLabel, r.status === 'Left' ? 'Left' : null].filter(Boolean).join(' · ')}</div>
+                <div className="small-muted r360-ellipsis">{[r.roleLabel, r.department, r.seatLabel, r.status === 'Left' ? 'Left' : null].filter(Boolean).join(' · ')}</div>
               </div>
-              <span className="small-muted">{`${fmt(r.counts.activeCandidates)} active · ${fmt(r.counts.needsAction)} to act`}</span>
+              <span className="small-muted">{r.role === 'BDE' ? `${fmt(r.counts.clients)} clients · ${fmt(r.counts.openRequirements)} open jobs` : `${fmt(r.counts.activeCandidates)} active · ${fmt(r.counts.needsAction)} to act`}</span>
             </div>
           );
         }
@@ -133,6 +134,7 @@ const EMPTY_TEXT = {
   selections: 'Nobody selected right now.',
   joining: 'No joinings.',
   recruiters: 'No recruiters in this team yet.',
+  bdeDesk: 'No client managers on the BDE desk yet.',
   reviews: 'No reviews waiting.',
 };
 
@@ -179,6 +181,7 @@ export default function Recruiter360({ personId, onClose }) {
 
         {d && (
           <div className="cdw-body">
+            {role !== 'TL' && <PendingStrip personId={personId} />}
             {/* --- Overview: who they are + the numbers, each opening its list --- */}
             <Section title={role === 'TL' ? 'Team' : 'Overview'}>
               <div className="c360-own is-compact" style={{ marginBottom: 10 }}>
@@ -189,7 +192,9 @@ export default function Recruiter360({ personId, onClose }) {
               </div>
               {role === 'TL' && d.team && (
                 <div className="small-muted" style={{ marginBottom: 8 }}>
-                  {`${fmt(d.team.size)} recruiter(s) · ${fmt(d.team.active)} active${d.team.sections.length ? ` · ${d.team.sections.join(', ')}` : ''}`}
+                  {d.team.departments
+                    ? `${fmt(d.team.size)} people · BDE desk and the recruiters on client jobs · ${d.team.departments.join(', ')}`
+                    : `${fmt(d.team.size)} recruiter(s) · ${fmt(d.team.active)} active${d.team.sections.length ? ` · ${d.team.sections.join(', ')}` : ''}`}
                 </div>
               )}
               <div className="r360-tiles">

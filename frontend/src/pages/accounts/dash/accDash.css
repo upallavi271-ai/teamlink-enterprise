@@ -10,6 +10,7 @@
 .acd .acd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .acd .acd-head h1{margin:0;font-size:20px}
 .acd .acd-head .acd-sub{color:var(--ink-soft);font-size:13px;margin-top:2px}
+.acd .acd-head-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
 /* ---- sections ---- */
 .acd-sec{background:var(--paper-raised,#fff);border:1px solid var(--acd-line);border-radius:var(--radius,12px);padding:14px 16px;margin-bottom:14px;min-width:0}
@@ -101,3 +102,7 @@
 .acd-modal-row>span{font-size:12px;font-weight:600;color:var(--ink-soft)}
 .acd-flash{position:fixed;right:18px;bottom:18px;z-index:5000;background:var(--navy,#1F3864);color:#fff;border-radius:8px;padding:10px 14px;font-size:13px;box-shadow:var(--shadow-md);max-width:min(420px,calc(100vw - 36px))}
 .acd-flash.red{background:var(--acd-red)}
+/* Every number opens its list (Drill.jsx) */
+.acd-see{margin-top:4px;font-size:12px;color:var(--acd-blue);text-decoration:underline;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+.acd-drillpanel{border:1px solid var(--acd-line);border-radius:10px;padding:10px 12px;background:#fff}
+.acd-drillhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}

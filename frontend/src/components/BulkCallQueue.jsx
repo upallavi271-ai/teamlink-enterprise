@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import Modal from './Modal.jsx';
 import Combo from './Combo.jsx';
+import './messaging/messaging.css';
 
 // ---------------------------------------------------------------------------
 // BULK CALL — a call queue over the selected candidates (user item 5).
@@ -38,6 +39,18 @@ export default function BulkCallQueue({ items, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [log, setLog] = useState([]); // { id, name, status: 'saved'|'skipped', result }
+  // Call through TeamLink (Exotel) when it is connected: your phone rings first, then the person.
+  const [gw, setGw] = useState(null);
+  const [gwNote, setGwNote] = useState(null);
+  const [gwBusy, setGwBusy] = useState(false);
+  useEffect(() => { api.get('/messaging/channels').then((r) => setGw(r.data.call || null)).catch(() => setGw(null)); }, []);
+  async function callThrough() {
+    setGwBusy(true); setGwNote(null);
+    try {
+      const r = await api.post('/messaging/call', { audience: 'candidates', id: cur.id, applicationId: cur.latestApplicationId || undefined });
+      setGwNote({ ok: true, text: r.data.message });
+    } catch (e) { setGwNote({ ok: false, text: e.response?.data?.error || 'The call could not be started.' }); } finally { setGwBusy(false); }
+  }
 
   useEffect(() => {
     api.get('/followups/statuses').then((r) => setVocab(r.data)).catch(() => setVocab(null));
@@ -50,6 +63,7 @@ export default function BulkCallQueue({ items, onClose, onDone }) {
   const results = (vocab && vocab.callResults) || [];
 
   function next(entry) {
+    setGwNote(null);
     setLog((l) => [...l, entry]);
     setCallResult('');
     setNotes('');
@@ -129,16 +143,23 @@ export default function BulkCallQueue({ items, onClose, onDone }) {
         </div>
         {cur.phone
           ? (
-            <a className="btn btn-primary bcq-call" href={telHref(cur.phone)}>
-              📞 Call {cur.phone}
-            </a>
+            <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+              {gw && gw.configured && (
+                <button type="button" className="btn btn-primary bcq-call" disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : '📞 Call through TeamLink'}</button>
+              )}
+              <a className={`btn${gw && gw.configured ? '' : ' btn-primary'} bcq-call`} href={telHref(cur.phone)}>
+                📞 {gw && gw.configured ? 'Or from my phone: ' : 'Call '}{cur.phone}
+              </a>
+            </span>
           )
           : <span className="status rejected">No phone on file</span>}
       </div>
       <div className="small-muted" style={{ marginBottom: 10 }}>
-        Dials from your own phone or softphone — no telephony provider is connected, so the app logs the result you
-        record here; it does not place or record the call.
+        {gw && gw.configured
+          ? 'Call through TeamLink rings your own phone first and then connects the person; the call is logged. Calling from your own phone works too. Either way, record how it went below.'
+          : 'Dials from your own phone or softphone — no telephony provider is connected, so the app logs the result you record here; it does not place or record the call.'}
       </div>
+      {gwNote && <div className={`msg-box ${gwNote.ok ? 'green' : 'red'}`} style={{ marginBottom: 8 }}>{gwNote.text}</div>}
       <div className="grid-2">
         <label className="field">
           <span>Why are you calling? *</span>

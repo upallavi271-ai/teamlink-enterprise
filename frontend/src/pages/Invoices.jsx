@@ -8,10 +8,13 @@ import { can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import FilterChips from '../components/FilterChips.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
+import ClientGroups, { buildClientGroups } from './invoices/ClientGroups.jsx';
 import '../components/ui/ui.css';
 import AccountsImport from '../components/AccountsImport.jsx';
 import PaymentModal from './invoices/PaymentModal.jsx';
 import NewJoinModal from './invoices/NewJoinModal.jsx';
+import NewInvoiceModal from './invoices/NewInvoiceModal.jsx';
+import AddClientModal from './invoices/AddClientModal.jsx';
 import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // B2 — the Credit & debit notes tab.
 import CreditNotesPanel from './invoices/CreditNotesPanel.jsx';
@@ -292,7 +295,8 @@ const loadViews = () => {
 };
 const loadGroup = () => {
   const g = readStore(GROUP_KEY);
-  return GROUP_BY.some(([v]) => v === g) ? g : 'inv';
+  // Default: one expandable group per client (the same client name no longer repeats down the page).
+  return GROUP_BY.some(([v]) => v === g) ? g : 'client';
 };
 
 // The Sort dropdown over the invoice table (newest first by default).
@@ -345,6 +349,7 @@ export default function Invoices() {
   const canCreate = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canPay = can(user, 'accounts', 'accounts', 'Payments', 'create');
   const canExport = can(user, 'accounts', 'accounts', 'Invoices', 'export');
+  const canBankView = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
 
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -360,6 +365,8 @@ export default function Invoices() {
   const [payFor, setPayFor] = useState(null); // null | { id }
   const [accountFor, setAccountFor] = useState(null); // null | { clientId, client }
   const [joinFor, setJoinFor] = useState(null); // null | '' | applicationId
+  const [newInvoice, setNewInvoice] = useState(false); // manual invoice (client picked from the central list)
+  const [addClient, setAddClient] = useState(false); // "+ Add client" (a draft client in the central list)
   const [menu, setMenu] = useState(null); // null | 'bell'
   const [exporting, setExporting] = useState(''); // '' | an EXPORTS key
   const [sort, setSort] = useState('new');
@@ -487,7 +494,7 @@ export default function Invoices() {
 
   // The groups in display order — also the order ⭳ Excel writes.
   const grouped = useMemo(() => {
-    if (group === 'inv') return null;
+    if (group === 'inv' || group === 'client') return null; // flat table / the client-group table (ClientGroups)
     const keyOf = (r) => (group === 'client' ? r.client
       : group === 'dept' ? (r.department || '—')
         : group === 'rec' ? (r.recruiter || 'not assigned')
@@ -506,10 +513,18 @@ export default function Invoices() {
       list: map.get(k),
     }));
   }, [rows, group]);
-  const displayRows = useMemo(() => (grouped ? grouped.flatMap((g) => g.list) : rows), [grouped, rows]);
+  // The downloads follow the screen's order: grouped by client (every client's invoices together) in client mode.
+  const displayRows = useMemo(() => {
+    if (grouped) return grouped.flatMap((g) => g.list);
+    if (group === 'client') return buildClientGroups(rows, sort).flatMap((g) => g.list);
+    return rows;
+  }, [grouped, rows, group, sort]);
   // Paged 25 / 50 / 100 when the table is one flat list; grouped, every group
   // shows whole so its subtotals always match the rows under it.
   const page = usePaged(rows);
+  // The client-group table pages over CLIENTS (a client's invoices are never split across pages).
+  const clientGroups = useMemo(() => buildClientGroups(rows, sort), [rows, sort]);
+  const cpage = usePaged(clientGroups, 25);
 
   // "Needs attention" — the bell.
   const notes = useMemo(() => {
@@ -949,6 +964,8 @@ export default function Invoices() {
             )}
           </div>
           {canCreate && <button type="button" className="btn btn-gold" onClick={() => setJoinFor('')}>+ New join</button>}
+          {canCreate && <button type="button" className="btn inv-hbtn" onClick={() => setNewInvoice(true)} title="Raise an invoice for any client in your list">+ New invoice</button>}
+          {canCreate && <button type="button" className="btn inv-hbtn" onClick={() => setAddClient(true)} title="Add a client to the client list">+ Add client</button>}
           {canPay && <button type="button" className="btn inv-hbtn" onClick={() => setPayFor({ id: null })}>+ Payment</button>}
           {canCreate && (
             <button type="button" className="btn inv-hbtn" onClick={() => setImporting(true)}>
@@ -1361,6 +1378,19 @@ export default function Invoices() {
             header row kept under the app top bar and the TOTAL row above the
             bottom bar; Invoice No (+ Client on wide screens) pinned left,
             Actions pinned right (invoices/invTable.css). */}
+        {group === 'client' ? (
+          <div className="inv-tablebox" aria-label="Invoices by client">
+            <ClientGroups
+              groups={cpage.slice}
+              allRows={rows}
+              canPay={canPay}
+              onPay={(id) => setPayFor({ id })}
+              onAccount={(g) => setAccountFor({ clientId: g.clientId, client: g.client })}
+              canBank={canBankView}
+            />
+          </div>
+        ) : (
+          <>
         <div ref={tableRef} className="inv-tablebox" aria-label="Invoice table — scrolls sideways">
         <ScrollSync className="inv-grid-wrap" deps={[rows.length, active.length, page.page, page.size, group]}>
           <table className="inv-grid">
@@ -1401,7 +1431,10 @@ export default function Invoices() {
           </table>
         </ScrollSync>
         </div>
-        {!grouped && rows.length > 25 && <Pager page={page} noun="invoices" />}
+          </>
+        )}
+        {group === 'client' && clientGroups.length > 10 && <Pager page={cpage} noun="clients" />}
+        {group !== 'client' && !grouped && rows.length > 25 && <Pager page={page} noun="invoices" />}
         <p className="inv-foot">
           Fee is the client&apos;s agreed percentage of the candidate&apos;s annual CTC (or a flat fee per hire). GST is charged at the
           client&apos;s rate on the fee — CGST + SGST within our state, IGST when the client is in another state. Clients withhold
@@ -1423,6 +1456,18 @@ export default function Invoices() {
           initialId={payFor.id}
           onClose={() => setPayFor(null)}
           onSaved={(id, msg) => { setPayFor(null); setFlash(msg); load(); focusRow(id); }}
+        />
+      )}
+      {newInvoice && (
+        <NewInvoiceModal
+          onClose={() => setNewInvoice(false)}
+          onSaved={(id, msg) => { setNewInvoice(false); setFlash(msg); load(); focusRow(id); }}
+        />
+      )}
+      {addClient && (
+        <AddClientModal
+          onClose={() => setAddClient(false)}
+          onSaved={(c, msg) => { setAddClient(false); setFlash(msg); }}
         />
       )}
       {joinFor !== null && (

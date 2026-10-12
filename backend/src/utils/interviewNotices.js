@@ -153,27 +153,33 @@ const CANDIDATE_TITLES = {
   reminder_hour: (job) => `Reminder: your ${job} interview starts in 1 hour`,
 };
 
-function lines(app, event, extra = {}) {
+// STAFF lines (recruiter, TL, BDE, panel, client): the client is named.
+// CANDIDATE lines: NEVER the client's name ("our client" / TeamLink for an internal job) and never
+// an internal reason. Both start with the candidate / job so the lines line up.
+function lines(app, event, extra = {}, forCandidate = false) {
   const r = app.requirement || {};
   const client = r.internal ? 'TeamLink' : (r.client && r.client.name) || '—';
   const out = [
     `Candidate: ${app.candidate ? app.candidate.name : '—'}`,
-    `Job: ${r.title || '—'} (${client})`,
+    forCandidate ? `Job: ${r.title || '—'}${r.internal ? ' (TeamLink)' : ''}` : `Job: ${r.title || '—'} (${client})`,
+    `Round: ${app.interviewRound || 1}`,
     `When: ${when(app.interviewAt)}`,
     `Where: ${whereLine(app)}`,
     `Interviewer: ${app.interviewer || 'to be confirmed'}`,
   ];
-  if (event === 'rescheduled' && extra.fromSlot) out.splice(2, 0, `Old time: ${when(extra.fromSlot)}`);
-  if (extra.reason) out.push(`Reason: ${extra.reason}`);
+  if (event === 'rescheduled' && extra.fromSlot) out.splice(3, 0, `Old time: ${when(extra.fromSlot)}`);
+  if (extra.reason && !forCandidate) out.push(`Reason: ${extra.reason}`);
   return out;
 }
+const staffLines = (app, event, extra = {}) => lines(app, event, extra, false);
 
 // --- who is on this interview ---------------------------------------------------
 const APP_INCLUDE = { candidate: true, requirement: { include: { client: true } } };
 
 async function peopleOf(app) {
   const r = app.requirement || {};
-  const staffIds = [r.recruiterId, ...String(r.recruiterIds || '').split(',').map((s) => s.trim()), r.tlId, r.bdeId].filter(Boolean);
+  // + the client's Owner BDE / second BDE (named on the client, not on the job).
+  const staffIds = await require('./clientBdes').withClientBdes([r.recruiterId, ...String(r.recruiterIds || '').split(',').map((s) => s.trim()), r.tlId, r.bdeId].filter(Boolean), r); // eslint-disable-line global-require
   const staff = staffIds.length
     ? await prisma.user.findMany({ where: { id: { in: [...new Set(staffIds)] }, status: 'Active' }, select: { id: true, name: true, email: true } })
     : [];
@@ -263,6 +269,7 @@ async function announceInterview(applicationId, event, opts = {}) {
     const job = (app.requirement && app.requirement.title) || 'the job';
     const p = await peopleOf(app);
     const detail = lines(app, event, opts);
+    const candDetail = lines(app, event, opts, true);
     const title = TITLES[event](cName);
     const message = detail.join(' · ');
     const actorId = opts.actor ? opts.actor.id : null;
@@ -287,7 +294,7 @@ async function announceInterview(applicationId, event, opts = {}) {
     for (const u of (staffOnly ? [] : p.candidateUsers)) {
       // eslint-disable-next-line no-await-in-loop
       await prisma.notification.create({
-        data: { userId: u.id, title: CANDIDATE_TITLES[event](job), message: detail.slice(1).join(' · '), channel: 'In-App', recipient: recipientKey, status: 'Sent' },
+        data: { userId: u.id, title: CANDIDATE_TITLES[event](job), message: candDetail.slice(1).join(' · '), channel: 'In-App', recipient: recipientKey, status: 'Sent' },
       });
       out.inApp += 1;
     }
@@ -318,7 +325,7 @@ async function announceInterview(applicationId, event, opts = {}) {
     // switch off queueCandidateEmail writes it as "Not sent — switched off".
     if (opts.candidateEmail !== false && !staffOnly) {
       const cSubject = CANDIDATE_TITLES[event](job);
-      const cBody = [`Hi ${cName},`, '', ...detail.slice(1), '',
+      const cBody = [`Hi ${cName},`, '', ...candDetail.slice(1), '',
         event === 'cancelled' ? 'Your recruiter will call you about a new time.' : 'If you cannot make it, please tell your recruiter as soon as you can.',
         '', '— TeamLink'].join('\n');
       const row = await queueCandidateEmail(app, {
@@ -356,45 +363,32 @@ async function runInterviewReminders({ now = new Date(), force = false, dryRun =
   // eslint-disable-next-line global-require
   if (!dryRun && !onlyIds) summary.offersExpired = await require('./offerLink').expireDue({ now }).catch(() => 0);
 
-  // 1 + 2 — slot reminders.
-  const soon = await prisma.application.findMany({
-    where: { ...idFilter, interviewStatus: { in: LIVE }, interviewAt: { gt: now, lte: new Date(t + DAY) }, stage: { notIn: DECIDED } },
-    select: { id: true, interviewAt: true, candidate: { select: { name: true } } },
+  // 1 + 2 — the candidate's reminders (about 1 day, 1 hour, 15 minutes before an online interview),
+  // the team's 1-hour reminder, the 08:30 "Today's interviews" list, "Did the candidate attend?" and the
+  // booked / moved / cancelled message nobody sent: utils/interviewEngine.js (settings: interviewReminderPlan.js).
+  // eslint-disable-next-line global-require
+  const ENGINE = require('./interviewEngine');
+  await ENGINE.run({
+    now, force, dryRun, onlyIds, summary, candOn, staffOn, staffSt,
   });
-  for (const a of soon) {
-    const slot = a.interviewAt.toISOString();
-    const left = a.interviewAt.getTime() - t;
-    let kind = null;
-    if (left <= HOUR) kind = 'REMINDER_HOUR';
-    else if (left > 2 * HOUR) kind = 'REMINDER_DAY';
-    if (!kind) continue;
-    // Is anyone to be told? Staff (their own setting) or everyone (the switch).
-    const staffWants = staffOn && (kind === 'REMINDER_HOUR' ? staffSt.hourBefore : staffSt.dayBefore);
-    if (!candOn && !staffWants && !force) continue;
-    if (skipPerson(a.candidate && a.candidate.name)) continue;
-    // eslint-disable-next-line no-await-in-loop
-    if (await remindedFor(a.id, kind, slot)) continue;
-    summary.items.push({ applicationId: a.id, kind, slot });
-    if (kind === 'REMINDER_HOUR') summary.hourBefore += 1; else summary.dayBefore += 1;
-    if (dryRun) continue;
-    // Written first, so two overlapping passes cannot both send.
-    // eslint-disable-next-line no-await-in-loop
-    await prisma.interviewEvent.create({ data: { applicationId: a.id, status: kind, toSlot: slot, by: 'System', reason: kind === 'REMINDER_HOUR' ? 'Reminder sent — 1 hour before' : 'Reminder sent — the day before' } });
-    // eslint-disable-next-line no-await-in-loop
-    await announceInterview(a.id, kind === 'REMINDER_HOUR' ? 'reminder_hour' : 'reminder_day', { key: `interview|${kind}|${a.id}|${slot}`, staffOnly: !candOn });
-  }
+  summary.dayBefore = summary.candidateDay;
+  summary.hourBefore = summary.candidateHour + summary.staffHour;
 
-  // 3 — feedback missing: the slot is 2+ hours gone, no feedback, no decision.
-  // (3 and 4 run as before: with the switch on, or "Run now".)
+  // 3 — feedback missing: the slot is 2+ hours gone, no feedback, no decision. The interviewer(s), the
+  // recruiter(s) and the TL are told (once a day, for 14 days).
   const today = istDay(now);
-  const owed = !candOn && !force ? [] : await prisma.application.findMany({
+  // eslint-disable-next-line global-require
+  const PLAN = require('./interviewReminderPlan');
+  const plan = await PLAN.load();
+  const fbOn = plan.feedback.on && (candOn || staffOn || force);
+  const owed = !fbOn ? [] : await prisma.application.findMany({
     where: {
       ...idFilter,
       interviewStatus: { in: [...LIVE, 'STARTED', 'COMPLETED', 'PENDING_FEEDBACK'] },
-      interviewAt: { lt: new Date(t - 2 * HOUR), gte: new Date(t - 14 * DAY) },
+      interviewAt: { lt: new Date(t - plan.feedback.afterHours * HOUR), gte: new Date(t - 14 * DAY) },
       stage: { notIn: DECIDED },
     },
-    include: { interviewFeedbacks: { where: { kind: 'Internal' }, select: { updatedAt: true } }, candidate: { select: { name: true } }, requirement: { select: { title: true, recruiterId: true, recruiterIds: true, tlId: true } } },
+    include: { interviewFeedbacks: { where: { kind: 'Internal' }, select: { updatedAt: true } }, candidate: { select: { name: true } }, requirement: { include: { client: true } } },
   });
   for (const a of owed) {
     // Feedback for THIS slot only: a round-2 slot is still owed even though
@@ -409,17 +403,26 @@ async function runInterviewReminders({ now = new Date(), force = false, dryRun =
     summary.items.push({ applicationId: a.id, kind: 'FEEDBACK_MISSING' });
     if (dryRun) continue;
     const r = a.requirement || {};
-    const ids = [r.recruiterId, ...String(r.recruiterIds || '').split(',').map((s) => s.trim()), r.tlId].filter(Boolean);
+    // eslint-disable-next-line global-require
+    const TELL = require('./interviewTell');
     // eslint-disable-next-line no-await-in-loop
-    const users = await prisma.user.findMany({ where: { id: { in: [...new Set(ids)] }, status: 'Active' }, select: { id: true, name: true, email: true } });
+    const parties = (await TELL.partiesOf(a)).filter((p) => p.roles.some((x) => ['Recruiter', 'Team lead', 'Interviewer'].includes(x)));
     const daysLate = Math.max(0, Math.floor((t - a.interviewAt.getTime()) / DAY));
     const title = `🔴 Feedback missing: ${a.candidate ? a.candidate.name : 'Candidate'}`;
     const message = `${r.title || 'Job'} — interview was ${when(a.interviewAt)}${daysLate ? ` (${daysLate} day${daysLate === 1 ? '' : 's'} ago)` : ''}. Please fill the short feedback form on Interviews → Waiting for feedback.`;
-    for (const u of users.filter((x) => !skipPerson(`${x.name} ${x.email}`))) {
+    for (const p of parties) {
+      const roles = p.roles.filter((x) => ['Recruiter', 'Team lead', 'Interviewer'].includes(x));
+      const flags = roles.map((x) => plan.parties[ENGINE.ROLE_KEY[x]]);
+      if (p.userId && flags.some((f) => f.bell)) {
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.notification.create({ data: { userId: p.userId, title, message, channel: 'In-App', recipient: key, status: 'Sent' } });
+      }
       // eslint-disable-next-line no-await-in-loop
-      await prisma.notification.create({ data: { userId: u.id, title, message, channel: 'In-App', recipient: key, status: 'Sent' } });
-      // eslint-disable-next-line no-await-in-loop
-      if (u.email) await mailTo(u.email, title.replace(/^[^\w]+\s*/, ''), `Hello ${u.name},\n\n${message}\n\n— TeamLink`);
+      if (p.email && flags.some((f) => f.email) && (candOn || force)) await mailTo(p.email, title.replace(/^[^w]+s*/, ''), `Hello ${p.name},
+
+${message}
+
+— TeamLink`);
     }
   }
 
@@ -453,7 +456,7 @@ async function runInterviewReminders({ now = new Date(), force = false, dryRun =
     summary.items.push({ applicationId: a.id, kind: 'GUARANTEE_ENDING', ends: end.toISOString().slice(0, 10) });
     if (dryRun) continue;
     const r = a.requirement;
-    const ids = [r.recruiterId, r.bdeId, r.tlId].filter(Boolean);
+    const ids = await require('./clientBdes').withClientBdes([r.recruiterId, r.bdeId, r.tlId].filter(Boolean), r); // eslint-disable-line global-require
     // eslint-disable-next-line no-await-in-loop
     const users = await prisma.user.findMany({ where: { id: { in: [...new Set(ids)] }, status: 'Active' }, select: { id: true, name: true, email: true } });
     const daysLeft = Math.ceil(left / DAY);
@@ -508,7 +511,8 @@ async function whatsappLinks(applicationId, actor = null) {
     `Interviewer: ${app.interviewer || 'to be confirmed'}`,
   ];
   const out = [];
-  const candText = [`Hi ${first}, your interview for ${r.title || 'the job'}${client ? ` at ${client}` : ''} is booked.`, ...slot, 'Please reply OK to confirm.', sign].join('\n');
+  // the candidate never sees the client's name
+  const candText = [`Hi ${first}, your interview for ${r.title || 'the job'}${r.internal ? ' at TeamLink' : ' at our client'} is booked.`, ...slot, 'Please reply OK to confirm.', sign].join('\n');
   const cPhone = waPhone(app.candidate && app.candidate.phone);
   out.push({ to: 'candidate', label: 'Candidate', name: app.candidate ? app.candidate.name : '', phone: cPhone, text: candText, url: waUrl(cPhone, candText) });
   if (r.bde) {
@@ -523,7 +527,7 @@ let TIMER = null;
 let RUNNING = false;
 function startSweep() {
   if (sandbox.isSandbox()) return; // the sandbox runs no timers
-  const ms = Number(process.env.INTERVIEW_REMINDER_SWEEP_MS || 15 * 60000);
+  const ms = Number(process.env.INTERVIEW_REMINDER_SWEEP_MS || 5 * 60000);
   if (!ms || TIMER) return;
   TIMER = setInterval(async () => {
     if (RUNNING) return;
@@ -535,5 +539,5 @@ function startSweep() {
 
 module.exports = {
   SETTINGS_KEY, loadSettings, saveSettings, STAFF_SETTINGS_KEY, loadStaffSettings, saveStaffSettings, announceInterview, runInterviewReminders, startSweep, queueCandidateEmail, when,
-  whatsappLinks, waPhone, candidateEmailsOn, SWITCHED_OFF, SWITCHED_OFF_DETAIL,
+  whatsappLinks, waPhone, candidateEmailsOn, SWITCHED_OFF, SWITCHED_OFF_DETAIL, staffLines, mailTo, lines, whereLine, peopleOf, skipPerson, isTest,
 };

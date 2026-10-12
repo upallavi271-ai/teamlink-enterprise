@@ -25,6 +25,9 @@ export const CODES = {
   // so it carries the matches in `details.duplicates`.
   DUPLICATE_CANDIDATE: 'DUPLICATE_CANDIDATE',
   JOB_UNAVAILABLE:     'JOB_UNAVAILABLE',
+  // 0137: a walk-in whose dates are over. Its own code, so the page can say
+  // exactly that (with the date) rather than "no longer accepting applications".
+  WALKIN_COMPLETED:    'WALKIN_COMPLETED',
   EMAIL_TAKEN:         'EMAIL_TAKEN',
   UPLOAD_FAILED:       'UPLOAD_FAILED',
   FILE_TOO_LARGE:      'FILE_TOO_LARGE',
@@ -80,6 +83,9 @@ export function fromPgError(err) {
     return new ApiError(409, c === 'TLB01' ? 'ENGAGEMENT_BLOCKED' : 'DUPLICATE_SUBMISSION',
       String(err.message || 'Another recruiter holds this candidate for this role.'), details);
   }
+
+  /* 0118: an override without a reason. */
+  if (c === 'TLC02') return badRequest(String(err.message), { overrideReason: String(err.message) });
 
   /* 0107: the walk-in ATS stage machine, refused by the database. */
   if (typeof c === 'string' && /^TLW0\d$/.test(c)) {

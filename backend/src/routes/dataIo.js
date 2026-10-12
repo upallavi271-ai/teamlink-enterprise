@@ -63,9 +63,11 @@ function fileOf(req) {
 async function checkFile(req, spec) {
   const f = fileOf(req);
   if (f.error) return { error: f.error };
+  if (typeof spec.prepare === 'function') await spec.prepare();
   const parsed = io.parseFile(spec, f.buffer, f.fileName);
   if (parsed.error) return { error: parsed.error, headerMismatch: parsed.headerMismatch };
   const ctx = await context(req);
+  ctx.fileName = f.fileName; // specs may record where an import came from
   const validated = await spec.validate(parsed.rows, ctx);
   return { parsed, validated, ctx, fileName: f.fileName, preview: io.previewOf(spec, validated, parsed) };
 }

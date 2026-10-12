@@ -33,6 +33,7 @@ const {
 } = require('../utils/atsVocab');
 const attachments = require('../utils/attachments');
 const { portalLoginFor, loginSummary, inviteToPortal } = require('../utils/portalAccess');
+const CT = require('../utils/clientPortalTypes'); // the tick boxes of a client login (2026-10-09)
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
@@ -95,6 +96,9 @@ const REQ_STATUS_WORDS = (status) => {
   if (requirementIsLive(status)) return 'Open';
   if (status === 'ON_HOLD') return 'On hold';
   if (status === 'CLOSED' || status === 'Closed') return 'Closed';
+  // A request the client just sent: TeamLink has not opened it yet (2026-10-09).
+  if (status === 'DRAFT') return 'Sent — waiting for confirmation';
+  if (status === 'AGREEMENT_CHECK') return 'Waiting for the agreement';
   return 'Being set up';
 };
 
@@ -132,19 +136,41 @@ function interviewOf(a, { forCandidate } = {}) {
 // ===========================================================================
 router.get('/client', requireAuth, wrap(async (req, res) => {
   const u = req.user;
-  // BILLING client login (spec B1): invoices only — no jobs, no candidates,
-  // no interviews. utils/clientPortalTypes.js refuses every other feature.
-  if (isClientLogin(u) && u.portalType === 'BILLING') {
-    if (!(await can(u, 'accounts', 'accounts', 'Invoices', 'view'))) return res.status(403).json({ error: 'Invoices are not part of your access yet — ask TeamLink.' });
-    const c = await prisma.client.findUnique({ where: { id: u.clientId }, select: { name: true, legalName: true, clientCode: true, gst: true } });
+  // A login WITHOUT the "See our jobs and candidates" tick (Billing is the old
+  // example: invoices only) gets a short page: no jobs, no candidates, no
+  // interviews — only what its other ticks allow. utils/clientPortalTypes.js
+  // refuses every other feature in can().
+  const caps = isClientLogin(u) ? CT.capsOf(u) : null;
+  if (caps && !caps.includes('VIEW')) {
+    const invoicesOnly = caps.length === 1 && caps[0] === 'INVOICES';
+    if (caps.includes('INVOICES') && !(await can(u, 'accounts', 'accounts', 'Invoices', 'view'))) return res.status(403).json({ error: 'Invoices are not part of your access yet — ask TeamLink.' });
+    const c = await prisma.client.findUnique({
+      where: { id: u.clientId },
+      select: { id: true, name: true, legalName: true, clientCode: true, gst: true, agreementId: true, agreementStatus: true, agreementStart: true, agreementEnd: true, agreementSignedAt: true },
+    });
     if (!c) return res.status(404).json({ error: 'Your company record was not found — contact TeamLink.' });
-    const rows = await prisma.invoice.findMany({
+    const rows = caps.includes('INVOICES') ? await prisma.invoice.findMany({
       where: { AND: [invoiceWhere(u), { clientId: u.clientId }] },
       select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, amount: true, gst: true, status: true },
       orderBy: { createdAt: 'desc' },
       take: 100,
-    }).catch(() => []);
-    return res.json({ billingOnly: true, portalType: 'BILLING', company: { name: c.name, legalName: c.legalName, clientCode: c.clientCode, gst: c.gst }, invoices: rows });
+    }).catch(() => []) : null;
+    const agStatusL = normalizeAgreementStatus(c.agreementStatus);
+    const agreementL = caps.includes('AGREEMENT') && (c.agreementId || agStatusL !== 'DRAFT') ? {
+      id: c.agreementId, status: AGREEMENT_WORDS[agStatusL] || agStatusL,
+      needsYou: ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(agStatusL),
+      start: c.agreementStart, end: c.agreementEnd, signedAt: c.agreementSignedAt, viewPath: `/agreements/${c.id}`,
+    } : null;
+    return res.json({
+      limited: true,
+      billingOnly: invoicesOnly,
+      portalType: u.portalType || null,
+      portalCaps: caps,
+      company: { name: c.name, legalName: c.legalName, clientCode: c.clientCode, gst: c.gst },
+      invoices: rows,
+      agreement: agreementL,
+      permissions: { request: await can(u, 'ats', 'requirements', 'Requirement Request', 'create') },
+    });
   }
   if (!isClientLogin(u) || !(await can(u, 'ats', 'requirements', 'Client Job Portal', 'view'))) {
     return res.status(403).json({ error: 'The client portal is for client logins.' });
@@ -153,7 +179,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
   const client = await prisma.client.findUnique({
     where: { id: clientId },
     select: {
-      id: true, name: true, legalName: true, clientCode: true, industry: true, location: true, website: true, status: true,
+      id: true, name: true, legalName: true, clientCode: true, industry: true, location: true, website: true, status: true, bdeOwner: true,
       contactName: true, contactDesignation: true, contactEmail: true, contactPhone: true,
       houseNumber: true, street: true, area: true, landmark: true, state: true, pincode: true, country: true,
       gst: true, pan: true,
@@ -272,6 +298,10 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
     };
   });
 
+  // Who looks after this client at TeamLink: "Name · Position" (user, 2026-10-09).
+  // eslint-disable-next-line global-require
+  const bdeDir = await require('../utils/bdeSeats').bdeDirectory();
+  const yourContact = client.bdeOwner ? { name: client.bdeOwner, position: bdeDir.positionFor(client.bdeOwner), label: bdeDir.labelFor(client.bdeOwner) } : null;
   const count = (reqId, pred) => shared.filter((a) => a.requirementId === reqId && pred(a)).length;
   const reqRows = requirements.map((r) => {
     const joined = count(r.id, (a) => JOINED.includes(a.stage));
@@ -288,6 +318,9 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       filled: joined,
       openLeft: Math.max(0, (r.openings || 1) - joined),
       status: REQ_STATUS_WORDS(r.status),
+      // A Draft is a request still to be checked and opened by TeamLink.
+      waitingForTeamLink: r.status === 'DRAFT',
+      handledBy: yourContact ? yourContact.label : null,
       live: requirementIsLive(r.status),
       raisedAt: r.createdAt,
       shared: count(r.id, () => true),
@@ -329,6 +362,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
   const address = [client.houseNumber, client.street, client.area, client.landmark, client.location, client.state, client.pincode]
     .filter(Boolean).join(', ');
   res.json({
+    yourContact,
     company: {
       name: client.name,
       legalName: client.legalName,
@@ -348,7 +382,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
     hires,
     // The agreement VIEW / e-sign screen belongs to the Client 360 → Agreement
     // tab (the agreement workflow's own screen); this is only its summary.
-    agreement: client.agreementId || agStatus !== 'DRAFT' ? {
+    agreement: !CT.hasCap(u, 'AGREEMENT') ? null : client.agreementId || agStatus !== 'DRAFT' ? {
       id: client.agreementId,
       status: AGREEMENT_WORDS[agStatus] || agStatus,
       needsYou: ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(agStatus),
@@ -371,7 +405,15 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       selected: hires.filter((h) => h.status !== 'Joined').length,
       joined: hires.filter((h) => h.status === 'Joined').length,
     },
-    permissions: { decide: await can(u, 'ats', 'requirements', 'Client Job Portal', 'edit') },
+    // What this login may DO (the ticks); the server re-checks every one.
+    permissions: {
+      decide: await can(u, 'ats', 'requirements', 'Client Job Portal', 'edit'),
+      shortlist: CT.hasCap(u, 'DECIDE'),
+      interview: CT.hasCap(u, 'INTERVIEW'),
+      feedback: CT.hasCap(u, 'FEEDBACK') && await can(u, 'ats', 'interviews', 'Client Feedback', 'create'),
+      request: await can(u, 'ats', 'requirements', 'Requirement Request', 'create'),
+    },
+    portalCaps: CT.capsOf(u),
     // Reviewer / Viewer (spec B1), null for an older login; drives the first-login guide.
     portalType: u.portalType || null,
   });
@@ -413,6 +455,7 @@ router.post('/client/requirement-requests', requireAuth, wrap(async (req, res) =
 router.get('/client/resume/:applicationId', requireAuth, wrap(async (req, res) => {
   const u = req.user;
   if (!isClientLogin(u)) return res.status(403).json({ error: 'The client portal is for client logins.' });
+  if (!CT.hasCap(u, 'VIEW')) return res.status(403).json({ error: 'Seeing candidates is not part of your access.' });
   const app = await prisma.application.findFirst({
     where: { id: req.params.applicationId, requirement: { clientId: u.clientId, internal: false } },
     select: { id: true, stage: true, candidateId: true },

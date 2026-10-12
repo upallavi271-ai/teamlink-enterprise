@@ -120,9 +120,10 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [done, setDone] = useState([]);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
-    setData(null); setError(''); setDone([]);
+    setData(null); setError(''); setDone([]); setShowAll(false);
     api.get(`/candidates/${candidateId}/location-requirements`)
       .then((r) => setData(r.data))
       .catch((e) => { if (e.response?.status !== 403) setError(e.response?.data?.error || 'Could not load open requirements nearby.'); setData(false); });
@@ -151,8 +152,9 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
     );
   }
   const place = data.cities.length ? data.cities.join(' / ') : null;
-  const rows = compact ? data.rows.slice(0, 5) : data.rows;
-  const title = place ? `Open requirements in ${place}: ${data.total}` : 'Open requirements nearby';
+  const sorted = [...data.rows].sort((x, y) => (y.match || 0) - (x.match || 0));
+  const rows = showAll ? sorted : sorted.slice(0, 5);
+  const title = 'Jobs that fit this person';
 
   return (
     <div className={compact ? 'cdw-card rq-reach' : 'card section rq-reach'} id="location-requirements">
@@ -166,49 +168,39 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
       )}
       {place && (
         <div className="small-muted" style={{ marginBottom: 6 }}>
-          {`${data.strong} match 60% or more · ${data.notApplied ?? data.total} not applied yet · by current or preferred location, within the requirements you may see.`}
+          {`Open jobs in ${place}: ${data.total}. ${data.strong} fit 60% or more, ${data.notApplied ?? data.total} not added yet.`}
         </div>
       )}
       {error && <div className="error-text">{error}</div>}
       {place && rows.length > 0 && (
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Requirement</th><th>Client</th>{!compact && <th>Location</th>}<th>Openings</th><th>Match</th>
-                {data.canAdd && <th />}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const applied = r.applied || done.includes(r.id);
-                return (
-                  <tr key={r.id}>
-                    <td><Link to={`/requirements/${r.id}`}>{r.reqCode ? `${r.reqCode} · ` : ''}{r.title}</Link></td>
-                    <td className="cell-muted">{r.client || '—'}</td>
-                    {!compact && <td className="cell-muted">{r.location || '—'}</td>}
-                    <td className="cell-muted">{r.openings ?? '—'}</td>
-                    <td><StatusChip tone={r.match >= 60 ? 'green' : r.match >= 50 ? 'amber' : 'grey'}>{`${r.match}%`}</StatusChip></td>
-                    {data.canAdd && (
-                      <td>
-                        {applied
-                          ? <span className="small-muted">In pipeline</span>
-                          : (
-                            <button type="button" className="btn btn-sm" disabled={busy === r.id} onClick={() => add(r)}>
-                              {busy === r.id ? 'Adding…' : 'Add to requirement'}
-                            </button>
-                          )}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="c360-jobs">
+          {rows.map((r) => {
+            const applied = r.applied || done.includes(r.id);
+            const where = [r.client, r.location, r.openings != null ? `${r.openings} opening${r.openings === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
+            return (
+              <div key={r.id} className="c360-job">
+                <div className="c360-job-main">
+                  <Link className="c360-job-title" to={`/requirements/${r.id}`}>{r.reqCode ? `${r.reqCode} · ` : ''}{r.title}</Link>
+                  {where && <div className="small-muted">{where}</div>}
+                </div>
+                <StatusChip tone={r.match >= 60 ? 'green' : r.match >= 50 ? 'amber' : 'grey'}>{`${r.match}% fit`}</StatusChip>
+                {applied && <span className="c360-job-added">Added ✓</span>}
+                {!applied && data.canAdd && (
+                  <button type="button" className="btn btn-sm" disabled={busy === r.id} title="Add this person to this job" onClick={() => add(r)}>
+                    {busy === r.id ? 'Adding…' : 'Add'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
+      {place && sorted.length > 5 && (
+        <button type="button" className="link-btn c360-showall" onClick={() => setShowAll((x) => !x)}>
+          {showAll ? 'Show top 5' : `Show all ${sorted.length}`}
+        </button>
+      )}
       {place && !rows.length && <div className="small-muted">{`No open requirement in ${place} within your access.`}</div>}
-      {compact && data.total > rows.length && <div className="small-muted rq-reach-more">{`Top ${rows.length} of ${data.total} — the full list is on the profile.`}</div>}
     </div>
   );
 }

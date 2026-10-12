@@ -149,3 +149,9 @@
    :has() matches only a page that renders the ATS kit. */
 .content:has(.ak-kpis),main:has(.ak-kpis),
 .content:has(.ak-page-head),main:has(.ak-page-head){max-width:1680px}
+
+/* A number that is still loading: a grey bar, never "…" (Batch 1, 2026-10-10). */
+.ak-skel{display:inline-block;vertical-align:middle;width:56px;height:.9em;min-height:14px;border-radius:6px;background:linear-gradient(90deg,#e8edf3 25%,#f4f7fa 50%,#e8edf3 75%);background-size:200% 100%;animation:ak-skel-shimmer 1.2s linear infinite}
+@keyframes ak-skel-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.ak-skel{animation:none}}
+.ak-stage-sub{font-size:10.5px;line-height:1.25;color:var(--ink-soft);white-space:normal}

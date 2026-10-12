@@ -82,12 +82,16 @@ import MasterLists from './pages/admin/MasterLists.jsx'; // spec D / §18: Admin
 // VENDOR PORTAL (P3): its own sign-in and its only page, outside the staff Shell.
 import VendorLogin from './pages/vendor/VendorLogin.jsx';
 import VendorAssets from './pages/vendor/VendorAssets.jsx';
+import VendorInvoices from './pages/vendor/VendorInvoices.jsx';
+import VendorDocuments from './pages/vendor/VendorDocuments.jsx';
+import VendorProfile from './pages/vendor/VendorProfile.jsx';
 import VendorLogins from './pages/admin/VendorLogins.jsx'; // Admin → Company Setup → Vendor logins
 import { useVendorRedirect } from './pages/vendor/vendorGate.js';
 // PARTNER PORTAL (B7): agencies / freelancers — own sign-in, one page, outside the staff Shell.
 import PartnerLogin from './pages/partner/PartnerLogin.jsx';
 import PartnerJobs from './pages/partner/PartnerJobs.jsx';
 import Partners from './pages/admin/Partners.jsx'; // Admin → Company Setup → Partners
+import MessageTemplates from './pages/admin/MessageTemplates.jsx'; // Admin → Company Setup → Message templates
 import { usePartnerRedirect } from './pages/partner/partnerGate.js';
 
 export default function App() {
@@ -111,8 +115,11 @@ export default function App() {
       <Route path="/partner" element={<Navigate to="/partner/jobs" replace />} />
       <Route path="/vendor-login" element={<VendorLogin />} />
       <Route path="/vendor/assets" element={<VendorAssets />} />
-      <Route path="/vendor/*" element={<Navigate to="/vendor/assets" replace />} />
-      <Route path="/vendor" element={<Navigate to="/vendor/assets" replace />} />
+      <Route path="/vendor/invoices" element={<VendorInvoices />} />
+      <Route path="/vendor/documents" element={<VendorDocuments />} />
+      <Route path="/vendor/profile" element={<VendorProfile />} />
+      <Route path="/vendor/*" element={<Navigate to="/vendor/invoices" replace />} />
+      <Route path="/vendor" element={<Navigate to="/vendor/invoices" replace />} />
 
       {/* Public home page. A logged-out "/" shows it too (ProtectedRoute). */}
       <Route path="/home" element={<HomeRoute />} />
@@ -271,6 +278,7 @@ export default function App() {
         <Route path="admin/data-cleanup" element={<DataCleanup />} />
         <Route path="admin/vendor-logins" element={<VendorLogins />} />
         <Route path="admin/partners" element={<Partners />} />
+        <Route path="admin/message-templates" element={<MessageTemplates />} />
         <Route path="admin/alerts" element={<Navigate to="/admin/step-timing" replace />} />
         <Route path="admin/profile" element={<Profile />} />
         {/* A section's bare address opens its dashboard, and an address that

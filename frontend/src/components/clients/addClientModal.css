@@ -1,0 +1,89 @@
+/* ---------------------------------------------------------------------------
+   ADD / EDIT CLIENT — the big window (user, 2026-10-09: "the modal is too
+   small").  Scoped to .acw-modal (AddClientWizard.jsx, ClientEditModal.jsx).
+
+   Desktop: nearly full screen (94vw x 92vh, up to 1500px wide). The form is the
+   left column (~55%), the live agreement the right (~45%); EACH column scrolls
+   on its own, so there is never a page inside a page. Head and footer stay put
+   (Cancel / Save draft / Save & create agreement are always in sight).
+   Phone (<= 900px): the whole sheet, one column, the preview behind its button,
+   the footer pinned to the bottom.
+   --------------------------------------------------------------------------- */
+.overlay:has(.modal.acw-modal) { padding: 3vh 3vw; }
+.overlay .modal.acw-modal {
+  width: 94vw; max-width: 1500px; height: 92vh; max-height: 92vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal.acw-modal .modal-head { flex: none; padding: 16px 28px; }
+.modal.acw-modal .modal-head h3 { font-size: 19px !important; }
+.modal.acw-modal .modal-body { flex: 1 1 auto; min-height: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.modal.acw-modal .modal-foot { flex: none; padding: 14px 28px; }
+/* what sits above the two columns (the duplicate warning) */
+.modal.acw-modal .modal-body > :not(.acw-wrap) { flex: none; margin: 12px 28px 0; }
+
+.modal.acw-modal .acw-wrap {
+  flex: 1 1 auto; min-height: 0; display: grid; gap: 0; align-items: stretch;
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+}
+.modal.acw-modal .acw-form { overflow-y: auto; padding: 20px 28px 28px; min-height: 0; }
+.modal.acw-modal .acw-side {
+  position: static; overflow-y: auto; min-height: 0; padding: 20px 28px 28px 24px;
+  border-left: 1px solid var(--line); background: var(--paper, #f6f8fb);
+}
+.modal.acw-modal .acw-preview { border: 0; background: transparent; padding: 0; }
+.modal.acw-modal .acw-doc { max-height: none; font-size: 13.5px; padding: 18px 20px; }
+.modal.acw-modal .acw-doc .agrd { font-size: 13.5px; }
+.modal.acw-modal .acw-preview-head b { font-size: 16px; }
+.modal.acw-modal .acw-status { font-size: 12.5px; }
+.modal.acw-modal .acw-term .k { font-size: 12px; }
+.modal.acw-modal .acw-term .v { font-size: 14px; }
+.modal.acw-modal .acw-terms { gap: 8px; }
+
+/* roomier, more readable form */
+.modal.acw-modal .cf { gap: 14px; }
+.modal.acw-modal .cf-sec-head { min-height: 64px; padding: 12px 18px; }
+.modal.acw-modal .cf-sec-title b { font-size: 16px; }
+.modal.acw-modal .cf-sec-title small { font-size: 13px; }
+.modal.acw-modal .cf-sec-count { font-size: 13px; }
+.modal.acw-modal .cf-sec-body { padding: 8px 18px 20px; }
+.modal.acw-modal .cf-grid { gap: 8px 22px; }
+.modal.acw-modal .cf-field > span { font-size: 13.5px; }
+.modal.acw-modal .cf input,
+.modal.acw-modal .cf select,
+.modal.acw-modal .cf textarea { font-size: 15px; min-height: 44px; }
+.modal.acw-modal .cf textarea { min-height: 76px; }
+.modal.acw-modal .cf-hint, .modal.acw-modal .cf-err { font-size: 13px; }
+.modal.acw-modal .cf-seg-btn { font-size: 14px; min-height: 40px; padding: 8px 14px; }
+.modal.acw-modal .cf-check { font-size: 14px; }
+.modal.acw-modal .cf-bar .btn { min-height: 44px; font-size: 15px; padding: 0 18px; }
+.modal.acw-modal .cf-bar-note { font-size: 13px; }
+
+/* a big screen gives the agreement a little more room still */
+@media (min-width: 1700px) {
+  .modal.acw-modal .acw-form { padding: 24px 36px 32px; }
+  .modal.acw-modal .acw-side { padding: 24px 36px 32px 28px; }
+}
+
+/* narrower laptops: the form keeps the larger half */
+@media (max-width: 1180px) {
+  .modal.acw-modal .acw-wrap { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .modal.acw-modal .acw-form, .modal.acw-modal .acw-side { padding-left: 18px; padding-right: 18px; }
+}
+
+/* phone / small tablet: the whole sheet, one column */
+@media (max-width: 900px) {
+  .overlay:has(.modal.acw-modal) { padding: 0; }
+  .overlay .modal.acw-modal { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  .modal.acw-modal .modal-head { padding: 12px 14px; }
+  .modal.acw-modal .modal-foot { padding: 10px 12px; }
+  .modal.acw-modal .modal-body > :not(.acw-wrap) { margin: 10px 14px 0; }
+  /* one scroll: the whole body */
+  .modal.acw-modal .modal-body { overflow-y: auto; display: block; }
+  .modal.acw-modal .acw-wrap { display: block; }
+  .modal.acw-modal .acw-form { overflow: visible; padding: 14px 14px 8px; }
+  .modal.acw-modal .acw-side { overflow: visible; border-left: 0; background: transparent; padding: 0 14px 18px; }
+  .modal.acw-modal .acw-preview { background: var(--paper, #f6f8fb); padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+  .modal.acw-modal .acw-doc { max-height: 60vh; overflow-y: auto; }
+  .modal.acw-modal .cf-sec-head { min-height: 58px; padding: 10px 12px; }
+  .modal.acw-modal .cf-sec-body { padding: 6px 12px 16px; }
+}

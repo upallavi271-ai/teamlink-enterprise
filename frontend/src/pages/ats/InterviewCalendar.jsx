@@ -9,7 +9,10 @@ import {
   interviewStatusLabel, interviewStatusClass, resultClass, aiStatusClass, stageLabel,
 } from '../../atsVocab';
 import './InterviewCalendar.css';
-import { canActOnPipeline, productRole, can, canRaiseRequirement } from '../../permissions';
+import { productRole, can, canRaiseRequirement } from '../../permissions';
+
+// Schedule Interview / edit: reschedule, cancel, confirm, start, complete (P5).
+const canSchedule = (user) => can(user, 'ats', 'interviews', 'Schedule Interview', 'edit');
 // ATS LAYOUT v3 (2026-10-03): filters bar → cards → charts → table, all from
 // the shared kit. The calendar is coloured by department (kit palette).
 import PageFilterBar, { usePageFilters } from '../../components/ui/PageFilterBar.jsx';
@@ -27,6 +30,8 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import { HiringTypeChip } from './intjoinShared.jsx';
 import Combo from '../../components/Combo.jsx';
 import ScheduleInterview from '../../components/ScheduleInterview.jsx';
+// "Rescheduled / Cancelled — now tell them" (Call · WhatsApp · SMS · Mail to the candidate + the team), 2026-10-10.
+import InterviewTell from '../../components/interviews/InterviewTell.jsx';
 // Change list §11 (2026-10-03): the short feedback form (with "Did not
 // attend" inside it), the Day / Week / Month calendar toggle, late feedback
 // in red, and the Admin switch for automatic reminders.
@@ -76,7 +81,7 @@ import '../../components/interviews-v4/iv4.css';
 
 // v4: the left column's quick filters — the list's own views, counted.
 const QUICK = [
-  ['upcoming', 'Upcoming', 'blue'], ['today', 'Today', 'teal'], ['feedback', 'Feedback pending', 'amber'],
+  ['upcoming', 'Upcoming', 'blue'], ['today', 'Today', 'teal'], ['feedback', 'Interview done, no feedback', 'amber'],
   ['moved', 'Rescheduled / did not attend', 'violet'], ['completed', 'Done', 'green'], ['cancelled', 'Cancelled / no-show', 'red'],
 ];
 // "Completed" for the KPI tile: the interview happened (done, feedback owed or in).
@@ -124,7 +129,7 @@ const EMPTY_FILTERS = {
 const VIEW_IDS = ['upcoming', 'today', 'week', 'feedback', 'moved', 'completed', 'cancelled', 'all'];
 const AI_VIEW_IDS = ['upcoming', 'today', 'feedback', 'completed', 'cancelled', 'all'];
 const CLIENT_VIEW_LABELS = {
-  upcoming: 'Upcoming', today: 'Today', week: 'This week', feedback: 'Feedback pending',
+  upcoming: 'Upcoming', today: 'Today', week: 'This week', feedback: 'Interview done, no feedback',
   moved: 'Rescheduled / did not attend', completed: 'Done', cancelled: 'Cancelled / no-show', all: 'All',
 };
 // The AI interview's equivalents: it has a deadline, not a slot, and it is
@@ -158,7 +163,7 @@ const CAL_FIELDS = [
   { key: 'department', get: (r) => r.requirement.department },
   { key: 'clientId', get: (r) => r.requirement.client?.id, label: (v, r) => r.requirement.client.name },
   { key: 'recruiterId', get: (r) => r.requirement.recruiter?.id, label: (v, r) => r.requirement.recruiter.name },
-  { key: 'bdeId', get: (r) => r.requirement.bde?.id, label: (v, r) => r.requirement.bde.name },
+  { key: 'bdeId', get: (r) => r.requirement.bde?.id, label: (v, r) => r.requirement.bde.label || r.requirement.bde.name },
   { key: 'requirement', get: (r) => r.requirement.title },
   { key: 'candidate', get: (r) => r.candidate.name },
   { key: 'hiringType', get: (r) => r.hiringType },
@@ -363,9 +368,11 @@ export default function InterviewCalendar() {
   const [openCand, setOpenCand] = useState(null); // { candidateId, applicationId }
   const showCand = (r) => setOpenCand({ candidateId: r.candidate.id, applicationId: r.id });
   // ?schedule=1 (the BDE dashboard's "Schedule Interview") opens the dialog.
-  const [scheduling, setScheduling] = useState(() => searchParams.get('schedule') === '1' && canActOnPipeline(user));
+  const [scheduling, setScheduling] = useState(() => searchParams.get('schedule') === '1' && canSchedule(user));
 
-  const canAct = canActOnPipeline(user);
+  // P5 (2026-10-09): the calendar's actions ask the cells they belong to.
+  const canAct = canSchedule(user);
+  const canFeedback = can(user, 'ats', 'interviews', 'Interview Feedback', 'create');
   // May this login take the Selected / On hold / Rejected decision right in
   // the feedback form? (The server checks it again.)
   const canDecide = can(user, 'ats', 'interviews', 'Interview Feedback', 'approve');
@@ -387,6 +394,7 @@ export default function InterviewCalendar() {
   const [aiQ, setAiQ] = useState('');
   const [aiStatus, setAiStatus] = useState('');
   const [aiSort, setAiSort] = useState('');
+  const [aiTick, setAiTick] = useState(0); // bumped by load(): the AI tab asks the server again
   // List (default) or Calendar — a toggle on the toolbar, not another row.
   const [layout, setLayout] = useState(() => {
     try { return localStorage.getItem('ivcal.layout') === 'calendar' ? 'calendar' : 'list'; } catch { return 'list'; }
@@ -421,6 +429,7 @@ export default function InterviewCalendar() {
   }
   const personKey = JSON.stringify(serverParams());
   function load() {
+    setAiTick((t) => t + 1);
     api.get('/ats/calendar', { params: serverParams() })
       .then((res) => { setData(res.data); setError(''); })
       .catch(() => setError('Could not load interviews. Please try again.'))
@@ -702,39 +711,60 @@ export default function InterviewCalendar() {
   ].filter((c) => c && c.value);
 
   // AI interviews: their own search, status and order — never pooled with the list above.
-  const aiSearched = useMemo(() => {
-    const q = aiQ.trim().toLowerCase();
-    return (data.ai || []).filter((r) => !q || `${r.candidate.name} ${r.requirement.title} ${r.aiCode}`.toLowerCase().includes(q));
-  }, [data.ai, aiQ]);
-  const aiFiltered = useMemo(() => aiSearched.filter((r) => !aiStatus || r.status === aiStatus), [aiSearched, aiStatus]);
-  const aiFacetRows = useMemo(() => aiSearched.filter((r) => aiInView(views.ai, r)), [aiSearched, views.ai]);
-  const aiValues = useMemo(() => ({ status: aiStatus }), [aiStatus]);
-  const aiFacets = useLocalFacets(aiFacetRows, AI_FIELDS, aiValues);
-  const aiCounts = useMemo(() => Object.fromEntries(
-    VIEW_IDS.map((id) => [id, aiFiltered.filter((r) => aiInView(id, r)).length]),
-  ), [aiFiltered]);
-  const aiRows = useMemo(() => {
-    const list = aiFiltered.filter((r) => aiInView(views.ai, r));
-    if (aiSort === 'deadline') {
-      const t = (r) => (r.deadline ? new Date(r.deadline).getTime() : Infinity);
-      return [...list].sort((a, b) => t(a) - t(b));
-    }
-    if (aiSort === 'candidate') return [...list].sort((a, b) => String(a.candidate.name).localeCompare(String(b.candidate.name)));
-    return list;
-  }, [aiFiltered, views.ai, aiSort]);
+  // The server answers one page at a time (GET /ats/calendar/ai — utils/calendarAi.js):
+  // there can be tens of thousands of "AI interview required" rows, so they are counted
+  // there and only the page on screen is sent. Asked only while the AI tab is open.
+  const [aiQSent, setAiQSent] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setAiQSent(aiQ.trim()), 250);
+    return () => clearTimeout(t);
+  }, [aiQ]);
+  const [aiSize, setAiSize] = useState(25);
+  const [aiData, setAiData] = useState({ rows: [], total: 0, pages: 1, counts: {}, facets: {} });
+  const [aiLoading, setAiLoading] = useState(true);
+  const aiKey = JSON.stringify([personKey, views.ai, aiStatus, aiQSent, aiSort, aiSize]);
+  const [aiPg, setAiPg] = useState({ key: aiKey, page: 1 });
+  const aiPageNo = aiPg.key === aiKey ? aiPg.page : 1; // page 1 again when anything above changes
+  useEffect(() => {
+    if (tab !== 'ai') return undefined;
+    let live = true;
+    setAiLoading(true);
+    api.get('/ats/calendar/ai', {
+      params: {
+        ...serverParams(), view: views.ai, status: aiStatus || undefined, q: aiQSent || undefined, sort: aiSort || undefined, today: todayIso(), page: aiPageNo, pageSize: aiSize,
+      },
+    })
+      .then((res) => { if (live) { setAiData(res.data); setAiLoading(false); } })
+      .catch(() => { if (live) { setAiLoading(false); setError('Could not load the AI interviews. Please try again.'); } });
+    return () => { live = false; };
+  }, [tab, aiKey, aiPageNo, aiTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const aiCounts = aiData.counts || {};
+  const aiFacets = aiData.facets || {};
+  const aiRows = aiData.rows || [];
+  const aiPager = {
+    total: aiData.total || 0,
+    pages: aiData.pages || 1,
+    size: aiSize,
+    setSize: setAiSize,
+    page: aiData.page || aiPageNo,
+    setPage: (n) => setAiPg({ key: aiKey, page: n }),
+    from: aiData.total ? ((aiData.page || aiPageNo) - 1) * aiSize + 1 : 0,
+    to: Math.min((aiData.page || aiPageNo) * aiSize, aiData.total || 0),
+  };
 
   // Every action funnels through here so one failure path handles them all.
   async function actOk(fn, msg) {
     setError(''); setNotice('');
     try { await fn(); setNotice(msg); load(); return true; } catch (err) { setError(err.response?.data?.error || 'That could not be saved. Please try again.'); return false; }
   }
-  async function act(fn, successMessage) {
+  async function act(fn, successMessage, after = null) {
     setError(''); setNotice('');
     try {
       await fn();
       setDialog(null);
       if (successMessage) setNotice(successMessage);
       load();
+      if (after) after();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not save that change. Please try again.');
     }
@@ -907,9 +937,9 @@ export default function InterviewCalendar() {
           onClick={() => openList('all', { label: 'Cancelled / rescheduled', test: (r) => ['CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(r.status) })}
         />
         <KpiTile
-          icon="chat" tone="violet" label="Pending feedback" value={cards.feedback} loading={!loaded}
+          icon="chat" tone="violet" label="Interview done, no feedback" value={cards.feedback} loading={!loaded}
           sub={cards.late > 0 ? `${cards.late.toLocaleString('en-IN')} late (more than a day)` : (cards.feedback ? 'Interview done, feedback not in' : 'All feedback is in')}
-          title="The interview is done, but nobody has written what the client said yet"
+          title="The interview is done (or its booked time has passed) and nobody has written the feedback yet. Counts every hiring type, so it can be bigger than the dashboard, which counts client jobs that are still recent."
           onClick={() => openList('feedback')}
         />
       </KpiRow>
@@ -990,7 +1020,7 @@ export default function InterviewCalendar() {
           onClear={() => setSelId(null)}
           onOpenCandidate={showCand}
           onFull={(r) => setDialog({ kind: 'detail', row: r })}
-          actions={shownRow && canAct ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} /></div> : null}
+          actions={shownRow && canAct ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} /></div> : null}
         />
       </div>
 
@@ -1082,7 +1112,8 @@ export default function InterviewCalendar() {
                 const params = serverParams();
                 const all = data.recruitment || [];
                 return {
-                  params,
+                  // The AI tab's export asks for every AI row (the calendar leaves the unscored "Required" ones out otherwise).
+                  params: tab === 'ai' ? { ...params, fullAi: '1' } : params,
                   tab: tab === 'ai' ? 'ai' : 'recruitment',
                   ids: tab !== 'ai' && rows.length !== all.length ? rows.map((r) => r.id) : null,
                 };
@@ -1094,7 +1125,7 @@ export default function InterviewCalendar() {
           label="Interview kind"
           tabs={[
             { key: 'recruitment', label: 'Client & team interviews', count: (data.recruitment || []).length },
-            { key: 'ai', label: 'AI interviews', count: (data.ai || []).length },
+            { key: 'ai', label: 'AI interviews', count: data.aiCounts ? data.aiCounts.total : (data.ai || []).length },
           ]}
           value={tab}
           onChange={setTab}
@@ -1227,7 +1258,7 @@ export default function InterviewCalendar() {
                           {r.cancelReason && <div className="ivv3-sub2" title={r.cancelReason}>{r.cancelReason}</div>}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          {!canAct ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} />}
+                          {!canAct ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} />}
                         </td>
                       </tr>
                     ))}
@@ -1269,7 +1300,7 @@ export default function InterviewCalendar() {
                 onClearAll={() => { setAiStatus(''); setAiQ(''); }}
                 panel={<FacetSelect label="Status" value={aiStatus} onChange={setAiStatus} options={aiFacets.status} allLabel="All statuses" />}
               />
-              <AiTab rows={aiRows} canAct={canAct} act={act} emptyLabel={AI_EMPTY[views.ai]} mine={mine} onOpen={showCand} />
+              <AiTab rows={aiRows} pager={aiPager} loading={aiLoading} canAct={canAct} act={act} emptyLabel={AI_EMPTY[views.ai]} mine={mine} onOpen={showCand} />
             </>
           )}
         </div>
@@ -1287,12 +1318,24 @@ export default function InterviewCalendar() {
           onClose={() => setDialog(null)}
           onSubmit={(body, rej) => saveFeedback(dialog.row, body, rej)}
           onNoShow={(body) => actOk(
-            () => api.post(`/ats/interviews/${dialog.row.id}/no-show`, body),
+            () => api.post(`/ats/interviews/${dialog.row.id}/no-show`, body.rescheduleAt ? { ...body, viaPopup: true } : body),
             body.rescheduleAt ? 'Saved. Did not attend. New time booked, everyone told.' : 'Saved. Did not attend. Book a new time when ready.',
-          )}
+          ).then((ok) => {
+            // a new time was booked in the same step: tell them (Call · WhatsApp · SMS · Mail)
+            if (ok && body.rescheduleAt) setDialog({ kind: 'tell', row: dialog.row, tellKind: 'rescheduled', saved: `Saved. ${dialog.row.candidate.name} did not attend. New time booked.` });
+            return ok;
+          })}
         />
       )}
       {dialog?.kind === 'history' && <HistoryPanel dialog={dialog} setDialog={setDialog} />}
+      {dialog?.kind === 'tell' && (
+        <InterviewTell
+          applicationId={dialog.row.id}
+          kind={dialog.tellKind || (dialog.row.status === 'CANCELLED' ? 'cancelled' : (dialog.row.status === 'RESCHEDULED' ? 'rescheduled' : 'scheduled'))}
+          saved={dialog.saved || ''}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog?.kind === 'detail' && <DetailPanel row={dialog.row} user={user} canAct={canAct} advance={advance} setDialog={setDialog} onChanged={(fresh) => { setDialog({ kind: 'detail', row: { ...dialog.row, ...fresh } }); load(); }} onNextRound={(r) => { setDialog(null); bookNext(r); }} onOpen={(r) => { setDialog(null); showCand(r); }} />}
       {openCand && (
         <CandidateDrawer
@@ -1322,13 +1365,13 @@ export default function InterviewCalendar() {
           <span title="Bell reminders inside TeamLink for the interviewers (panel), the recruiter, the team lead and the client manager (BDE). Separate from Candidate emails.">
             {'Staff reminders (app bell): '}
             <b>{reminders.staff.enabled ? 'On' : 'Off'}</b>
-            {reminders.staff.enabled ? ` — ${[reminders.staff.dayBefore ? '1 day before' : null, reminders.staff.hourBefore ? '1 hour before' : null].filter(Boolean).join(' and ') || 'no times picked'}` : ''}
+            {reminders.staff.enabled ? ` — ${[reminders.staff.dayBefore ? "the list of today's interviews at 8:30 am" : null, reminders.staff.hourBefore ? '1 hour before' : null].filter(Boolean).join(' and ') || 'no times picked'}` : ''}
             {' · Candidate reminders: '}
             <b>{reminders.enabled ? 'On' : 'Off'}</b>
             {reminders.enabled ? '' : ' (they follow Candidate emails, which is off — the candidate gets nothing)'}
           </span>
           {reminders.canEdit && (
-            <button type="button" className="btn btn-sm" onClick={() => act(async () => { const r = await api.put('/ats/interview-staff-reminders', { enabled: !reminders.staff.enabled }); setReminders({ ...reminders, staff: r.data.staff }); }, reminders.staff.enabled ? 'Staff reminders are off.' : 'Staff reminders are on: a bell 1 day and 1 hour before each interview.')}>
+            <button type="button" className="btn btn-sm" onClick={() => act(async () => { const r = await api.put('/ats/interview-staff-reminders', { enabled: !reminders.staff.enabled }); setReminders({ ...reminders, staff: r.data.staff }); }, reminders.staff.enabled ? 'Staff reminders are off.' : "Staff reminders are on: the list of today's interviews at 8:30 am and a bell 1 hour before each interview.")}>
               {reminders.staff.enabled ? 'Turn off' : 'Turn on'}
             </button>
           )}
@@ -1341,7 +1384,7 @@ export default function InterviewCalendar() {
 // The prototype's ivActionsHtml(): what you can do depends entirely on where the
 // interview currently is.
 function Actions({
-  row, advance, setDialog, onNextRound = null,
+  row, advance, setDialog, onNextRound = null, canFeedback = true,
 }) {
   const st = row.status;
   const next = INTERVIEW_NEXT[st];
@@ -1353,8 +1396,8 @@ function Actions({
   if (passed) {
     return (
       <>
-        <button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'feedback', row })}>Add feedback</button>{' '}
-        <button className="btn btn-sm" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>
+        {canFeedback && <><button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'feedback', row })}>Add feedback</button>{' '}</>}
+        <button className={'btn btn-sm' + (canFeedback ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>
       </>
     );
   }
@@ -1364,6 +1407,7 @@ function Actions({
       <>
         <button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>{' '}
         {st === 'RESCHEDULED' && <button className="btn btn-sm" onClick={() => advance(row, 'CONFIRMED')}>Confirm</button>}{' '}
+        <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'tell', row })}>Tell them</button>{' '}
         <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'history', row })}>History</button>
       </>
     );
@@ -1374,11 +1418,13 @@ function Actions({
     return (
       <>
         {/* The decision is taken on the Feedback tab of this same screen. */}
-        {decide && <><Link className="btn btn-sm btn-primary" to="/ats/interview-feedback">Decide</Link>{' '}</>}
+        {decide && canFeedback && <><Link className="btn btn-sm btn-primary" to="/ats/interview-feedback">Decide</Link>{' '}</>}
         {decide && onNextRound && <><button type="button" className="btn btn-sm" onClick={() => onNextRound(row)}>{`Book round ${(Number(row.round) || 1) + 1}`}</button>{' '}</>}
-        <button className={'btn btn-sm' + (decide ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'feedback', row })}>
-          {['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(st) ? 'Edit feedback' : 'Add feedback'}
-        </button>{' '}
+        {canFeedback && (
+          <button className={'btn btn-sm' + (decide ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'feedback', row })}>
+            {['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(st) ? 'Edit feedback' : 'Add feedback'}
+          </button>
+        )}{' '}
         <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'history', row })}>History</button>
       </>
     );
@@ -1387,6 +1433,7 @@ function Actions({
     <>
       {next && <><button className="btn btn-sm btn-primary" onClick={() => advance(row, next)}>{nextLabel}</button>{' '}</>}
       <button className="btn btn-sm" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>{' '}
+      <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'tell', row })}>Tell them</button>{' '}
       <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'cancel', row })}>Cancel interview</button>
     </>
   );
@@ -1433,7 +1480,7 @@ function RescheduleForm({ dialog, setDialog, act, error }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          act(() => api.post(`/ats/interviews/${row.id}/reschedule`, { interviewAt: when, reason }), `Saved. Moved to ${fmtDate(when)} ${fmtTime(when)}.`);
+          act(() => api.post(`/ats/interviews/${row.id}/reschedule`, { interviewAt: when, reason, viaPopup: true }), `Saved. Moved to ${fmtDate(when)} ${fmtTime(when)}.`, () => setDialog({ kind: 'tell', row, tellKind: 'rescheduled', saved: `Saved. ${row.candidate.name} · moved to ${fmtDate(when)} ${fmtTime(when)}` }));
         }}
       >
         <div className="grid-2">
@@ -1456,7 +1503,7 @@ function CancelForm({ dialog, setDialog, act, error }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          act(() => api.post(`/ats/interviews/${row.id}/cancel`, { reason }), 'Saved. Interview cancelled. The person stays at their step.');
+          act(() => api.post(`/ats/interviews/${row.id}/cancel`, { reason, viaPopup: true }), 'Saved. Interview cancelled. The person stays at their step.', () => setDialog({ kind: 'tell', row, tellKind: 'cancelled', saved: `Saved. ${row.candidate.name} · interview cancelled. The person stays at their step.` }));
         }}
       >
         <label className="field" style={{ marginBottom: 10 }}><span>Why? *</span>
@@ -1520,7 +1567,7 @@ function DetailPanel({
         )}
       </div>
       <div className="ivx-actions">
-        {canAct && <Actions row={row} advance={advance} setDialog={setDialog} onNextRound={onNextRound} />}
+        {canAct && <Actions row={row} advance={advance} setDialog={setDialog} onNextRound={onNextRound} canFeedback={can(user, 'ats', 'interviews', 'Interview Feedback', 'create')} />}
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpen(row)}>Open candidate</button>
       </div>
     </Panel>
@@ -1566,9 +1613,8 @@ function aiOutcome(r) {
 }
 
 function AiTab({
-  rows, canAct, act, emptyLabel, mine, onOpen,
+  rows, pager: page, loading, canAct, act, emptyLabel, mine, onOpen,
 }) {
-  const page = usePaged(rows);
   return (
     <>
       <div className="tbl-wrap">
@@ -1580,7 +1626,7 @@ function AiTab({
             </tr>
           </thead>
           <tbody>
-            {page.slice.map((r) => {
+            {rows.map((r) => {
               const expired = r.status === 'Expired';
               const outcome = aiOutcome(r);
               return (
@@ -1624,7 +1670,10 @@ function AiTab({
                 </tr>
               );
             })}
-            {rows.length === 0 && (
+            {rows.length === 0 && loading && (
+              <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>Loading AI interviews…</td></tr>
+            )}
+            {rows.length === 0 && !loading && (
               <tr><td colSpan="9" style={{ padding: 0 }}>
                 <EmptyState
                   compact
@@ -1638,8 +1687,8 @@ function AiTab({
         </table>
       </div>
       {rows.length > 0 && (
-        <ListFooter from={page.from} to={page.to} total={rows.length} noun="AI interviews">
-          <Pager page={page} noun="AI interviews" />
+        <ListFooter from={page.from} to={page.to} total={page.total} noun="AI interviews">
+          <Pager page={page} noun="AI interviews" sizes={[25, 50, 100, 200]} />
         </ListFooter>
       )}
     </>

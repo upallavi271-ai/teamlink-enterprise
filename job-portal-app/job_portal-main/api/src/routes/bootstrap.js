@@ -24,8 +24,9 @@ import { config } from '../config.js';
 import {
   toCompany, toJob, toCandidate, toApplication,
   toEducationRecord, toExperienceRecord,
-  toInterview, toOffer, toNotification, toPerson, attachPrimary,
+  toInterview, toOffer, toNotification, toPerson, attachPrimary, toStaffJob, JOB_RECORD_COLS,
 } from '../shapes.js';
+import { teamlinkOnly } from '../jobs/source-scope.js';
 
 export default function bootstrapRoutes() {
   const r = Router();
@@ -52,9 +53,22 @@ export default function bootstrapRoutes() {
       const companies   = await c.query(`select * from companies order by name`);
       // jobs_with_counts supplies the DERIVED applicants count and
       // posted_days_ago, replacing the drifting counter (§3.2).
-      const jobs        = await c.query(`select * from jobs_with_counts order by published_at desc nulls last, id`);
+      /* 0113: a candidate or a visitor is handed TeamLink jobs - the Jobs
+         page's dataset - plus, for a candidate, any job they already
+         applied to (so their own applications still have a title). Staff
+         keep every row RLS lets them read: that is the ATS, not the Jobs page. */
+      const staff = !!session && ['recruiter', 'admin', 'bde', 'client'].includes(session.role);
+      const jobs        = await c.query(`select *, ${JOB_RECORD_COLS} from jobs_with_counts
+        ${staff ? '' : `where ${teamlinkOnly()} or id in (select job_id from applications)`}
+        order by published_at desc nulls last, id`);
       const candidates  = await c.query(`select * from candidates order by id`);
-      const applications= await c.query(`select * from applications order by applied_at desc`);
+      /* 0133: for a candidate, whether each AI interview is still open (and why not) - the job may be one
+         they can no longer read, so the page cannot work this out itself */
+      const applications= session && session.role === 'candidate'
+        ? await c.query(`select a.*, w.open as ai_interview_open, w.reason as ai_interview_closed_reason
+                           from applications a left join lateral ai_interview_window(a.id) w on true
+                          order by a.applied_at desc`)
+        : await c.query(`select * from applications order by applied_at desc`);
       const interviews  = await c.query(`select * from interviews order by scheduled_date desc nulls last`);
       const offers      = await c.query(`select * from offers order by extended_at desc`);
       const notifications = session
@@ -125,7 +139,7 @@ export default function bootstrapRoutes() {
 
       return {
         companies:   companies.rows.map(toCompany),
-        jobs:        jobs.rows.map(toJob),
+        jobs:        jobs.rows.map(staff ? toStaffJob : toJob),
         candidates:  cands,
         applications: extraApplications,
         interviews:  interviews.rows.map(toInterview),
@@ -175,7 +189,10 @@ export default function bootstrapRoutes() {
       session: session
         ? {
             role: session.role, id: session.profileId, userId: session.userId,
-            mustChangePassword: !!(temp && temp.must_change_password),
+            isTeamLead: session.isTeamLead === true,
+            /* Not for a session opened from HRMS (0127): HRMS signed them
+               in, and the portal password is never asked for there. */
+            mustChangePassword: !!(temp && temp.must_change_password) && !session.hrmsSid,
           }
         : null,
       data: payload,

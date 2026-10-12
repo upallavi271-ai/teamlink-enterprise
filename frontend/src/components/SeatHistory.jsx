@@ -136,7 +136,7 @@ export default function SeatHistory({ defaultDepartment = '' }) {
                     <td>
                       {t.current
                         ? <span className="status active">Current</span>
-                        : <span className="status pending">{['Relieved', 'Exited', 'Exit Process'].includes(t.employmentStatus) ? 'Left company' : 'Moved on'}</span>}
+                        : <span className="status pending">{(t.endedBecause === 'Exited' || ['Relieved', 'Exited', 'Exit Process'].includes(t.employmentStatus)) ? 'Left company - seat freed' : 'Moved on'}</span>}
                     </td>
                   </tr>
                 ))}

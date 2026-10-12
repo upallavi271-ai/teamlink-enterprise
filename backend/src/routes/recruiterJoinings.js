@@ -65,6 +65,24 @@ function scopeRows(user, viewer, rows) {
   return rows.filter((r) => (r.userId && r.userId === user.id) || (user.employeeId && r.employeeId === user.employeeId));
 }
 
+// HRMS SHOWS ONLY ATS SUMMARY COUNTS (user, 2026-10-09): required joinings,
+// achieved joinings, completion %. Client names, candidate names and job
+// titles stay in ATS - they never leave utils/recruiterJoinings.js for an
+// HRMS screen, export or popup (stripNames below is the one place).
+const statusGroupOf = (employmentStatus) => (employmentStatus === 'Relieved' ? 'Relieved' : employmentStatus === 'Exited' ? 'Exited' : 'Active');
+const pctOf = (joinings, target) => (target > 0 ? Math.round((joinings * 100) / target) : null);
+function stripNames(r) {
+  // eslint-disable-next-line no-unused-vars
+  const { joiningList, notCountedList, ...rest } = r;
+  return {
+    ...rest,
+    required: r.target,
+    achieved: r.joinings,
+    completionPct: pctOf(r.joinings, r.target),
+    statusGroup: statusGroupOf(r.employmentStatus),
+  };
+}
+
 // A decision as this viewer may see it.
 function decisionFor(viewer, d) {
   if (!d || !viewer.decisions) return null;
@@ -77,8 +95,43 @@ function decisionFor(viewer, d) {
   return { ...base, amount: d.amount, note: d.note, salaryVersionId: d.salaryVersionId, payrollEntryId: d.payrollEntryId, joinings: d.joinings, target: d.target };
 }
 
-function shapeBoard(user, viewer, board) {
-  const rows = scopeRows(user, viewer, board.rows).map((r) => ({ ...r, decision: decisionFor(viewer, r.decision) }));
+// The department rules and, per person, the target that CARRIES FORWARD
+// (utils/incentives.js joiningsPlan): this month's target = the base + what was
+// still missing from the month before. Counts only.
+async function carryPlanFor(board) {
+  const INC = require('../utils/incentives'); // eslint-disable-line global-require
+  const rules = await INC.loadRules({ activeOnly: true });
+  const plan = await INC.joiningsPlan(board.month, { rules });
+  const awards = plan.size ? await prisma.incentiveAward.findMany({ where: { month: board.month, metric: 'JOININGS' } }).catch(() => []) : [];
+  const awardOf = new Map(awards.map((a) => [`${a.employeeId}|${a.ruleId}`, a]));
+  const carryRules = rules.filter((r) => r.metric === 'JOININGS' && r.carryForward);
+  const depts = [...new Set(board.rows.map((r) => r.department).filter(Boolean))].sort();
+  const ruleLines = depts.map((d) => {
+    const rule = carryRules.find((r) => !r.department || String(r.department).toLowerCase() === d.toLowerCase());
+    if (!rule) return { department: d, set: false, sentence: 'Rule not set yet: Super Admin will add it.' };
+    const base = rule.target != null ? Number(rule.target) : RJ.DEFAULT_TARGET;
+    return {
+      department: d, set: true, base, carry: true, from: rule.fromMonth, amountSet: Number(rule.amount) > 0,
+      sentence: `Target ${base} a month. If you join fewer, the missing ones are added to next month's target (for example, 2 joined this month: next month's target is ${base + Math.max(0, base - 2)}). The incentive is earned when the month's target is completed.`,
+    };
+  });
+  return { plan, awardOf, ruleLines, example: [[2, 4, 6], [2, 6, 8]] };
+}
+const BOARD_WORD = { green: 'Reached', orange: 'Close', red: 'Low', grey: '—' };
+function shapeBoard(user, viewer, board, cp = null) {
+  const rows = scopeRows(user, viewer, board.rows).map((r) => {
+    const base = { ...stripNames(r), decision: decisionFor(viewer, r.decision) };
+    const p = cp && r.employeeId ? cp.plan.get(r.employeeId) : null;
+    if (!p) return base;
+    const aw = cp.awardOf.get(`${r.employeeId}|${p.ruleId}`) || null;
+    const tone = RJ.toneOf(r.joinings, p.target);
+    return {
+      ...base, target: p.target, required: p.target, baseTarget: p.base, carried: p.carried, completed: p.completed, nextTarget: p.next,
+      completionPct: pctOf(r.joinings, p.target), tone, toneWord: BOARD_WORD[tone], targetSource: p.sentence,
+      carryNote: p.carried ? `${p.base} + ${p.carried} carried from earlier months = ${p.target}` : `Target ${p.base}`,
+      incentive: aw ? { status: aw.status, amount: viewer.money ? aw.amount : null } : { status: p.completed ? 'Not worked out yet' : 'Target not completed', amount: null },
+    };
+  });
   const needs = rows.filter((r) => r.needsDecision);
   const summary = {
     people: rows.length,
@@ -98,10 +151,13 @@ function shapeBoard(user, viewer, board) {
     month: board.month, label: board.label, from: board.from, to: board.to, ended: board.ended, current: board.current,
     defaultTarget: board.defaultTarget, rule: board.rule,
     rows,
-    // Skipped = joined but credited to nobody: only the company-wide viewers.
-    skipped: viewer.level === 'sa' || viewer.level === 'all' ? board.skipped : [],
+    // Skipped = joined but credited to nobody: only the company-wide viewers, and
+    // only HOW MANY - who they are is in ATS.
+    skipped: [],
+    skippedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.skipped.length : 0,
     undatedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.undatedCount : 0,
     summary,
+    rules: cp ? cp.ruleLines : [], example: cp ? cp.example : [],
     viewer: { level: viewer.level, money: viewer.money, decide: viewer.decide && board.ended, decisions: viewer.decisions, setTarget: viewer.level === 'sa' },
   };
 }
@@ -126,7 +182,7 @@ router.get('/board', guarded(async (req, res) => {
   const month = monthOf(req.query, RJ.thisMonth());
   const viewer = viewerOf(req.user);
   const board = await RJ.monthBoard(month, { fresh: req.query.fresh === '1' });
-  res.json(shapeBoard(req.user, viewer, board));
+  res.json(shapeBoard(req.user, viewer, board, await carryPlanFor(board)));
 }));
 
 // The signed-in person's own "3 of 4 this month".
@@ -134,7 +190,9 @@ router.get('/mine', guarded(async (req, res) => {
   const month = monthOf(req.query, RJ.thisMonth());
   const own = await RJ.ownFigure(req.user, month);
   if (!own) return res.json({ month, label: RJ.monthLabel(month), listed: false });
-  return res.json({ ...own, listed: true });
+  // eslint-disable-next-line no-unused-vars
+  const { appIds, list, notCounted, ...counts } = own;
+  return res.json({ ...counts, required: own.target, achieved: own.joinings, completionPct: pctOf(own.joinings, own.target), notCountedCount: (notCounted || []).length, listed: true });
 }));
 
 // Month by month for one person.
@@ -149,7 +207,14 @@ router.get('/history/:employeeId', guarded(async (req, res) => {
   const months = Math.min(24, Math.max(3, Number(req.query.months) || 12));
   const hist = await RJ.personHistory(id, months);
   const emp = await prisma.employee.findUnique({ where: { id }, select: { id: true, name: true, employeeCode: true } });
-  res.json({ employee: emp, months: hist.map((h) => ({ ...h, decision: decisionFor(viewer, h.decision) })) });
+  // The carried-forward target month by month (counts only), when a rule applies.
+  let carry = [];
+  try {
+    const INC = require('../utils/incentives'); // eslint-disable-line global-require
+    const plan = await INC.joiningsPlan(RJ.thisMonth());
+    carry = (plan.get(id) || {}).history || [];
+  } catch { carry = []; }
+  res.json({ employee: emp, months: hist.map((h) => ({ ...h, decision: decisionFor(viewer, h.decision) })), carry });
 }));
 
 // Joined applications that belong to no month (no usable joining date).
@@ -158,7 +223,8 @@ router.get('/skipped', guarded(async (req, res) => {
   if (!['sa', 'all'].includes(viewer.level)) return err(res, 403, 'Only Super Admin, Admin and HR can see this list.');
   const month = monthOf(req.query, RJ.thisMonth());
   const [board, undated] = await Promise.all([RJ.monthBoard(month), RJ.undatedJoinings(month)]);
-  res.json({ month, label: board.label, noRecruiter: board.skipped, undated });
+  // Counts only: the people / clients / jobs behind them are in ATS.
+  res.json({ month, label: board.label, noRecruiterCount: board.skipped.length, undatedCount: undated.length, details: 'Open ATS to see who these joinings are.' });
 }));
 
 // ---- Popup (Super Admin, HRMS dashboard) ------------------------------------------
@@ -171,7 +237,8 @@ router.get('/popup', guarded(async (req, res) => {
   const viewer = viewerOf(req.user);
   if (viewer.level !== 'sa') return res.json({ show: false });
   const month = RJ.prevMonth();
-  const board = shapeBoard(req.user, viewer, await RJ.monthBoard(month));
+  const rawBoard = await RJ.monthBoard(month);
+  const board = shapeBoard(req.user, viewer, rawBoard, await carryPlanFor(rawBoard));
   const snoozed = await snoozedToday(req.user.id);
   const pending = board.summary.pending || 0;
   // ?peek=1 opens it on demand (the "Recruiter joinings" button), snoozed or not.
@@ -236,6 +303,8 @@ router.post('/decisions', guarded(async (req, res) => {
     decidedById: req.user.id, decidedByName: req.user.name,
   };
   if (decision === 'INCENTIVE') {
+    const clash = await prisma.incentiveAward.findFirst({ where: { employeeId, month, status: { in: ['Approved', 'Paid'] } } }).catch(() => null);
+    if (clash) return err(res, 409, `${row.name} already has an approved incentive of ${rupee(clash.amount)} for ${RJ.monthLabel(month)} under the department rule. Undo that one first - never both.`);
     const amount = Math.round(Number(body.amount));
     if (!(amount > 0)) return err(res, 400, 'Enter the incentive amount in rupees.');
     if (amount > MAX_INCENTIVE) return err(res, 400, `That is more than ${rupee(MAX_INCENTIVE)} — please check the amount.`);
@@ -360,15 +429,16 @@ router.delete('/targets/:id', guarded(async (req, res) => {
 router.get('/export', guarded(async (req, res) => {
   const month = monthOf(req.query, RJ.thisMonth());
   const viewer = viewerOf(req.user);
-  const b = shapeBoard(req.user, viewer, await RJ.monthBoard(month));
-  const f = { department: s(req.query.department), tl: s(req.query.tl), recruiter: s(req.query.recruiter) };
+  const rawB = await RJ.monthBoard(month);
+  const b = shapeBoard(req.user, viewer, rawB, await carryPlanFor(rawB));
+  const f = { department: s(req.query.department), tl: s(req.query.tl), recruiter: s(req.query.recruiter), status: s(req.query.status) };
   const rows = b.rows.filter((r) => (!f.department || r.department === f.department)
-    && (!f.tl || r.tlName === f.tl) && (!f.recruiter || r.key === f.recruiter));
-  const head = ['Recruiter', 'Employee ID', 'Seat', 'Department', 'Team lead', 'Target', 'Joinings', 'Status', 'Not counted'];
+    && (!f.tl || r.tlName === f.tl) && (!f.recruiter || r.key === f.recruiter) && (!f.status || r.statusGroup === f.status));
+  const head = ['Recruiter', 'Employee ID', 'Employee status', 'Seat', 'Department', 'Team lead', 'Required joinings', 'Carried from earlier months', 'Achieved joinings', 'Completion %', 'Target completed', 'Result', 'Not counted'];
   if (viewer.decisions) head.push('Decision');
   if (viewer.money) head.push('Incentive (₹)', 'Paid with', 'Raise from', 'Note');
   const main = rows.map((r) => {
-    const out = [r.name, r.employeeCode, r.seat, r.department, r.tlName, r.target, r.joinings, r.toneWord, r.notCountedCount];
+    const out = [r.name, r.employeeCode, r.statusGroup, r.seat, r.department, r.tlName, r.required, r.carried || 0, r.achieved, r.completionPct == null ? '' : r.completionPct, r.completed === undefined ? '' : (r.completed ? 'Yes' : 'No'), r.toneWord, r.notCountedCount];
     if (viewer.decisions) out.push(r.decision ? r.decision.word : (r.needsDecision ? 'Waiting for decision' : '—'));
     if (viewer.money) {
       const d = r.decision || {};
@@ -376,13 +446,8 @@ router.get('/export', guarded(async (req, res) => {
     }
     return out;
   });
-  const list = (key) => rows.flatMap((r) => r[key].map((a) => [r.name, r.seat, a.candidate, a.client, a.job, a.joiningDate, a.status, a.note || '']));
-  const sheets = [
-    { name: `${b.label}`, headers: head, rows: main },
-    { name: 'Joinings counted', headers: ['Recruiter', 'Seat', 'Candidate', 'Client', 'Job', 'Joining date', 'Status', 'Check'], rows: list('joiningList') },
-    { name: 'Not counted', headers: ['Recruiter', 'Seat', 'Candidate', 'Client', 'Job', 'Joining date', 'Why not counted', 'Note'], rows: list('notCountedList') },
-  ];
-  if (b.skipped.length) sheets.push({ name: 'Skipped', headers: ['Candidate', 'Client', 'Job', 'Joining date', 'Why skipped'], rows: b.skipped.map((a) => [a.candidate, a.client, a.job, a.joiningDate, a.reason]) });
+  // Summary counts only (no candidate / client / job): those stay in ATS.
+  const sheets = [{ name: `${b.label}`, headers: head, rows: main }];
   await logAudit({
     userId: req.user.id, actorName: req.user.name, action: 'Recruiter joinings exported (XLSX)', entity: 'RecruiterJoiningDecision',
     toValue: `${b.label} · ${rows.length} recruiter(s)`,

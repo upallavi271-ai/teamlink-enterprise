@@ -12,7 +12,22 @@
 .rsm-drop{border:1.5px dashed var(--brand-tint-2,#c9dcd4);border-radius:8px;padding:14px;text-align:center;font-size:12.5px;color:var(--ink-soft,#5b6478);cursor:pointer;background:#fbfcfd}
 .rsm-drop.over{background:var(--brand-tint,#e6efeb);border-color:var(--brand,#4A6F64)}
 .rsm-drop b{color:var(--brand-ink,#2A4139)}
-.rsm-details{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px}
+.rsm-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:12px 18px}
+.rsm-details > .rsm-full{grid-column:1/-1}
+.rsm-contact{overflow-wrap:break-word;word-break:normal;font-weight:600}
+.rsm-note{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line,#e3e8f0);font-size:12.5px;line-height:1.5}
+.rsm-skills .skillpill{margin:0 4px 4px 0}
+.rsm-sub{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft,#5b6478);margin-bottom:10px}
+/* Inside the profile's Resume card (already a card with a RESUME label): no
+   card-in-a-card. The sections sit one under another with a divider. */
+.pfl-resume .rsm{gap:0;margin-bottom:0}
+.pfl-resume .rsm > .rsm-card{border:0;border-radius:0;background:transparent;padding:0}
+.pfl-resume .rsm > .rsm-card + .rsm-card,.pfl-resume .rsm > .rsm-viewer{margin-top:14px}
+.pfl-resume .rsm > .rsm-card + .rsm-card{padding-top:14px;border-top:1px solid var(--line,#e3e8f0)}
+.pfl-resume .rsm-main-title{display:none}
+.pfl-card.pfl-resume{overflow:clip}
+.pfl-resume .rsm-file-card{background:var(--brand-tint,#e6efeb);border-color:var(--brand-tint-2,#c9dcd4)}
+.pfl-resume .rsm-file-card.on{background:#f3f8fe}
 .rsm-k{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft,#5b6478);margin-bottom:2px}
 .rsm-v{font-size:13px;overflow-wrap:anywhere}
 .rsm-skills{grid-column:1/-1}
@@ -30,7 +45,7 @@
 .rsm-foot{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .rsm-hist{width:100%;font-size:12.5px}
 .rsm-empty{padding:28px;text-align:center;color:var(--ink-soft,#5b6478);font-size:12.5px;background:#fff}
-@media (max-width:900px){.rsm-details{grid-template-columns:repeat(2,minmax(0,1fr))}.rsm-side,.rsm-editor{grid-template-columns:1fr}.rsm-viewer iframe{height:520px}}
+@media (max-width:900px){.rsm-side,.rsm-editor{grid-template-columns:1fr}.rsm-viewer iframe{height:520px}}
 
 /* 3-number match tables (components/resume/MatchSplit.jsx) */
 .msp-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:12.5px}
@@ -44,9 +59,14 @@
 .msp-src{font-size:10.5px;color:var(--ink-soft,#5b6478);display:block}
 
 /* Simple top card (user 2026-10-03: "asalu clear ga ledhu") */
-.rsm-title{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 240px}
+.rsm-head{align-items:stretch;flex-direction:column;gap:10px}
+.rsm-title{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto}
 .rsm-title .small-muted{overflow-wrap:anywhere}
-.rsm-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.rsm-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rsm-fname{font-size:13px;font-weight:600;overflow-wrap:anywhere;word-break:break-word}
+.rsm-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start}
+.rsm-head > .rsm-actions{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr))}
+.rsm-head > .rsm-actions .btn{width:100%;justify-content:center;text-align:center;white-space:normal;line-height:1.25;min-height:34px}
 .rsm-over{outline:2px dashed var(--brand,#4A6F64);outline-offset:-4px}
 .rsm-ok{background:var(--teal-tint,#e7f5ef);color:var(--teal,#1f7a5c);border-color:transparent}
 .rsm-warn{margin:10px 0 0;display:flex;flex-direction:column;gap:3px}
@@ -100,10 +120,13 @@
 .msp-sort{border:0;background:none;padding:0;font:inherit;font-weight:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer;white-space:nowrap}
 .msp-sort:hover,.msp-sort.on{color:var(--brand,#0a6fc2)}
 .msp-all{margin-top:8px}
-.rsm-files{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin-top:10px}
-.rsm-file-card{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:8px 10px;background:#fbfcfe;min-width:0}
+.rsm-files{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:8px;margin-top:12px}
+.rsm-file-card{display:flex;flex-direction:column;align-items:stretch;gap:8px;border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:8px 10px;background:#fbfcfe;min-width:0}
 .rsm-file-card.on{border-color:var(--brand,#0a6fc2);background:#f3f8fe}
 .rsm-file-card .small-muted{overflow-wrap:anywhere}
+.rsm-file-card .rsm-actions{gap:6px}
+.rsm-file-card .rsm-actions .btn{flex:1 1 auto;justify-content:center;white-space:normal;text-align:center}
+.rsm-files{grid-template-columns:minmax(0,1fr)}
 .rsm-files-note{grid-column:1/-1}
 @media (max-width:560px){.rsm-files{grid-template-columns:1fr}}
 @media (max-width:560px){.rsm-hist th:nth-child(2),.rsm-hist td:nth-child(2){display:none}.rsm-actions{justify-content:flex-start}.rsm-viewer iframe{height:440px}.rsm-card{padding:10px}}

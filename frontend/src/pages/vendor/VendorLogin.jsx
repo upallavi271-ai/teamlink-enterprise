@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { TeamLinkMark } from '../../components/Logo.jsx';
 import vendorApi, {
   setVendorToken, vendorToken, vendorError, VENDOR_NOTICE_KEY,
 } from '../../vendorApi';
+import { VENDOR_HOME } from './vendorGate.js';
 import './vendorPortal.css';
 
 // /vendor-login — the VENDOR sign-in (P3, v2). Separate from the staff
@@ -14,7 +15,10 @@ export const PW_HINT = 'At least 10 characters, with a capital letter, a small l
 
 export default function VendorLogin() {
   const navigate = useNavigate();
-  const [step, setStep] = useState('signin'); // signin | password | off
+  const [params] = useSearchParams();
+  const inviteToken = params.get('invite') || '';
+  const [invite, setInvite] = useState(null); // { name, email, vendorName, purpose } once the link checks out
+  const [step, setStep] = useState(inviteToken ? 'invite' : 'signin'); // signin | password | invite | badlink | off
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
@@ -31,12 +35,33 @@ export default function VendorLogin() {
     } catch { /* ignore */ }
     // The feature flag: a switched-off portal says so instead of a dead form.
     vendorApi.get('/status').catch((err) => { if (err.response?.status === 404) setStep('off'); });
+    if (inviteToken) {
+      // A secure link wins over any older session in this browser.
+      vendorApi.get(`/invite/${encodeURIComponent(inviteToken)}`).then((r) => { setInvite(r.data); setStep('invite'); })
+        .catch(() => setStep('badlink'));
+      return;
+    }
     if (!vendorToken()) return;
     vendorApi.get('/me').then((r) => {
       if (r.data.mustChangePassword) setStep('password');
-      else navigate('/vendor/assets', { replace: true });
+      else navigate(VENDOR_HOME, { replace: true });
     }).catch(() => setVendorToken(null));
-  }, [navigate]);
+  }, [navigate, inviteToken]);
+
+  async function acceptInvite(e) {
+    e.preventDefault();
+    setError('');
+    if (newPw !== newPw2) { setError('The two passwords do not match.'); return; }
+    setBusy(true);
+    try {
+      const r = await vendorApi.post('/invite/accept', { token: inviteToken, newPassword: newPw, confirmPassword: newPw2 });
+      setVendorToken(r.data.token);
+      navigate(VENDOR_HOME, { replace: true });
+    } catch (err) {
+      if (err.response?.data?.linkProblem) setStep('badlink');
+      else setError(vendorError(err, 'Could not set the password.'));
+    } finally { setBusy(false); }
+  }
 
   async function signIn(e) {
     e.preventDefault();
@@ -45,7 +70,7 @@ export default function VendorLogin() {
       const r = await vendorApi.post('/login', { email, password });
       setVendorToken(r.data.token);
       if (r.data.vendor?.mustChangePassword) setStep('password');
-      else navigate('/vendor/assets', { replace: true });
+      else navigate(VENDOR_HOME, { replace: true });
     } catch (err) {
       setError(err.response?.status === 401 ? 'Invalid credentials. Check your email and password. If you cannot sign in, ask the company.' : vendorError(err, 'Could not sign in.'));
     } finally { setBusy(false); }
@@ -58,7 +83,7 @@ export default function VendorLogin() {
     setBusy(true);
     try {
       await vendorApi.post('/change-password', { currentPassword: password, newPassword: newPw, confirmPassword: newPw2 });
-      navigate('/vendor/assets', { replace: true });
+      navigate(VENDOR_HOME, { replace: true });
     } catch (err) {
       setError(vendorError(err, 'Could not change the password.'));
     } finally { setBusy(false); }
@@ -82,6 +107,44 @@ export default function VendorLogin() {
     );
   }
 
+  if (step === 'badlink') {
+    return (
+      <div className="login-shell vp-login">
+        <div className="login-card">
+          <div className="logo-lockup"><TeamLinkMark width={168} /><div className="vp-login-title">Vendor Portal</div></div>
+          <div className="notice amber"><span>This link is not valid or has expired. A link works only once. Ask your contact at the company to send you a new one.</span></div>
+          <div className="small-muted" style={{ marginTop: 14, fontSize: 12, textAlign: 'center' }}>Already have a password? <Link to="/vendor-login">Sign in</Link></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'invite') {
+    return (
+      <div className="login-shell vp-login">
+        <form className="login-card" onSubmit={acceptInvite}>
+          <div className="logo-lockup"><TeamLinkMark width={140} /><div className="vp-login-title">{invite?.purpose === 'reset' ? 'Choose a new password' : 'Welcome — choose your password'}</div></div>
+          {!invite ? <div className="small-muted">Checking your link…</div> : (
+            <>
+              <div className="small-muted" style={{ marginBottom: 14 }}>
+                {invite.vendorName} · {invite.email}<br />Choose a password. Only you will know it.
+              </div>
+              <label htmlFor="vpNew">New password</label>
+              <input id="vpNew" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" required />
+              <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{PW_HINT}</div>
+              <div style={{ marginTop: 12 }}>
+                <label htmlFor="vpNew2">New password again</label>
+                <input id="vpNew2" type="password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} autoComplete="new-password" required />
+              </div>
+              {error && <div className="error-text" style={{ marginTop: 10 }}>{error}</div>}
+              <button className="btn btn-primary vp-wide" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save password and continue'}</button>
+            </>
+          )}
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="login-shell vp-login">
       {step === 'signin' ? (
@@ -91,7 +154,7 @@ export default function VendorLogin() {
             <div className="vp-login-title">Vendor Portal</div>
           </div>
           <div className="small-muted" style={{ marginBottom: 14 }}>
-            For our vendors: see the assets you supply or service, and send your bills.
+            For our vendors: see your bills and payments, the documents shared with you, and the assets you look after.
           </div>
           {notice && <div className="notice amber" style={{ marginBottom: 10 }}><span>{notice}</span></div>}
           <label htmlFor="vpEmail">Email</label>

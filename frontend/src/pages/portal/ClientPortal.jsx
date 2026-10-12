@@ -46,11 +46,22 @@ const GUIDE = {
   VIEWER: ['Your jobs: the openings TeamLink is filling for you.', 'Candidates: the people we sent you, with their resume.', 'Interviews: dates and times. You can view everything; your colleague with a Reviewer login gives the decisions.'],
   DEFAULT: ['Your jobs: the openings TeamLink is filling for you.', 'Candidates for review: open a person, read the resume, then press Shortlist, Hold or Reject.', 'Interviews: confirm the time, and after the interview tell us how it went.'],
 };
-function FirstLoginGuide({ user, type }) {
+// A custom set of ticks: one short line per thing the login can do.
+const GUIDE_BY_CAP = {
+  VIEW: 'Your jobs and Candidates: the openings TeamLink is filling and the people we sent you, with their resume.',
+  DECIDE: 'Candidates: open a person, read the resume, then press Shortlist, Hold or Reject.',
+  INTERVIEW: 'Candidates: press Request interview to tell us you want to meet someone.',
+  FEEDBACK: 'After an interview, press Give feedback and tell us how it went.',
+  REQUEST: 'Press Ask for a new job at the top to tell us about a new opening.',
+  AGREEMENT: 'Agreement: open it here, and sign it when it is waiting for you.',
+  INVOICES: 'Invoices: your bills from TeamLink, with due dates and whether they are paid.',
+};
+function FirstLoginGuide({ user, type, caps }) {
   const key = `tl_client_guide_${user?.id || ''}`;
   const [seen, setSeen] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
   if (seen || !user) return null;
-  const lines = GUIDE[type] || GUIDE.DEFAULT;
+  const custom = caps && caps.length && (type === 'CUSTOM' || !GUIDE[type]) ? caps.map((k) => GUIDE_BY_CAP[k]).filter(Boolean) : null;
+  const lines = custom && custom.length ? custom : (GUIDE[type] || GUIDE.DEFAULT);
   return (
     <div className="tlp-banner" role="note" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
       <b>Welcome! Here is how your portal works:</b>
@@ -74,6 +85,7 @@ export default function ClientPortal() {
   const [q, setQ] = useState('');
   const [reqFilter, setReqFilter] = useState('');
   const [show, setShow] = useState('waiting');
+  const [feedbackFor, setFeedbackFor] = useState(null); // { c, recommendation, comment }
 
   const load = useCallback(() => {
     api.get('/portal/client')
@@ -81,6 +93,8 @@ export default function ClientPortal() {
       .catch((e) => setError(e.response?.data?.error || 'Could not load your portal.'));
   }, []);
   useEffect(load, [load]);
+  // A login that cannot decide has nothing "waiting for its decision": start on the full list.
+  useEffect(() => { if (data && !data.limited && !data.permissions?.decide) setShow('all'); }, [data]);
 
   const candidates = data?.candidates || [];
   const shownCandidates = useMemo(() => candidates.filter((c) => {
@@ -109,21 +123,50 @@ export default function ClientPortal() {
       .finally(() => setBusy(false));
   }
 
+  function submitFeedback() {
+    const f = feedbackFor;
+    if (!f.recommendation || !f.comment.trim()) return;
+    setBusy(true); setError(''); setNotice('');
+    api.post(`/ats/interviews/${f.c.applicationId}/client-feedback`, { recommendation: f.recommendation, overall: f.comment.trim() })
+      .then(() => { setNotice(`${f.c.name}: your feedback is saved. The TeamLink team has it.`); setFeedbackFor(null); load(); })
+      .catch((e) => setError(e.response?.data?.error || 'Your feedback could not be saved.'))
+      .finally(() => setBusy(false));
+  }
+
   if (error && !data) return <div className="tlp"><div className="notice red"><span>{error}</span></div></div>;
   if (!data) return <div className="tlp small-muted">Loading your portal…</div>;
 
-  // BILLING login (spec B1): invoices only — the server sends nothing else.
-  if (data.billingOnly) {
+  // A login without the "See our jobs and candidates" tick (Billing is the old
+  // example: invoices only) — the server sends nothing else, so draw only that.
+  if (data.limited || data.billingOnly) {
+    const lcaps = data.portalCaps || [];
+    const mayAsk = !!data.permissions?.request && mayRequest;
     return (
       <div className="tlp">
         <div className="page-head">
           <div>
             <h1 className="tlp-hello">{data.company.name}</h1>
-            <div className="tlp-sub">Your invoices from TeamLink</div>
+            <div className="tlp-sub">{data.billingOnly ? 'Your invoices from TeamLink' : 'Your TeamLink client portal'}</div>
           </div>
+          {mayAsk && <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Ask for a new job</button>}
         </div>
-        <FirstLoginGuide user={user} type="BILLING" />
-        {data.invoices.length ? (
+        {requesting && (
+          <RequestJobModal
+            endpoint="/portal/client/requirement-requests"
+            onClose={() => setRequesting(false)}
+            onSent={(r) => { setRequesting(false); setNotice(r?.message || "Request sent. We'll confirm soon."); }}
+          />
+        )}
+        {notice && <div className="notice"><span>{notice}</span></div>}
+        <FirstLoginGuide user={user} type={data.portalType} caps={lcaps} />
+        {data.agreement && (
+          <div className="tlp-card" style={{ maxWidth: 560, marginBottom: 12 }}>
+            <h3>Service agreement</h3>
+            <KV rows={[['Status', <Chip key="s" label={data.agreement.status} />], ['Valid from', data.agreement.start], ['Valid to', data.agreement.end]]} />
+            <div className="tlp-actions"><Link className="btn btn-sm btn-primary" to={data.agreement.viewPath}>{data.agreement.needsYou ? 'Review & sign →' : 'Open agreement →'}</Link></div>
+          </div>
+        )}
+        {data.invoices && (data.invoices.length ? (
           <div className="tbl-wrap">
             <table>
               <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th>Amount</th><th>Status</th></tr></thead>
@@ -140,13 +183,24 @@ export default function ClientPortal() {
               </tbody>
             </table>
           </div>
-        ) : <EmptyState icon="🧾" title="No invoices yet" hint="When TeamLink raises an invoice for your company, it shows here." />}
+        ) : <EmptyState icon="🧾" title="No invoices yet" hint="When TeamLink raises an invoice for your company, it shows here." />)}
+        {!data.invoices && !data.agreement && (
+          <EmptyState
+            icon="📝"
+            title={mayAsk ? 'You can ask for a new job here' : 'Nothing to show on this page'}
+            hint={mayAsk ? 'Press "Ask for a new job" and tell us about the opening. To also see your jobs and candidates, ask your TeamLink contact to add that for you.' : 'Your login is set up for other things. Ask your TeamLink contact if you need more.'}
+          />
+        )}
       </div>
     );
   }
 
   const { company, requirements, interviews, hires, agreement, invoices, totals, permissions } = data;
   const canDecide = !!permissions?.decide;
+  const mayShortlist = permissions?.shortlist !== false; // older logins: undefined -> yes
+  const mayInterview = permissions?.interview !== false;
+  const mayFeedback = !!permissions?.feedback;
+  const capOn = (k) => !data.portalCaps || data.portalCaps.includes(k);
   const upcoming = interviews.filter((i) => i.upcoming);
   const past = interviews.filter((i) => !i.upcoming);
 
@@ -156,16 +210,17 @@ export default function ClientPortal() {
         <div>
           <h1 className="tlp-hello">{company.name}</h1>
           <div className="tlp-sub">Your TeamLink client portal — requirements, candidates, interviews and joinings in one place</div>
+          {data.yourContact && <div className="tlp-sub">{`Your TeamLink contact: ${data.yourContact.label}`}</div>}
         </div>
         {mayRequest && (
-          <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Request a new requirement</button>
+          <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Ask for a new job</button>
         )}
       </div>
       {requesting && (
         <RequestJobModal
           endpoint="/portal/client/requirement-requests"
           onClose={() => setRequesting(false)}
-          onSent={(r) => { setRequesting(false); setNotice(r?.message || 'Request sent — TeamLink will review it.'); }}
+          onSent={(r) => { setRequesting(false); setNotice(r?.message || "Request sent. We'll confirm soon."); setTab('requirements'); load(); }}
         />
       )}
 
@@ -185,12 +240,12 @@ export default function ClientPortal() {
       )}
       {error && <div className="notice red"><span>{error}</span></div>}
       {notice && <div className="notice"><span>{notice}</span></div>}
-      <FirstLoginGuide user={user} type={data.portalType} />
+      <FirstLoginGuide user={user} type={data.portalType} caps={data.portalCaps} />
 
       <div className="tlp-stats">
         <Stat value={totals.openRequirements} label="Open requirements" onClick={() => setTab('requirements')} />
         <Stat value={totals.openings} label="Openings still to fill" onClick={() => setTab('requirements')} />
-        <Stat value={totals.waitingForYou} label="Candidates waiting for your review" onClick={() => { setShow('waiting'); setTab('candidates'); }} />
+        {canDecide && <Stat value={totals.waitingForYou} label="Candidates waiting for your review" onClick={() => { setShow('waiting'); setTab('candidates'); }} />}
         <Stat value={totals.upcomingInterviews} label="Upcoming interviews" onClick={() => setTab('interviews')} />
         <Stat value={totals.selected} label="Selected" onClick={() => setTab('hires')} />
         <Stat value={totals.joined} label="Joined" onClick={() => setTab('hires')} />
@@ -205,7 +260,7 @@ export default function ClientPortal() {
           { id: 'candidates', label: 'Candidates for Review', count: candidates.length },
           { id: 'interviews', label: 'Interviews', count: interviews.length },
           { id: 'hires', label: 'Selected & Joined', count: hires.length },
-          { id: 'agreement', label: 'Agreement' },
+          agreement || capOn('AGREEMENT') ? { id: 'agreement', label: 'Agreement' } : null,
           invoices ? { id: 'invoices', label: 'Invoices', count: invoices.length } : null,
           mayReports ? { id: 'reports', label: 'Reports' } : null,
         ]}
@@ -241,6 +296,7 @@ export default function ClientPortal() {
             />
             <div className="tlp-muted" style={{ marginTop: 10 }}>Something wrong here? Tell your TeamLink contact and we will correct it.</div>
           </div>
+          {canDecide && (
           <div className="tlp-card">
             <h3>Waiting for you</h3>
             {candidates.filter((c) => c.canDecide).slice(0, 6).map((c) => (
@@ -261,6 +317,8 @@ export default function ClientPortal() {
               </>
             )}
           </div>
+          )}
+          {capOn('AGREEMENT') && (
           <div className="tlp-card">
             <h3>Agreement</h3>
             {agreement ? (
@@ -270,6 +328,7 @@ export default function ClientPortal() {
               </>
             ) : <div className="tlp-muted">Your agreement is being prepared. You will get a link to review and sign it.</div>}
           </div>
+          )}
         </div>
       )}
 
@@ -290,7 +349,10 @@ export default function ClientPortal() {
                     <td>{r.title}<div className="tlp-meta">{[r.department, r.experience ? (/yr/i.test(r.experience) ? r.experience : `${r.experience} yrs`) : null, r.workMode].filter(Boolean).join(' · ')}</div></td>
                     <td className="cell-muted">{r.location || '—'}</td>
                     <td>{r.openings}<div className="tlp-meta">{r.filled} filled · {r.openLeft} left</div></td>
-                    <td><Chip label={r.status} /></td>
+                    <td>
+                      <Chip label={r.status} tone={r.waitingForTeamLink ? 'amber' : undefined} />
+                      {r.waitingForTeamLink && <div className="tlp-meta">{r.handledBy ? `With ${r.handledBy}` : 'With the TeamLink team'}</div>}
+                    </td>
                     <td>{r.shared}</td>
                     <td>{r.waitingForYou ? <button type="button" className="btn btn-sm" onClick={() => { setReqFilter(r.id); setShow('waiting'); setTab('candidates'); }}>{r.waitingForYou} →</button> : 0}</td>
                     <td>{r.interviews}</td>
@@ -312,12 +374,14 @@ export default function ClientPortal() {
               <option value="">All requirements</option>
               {requirements.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
             </select>
-            <select value={show} onChange={(e) => setShow(e.target.value)}>
-              <option value="waiting">Waiting for your decision</option>
-              <option value="all">All shared with you</option>
-            </select>
-            {(q || reqFilter || show !== 'waiting') && (
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setQ(''); setReqFilter(''); setShow('waiting'); }}>Clear all</button>
+            {canDecide && (
+              <select value={show} onChange={(e) => setShow(e.target.value)}>
+                <option value="waiting">Waiting for your decision</option>
+                <option value="all">All shared with you</option>
+              </select>
+            )}
+            {(q || reqFilter || (canDecide && show !== 'waiting')) && (
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setQ(''); setReqFilter(''); setShow(canDecide ? 'waiting' : 'all'); }}>Clear all</button>
             )}
           </div>
           <div className="tlp-list">
@@ -361,12 +425,17 @@ export default function ClientPortal() {
                     </button>
                   )}
                   {!c.resume?.downloadable && c.resume?.name && <span className="tlp-muted">Resume: {c.resume.name} (ask your TeamLink contact for the file)</span>}
+                  {mayFeedback && c.interview && (
+                    <button type="button" className="btn btn-sm" onClick={() => setFeedbackFor({ c, recommendation: c.yourFeedback?.recommendation || '', comment: c.yourFeedback?.comment || '' })}>
+                      {c.yourFeedback ? 'Change my interview feedback' : 'Give interview feedback'}
+                    </button>
+                  )}
                   {canDecide && c.canDecide && (
                     <>
-                      {c.canShortlist && <button type="button" className="btn btn-sm btn-primary" onClick={() => setDeciding({ c, decision: 'SHORTLIST', note: '', reasonCategory: '' })}>Shortlist</button>}
-                      {c.canShortlist && <button type="button" className="btn btn-sm" onClick={() => setDeciding({ c, decision: 'HOLD', note: '', reasonCategory: '' })}>Hold</button>}
-                      <button type="button" className="btn btn-sm" onClick={() => setDeciding({ c, decision: 'REQUEST_INTERVIEW', note: '', reasonCategory: '' })}>Request interview</button>
-                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDeciding({ c, decision: 'REJECT', note: '', reasonCategory: '' })}>Reject</button>
+                      {mayShortlist && c.canShortlist && <button type="button" className="btn btn-sm btn-primary" onClick={() => setDeciding({ c, decision: 'SHORTLIST', note: '', reasonCategory: '' })}>Shortlist</button>}
+                      {mayShortlist && c.canShortlist && <button type="button" className="btn btn-sm" onClick={() => setDeciding({ c, decision: 'HOLD', note: '', reasonCategory: '' })}>Hold</button>}
+                      {mayInterview && <button type="button" className="btn btn-sm" onClick={() => setDeciding({ c, decision: 'REQUEST_INTERVIEW', note: '', reasonCategory: '' })}>Request interview</button>}
+                      {mayShortlist && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDeciding({ c, decision: 'REJECT', note: '', reasonCategory: '' })}>Reject</button>}
                     </>
                   )}
                 </div>
@@ -455,6 +524,31 @@ export default function ClientPortal() {
             </table>
           </div>
         ) : <EmptyState icon="🧾" title="No invoices yet" />
+      )}
+
+      {feedbackFor && (
+        <Modal
+          title={`How did the interview go? — ${feedbackFor.c.name}`}
+          onClose={() => setFeedbackFor(null)}
+          footer={(
+            <>
+              <button type="button" className="btn" onClick={() => setFeedbackFor(null)}>Cancel</button>
+              <button type="button" className="btn btn-primary" disabled={busy || !feedbackFor.recommendation || !feedbackFor.comment.trim()} onClick={submitFeedback}>{busy ? 'Saving…' : 'Save feedback'}</button>
+            </>
+          )}
+        >
+          <div className="tlp-muted" style={{ marginBottom: 10 }}>Your words go to the TeamLink team only. They are kept apart from our own interview notes.</div>
+          <div className="field"><span>Your answer *</span></div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            {[['Selected', 'Selected'], ['Hold', 'Keep on hold'], ['Rejected', 'Not selected']].map(([v, label]) => (
+              <button key={v} type="button" className={`btn btn-sm${feedbackFor.recommendation === v ? ' btn-primary' : ''}`} aria-pressed={feedbackFor.recommendation === v} onClick={() => setFeedbackFor({ ...feedbackFor, recommendation: v })}>{label}</button>
+            ))}
+          </div>
+          <label className="field">
+            <span>What did you think? *</span>
+            <textarea rows="3" value={feedbackFor.comment} onChange={(e) => setFeedbackFor({ ...feedbackFor, comment: e.target.value })} />
+          </label>
+        </Modal>
       )}
 
       {deciding && (

@@ -1,0 +1,7 @@
+/* Invoices -> Add client / New invoice */
+.inv-acgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.inv-acf label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:3px}
+.inv-acf input,.inv-acf textarea{width:100%}
+.inv-acf-full{grid-column:1 / -1}
+.inv-pickrow{display:flex;gap:10px;align-items:flex-end;margin-bottom:8px}
+@media (max-width:760px){.inv-acgrid{grid-template-columns:1fr}.inv-pickrow{flex-direction:column;align-items:stretch}}

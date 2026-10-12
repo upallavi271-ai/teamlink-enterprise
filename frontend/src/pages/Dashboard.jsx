@@ -412,7 +412,7 @@ function ProductDashboard({ user }) {
         >
           {atsRows.map((w) => <Row key={w.label} label={w.label} value={w.value} to={w.to} />)}
           {(pending.ats || pending.core) && atsRows.length === 0 && (
-            <div className="small-muted" style={{ padding: '8px 0' }}>Loading…</div>
+            <div className="small-muted" style={{ padding: '8px 0' }}>Loading...</div>
           )}
           {!pending.core && !carries('selected') && (
             <Row label="Selected (now)" value={selected} to="/candidates?stage=SELECTED,OFFER,OFFER_ACCEPTED" />
@@ -517,6 +517,22 @@ function ProductDashboard({ user }) {
 }
 
 // --- The client's own dashboard (§18: "only their client dashboard") -------
+// The client's candidates awaiting review. The full pipeline is 130-190 MB, so
+// ask for only the two review steps, a page of 200 at a time, until all are in.
+async function awaitingApplications() {
+  const rows = [];
+  try {
+    for (let page = 1; page <= 50; page += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await api.get('/applications', { params: { stages: 'SHARED_WITH_CLIENT,CLIENT_REVIEW', page, pageSize: 200 } });
+      const data = res.data || {};
+      rows.push(...(data.rows || []));
+      if (page >= (data.pages || 1)) break;
+    }
+  } catch { /* the rest of the dashboard still draws */ }
+  return rows;
+}
+
 function ClientDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
@@ -536,11 +552,11 @@ function ClientDashboard({ user }) {
     let alive = true;
     Promise.all([
       api.get('/dashboard', { params: rangeParams(range) }).then((r) => r.data).catch(() => ({})),
-      api.get('/applications').then((r) => r.data).catch(() => []),
+      awaitingApplications(),
     ]).then(([s, a]) => { if (alive) { setStats(s); setApps(a || []); } });
     return () => { alive = false; };
   }, [range]);
-  if (!stats) return <div className="small-muted">Loading dashboard…</div>;
+  if (!stats) return <div className="small-muted">Loading dashboard...</div>;
   const period = resolveRange(range);
 
   const mine = apps.filter((a) => a.requirement?.clientId === user?.clientId);

@@ -39,7 +39,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const {
-  serviceToken, ensureChart, accountIndex, paise, ensureAccount, monthEnd,
+  serviceToken, ensureChart, accountIndex, paise, ensureAccount, monthEnd, employeeWiseReady, LedgerError,
 } = require('./ledger');
 const { monthLabel } = require('./attendanceMath');
 const { logAudit } = require('./audit');
@@ -145,6 +145,17 @@ async function saveMapping(patch, actor) {
   return getMapping();
 }
 
+// The voucher's lines as one row per ledger (an employee-wise voucher has hundreds of lines; this
+// state is read by HR screens that must not carry who-got-what).
+function collapseLines(lines) {
+  const m = new Map();
+  (lines || []).forEach((l) => {
+    const r = m.get(l.accountCode) || { id: l.accountCode, accountCode: l.accountCode, accountName: l.accountName, debit: 0, credit: 0 };
+    r.debit += paise(l.debit); r.credit += paise(l.credit); m.set(l.accountCode, r);
+  });
+  return [...m.values()].map((r) => ({ ...r, debit: r.debit / 100, credit: r.credit / 100 }));
+}
+
 // ---- The month's state -------------------------------------------------------
 async function monthState(month) {
   const run = await prisma.payrollRun.findUnique({ where: { month } });
@@ -161,7 +172,13 @@ async function monthState(month) {
   const reversedKey = new Set(reversals.map((r) => r.idempotencyKey.replace(/:reversal$/, '')));
   const current = [...postings].reverse().find((p) => !reversedKey.has(p.idempotencyKey)) || null;
   const version = current ? Number(String(current.idempotencyKey).split(':v').pop()) || postings.length : null;
-  const payment = run && current ? await prisma.journalEntry.findUnique({ where: { idempotencyKey: paymentKey(run.id, version) } }) : null;
+  // Salary payments of this voucher: the first one has the base key, a later batch (some employees,
+  // or the rest) adds ":<n>". Matched exactly, so v1 never picks up v10.
+  const payKey = run && current ? paymentKey(run.id, version) : null;
+  const payments = payKey ? await prisma.journalEntry.findMany({
+    where: { OR: [{ idempotencyKey: payKey }, { idempotencyKey: { startsWith: `${payKey}:` } }] }, orderBy: { createdAt: 'asc' },
+  }) : [];
+  const payment = payments[0] || null;
   const lastLog = run ? await prisma.payrollSyncLog.findFirst({
     where: { employeePayrollRunId: run.id, kind: { in: ['MONTH', 'MONTH_PAYMENT', 'MONTH_REVERSAL'] } }, orderBy: { updatedAt: 'desc' },
   }) : null;
@@ -173,12 +190,12 @@ async function monthState(month) {
     posted: !!current,
     journalEntry: current ? {
       id: current.id, date: current.date, narration: current.narration, totalDebit: current.totalDebit, totalCredit: current.totalCredit,
-      idempotencyKey: current.idempotencyKey, version, createdAt: current.createdAt, createdByName: current.createdByName, lines: current.lines,
+      idempotencyKey: current.idempotencyKey, version, createdAt: current.createdAt, createdByName: current.createdByName, lines: collapseLines(current.lines),
     } : null,
     history: postings.map((p) => ({ id: p.id, key: p.idempotencyKey, date: p.date, total: p.totalDebit, reversed: reversedKey.has(p.idempotencyKey), createdAt: p.createdAt })),
     reversals: reversals.map((r) => ({ id: r.id, key: r.idempotencyKey, date: r.date, total: r.totalDebit, createdAt: r.createdAt })),
     nextVersion: postings.length + 1,
-    payment: payment ? { id: payment.id, date: payment.date, amount: payment.totalDebit, narration: payment.narration } : null,
+    payment: payment ? { id: payment.id, date: payment.date, amount: payments.reduce((n, p) => n + paise(p.totalDebit), 0) / 100, narration: payment.narration, vouchers: payments.length } : null,
     paid: paidCount > 0 && paidCount === entries.length,
     // What is wrong right now, in words (the button's error reason).
     lastError: lastLog && lastLog.status === 'FAILED' ? lastLog.lastError : null,
@@ -279,29 +296,49 @@ async function failOn(kind, run, month, key, err, actor) {
 
 // ---- Post the month ------------------------------------------------------------
 // opts.auto: called by the approval that finalized the month.
-async function postMonth(month, actor, { auto = false } = {}) {
+async function postMonth(month, actor, { auto = false, plug = false, includeEmployer = true, skipClosedCheck = false } = {}) {
   const st = await monthState(month);
   if (!st.runId) throw new PayrollError(404, `There is no payroll run for ${monthLabel(month)}.`);
   if (st.posted) return { ok: true, already: true, state: st };
   if (!st.finalized) throw new PayrollError(409, st.blockReason || 'The payroll is not finalized yet.');
   const run = await prisma.payrollRun.findUnique({ where: { id: st.runId } });
-  const entries = await prisma.employeePayrollRun.findMany({ where: { month } });
+  const entries = await prisma.employeePayrollRun.findMany({ where: { month }, include: { employee: { select: { name: true, employeeCode: true, department: true } } } });
   if (entries.some((e) => e.status !== 'APPROVED')) {
     throw new PayrollError(409, 'Some records are already synced or paid without a journal on file — reopen the month and finalize it again.');
   }
   const key = monthKey(run.id, st.nextVersion);
+  // EMPLOYEE-WISE (2026-10-09): one Payroll voucher with each employee's own balanced group of lines.
+  const employeeWise = await employeeWiseReady();
   let payload;
+  let result;
+  let log;
   try {
     const { map } = await getMapping();
     const accounts = await resolveMapping(map);
-    payload = buildMonthPayload({ month, run, entries, accounts, version: st.nextVersion });
+    if (employeeWise) {
+      const V = require('./payrollVouchers'); // eslint-disable-line global-require
+      log = await logRow('MONTH', run, month, key, { voucher: 'employee-wise', employees: entries.length });
+      try {
+        const r = await V.postRunVoucher({ month, run, entries, accounts, actor, key, plug, includeEmployer, skipClosedCheck });
+        result = { ok: true, status: r.status, entry: r.entry, replay: r.replay };
+      } catch (err) {
+        // A payroll rule (unbalanced employee, closed books, no amount) is refused as such; a ledger refusal is a failed posting.
+        if (err instanceof PayrollError) throw err;
+        if (err instanceof LedgerError || (err && err.status)) result = { ok: false, status: err.status, error: err.message };
+        else throw err;
+      }
+    } else {
+      payload = buildMonthPayload({ month, run, entries, accounts, version: st.nextVersion });
+    }
   } catch (err) {
     if (err instanceof PayrollError) await failOn('MONTH', run, month, key, err, actor);
     throw err;
   }
-  payload.posted_by = actor ? actor.name : 'System';
-  const log = await logRow('MONTH', run, month, key, payload);
-  const result = await callAccounts('', payload, key);
+  if (!employeeWise) {
+    payload.posted_by = actor ? actor.name : 'System';
+    log = await logRow('MONTH', run, month, key, payload);
+    result = await callAccounts('', payload, key);
+  }
   await finishLog(log, result);
   if (!result.ok) {
     await logAudit({
@@ -336,6 +373,10 @@ async function reverseMonth(month, actor, { toStatus = 'DRAFT', reason = '' } = 
     throw new PayrollError(409, `Salary for ${monthLabel(month)} is already marked paid, so it cannot be re-opened. Put the correction in next month's payroll.`);
   }
   if (toStatus === 'APPROVED' && !st.posted) throw new PayrollError(409, `${monthLabel(month)} is not posted to Accounts.`);
+  if (st.runId && await employeeWiseReady()) {
+    const adj = await prisma.payrollVoucherEmployee.count({ where: { payrollRunId: st.runId, kind: 'ADJUSTMENT' } });
+    if (adj) throw new PayrollError(409, `Correction voucher(s) were booked for ${monthLabel(month)}, so it cannot be re-opened. Put further changes in a new correction.`);
+  }
   if (toStatus === 'DRAFT' && !st.posted && !st.records) throw new PayrollError(409, 'Nothing to re-open.');
   const run = await prisma.payrollRun.findUnique({ where: { id: st.runId } });
   let reversal = null;
@@ -405,10 +446,28 @@ async function bankMatches(month, bankAccountId) {
   };
 }
 
-async function payMonth(month, actor, { bankAccountId = null, paidDate = null, bankTransactionId = null, reference = null } = {}) {
+// items: [{ employeeId, amount?, reference? }] pays only those people (a part or all of what each is owed);
+// leave it out to pay everyone still unpaid. mode: Bank transfer | Cash | Cheque.
+async function payMonth(month, actor, {
+  bankAccountId = null, paidDate = null, bankTransactionId = null, reference = null, items = null, mode = 'Bank transfer',
+} = {}) {
   const st = await monthState(month);
   if (!st.runId) throw new PayrollError(404, `There is no payroll run for ${monthLabel(month)}.`);
   if (!st.posted) throw new PayrollError(409, `Post ${monthLabel(month)} to Accounts first — the salary payment clears the Salary Payable it books.`);
+  // EMPLOYEE-WISE (2026-10-09): per-employee Dr Salary payable - name / Cr Bank, status per employee.
+  if (await employeeWiseReady()) {
+    const V = require('./payrollVouchers'); // eslint-disable-line global-require
+    const run0 = await prisma.payrollRun.findUnique({ where: { id: st.runId } });
+    let log = null;
+    const r = await V.payRun(month, actor, {
+      items, date: paidDate, mode, reference, bankAccountId, bankTransactionId,
+      hooks: {
+        onStart: async (key, payload) => { log = await logRow('MONTH_PAYMENT', run0, month, key, { employees: payload.lines.length / 2, reference }); },
+        onFinish: async (res) => { if (log) await finishLog(log, res); },
+      },
+    });
+    if (r) return r;
+  }
   if (st.payment) return { ok: true, already: true, state: st };
   const entries = await prisma.employeePayrollRun.findMany({ where: { month }, include: { employee: { select: { name: true } } } });
   if (entries.some((e) => e.status !== 'SYNCED_TO_ACCOUNTS')) throw new PayrollError(409, 'Every record of the month must be posted (Synced) before it is marked paid.');
@@ -501,5 +560,5 @@ async function sweepMonths() {
 module.exports = {
   COMPONENTS, ALL_COMPONENTS, MAPPING_KEY, monthKey, paymentKey,
   getMapping, saveMapping, resolveMapping, monthState, buildMonthPayload, totalsOf, employeeShare,
-  postMonth, reverseMonth, payMonth, bankMatches, bankLedger, postIfFinalized, sweepMonths, voucherNo, callAccounts,
+  postMonth, reverseMonth, payMonth, bankMatches, bankLedger, collapseLines, postIfFinalized, sweepMonths, voucherNo, callAccounts,
 };

@@ -32,7 +32,8 @@ router.use(rateLimit({ bucket: 'offer-link', max: 120, windowMs: 10 * 60000 }));
 const codeLimit = rateLimit({ bucket: 'offer-code', max: 6, windowMs: 60 * 60000, message: 'Too many codes asked for from your network. Please wait an hour, or call your recruiter.' });
 const signLimit = rateLimit({ bucket: 'offer-sign', max: 20, windowMs: 10 * 60000 });
 
-const ipOf = (req) => String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60);
+// The signing IP written into the audit trail: the safe helper (utils/clientIp.js), never the caller's own X-Forwarded-For.
+const ipOf = (req) => require('../utils/clientIp').ipOf(req); // eslint-disable-line global-require
 const uaOf = (req) => String(req.headers['user-agent'] || '').slice(0, 160);
 
 const APP_INCLUDE = { candidate: true, requirement: { include: { client: true } } };
@@ -149,7 +150,7 @@ async function applyAccept(app, v, actorName) {
   await logAudit({ action: `Offer accepted by the candidate (offer link v${v.version})`, entity: 'Application', entityId: app.id, fromValue: 'Offer Released', toValue: 'Offer Accepted', actorName: pseudo.name });
   // eslint-disable-next-line global-require
   await require('../utils/stageEvents').recordWorkflowMove({ user: pseudo, existing: app, toStage: 'OFFER_ACCEPTED', action: 'Offer accepted and signed by the candidate (offer link)' });
-  await notifyUsers(staffIds(app), { title: `✅ Offer accepted: ${app.candidate.name}`, message: `${app.requirement.title} — signed on the offer link (v${v.version}). Next: joining.` });
+  await notifyUsers(await require('../utils/clientBdes').withClientBdes(staffIds(app), app.requirement), { title: `✅ Offer accepted: ${app.candidate.name}`, message: `${app.requirement.title} — signed on the offer link (v${v.version}). Next: joining.` });
   return true;
 }
 
@@ -202,7 +203,7 @@ router.post('/:token/decline', signLimit, async (req, res, next) => {
     if (app && app.offerStatus === 'Offer Released') {
       await prisma.application.update({ where: { id: app.id }, data: { offerStatus: 'Offer Declined', offerNotes: `Candidate (offer link): ${reason}` } });
       await logAudit({ action: `Offer declined by the candidate (offer link v${v.version}) — ${reason}`, entity: 'Application', entityId: app.id, fromValue: 'Offer Released', toValue: 'Offer Declined' });
-      await notifyUsers(staffIds(app), { title: `Offer declined: ${app.candidate.name}`, message: `${app.requirement.title}: ${reason}` });
+      await notifyUsers(await require('../utils/clientBdes').withClientBdes(staffIds(app), app.requirement), { title: `Offer declined: ${app.candidate.name}`, message: `${app.requirement.title}: ${reason}` });
     }
     return res.json({ ...(await OL.publicView(await prisma.offerVersion.findUnique({ where: { id: v.id } }))), message: 'Your answer is saved. Your recruiter has been told.' });
   } catch (err) { return next(err); }

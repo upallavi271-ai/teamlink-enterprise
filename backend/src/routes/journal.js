@@ -22,11 +22,16 @@ const prisma = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { can, DENIED } = require('../utils/permissions');
 const {
-  postJournal, isServiceToken, LedgerError, ensureChart, reverseJournal, groupOf, debitNatured, closedUpTo, CLOSED_KEY,
+  postJournal, isServiceToken, LedgerError, ensureChart, reverseJournal, groupOf, debitNatured, closedUpTo, CLOSED_KEY, employeeWiseReady,
 } = require('../utils/ledger');
 const { reconciliation } = require('../utils/payrollReports');
+const { monthDetails, EXPORT_HEADERS, exportRows } = require('../utils/payrollMonthDetails');
+const { formatOf, sendTable: sendKitTable } = require('../utils/exportKit');
+const { roleForProduct, SET } = require('../utils/permissions');
 const { toCsv, toXlsx } = require('../utils/tabularExport');
 const { logAudit } = require('../utils/audit');
+const V = require('../utils/payrollVouchers');
+const salaryRouter = require('./salaryVouchers');
 
 const router = express.Router();
 const FEATURE = 'Journal & Ledger';
@@ -138,10 +143,7 @@ async function accountFilter(account) {
 }
 
 // Voucher numbers: an entry's position in the (append-only) journal.
-async function voucherMap() {
-  const all = await prisma.journalEntry.findMany({ select: { id: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
-  return new Map(all.map((e, i) => [e.id, `JV-${String(i + 1).padStart(5, '0')}`]));
-}
+const voucherMap = () => V.voucherMap();
 
 // The date window of a request: ?from=&to= (YYYY-MM-DD) or ?month=YYYY-MM.
 function windowOf(q) {
@@ -169,9 +171,44 @@ router.get('/chart-of-accounts', ...guard('view'), async (req, res) => {
   res.json(accounts.map((a) => ({ ...a, group: groupOf(a) })));
 });
 
+// A voucher whose lines are employee-wise (Payroll / Payment / Payroll adjustment and their reversals).
+const salaryLike = (e) => !!e.voucherType && /^Payroll|^Payment/.test(e.voucherType);
+const legacyType = (e) => { try { return JSON.parse(e.payload || '{}').voucher_type || 'Journal'; } catch { return 'Journal'; } };
+
+// Lines of salary vouchers collapse to one row per ledger in the list (the employee-wise
+// table is read from /api/accounts/salary/vouchers/:id, Accounts / Admin only).
+async function collapsedLines(ids) {
+  if (!ids.length) return new Map();
+  const g = await prisma.journalLine.groupBy({
+    by: ['journalEntryId', 'accountCode', 'accountName'], where: { journalEntryId: { in: ids } }, _sum: { debit: true, credit: true }, _count: { _all: true },
+  });
+  const out = new Map();
+  g.forEach((x) => {
+    const arr = out.get(x.journalEntryId) || [];
+    arr.push({
+      id: `${x.journalEntryId}:${x.accountCode}`, accountCode: x.accountCode, accountName: x.accountName, debit: Math.round((x._sum.debit || 0) * 100) / 100,
+      credit: Math.round((x._sum.credit || 0) * 100) / 100, memo: null, lineNo: Number(x.accountCode) || 0,
+    });
+    out.set(x.journalEntryId, arr);
+  });
+  out.forEach((arr) => arr.sort((a, b) => (a.debit > 0 ? 0 : 1) - (b.debit > 0 ? 0 : 1) || a.lineNo - b.lineNo));
+  return out;
+}
+
 router.get('/journal-entries', ...guard('view'), async (req, res) => {
   const w = windowOf(req.query);
   if (w.error) return res.status(400).json({ error: w.error });
+  const priv = V.isPrivileged(req.user);
+  const ready = await employeeWiseReady();
+  const sf = {
+    employeeId: ready && req.query.employeeId ? String(req.query.employeeId) : '',
+    department: ready && req.query.department ? String(req.query.department) : '',
+    payrollMonth: ready && V.isMonth(req.query.payrollMonth) ? String(req.query.payrollMonth) : '',
+    paymentStatus: ready && ['PAID', 'UNPAID', 'PARTIAL'].includes(String(req.query.paymentStatus || '').toUpperCase()) ? String(req.query.paymentStatus).toUpperCase() : '',
+  };
+  const salaryFilter = !!(sf.employeeId || sf.department || sf.payrollMonth || sf.paymentStatus);
+  // Who got how much is for Accounts and Admin only - refused outright for anyone else.
+  if (salaryFilter && !priv) return res.status(403).json(DENIED);
   const where = { ...dateWhere(w) };
   if (req.query.referenceType) where.referenceType = String(req.query.referenceType);
   if (req.query.referenceId) where.referenceId = String(req.query.referenceId);
@@ -182,13 +219,38 @@ router.get('/journal-entries', ...guard('view'), async (req, res) => {
   if (req.query.search) {
     const q = String(req.query.search);
     where.OR = [{ narration: { contains: q } }, { employeeName: { contains: q } }, { idempotencyKey: { contains: q } }, { lines: { some: { referenceId: q } } }];
+    // The employee's name is searched only for those allowed to see it.
+    if (priv && ready) where.OR.push({ lines: { some: { employeeName: { contains: q } } } });
   }
+  const vt = req.query.voucherType ? String(req.query.voucherType) : '';
+  const typeWhere = (t) => {
+    if (t === 'Journal') return { AND: [{ OR: [{ voucherType: null }, { voucherType: 'Journal' }] }, { NOT: { payload: { contains: '"voucher_type":"Payment"' } } }, { NOT: { referenceType: 'REVERSAL' } }] };
+    if (t === 'Payment') return { OR: [{ voucherType: 'Payment' }, { payload: { contains: '"voucher_type":"Payment"' } }] };
+    if (t === 'Reversal') return { referenceType: 'REVERSAL' };
+    return { voucherType: t };
+  };
+  const andBase = [];
+  let match = null;
+  if (salaryFilter) {
+    match = await V.matching(sf);
+    andBase.push({ id: { in: [...match.ids] } });
+  }
+  const baseWhere = { ...where, ...(andBase.length ? { AND: andBase } : {}) };
+  if (vt && ready) where.AND = [...andBase, typeWhere(vt)]; else if (andBase.length) where.AND = andBase;
   const [entries, vno] = await Promise.all([
-    prisma.journalEntry.findMany({
-      where, include: { lines: { orderBy: { lineNo: 'asc' } } }, orderBy: [{ date: 'desc' }, { createdAt: 'desc' }], take: 1000,
-    }),
-    voucherMap(),
+    prisma.journalEntry.findMany({ where, orderBy: [{ date: 'desc' }, { createdAt: 'desc' }], take: 1000 }),
+    V.voucherMap(),
   ]);
+  // Lines: salary vouchers one row per ledger; everything else in full.
+  const salaryIds = entries.filter(salaryLike).map((e) => e.id);
+  const otherIds = entries.filter((e) => !salaryLike(e)).map((e) => e.id);
+  const [otherLines, saLines, summaries] = await Promise.all([
+    otherIds.length ? prisma.journalLine.findMany({ where: { journalEntryId: { in: otherIds } }, orderBy: { lineNo: 'asc' } }) : [],
+    collapsedLines(salaryIds),
+    priv && ready ? V.summariesFor(entries) : new Map(),
+  ]);
+  const linesOf = new Map();
+  otherLines.forEach((l) => { const a = linesOf.get(l.journalEntryId) || []; a.push(l); linesOf.set(l.journalEntryId, a); });
   // Which of them are reversed, and what each reversal reverses.
   const keys = entries.map((e) => `${e.idempotencyKey}:reversal`);
   const revs = keys.length ? await prisma.journalEntry.findMany({ where: { idempotencyKey: { in: keys } }, select: { id: true, idempotencyKey: true } }) : [];
@@ -199,11 +261,18 @@ router.get('/journal-entries', ...guard('view'), async (req, res) => {
   const shaped = entries.map((e) => {
     const runId = e.source === 'HRMS_PAYROLL' ? (e.referenceType === 'REVERSAL' ? (e.idempotencyKey.match(/^payroll-month:([^:]+):/) || [])[1] : e.referenceId) : null;
     const reversedById = reversedBy.get(e.idempotencyKey) || null;
-    return {
+    const isSalary = salaryLike(e);
+    const sm = summaries.get(e.id);
+    const scoped = match && match.scope.get(e.id);
+    const out = {
       ...e,
       payload: undefined,
+      lines: isSalary ? (saLines.get(e.id) || []) : (linesOf.get(e.id) || []),
       voucherNo: vno.get(e.id) || null,
-      voucherType: (() => { try { return JSON.parse(e.payload || '{}').voucher_type || 'Journal'; } catch { return 'Journal'; } })(),
+      voucherType: e.voucherType || legacyType(e),
+      // The Entry No an import carried (Journal -> Import), so it can be found again.
+      entryNo: (() => { try { return JSON.parse(e.payload || '{}').entry_no || null; } catch { return null; } })(),
+      imported: e.referenceType === 'JOURNAL_IMPORT' || e.referenceType === 'OPENING_BALANCE',
       sourceLabel: SOURCE_LABEL[e.source] || e.source,
       readOnly: e.source !== 'MANUAL',
       isReversal: e.referenceType === 'REVERSAL',
@@ -215,24 +284,61 @@ router.get('/journal-entries', ...guard('view'), async (req, res) => {
       // HRMS in step (a payroll month), or for a manual entry.
       canReverse: !reversedById && e.referenceType !== 'REVERSAL' && (e.source === 'MANUAL' || e.referenceType === 'ASSET_DEPRECIATION' || (e.source === 'HRMS_PAYROLL' && e.referenceType === 'PAYROLL_MONTH')),
       payrollMonth: runId ? monthOfRun.get(runId) || null : null,
-      assetIds: e.source === 'HRMS_ASSETS' ? [...new Set(e.lines.filter((l) => l.referenceType && l.referenceType.startsWith('ASSET')).map((l) => l.referenceId))] : [],
+      assetIds: e.source === 'HRMS_ASSETS' ? [...new Set((linesOf.get(e.id) || []).filter((l) => l.referenceType && l.referenceType.startsWith('ASSET')).map((l) => l.referenceId))] : [],
+      employeeWise: isSalary && !!sm && sm.employees.size > 0,
     };
+    // Employee-wise figures: Accounts / Admin only, and ONLY in the payload they are allowed to see.
+    if (priv && sm && sm.employees.size) {
+      out.salary = {
+        employees: sm.employees.size, totalNet: Math.round(sm.net) / 100, totalDeductions: Math.round(sm.deductions) / 100, gross: Math.round(sm.gross) / 100,
+        paidEmployees: sm.paidEmployees.size, unpaidEmployees: sm.unpaid, paid: Math.round(sm.paid) / 100,
+      };
+    }
+    if (priv && scoped) out.scoped = { employees: scoped.employees.size, net: Math.round(scoped.net) / 100, deductions: Math.round(scoped.deductions) / 100, amount: Math.round(scoped.amount) / 100, paid: Math.round(scoped.paid) / 100 };
+    return out;
   });
-  if (req.query.format === 'csv' || req.query.format === 'xlsx') {
+
+  if (req.query.format === 'csv' || req.query.format === 'xlsx' || req.query.format === 'pdf') {
+    const wantsEmployees = [V.VOUCHER.PAYROLL, V.VOUCHER.PAYMENT, V.VOUCHER.ADJUSTMENT].includes(vt);
+    if (wantsEmployees && priv && ready) {
+      // One row per employee per voucher, with every active filter applied.
+      const fmt = formatOf(req.query);
+      const data = await salaryRouter.employeeWiseExport(shaped.map((e) => e.id), sf, vt);
+      return sendKitTable(req, res, {
+        format: fmt, name: `journal-${vt.toLowerCase().replace(/\s+/g, '-')}-${w.month || w.from || 'all'}`, title: `Journal - ${vt} vouchers, employee-wise`,
+        headers: data.headers, rows: data.rows, sheet: 'Employee-wise', entity: 'JournalEntry', what: `Employee-wise ${vt} vouchers`,
+        scope: `${shaped.length} voucher(s)${sf.employeeId ? ' · one employee' : ''}${sf.department ? ` · ${sf.department}` : ''}${sf.payrollMonth ? ` · ${sf.payrollMonth}` : ''}${sf.paymentStatus ? ` · ${sf.paymentStatus}` : ''}`,
+        screen: 'Accounts',
+      });
+    }
     const rows = [];
     shaped.forEach((e) => e.lines.forEach((l) => rows.push([
       e.voucherNo, e.date, e.month, e.voucherType, e.sourceLabel, e.narration || '', e.referenceType || '', e.referenceId || '', l.accountCode, l.accountName, l.debit, l.credit,
     ])));
     await logAudit({ userId: req.user.id, action: `Journal exported (${req.query.format.toUpperCase()})`, entity: 'JournalEntry', toValue: `${entries.length} entries` });
-    return sendTable(res, req.query.format, `journal-${w.month || w.from || 'all'}`,
+    return sendTable(res, req.query.format === 'xlsx' ? 'xlsx' : 'csv', `journal-${w.month || w.from || 'all'}`,
       ['Voucher No', 'Date', 'Month', 'Voucher Type', 'Source', 'Narration', 'Reference Type', 'Reference ID', 'Account Code', 'Account', 'Debit', 'Credit'], rows, 'Journal');
+  }
+  if (priv && salaryFilter) {
+    await V.auditView(req.user, 'Employee-wise salary viewed', 'JournalEntry', sf.employeeId || null, `Journal filter: ${[sf.employeeId && 'employee', sf.department, sf.payrollMonth, sf.paymentStatus].filter(Boolean).join(' · ')} · ${entries.length} voucher(s)`);
   }
   const totals = entries.reduce((a, e) => ({ debit: a.debit + e.totalDebit, credit: a.credit + e.totalCredit }), { debit: 0, credit: 0 });
   // Source counts over every OTHER filter (the Source filter cascades).
   const { source: _s, ...noSource } = where;
   const grouped = await prisma.journalEntry.groupBy({ by: ['source'], where: noSource, _count: { _all: true } });
   const bySource = Object.fromEntries(grouped.map((g) => [g.source, g._count._all]));
-  return res.json({ entries: shaped, totals, count: entries.length, bySource, sources: SOURCE_LABEL });
+  // Voucher types over every other filter.
+  let byType = {};
+  if (ready) {
+    const g = await prisma.journalEntry.groupBy({ by: ['voucherType'], where: baseWhere, _count: { _all: true } });
+    g.forEach((x) => { const k = x.voucherType || 'Journal'; byType[k] = (byType[k] || 0) + x._count._all; });
+    // Reversals of a voucher carry its type + " reversal"; show them under Reversal.
+    Object.keys(byType).forEach((k) => { if (/ reversal$/.test(k)) { byType.Reversal = (byType.Reversal || 0) + byType[k]; delete byType[k]; } });
+  }
+  return res.json({
+    entries: shaped, totals, count: entries.length, bySource, sources: SOURCE_LABEL, byType,
+    salaryCards: priv && match ? match.cards : null, canSeeSalary: priv && ready,
+  });
 });
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -249,11 +355,25 @@ router.get('/ledger', ...guard('view'), async (req, res) => {
   const code = await accountFilter(req.query.account);
   const lineWhere = {};
   if (code) lineWhere.accountCode = code;
-  const [accounts, lines, vno] = await Promise.all([
+  const [accounts, rawLines, vno] = await Promise.all([
     prisma.ledgerAccount.findMany({ orderBy: { code: 'asc' } }),
     prisma.journalLine.findMany({ where: { ...lineWhere, ...(end ? { journalEntry: { date: { lte: end } } } : {}) }, include: { journalEntry: true } }),
     voucherMap(),
   ]);
+  // WHO GOT HOW MUCH is for Accounts / Admin only: for anyone else a voucher's employee lines on one
+  // ledger are one line (the voucher total), with no names (enforced here, on the payload).
+  let lines = rawLines;
+  if (!V.isPrivileged(req.user) && rawLines.some((l) => l.employeeId)) {
+    const keep = [];
+    const merged = new Map();
+    rawLines.forEach((l) => {
+      if (!l.employeeId) { keep.push(l); return; }
+      const k = `${l.journalEntryId}|${l.accountCode}`;
+      const m = merged.get(k);
+      if (m) { m.debit += l.debit; m.credit += l.credit; } else merged.set(k, { ...l, memo: null, employeeId: null, employeeName: null, department: null, id: k });
+    });
+    lines = [...keep, ...[...merged.values()].map((m) => ({ ...m, debit: Math.round(m.debit * 100) / 100, credit: Math.round(m.credit * 100) / 100 }))];
+  }
   const byCode = new Map(accounts.map((a) => [a.code, { code: a.code, name: a.name, type: a.type, group: groupOf(a), openDr: 0, openCr: 0, debit: 0, credit: 0, lines: 0 }]));
   lines.sort((a, b) => (a.journalEntry.date < b.journalEntry.date ? -1 : a.journalEntry.date > b.journalEntry.date ? 1 : (a.createdAt - b.createdAt) || (a.lineNo - b.lineNo)));
   lines.forEach((l) => {
@@ -464,11 +584,52 @@ router.get('/payroll-months', ...guard('view'), async (req, res) => {
   res.json({ months: out, canPost: await can(req.user, 'accounts', 'accounts', FEATURE, 'create') });
 });
 
+// ---- One payroll month, employee by employee (Accounts -> Payroll months -> Open) ----
+// Accounts roles and Super Admin / Admin ONLY - checked on the role as well as on
+// the Journal & Ledger permission, so a Manager / TL / HR / Employee gets 403 here
+// whatever a custom rule says.
+async function payrollDesk(req, res, next) {
+  try {
+    const role = roleForProduct(req.user, 'accounts');
+    if (SET.ACCOUNTS.includes(role) && await can(req.user, 'accounts', 'accounts', FEATURE, 'view')) return next();
+    return res.status(403).json(DENIED);
+  } catch (err) { return next(err); }
+}
+router.get('/payroll-months/:month/details', requireAuth, payrollDesk, async (req, res) => {
+  const month = req.params.month;
+  if (!isMonth(month)) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const d = await monthDetails(month, { q: req.query.q, department: req.query.department, paymentStatus: req.query.paymentStatus });
+  const format = req.query.format ? formatOf(req.query) : null;
+  if (req.query.format) {
+    if (!format || format === 'pdf') return res.status(400).json({ error: 'Export as Excel (xlsx) or CSV.' });
+    if (!d.rows.length) return res.status(404).json({ error: 'There are no employees to export for this month and filter.' });
+    return sendKitTable(req, res, {
+      format, name: `payroll-${month}`, title: `Payroll ${d.period}`, headers: EXPORT_HEADERS, rows: exportRows(d), sheet: `Payroll ${month}`,
+      entity: 'EmployeePayrollRun', what: `Payroll ${d.period}`, scope: d.filtered ? 'filtered employees' : 'all employees of the month', screen: 'Accounts',
+    });
+  }
+  return res.json(d);
+});
+
+// POSTED VOUCHERS ARE READ-ONLY: no edit, no delete - only a reversal, or (payroll) an adjustment voucher.
+router.all('/journal-entries/:id', requireAuth, (req, res, next) => {
+  if (['PUT', 'PATCH', 'DELETE'].includes(req.method)) return res.status(405).json({ error: 'A posted voucher can not be edited or deleted. Reverse it, or for salary book a correction (adjustment) voucher.' });
+  return next();
+});
+
+// EMPLOYEE-WISE SALARY (user spec 2026-10-09): routes/salaryVouchers.js, own guards.
+router.use('/salary', salaryRouter);
+
+// Journal / Ledger IMPORT (Accounts fixes 2026-10-09): routes/booksImport.js, own guards.
+router.use('/books-import', require('./booksImport'));
+
 // ---- Payroll reconciliation: HRMS run totals vs ledger booked -------------------
 router.get('/reports/payroll-reconciliation', ...guard('view'), async (req, res) => {
   const month = req.query.month;
   if (!isMonth(month)) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
   const r = await reconciliation(month);
+  // Per-employee rows name who got what: Accounts / Admin only.
+  if (!V.isPrivileged(req.user)) { r.rows = []; r.rowsHidden = true; }
   if (req.query.format === 'csv' || req.query.format === 'xlsx') {
     const rows = r.rows.map((x) => [
       x.employeeCode || '', x.name, x.status || '', x.costToCompany, x.expectedDebit, x.bookedDebit, x.difference,

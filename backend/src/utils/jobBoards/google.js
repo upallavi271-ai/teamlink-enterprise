@@ -69,6 +69,13 @@ async function token(cfg) {
   return { ok: true, token: res.body.access_token };
 }
 
+// CHECK CONNECTION: Google signs the service account in (the real handshake; nothing is sent).
+async function handshake(cfg) {
+  http.forgetToken(`google|${cfg.sa.client_email}`);
+  const t = await token(cfg);
+  return t.ok ? { ok: true, text: 'Google accepted the service account (sign-in worked). Make sure it is an Owner of the site in Search Console.' } : { ok: false, text: t.error };
+}
+
 // The page Google indexes: our public job page.
 const pageUrl = (r) => http.publicUrl(require('../jobSlug').careersPath(r)); // eslint-disable-line global-require
 
@@ -100,5 +107,5 @@ async function inspect(r, cfg) {
 }
 
 module.exports = {
-  id: 'google', label: LABEL, integrationId: 'google-jobs', FIELDS, SETUP, config, notify, inspect, pageUrl,
+  id: 'google', label: LABEL, integrationId: 'google-jobs', FIELDS, SETUP, config, handshake, notify, inspect, pageUrl,
 };

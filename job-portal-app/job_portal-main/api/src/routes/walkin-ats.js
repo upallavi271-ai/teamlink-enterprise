@@ -28,6 +28,7 @@
  * caller's scope answers 404 whatever the route.
  */
 import { Router } from 'express';
+import { hiddenError } from '../scope.js';
 import { z } from 'zod';
 import { withUser } from '../db.js';
 import { wrap, badRequest, notFound, forbidden, ApiError } from '../errors.js';
@@ -213,7 +214,10 @@ async function myJob(c, jobId) {
     `select j.*, walkin_starts_at(j.walkin_date, j.walkin_from) as starts_at,
             walkin_ends_at(j.walkin_date, j.walkin_to) as ends_at
        from jobs j where j.id = $1 and ats_job_is_mine(j.id)`, [jobId]);
-  if (!rows[0]) throw notFound('That job does not exist or is not one of yours.');
+  if (!rows[0]) {
+    const e = (await c.query(`select app_row_exists('job',$1) as e`, [jobId])).rows[0].e;
+    throw e ? forbidden('That job is not one of yours.') : notFound('That job does not exist.');
+  }
   return rows[0];
 }
 
@@ -337,7 +341,10 @@ export default function walkinAtsRoutes() {
   async function loadApplication(c, id) {
     const ok = (await c.query(`select ats_can_manage($1) as ok`, [id])).rows[0].ok;
     const row = ok ? (await applicantRows(c, [id]))[0] : null;
-    if (!row) throw notFound('That application does not exist or is not one you can open.');
+    if (!row) {
+      const e = (await c.query(`select app_row_exists('application',$1) as e`, [id])).rows[0].e;
+      throw e ? forbidden('That application is not one you can open.') : notFound('That application does not exist.');
+    }
     return row;
   }
 
@@ -403,7 +410,14 @@ export default function walkinAtsRoutes() {
           where a.candidate_id = $1 and a.id <> $2
           order by a.applied_at desc`, [row.candidate_id, row.id])).rows;
       const nr = await notesAndRatings(c, row.id, req.session);
-      return { row, job, appRow, others, nr, timeline: await timeline(c, row.id) };
+      const ai = (await c.query(
+        `select a.source, a.source_channel, a.walkin_ai_score, a.walkin_ai_eligibility, a.walkin_ai_completed_at,
+                i.status as iv_status, i.overall_percentage as iv_score, i.completed_at as iv_completed_at
+           from applications a
+           left join lateral (select status, overall_percentage, completed_at from ai_interviews
+                               where application_id = a.id order by coalesce(attempt_number, 1) desc, created_at desc limit 1) i on true
+          where a.id = $1`, [row.id])).rows[0] || {};
+      return { row, job, appRow, others, nr, ai, timeline: await timeline(c, row.id) };
     });
     const a = applicantRow(out.row);
     const j = out.job;
@@ -419,11 +433,22 @@ export default function walkinAtsRoutes() {
         applicationId: a.applicationId, reference: a.reference, applicationDate: a.applicationDate,
         stage: a.stage, stageLabel: a.stageLabel, status: a.status, version: a.version,
         updatedAt: a.updatedAt, updatedBy: a.updatedBy, rating: out.nr.rating,
+        source: out.ai.source_channel || out.ai.source || null,
+      },
+      /* 0139: the AI interview and, for a walk-in, the eligibility decided from its final score */
+      aiInterview: {
+        status: out.ai.iv_status || null,
+        score: out.ai.walkin_ai_score == null ? (out.ai.iv_score == null ? null : Number(out.ai.iv_score)) : Number(out.ai.walkin_ai_score),
+        completedAt: iso(out.ai.walkin_ai_completed_at || out.ai.iv_completed_at),
+        eligibility: out.ai.walkin_ai_eligibility || null,
+        threshold: j.posting_kind === 'walkin' ? Number(j.walkin_ai_threshold == null ? 50 : j.walkin_ai_threshold) : null,
+        required: j.posting_kind === 'walkin' ? j.walkin_ai_required !== false : null,
       },
       walkin: j.posting_kind === 'walkin' ? {
         date: j.walkin_date || '', startTime: j.walkin_from || '', endTime: j.walkin_to || '',
         when: whenText(jobDetails(j)), venue: j.walkin_venue || '', address: j.walkin_address || '',
         mapLink: j.walkin_map_link || '', contactPerson: j.walkin_contact || '', contactNumber: j.walkin_phone || '',
+        contactDesignation: j.walkin_contact_designation || '',
         checkedInAt: a.checkedInAt, checkedInBy: out.appRow.checked_in_name || null,
         attendedAt: a.attendedAt, attendedBy: out.appRow.attended_name || null,
         interviewedAt: a.interviewedAt, status: walkinStatus(j),
@@ -482,9 +507,16 @@ export default function walkinAtsRoutes() {
       reason: z.string().trim().max(1000).optional(),
       expectedVersion: z.number().int().min(1).optional(),
     }), req.body);
-    const out = await withUser(req.session, async (c) => (await c.query(
-      `select ats_move_stage($1,$2,$3,$4,'recruiter') as r`,
-      [req.params.id, b.stage, b.reason || null, b.expectedVersion ?? null])).rows[0].r);
+    let out;
+    try {
+      out = await withUser(req.session, async (c) => (await c.query(
+        `select ats_move_stage($1,$2,$3,$4,'recruiter') as r`,
+        [req.params.id, b.stage, b.reason || null, b.expectedVersion ?? null])).rows[0].r);
+    } catch (err) {
+      /* 0118: an application that exists and is not theirs is a 403. */
+      if (err && err.code === 'TLW06') throw await hiddenError(req.session, 'application', req.params.id, err);
+      throw err;
+    }
     if (out.changed) await tellCandidate(req.session, [out]);
     res.json({ result: out });
   }));
@@ -541,7 +573,12 @@ export default function walkinAtsRoutes() {
 
   r.post('/ats/applications/:id/check-in', requireAuth(), requireRole(...STAFF), wrap(async (req, res) => {
     const b = parse(checkInSchema, req.body);
-    res.json({ result: await doCheckIn(req.session, req.params.id, b) });
+    try {
+      res.json({ result: await doCheckIn(req.session, req.params.id, b) });
+    } catch (err) {
+      if (err && (err.code === 'TLW06' || err.status === 404)) throw await hiddenError(req.session, 'application', req.params.id, err);
+      throw err;
+    }
   }));
 
   r.post('/jobs/:id/check-in/quick', requireAuth(), requireRole(...STAFF), wrap(async (req, res) => {
@@ -859,6 +896,7 @@ export default function walkinAtsRoutes() {
   r.get('/my/applications-status', requireAuth(), requireRole('candidate'), wrap(async (req, res) => {
     const rows = await withUser(req.session, async (c) => (await c.query(
       `select a.id, a.reference, a.job_id, a.applied_at, a.stage, j.title, j.posting_kind,
+              a.walkin_ai_score, a.walkin_ai_eligibility, j.walkin_contact_designation,
               j.walkin_date, j.walkin_from, j.walkin_to, j.walkin_venue, j.walkin_address, j.walkin_map_link,
               j.walkin_contact, j.walkin_phone, j.walkin_documents, j.walkin_instructions,
               j.status as job_status, j.paused, j.archived,
@@ -874,10 +912,17 @@ export default function walkinAtsRoutes() {
         return {
           applicationId: x.id, reference: x.reference || x.id, jobId: x.job_id, jobTitle: x.title,
           jobType: walkin ? 'Walk-in' : 'Regular', applicationDate: iso(x.applied_at), status: x.cstatus,
+          /* 0139: the walk-in eligibility the final AI interview score gave (never attendance) */
+          walkinEligibility: walkin && x.walkin_ai_eligibility ? {
+            result: x.walkin_ai_eligibility === 'eligible' ? 'Eligible'
+              : x.walkin_ai_eligibility === 'not_eligible' ? 'Not Eligible' : 'No valid score',
+            score: x.walkin_ai_score == null ? null : Number(x.walkin_ai_score),
+          } : null,
           walkin: upcoming && x.stage === 'registered' ? {
             date: x.walkin_date, startTime: x.walkin_from || '', endTime: x.walkin_to || '',
             when: whenText(jobDetails(x)), venue: x.walkin_venue || '', address: x.walkin_address || '',
             mapLink: x.walkin_map_link || '', contactPerson: x.walkin_contact || '', contactNumber: x.walkin_phone || '',
+            contactDesignation: x.walkin_contact_designation || '',
             documents: jobDetails(x).documents, instructions: x.walkin_instructions || '',
           } : null,
         };

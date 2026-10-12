@@ -12,6 +12,8 @@ import AudiencePicker, { DeliverVia, audienceReady } from '../../components/Audi
 import { AiAssist } from '../../components/ComposeForm.jsx';
 import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
+import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
+import './timesheet-priority.css';
 
 // Timesheet — "Track and assign work".
 //
@@ -44,6 +46,7 @@ function emptyForm(options) {
     subTaskName: '',
     assigneeId: '',
     status: '',
+    priority: 'Medium',
     startDate: (options && options.today) || new Date().toISOString().slice(0, 10),
     endDate: '',
     dependent: false,
@@ -56,6 +59,15 @@ function emptyForm(options) {
     channels: [],
   };
 }
+
+// Priority colours: High red, Medium orange, Low blue (the four-colour rule).
+function priorityClass(p) {
+  if (p === 'High') return 'rejected';
+  if (p === 'Low') return 'interview';
+  return 'hold';
+}
+const PRIORITY_ORDER = ['High', 'Medium', 'Low'];
+const STATUS_ORDER = ['Overdue', 'Not Started', 'In Progress', 'On Hold', 'Completed', 'Cancelled'];
 
 function statusClass(status) {
   if (status === 'Completed') return 'approved';
@@ -84,6 +96,7 @@ function validate(form) {
   if (!form.department || !form.department.trim()) errors.department = 'Please select a department.';
   if (!form.name || !form.name.trim()) errors.name = 'Please enter a task name.';
   if (!form.status) errors.status = 'Please select a status.';
+  if (!['High', 'Medium', 'Low'].includes(form.priority)) errors.priority = 'Priority must be High, Medium or Low.';
   if (!form.startDate) errors.startDate = 'Please select a start date.';
   if (form.startDate && form.endDate && form.endDate < form.startDate) {
     errors.endDate = 'End date cannot be before start date.';
@@ -123,11 +136,13 @@ export default function Timesheet({ standalone = false }) {
   // an Employee list holding only that department's people IN THIS LOGIN'S
   // SCOPE (GET /tasks/people). Both go to the server, which refuses anything
   // outside the scope.
+  // Department, Employee, Priority and Status are picked from lists that are
+  // COUNTED over the tasks this login may see (cascading, with counts): picking
+  // one narrows the others. Only the date range goes to the server.
   const [filters, setFilters] = useState({ department: '', assigneeId: '', from: '', to: '' });
-  const [pickPeople, setPickPeople] = useState([]);
   // The ASSIGNEE's ID, name and role and the task's status, applied here over
   // the rows the server returned; department and dates stay server-side.
-  const [pf, setPf] = useState({ q: '', code: '', name: '', role: '', status: '', review: '' });
+  const [pf, setPf] = useState({ q: '', code: '', name: '', role: '', status: '', review: '', priority: '', dueFrom: '', dueTo: '' });
   const [sort, setSort] = useState('');
   const [form, setForm] = useState(null); // the New Task / Edit Task modal
   const [saving, setSaving] = useState(false);
@@ -155,8 +170,6 @@ export default function Timesheet({ standalone = false }) {
 
   const load = useCallback(() => {
     const params = {};
-    if (filters.department) params.department = filters.department;
-    if (filters.assigneeId) params.assigneeId = filters.assigneeId;
     if (filters.from) params.from = filters.from;
     if (filters.to) params.to = filters.to;
     setLoading(true);
@@ -164,7 +177,7 @@ export default function Timesheet({ standalone = false }) {
       .then((res) => setTasks(res.data))
       .catch((err) => setError(err.response?.data?.error || 'Could not load tasks.'))
       .finally(() => setLoading(false));
-  }, [filters]);
+  }, [filters.from, filters.to]);
 
   useEffect(() => {
     api.get('/tasks/options')
@@ -176,12 +189,6 @@ export default function Timesheet({ standalone = false }) {
   // The Employee select refreshes whenever the Department changes: Medical
   // -> only Medical employees. An Employee login has no picker at all.
   const canPickEmployee = !!options?.canPickEmployee;
-  useEffect(() => {
-    if (!canPickEmployee) { setPickPeople([]); return; }
-    api.get('/tasks/people', { params: filters.department ? { department: filters.department } : {} })
-      .then((res) => setPickPeople(res.data.people || []))
-      .catch(() => setPickPeople([]));
-  }, [canPickEmployee, filters.department]);
 
   const people = options?.assignable || [];
   const canAssignOthers = !!options?.canAssignOthers;
@@ -195,8 +202,24 @@ export default function Timesheet({ standalone = false }) {
   // The assignee as the filters read them — the name the task was given to,
   // plus the employee ID and designation the list now carries.
   const assigneeOf = (t) => ({ ...(t.assignee || {}), name: t.assigneeName });
+  const FACET_FIELDS = useMemo(() => [
+    { key: 'priority', get: (t) => t.priority || 'Medium' },
+    { key: 'status', get: (t) => (t.overdue ? [t.status, 'Overdue'] : [t.status]) },
+    { key: 'assigneeId', get: (t) => t.assigneeId, label: (v, t) => t.assigneeName },
+    { key: 'department', get: (t) => t.department || (t.assignee && t.assignee.department) || '' },
+  ], []);
+  const facetValues = { priority: pf.priority, status: pf.status, assigneeId: filters.assigneeId, department: filters.department };
+  const facets = useLocalFacets(tasks, FACET_FIELDS, facetValues);
+  const orderBy = (list, order) => [...list].sort((a, b) => (order.indexOf(a.value) < 0 ? 99 : order.indexOf(a.value)) - (order.indexOf(b.value) < 0 ? 99 : order.indexOf(b.value)));
+  const taskDept = (t) => t.department || (t.assignee && t.assignee.department) || '';
   const shown = tasks.filter((t) => textMatches(`${t.name || ''} ${t.subTaskName || ''} ${t.description || ''} ${t.assigneeName || ''} ${t.assignedByName || ''}`, pf.q)
-    && peopleMatches(t, pf, assigneeOf) && (!pf.review || (t.reviewState || 'Not Submitted') === pf.review));
+    && peopleMatches(t, pf, assigneeOf) && (!pf.review || (t.reviewState || 'Not Submitted') === pf.review)
+    && (!pf.priority || (t.priority || 'Medium') === pf.priority)
+    && (!pf.status || t.status === pf.status || (pf.status === 'Overdue' && t.overdue))
+    && (!filters.assigneeId || t.assigneeId === filters.assigneeId)
+    && (!filters.department || taskDept(t) === filters.department)
+    && (!pf.dueFrom || (t.endDate && t.endDate >= pf.dueFrom))
+    && (!pf.dueTo || (t.endDate && t.endDate <= pf.dueTo)));
   const assigneeRoles = peopleOptions(tasks, assigneeOf).roles;
   const reviewStates = [...new Set(tasks.map((t) => t.reviewState || 'Not Submitted'))].sort();
   const setP = (k, v) => setPf((f) => ({ ...f, [k]: v }));
@@ -208,16 +231,22 @@ export default function Timesheet({ standalone = false }) {
   };
   const page = usePaged(TASK_SORTS[sort] ? [...shown].sort(TASK_SORTS[sort]) : shown);
   const NO_SERVER = { department: '', assigneeId: '', from: '', to: '' };
-  const NO_CLIENT = { q: '', code: '', name: '', role: '', status: '', review: '' };
+  const NO_CLIENT = { q: '', code: '', name: '', role: '', status: '', review: '', priority: '', dueFrom: '', dueTo: '' };
   const clearTaskFilters = () => { setFilters(NO_SERVER); setPf(NO_CLIENT); };
   const taskFiltersOn = Object.values(filters).some(Boolean) || Object.values(pf).some(Boolean);
   const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
-  const pickedName = (pickPeople.find((p) => p.userId === filters.assigneeId) || {}).name || filters.assigneeId;
+  const pickedName = (tasks.find((t) => t.assigneeId === filters.assigneeId) || {}).assigneeName || filters.assigneeId;
   const taskChips = [
     { key: 'q', label: 'Search', value: pf.q, onRemove: () => setP('q', '') },
     { key: 'department', label: 'Department', value: filters.department, onRemove: () => setFilters((f) => ({ ...f, department: '', assigneeId: '' })) },
     { key: 'assigneeId', label: 'Employee', value: filters.assigneeId ? pickedName : '', onRemove: () => setFilters((f) => ({ ...f, assigneeId: '' })) },
+    { key: 'priority', label: 'Priority', value: pf.priority, onRemove: () => setP('priority', '') },
     { key: 'status', label: 'Status', value: pf.status, onRemove: () => setP('status', '') },
+    {
+      key: 'due', label: 'Due date',
+      value: pf.dueFrom || pf.dueTo ? (pf.dueFrom && pf.dueTo ? `${dmy(pf.dueFrom)} → ${dmy(pf.dueTo)}` : pf.dueFrom ? `from ${dmy(pf.dueFrom)}` : `to ${dmy(pf.dueTo)}`) : '',
+      onRemove: () => setPf((f) => ({ ...f, dueFrom: '', dueTo: '' })),
+    },
     { key: 'review', label: 'Review', value: pf.review, onRemove: () => setP('review', '') },
     {
       key: 'dates', label: 'Date range',
@@ -228,7 +257,7 @@ export default function Timesheet({ standalone = false }) {
     { key: 'name', label: 'Assignee name', value: pf.name, onRemove: () => setP('name', '') },
     { key: 'role', label: 'Role', value: pf.role, onRemove: () => setP('role', '') },
   ];
-  const moreOn = [filters.from || filters.to, pf.review, pf.code, pf.name, pf.role].filter(Boolean).length;
+  const moreOn = [filters.from || filters.to, pf.dueFrom || pf.dueTo, pf.review, pf.code, pf.name, pf.role].filter(Boolean).length;
   // The Send-to picker lists exactly the people assignable() offers — the
   // same set the API accepts — keyed by employee id.
   const pickable = useMemo(() => people.filter((p) => p.employeeId).map((p) => ({
@@ -259,6 +288,7 @@ export default function Timesheet({ standalone = false }) {
       subTaskName: task.subTaskName || '',
       assigneeId: task.assigneeId,
       status: task.status,
+      priority: task.priority || 'Medium',
       startDate: task.startDate || '',
       endDate: task.endDate || '',
       dependent: !!task.dependent,
@@ -290,6 +320,7 @@ export default function Timesheet({ standalone = false }) {
       // Blank means "myself", exactly as the field says.
       assigneeId: form.assigneeId || (options?.me.id ?? ''),
       status: form.status,
+      priority: form.priority,
       startDate: form.startDate,
       endDate: form.endDate || null,
       dependent: form.dependent,
@@ -433,7 +464,7 @@ export default function Timesheet({ standalone = false }) {
                 The hours summary keeps the Export above the charts. */}
             <DataIoBar
               ioKey="timesheet"
-              params={{ department: filters.department, from: filters.from, to: filters.to, status: pf.status }}
+              params={{ department: filters.department, from: filters.from, to: filters.to, status: pf.status === 'Overdue' ? '' : pf.status }}
               onImported={load}
             />
             <button className="btn btn-primary btn-sm" onClick={openNew} disabled={!options}>+ New Task</button>
@@ -452,30 +483,15 @@ export default function Timesheet({ standalone = false }) {
               primary={(
                 <>
                   <input type="search" placeholder="Search task, sub task or person…" value={pf.q} onChange={(e) => setP('q', e.target.value)} aria-label="Search" style={{ minWidth: 220 }} />
-                  <Combo
-                    value={filters.department} title="Department"
-                    onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value, assigneeId: '' }))}
-                  >
-                    <option value="">{canPickEmployee && !(options?.viewDepartments || []).length ? 'My department' : 'All departments'}</option>
-                    {((canPickEmployee ? options?.viewDepartments : options?.departments) || []).map((d) => <option key={d}>{d}</option>)}
-                  </Combo>
+                  <FacetSelect label="Priority" allLabel="Any priority" value={pf.priority} onChange={(v) => setP('priority', v)} options={orderBy(facets.priority || [], PRIORITY_ORDER)} />
+                  <FacetSelect label="Status" allLabel="Any status" value={pf.status} onChange={(v) => setP('status', v)} options={orderBy(facets.status || [], STATUS_ORDER)} />
                   {canPickEmployee && (
-                    <Combo
-                      value={filters.assigneeId} title="Employee"
-                      onChange={(e) => setFilters((f) => ({ ...f, assigneeId: e.target.value }))}
-                    >
-                      <option value="">{filters.department ? `All ${filters.department} employees` : 'All employees'}</option>
-                      {pickPeople.map((p) => (
-                        <option key={p.userId} value={p.userId}>
-                          {p.name}{p.employeeCode ? ` · ${p.employeeCode}` : ''}{p.self ? ' (me)' : ''}{p.active === false ? ' — inactive' : ''}
-                        </option>
-                      ))}
-                    </Combo>
+                    <FacetSelect label="Employee" allLabel="Everyone" value={filters.assigneeId} onChange={(v) => setFilters((f) => ({ ...f, assigneeId: v }))}
+                      options={(facets.assigneeId || []).slice().sort((a, b) => a.label.localeCompare(b.label))} />
                   )}
-                  <Combo value={pf.status} title="Status" onChange={(e) => setP('status', e.target.value)}>
-                    <option value="">All statuses</option>
-                    {(options?.statuses || []).map((s) => <option key={s}>{s}</option>)}
-                  </Combo>
+                  {canPickEmployee && (
+                    <FacetSelect label="Department" allLabel="All departments" value={filters.department} onChange={(v) => setFilters((f) => ({ ...f, department: v }))} options={facets.department || []} />
+                  )}
                 </>
               )}
               extra={(
@@ -499,6 +515,12 @@ export default function Timesheet({ standalone = false }) {
                 <span aria-hidden="true">→</span>
                 <input type="date" aria-label="Date range to" value={filters.to} min={filters.from || undefined} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
               </span>
+              <span className="lf-dates" title="Due date (the task's End Date)">
+                <span className="lf-dates-lbl">Due date</span>
+                <input type="date" aria-label="Due from" value={pf.dueFrom} max={pf.dueTo || undefined} onChange={(e) => setP('dueFrom', e.target.value)} />
+                <span aria-hidden="true">→</span>
+                <input type="date" aria-label="Due to" value={pf.dueTo} min={pf.dueFrom || undefined} onChange={(e) => setP('dueTo', e.target.value)} />
+              </span>
               <Combo value={pf.review} title="Review" onChange={(e) => setP('review', e.target.value)}>
                 <option value="">All review states</option>
                 {reviewStates.map((s) => <option key={s}>{s}</option>)}
@@ -517,10 +539,20 @@ export default function Timesheet({ standalone = false }) {
             <FilterChips filters={taskChips} onClearAll={taskFiltersOn ? clearTaskFilters : undefined} />
           </div>
 
+          {/* Status-wise at a glance: tap a word to see just those tasks. The
+              numbers follow the other filters (Priority, Employee, Department). */}
+          <div className="ts-strip" role="group" aria-label="Tasks by status">
+            <button type="button" className={`ts-chip${!pf.status ? ' on' : ''}`} onClick={() => setP('status', '')}>All <b>{tasks.filter((t) => (!pf.priority || (t.priority || 'Medium') === pf.priority) && (!filters.assigneeId || t.assigneeId === filters.assigneeId) && (!filters.department || taskDept(t) === filters.department)).length}</b></button>
+            {orderBy(facets.status || [], STATUS_ORDER).filter((o) => o.count > 0).map((o) => (
+              <button key={o.value} type="button" className={`ts-chip tone-${o.value === 'Overdue' ? 'red' : o.value === 'Completed' ? 'green' : o.value === 'In Progress' ? 'blue' : o.value === 'Cancelled' ? 'grey' : 'orange'}${pf.status === o.value ? ' on' : ''}`}
+                onClick={() => setP('status', pf.status === o.value ? '' : o.value)}>{o.label} <b>{o.count}</b></button>
+            ))}
+          </div>
+
           <div className="tbl-wrap">
             <table>
               <thead>
-                <tr><th>Task</th><th>Start Date</th><th>End Date</th><th>Actions</th></tr>
+                <tr><th>Task</th><th>Priority</th><th>Start Date</th><th>Due Date</th><th>Progress</th><th>Actions</th></tr>
               </thead>
               <tbody>
                 {page.slice.map((t) => (
@@ -528,6 +560,7 @@ export default function Timesheet({ standalone = false }) {
                     <td>
                       <b>{t.name}</b>{' '}
                       <span className={`status ${statusClass(t.status)}`}>{t.status}</span>{' '}
+                      {t.overdue && <span className="status rejected" title={`Due ${ddmmyyyy(t.endDate)}`}>Overdue</span>}{' '}
                       {t.reviewState && t.reviewState !== 'Not Submitted' && (
                         <span className={`status ${reviewClass(t.reviewState)}`}>{t.reviewState}</span>
                       )}
@@ -543,8 +576,16 @@ export default function Timesheet({ standalone = false }) {
                         </div>
                       )}
                     </td>
+                    <td><span className={`status ${priorityClass(t.priority)}`}>{t.priority || 'Medium'}</span></td>
                     <td className="cell-muted">{ddmmyyyy(t.startDate)}</td>
-                    <td className="cell-muted">{ddmmyyyy(t.endDate)}</td>
+                    <td className="cell-muted">
+                      {ddmmyyyy(t.endDate)}
+                      {t.overdue && <div className="ts-late">{t.daysLate} day{t.daysLate === 1 ? '' : 's'} late</div>}
+                    </td>
+                    <td className="cell-muted">
+                      {t.completion}
+                      {t.completedAt && t.status === 'Completed' && <div className="small-muted">on {ddmmyyyy(String(t.completedAt).slice(0, 10))}</div>}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {/* The workflow, in the order it happens. A button only
                           appears where its transition is actually available. */}
@@ -590,7 +631,7 @@ export default function Timesheet({ standalone = false }) {
                 ))}
                 {!shown.length && (
                   <tr>
-                    <td colSpan="4" className="small-muted" style={{ padding: loading ? 16 : 0 }}>
+                    <td colSpan="6" className="small-muted" style={{ padding: loading ? 16 : 0 }}>
                       {loading ? 'Loading…' : <ListEmpty lf={{ activeCount: taskFiltersOn ? 1 : 0, clear: clearTaskFilters }} noun="tasks" title="No tasks yet." hint={'"+ New Task" creates the first one.'} />}
                     </td>
                   </tr>
@@ -678,9 +719,13 @@ export default function Timesheet({ standalone = false }) {
                 {fieldErrors.status && <p className="error-text">{fieldErrors.status}</p>}
               </label>
 
-              {/* The left cell of this row is empty in the design — Task Start
-                  Date sits beside Assign To's helper line. */}
-              <div />
+              <label className="field"><span>Priority *</span>
+                <Combo value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
+                  {(options?.priorities || ['High', 'Medium', 'Low']).map((x) => <option key={x}>{x}</option>)}
+                </Combo>
+                <span className="small-muted">How urgent it is. Medium unless you say otherwise.</span>
+                {fieldErrors.priority && <p className="error-text">{fieldErrors.priority}</p>}
+              </label>
               <label className="field"><span>Task Start Date *</span>
                 <input type="date" value={form.startDate} onChange={(e) => set({ startDate: e.target.value })} />
                 {fieldErrors.startDate && <p className="error-text">{fieldErrors.startDate}</p>}
@@ -843,6 +888,22 @@ export default function Timesheet({ standalone = false }) {
                   On time measured over {reports.onTime.judged} completed task(s) with a due date —{' '}
                   {reports.onTime.onTime} on time, {reports.onTime.late} late.
                 </div>
+              )}
+
+              {!!(reports.byPriority || []).length && (
+                <>
+                  <div className="section-label">By priority</div>
+                  <div className="tbl-wrap">
+                    <table>
+                      <thead><tr><th>Priority</th><th>Tasks</th><th>Still open</th><th>Overdue</th></tr></thead>
+                      <tbody>
+                        {reports.byPriority.map((r) => (
+                          <tr key={r.priority}><td>{r.priority}</td><td>{r.total}</td><td>{r.open}</td><td>{r.overdue}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
 
               <div className="section-label">By status</div>

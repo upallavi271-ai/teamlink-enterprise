@@ -12,7 +12,7 @@
 // formats; this adds the headers, the filename and the log.)
 // ---------------------------------------------------------------------------
 
-const { toCsv, toXlsx, toPdf } = require('./tabularExport');
+const { toCsv, toXlsx, toXlsxBook, toPdf } = require('./tabularExport');
 const { logAudit } = require('./audit');
 // Every export also tells the Super Admin (utils/dataIoNotify.js).
 const { notifyDataIo } = require('./dataIoNotify');
@@ -84,4 +84,41 @@ async function sendTable(req, res, {
   }));
 }
 
-module.exports = { FORMATS, formatOf, sendTable };
+// A WORKBOOK of several tables (the dashboards' Export: tiles, chart numbers,
+// lists), audited and named like sendTable. sheets: [{ name, headers, rows }].
+// Excel gets one sheet each; CSV gets the same tables one after another, each
+// under a "== name ==" line (a CSV file has only one table).
+async function sendBook(req, res, {
+  format, name, sheets, entity, what, scope, period, screen,
+}) {
+  const clean = sheets.map((s) => ({ ...s, rows: s.rows.map((r) => r.map(cell)) }));
+  const total = clean.reduce((n, s) => n + s.rows.length, 0);
+  const stamp = new Date().toISOString().slice(0, 10);
+  const range = period ? `${period.from} to ${period.to}` : 'all dates';
+  await logAudit({
+    userId: req.user.id,
+    actorName: req.user.name,
+    action: `${what} exported (${format.toUpperCase()})`,
+    entity,
+    toValue: `${clean.length} sheet(s), ${total} row(s) · scope: ${scope} · ${range}`,
+  });
+  if (!String(req.baseUrl || '').startsWith('/api/ats')) {
+    await notifyDataIo(req, {
+      kind: 'export', module: screen || what, count: total, what: `rows of ${what}`, format, detail: `scope: ${scope} · ${range}`,
+    });
+  }
+  const filename = `${safeName(name)}-${stamp}.${format}`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('X-Export-Rows', String(total));
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Rows');
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    const blocks = clean.map((s) => `${csvTitle(s.name)}\r\n${toCsv(s.headers, s.rows)}`);
+    return res.send(`﻿${blocks.join('\r\n\r\n')}`);
+  }
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  return res.send(toXlsxBook(clean));
+}
+const csvTitle = (s) => `== ${String(s || '').replace(/[\r\n]+/g, ' ')} ==`;
+
+module.exports = { FORMATS, formatOf, sendTable, sendBook };

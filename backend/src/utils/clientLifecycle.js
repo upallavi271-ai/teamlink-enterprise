@@ -25,11 +25,18 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const { can } = require('./permissions');
-const { scopeOf, atsViewRole } = require('./scope');
+const { scopeOf, atsViewRole, isBdeTl } = require('./scope');
 
 const FEATURE_PAUSE = 'Pause / Reactivate Client';
 const FEATURE_ARCHIVE = 'Archive Client';
 const FEATURE_DELETE = 'Delete Client';
+// BDE business workspace (user spec 2026-10-10)
+const FEATURE_RESUME = 'Resume Client';
+const FEATURE_DEACTIVATE = 'Deactivate Client';
+const FEATURE_DELETE_REQ = 'Client Delete Request';
+const FEATURE_OWNER_REQ = 'Client Ownership Request';
+const FEATURE_MERGE_REQ = 'Client Merge Request';
+const FEATURE_APPROVAL = 'Client Approval Submission';
 
 const LIFECYCLES = ['Active', 'Paused', 'Archived'];
 
@@ -90,16 +97,34 @@ function departmentOk(user, client) {
   return !!(client && client.ownerDepartment && depts.includes(client.ownerDepartment));
 }
 
+// A BDE (not the BDE team lead) works only THEIR OWN clients: assigned on Users, Owner / second BDE,
+// or a client of their desk that has no BDE yet (utils/scope.js bdeOwnClientIds). Seeing the whole desk is
+// not working it (user, 2026-10-09 P4; spec 2026-10-10 "edit own created / assigned").
+function isDeskBde(user) {
+  return atsViewRole(user) === 'bde' && !isBdeTl(user) && !scopeOf(user).global;
+}
+function ownsClient(user, client) {
+  if (!isDeskBde(user)) return true;
+  return !!client && (scopeOf(user).bdeOwnClientIds || []).includes(client.id);
+}
+
 // The role-level answers, once per request.
 async function baseRights(user) {
-  const [pauseEdit, pauseRequest, archive, del] = await Promise.all([
+  const [pauseEdit, pauseRequest, archive, del, resumeEdit, deactivateEdit, deactivateRequest, deleteRequest, ownerRequest, mergeRequest, approvalSubmit] = await Promise.all([
     allows(user, FEATURE_PAUSE, 'edit'),
     allows(user, FEATURE_PAUSE, 'create'),
     allows(user, FEATURE_ARCHIVE, 'edit'),
     allows(user, FEATURE_DELETE, 'delete'),
+    allows(user, FEATURE_RESUME, 'edit'),
+    allows(user, FEATURE_DEACTIVATE, 'edit'),
+    allows(user, FEATURE_DEACTIVATE, 'create'),
+    allows(user, FEATURE_DELETE_REQ, 'create'),
+    allows(user, FEATURE_OWNER_REQ, 'create'),
+    allows(user, FEATURE_MERGE_REQ, 'create'),
+    allows(user, FEATURE_APPROVAL, 'create'),
   ]);
   return {
-    pauseEdit, pauseRequest, archive,
+    pauseEdit, pauseRequest, archive, resumeEdit, deactivateEdit, deactivateRequest, deleteRequest, ownerRequest, mergeRequest, approvalSubmit,
     // DELETE IS SUPER ADMIN ONLY (binding) — whatever a catalog row says.
     delete: del && isSuperAdmin(user),
     fallback: false,
@@ -110,17 +135,39 @@ async function baseRights(user) {
 function rightsFor(user, client, base) {
   const lc = lifecycleOf(client && client.status);
   const internal = client && client.clientType === 'Internal';
-  const pauseOk = base.pauseEdit && departmentOk(user, client);
+  const own = ownsClient(user, client);
+  const deptOk = departmentOk(user, client);
+  const pauseOk = base.pauseEdit && deptOk && own;
+  const resumeOk = (base.resumeEdit || base.pauseEdit) && deptOk && own;
+  const deactivateOk = !!base.deactivateEdit && deptOk && own;
+  const live = lc === 'Active' || lc === 'Paused';
   return {
     lifecycle: lc,
     pause: !internal && pauseOk && (lc === 'Active' || lc === 'Inactive'),
-    reactivate: pauseOk && (lc === 'Paused' || lc === 'Inactive'),
-    // A request is for those who cannot pause directly (the BDE).
-    requestPause: !internal && !pauseOk && base.pauseRequest && lc === 'Active',
+    reactivate: resumeOk && (lc === 'Paused' || lc === 'Inactive'),
+    // A request is for those who cannot pause directly (a custom role with Ask-only).
+    requestPause: !internal && !pauseOk && base.pauseRequest && own && lc === 'Active',
+    // Deactivate: do it (Admin / Manager) or ask (Role Catalog tick, not on for the BDE by default).
+    deactivate: !internal && deactivateOk && live,
+    requestDeactivate: !internal && !deactivateOk && !!base.deactivateRequest && own && live,
     archive: !internal && base.archive && lc !== 'Archived',
     unarchive: base.archive && lc === 'Archived',
     delete: !internal && base.delete,
+    // Delete is a REQUEST for a BDE: an Admin approves, the client is archived (soft delete), every record is kept.
+    requestDelete: !internal && !base.delete && !base.archive && !!base.deleteRequest && own && lc !== 'Archived',
+    requestOwner: !internal && !!base.ownerRequest && own && lc !== 'Archived',
+    requestMerge: !internal && !!base.mergeRequest && own,
+    submitApproval: !internal && !!base.approvalSubmit && own && lc !== 'Archived',
   };
+}
+
+// WHO DECIDES A REQUEST (spec: "designated Manager or Admin only"): Super Admin / Admin for any client,
+// a Manager for the clients of their own department(s). Never the person who asked, never a BDE.
+function mayDecide(user, client) {
+  const s = scopeOf(user);
+  if (s.adminGlobal) return true;
+  if (atsViewRole(user) === 'mgmt' && s.atsRole === 'MANAGER') return departmentOk(user, client);
+  return false;
 }
 
 async function lifecycleRights(user, client) {
@@ -164,6 +211,15 @@ async function pauseApproverIds(client) {
 }
 
 module.exports = {
+  mayDecide,
+  FEATURE_RESUME,
+  FEATURE_DEACTIVATE,
+  FEATURE_DELETE_REQ,
+  FEATURE_OWNER_REQ,
+  FEATURE_MERGE_REQ,
+  FEATURE_APPROVAL,
+  isDeskBde,
+  ownsClient,
   FEATURE_PAUSE,
   FEATURE_ARCHIVE,
   FEATURE_DELETE,

@@ -14,6 +14,7 @@ import SetupTabs from './SetupTabs.jsx';
 import InterviewTabs from './InterviewTabs.jsx';
 import NotificationBell from './NotificationBell.jsx';
 import TaskPopup from './dashboard/TaskPopup.jsx';
+import JobRequestPopup from './JobRequestPopup.jsx';
 import HealthDot from './dashboard/HealthDot.jsx';
 import TodayTasks from './dashboard/TodayTasks.jsx';
 import GlobalSearch from './GlobalSearch.jsx';
@@ -182,6 +183,8 @@ export default function Shell() {
             <NotificationBell />
             {/* The login popup: 'You have 6 tasks, 2 are late' (spec §14). */}
             {hasAtsWork(user) && <TaskPopup />}
+            {/* A client's new job request: the client's BDE and the BDE TL see it on screen at once (2026-10-09). */}
+            {hasAtsWork(user) && <JobRequestPopup />}
             {/* Admin health dot: system problems only (dashboard review #2). */}
             {hasAtsWork(user) && <HealthDot />}
             <div className="avatar">{initials(user?.name)}</div>

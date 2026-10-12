@@ -58,9 +58,9 @@ const isTestUser = (u) => TEST_RE.test([u.name, u.email].join(' '));
 // ---- settings ---------------------------------------------------------------
 async function defaults() {
   const cfg = (await prisma.hrConfig.findFirst()) || {};
-  // The "Late" rule elsewhere is "after the grace clock time" (09:30 against a
+  // The "Late" rule elsewhere is "after the grace clock time" (09:15 against a
   // 09:00 start), so the default grace here is that same gap.
-  const g = toMinutes(cfg.graceTime || '09:30');
+  const g = toMinutes(cfg.graceTime || require('./attendancePolicy').LATE_AFTER);
   return {
     inApp: true,
     email: true,
@@ -136,7 +136,7 @@ async function detect({ now = new Date(), testMode = false, settings, scope = nu
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const goLive = new Date(settings.goLiveAt);
   const at = (min) => new Date(`${today}T${hhmm(min)}:00`); // local time today
-  const cfg = await withExtras((await prisma.hrConfig.findFirst()) || await prisma.hrConfig.create({ data: {} }));
+  const cfg = await withExtras((await prisma.hrConfig.findFirst()) || await prisma.hrConfig.create({ data: { graceTime: require('./attendancePolicy').LATE_AFTER, weeklyOffDays: require('./attendancePolicy').WEEKLY_OFF } }));
   const [all, patterns] = await Promise.all([
     prisma.employee.findMany({
       where: withoutSystemAccounts({ employmentStatus: { notIn: LEFT } }),
@@ -198,7 +198,8 @@ function employeeText(ev) {
   const start = hhmm(ev.shift.start);
   const end = hhmm(ev.shift.end);
   const fix = 'If this is not right, raise a regularization under Attendance → Regularization.';
-  if (ev.type === 'late') return `Your first check-in today (${d}) was at ${ev.time}, after your shift start ${start} plus the grace period (late after ${ev.limit}). ${fix}`;
+  if (ev.type === 'late') return `Your first check-in today (${d}) was at ${ev.time}, after your shift start ${start} plus the grace period (late after ${ev.limit}). If you have a reason, open Attendance → My Attendance and press "Tell why I was late" - your approver will be asked. ${fix}
+Open: /attendance?tab=late`;
   if (ev.type === 'earlyOut') return `You checked out at ${ev.time} today (${d}), before the end of your working day (${end}). If you had permission, ask HR to note it. ${fix}`;
   if (ev.type === 'missingOut') return `You checked in at ${ev.time} today (${d}), but no check-out has been recorded (shift ended ${end}). Please check out on the device, or raise a regularization. ${fix}`;
   return `No check-in has been recorded for you today (${d}); your shift started at ${start}. If you are at work, check in on the device now. ${fix}`;

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
 import Combo from './Combo.jsx';
+import ContactDialog from './messaging/ContactDialog.jsx';
 
 // ---------------------------------------------------------------------------
 // THE CONTACT PANEL (§3-§7, §16).
@@ -90,6 +91,9 @@ export default function ContactPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(null);
+  // Any way of reaching them opens the SAME window (templates, ready message, real send or the person's own app).
+  const [dlg, setDlg] = useState(null);
+  const loggedRef = useRef(false);
   // "+ Add purpose": saved for everyone (ContactPurpose), with an optional message.
   const [adding, setAdding] = useState(null); // { label, template }
   const [addError, setAddError] = useState('');
@@ -143,8 +147,8 @@ export default function ContactPanel({
   function chooseMethod(id) {
     setMethod(id);
     setError('');
-    if (id === 'Call' && phone) window.location.href = telHref(phone);
-    if (id !== 'Call' && !body) pickTemplate(purpose || templates[0] || '');
+    loggedRef.current = false;
+    setDlg(id);
   }
 
   async function send() {
@@ -164,6 +168,27 @@ export default function ContactPanel({
     } catch (err) {
       setError(err.response?.data?.error || 'That could not be recorded.');
     } finally { setBusy(false); }
+  }
+
+  if (dlg) {
+    return (
+      <ContactDialog
+        channel={dlg}
+        audience="candidates"
+        personId={candidateId}
+        name={name}
+        email={email || ''}
+        phone={phone || ''}
+        applicationId={applicationId}
+        purposeLabel={purpose}
+        onLogged={() => { loggedRef.current = true; }}
+        onClose={() => {
+          const m = dlg;
+          setDlg(null);
+          if (loggedRef.current) { loggedRef.current = false; if (onContacted) onContacted({ method: m, purpose }); } else onClose();
+        }}
+      />
+    );
   }
 
   // --- after it is done: say plainly what happened, then hand over ----------
@@ -267,14 +292,12 @@ export default function ContactPanel({
         <label>Choose method</label>
         <div className="contact-methods">
           {METHODS.map((m) => {
-            const has = m.id === 'Email' ? !!email : !!phone;
             return (
               <button
                 key={m.id}
                 type="button"
                 className={`contact-method${method === m.id ? ' is-on' : ''}`}
-                disabled={!has}
-                title={has ? '' : `No ${m.id === 'Email' ? 'email address' : 'phone number'} on this record`}
+                title={m.id === 'Call' ? 'See what to say, dial, then save the call' : `Write a ${m.label} from a template`}
                 onClick={() => chooseMethod(m.id)}
               >
                 <span aria-hidden="true">{m.icon}</span> {m.label}

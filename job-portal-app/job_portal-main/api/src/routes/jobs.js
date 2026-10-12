@@ -12,10 +12,14 @@ import { z } from 'zod';
 import { withUser } from '../db.js';
 import { wrap, badRequest, notFound, forbidden, ApiError, CODES } from '../errors.js';
 import { requireAuth, requireRole } from '../auth.js';
-import { toJob, toJobMatch } from '../shapes.js';
+import { toJob, toJobMatch, toStaffJob, JOB_RECORD_COLS } from '../shapes.js';
 import { runJobAlertsInBackground } from '../notify/job-alerts.js';
 import { normaliseWalkinBody, checkWalkin } from '../portal/walkin-jobs.js';
 import { kickWalkinNotices } from '../notify/walkin-jobs.js';
+import { jobsPageScope, teamlinkOnly } from '../jobs/source-scope.js';
+
+/* Who reads the ATS rather than the Jobs page. */
+const isStaff = (s) => !!s && ['recruiter', 'admin', 'bde', 'client'].includes(s.role);
 
 const strArr = z.array(z.string().trim().max(200)).max(60).optional();
 
@@ -73,6 +77,12 @@ const jobSchema = z.object({
   walkinInstructions: z.string().trim().max(2000).optional().or(z.literal('')),
   walkinCapacity:     z.union([z.coerce.number().int().min(1).max(100000), z.literal(''), z.null()]).optional()
     .transform((v) => (v === '' ? null : v)),
+  /* 0139: the contact's designation; whether the AI interview is part of this walk-in, and the
+     final score that makes an applicant eligible (50 unless the job says otherwise) */
+  walkinContactDesignation: z.string().trim().max(120).optional().or(z.literal('')),
+  walkinAiRequired:  z.boolean().optional(),
+  walkinAiThreshold: z.coerce.number().min(0, 'The eligibility threshold is a percentage (0-100).')
+    .max(100, 'The eligibility threshold is a percentage (0-100).').optional(),
 
   internshipDuration: z.string().trim().max(40).optional().or(z.literal('')),
   internshipType:     z.enum(['Paid', 'Unpaid']).optional().or(z.literal('')),
@@ -109,6 +119,7 @@ import {
   buildJobDescription, buildStructuredJd, buildWalkinPack, buildInternshipPack,
   suggestSkills, isKnownStub,
 } from '../ai/jd.js';
+import { hiddenError } from '../scope.js';
 
 const COLS = {
   title: 'title', companyId: 'company_id', location: 'location', mode: 'mode',
@@ -128,6 +139,8 @@ const COLS = {
   walkinAddress: 'walkin_address', walkinMapLink: 'walkin_map_link',
   walkinDocuments: 'walkin_documents', walkinInstructions: 'walkin_instructions',
   walkinCapacity: 'walkin_capacity',
+  walkinContactDesignation: 'walkin_contact_designation',
+  walkinAiRequired: 'walkin_ai_required', walkinAiThreshold: 'walkin_ai_threshold',
   internshipDuration: 'internship_duration', internshipType: 'internship_type',
   stipend: 'stipend',
 };
@@ -142,10 +155,16 @@ export default function jobRoutes() {
     const q      = (req.query.q || '').trim();
     const loc    = (req.query.location || '').trim();
     const view   = req.query.view === 'all' ? 'jobs_with_counts' : 'jobs_open';
+    /* 0113: the Jobs page is TeamLink jobs only - refused, not widened,
+       for any other ?sourceType=. Staff reading their whole desk
+       (?view=all) still see every row they are allowed by RLS. */
+    jobsPageScope(req);
+    const staffAll = view === 'jobs_with_counts' && isStaff(req.session);
 
     const out = await withUser(req.session, async (c) => {
       const where = [];
       const params = [];
+      if (!staffAll) where.push(teamlinkOnly());
       if (q) {
         params.push(`%${q}%`);
         where.push(`(title ilike $${params.length} or $${params.length} = any(skills))`);
@@ -176,24 +195,32 @@ export default function jobRoutes() {
       const total = await c.query(`select count(*)::int n from ${view} ${clause}`, params);
       params.push(limit, offset);
       const rows = await c.query(
-        `select * from ${view} ${clause}
+        `select *, ${JOB_RECORD_COLS} from ${view} ${clause}
          order by published_at desc nulls last, id
          limit $${params.length - 1} offset $${params.length}`, params);
       return { total: total.rows[0].n, rows: rows.rows };
     });
 
-    res.json({ jobs: out.rows.map(toJob), total: out.total, limit, offset });
+    res.json({ jobs: out.rows.map(isStaff(req.session) ? toStaffJob : toJob), total: out.total, limit, offset });
   }));
 
   r.get('/jobs/:id', wrap(async (req, res) => {
     const row = await withUser(req.session, async (c) => {
-      const { rows } = await c.query(`select * from jobs_with_counts where id=$1`, [req.params.id]);
+      /* 0113: a candidate or visitor opens TeamLink jobs here; an
+         external job's details are /api/portal/external-jobs/:id. */
+      const { rows } = await c.query(
+        `select *, ${JOB_RECORD_COLS} from jobs_with_counts where id=$1 ${isStaff(req.session) ? '' : `and ${teamlinkOnly()}`}`,
+        [req.params.id]);
       return rows[0];
     });
     // RLS hides an unpublished job from the public, which surfaces here as
     // "not found" — the same answer requirement 24 calls "Job unavailable".
-    if (!row) throw new ApiError(404, CODES.JOB_UNAVAILABLE, 'This role is no longer available.');
-    res.json({ job: toJob(row) });
+    // For staff, a job that exists but is another recruiter's is a 403 (0118).
+    if (!row) {
+      throw await hiddenError(req.session, 'job', req.params.id,
+        new ApiError(404, CODES.JOB_UNAVAILABLE, 'This role is no longer available.'));
+    }
+    res.json({ job: isStaff(req.session) ? toStaffJob(row) : toJob(row) });
   }));
 
   r.post('/jobs', requireAuth(), requireRole('recruiter', 'admin'), wrap(async (req, res) => {
@@ -255,7 +282,7 @@ export default function jobRoutes() {
         cols.push('published_at'); vals.push(new Date()); ph.push(`$${vals.length}`);
       }
       await c.query(`insert into jobs (${cols.join(',')}) values (${ph.join(',')})`, vals);
-      const { rows } = await c.query(`select * from jobs_with_counts where id=$1`, [id]);
+      const { rows } = await c.query(`select *, ${JOB_RECORD_COLS} from jobs_with_counts where id=$1`, [id]);
       return rows[0];
     });
 
@@ -266,7 +293,7 @@ export default function jobRoutes() {
     const alerts = job.status === 'open' && !job.paused && !job.archived;
     if (alerts) runJobAlertsInBackground(id);
 
-    res.status(201).json({ job: toJob(job), alerting: alerts });
+    res.status(201).json({ job: toStaffJob(job), alerting: alerts });
   }));
 
   /**
@@ -363,17 +390,17 @@ export default function jobRoutes() {
         `update jobs set ${sets.join(',')} where id=$${vals.length} returning id`, vals);
       // Zero rows means RLS refused it — another company's job.
       if (!upd.rowCount) {
-        const seen = await c.query(`select 1 from jobs where id=$1`, [id]);
-        throw seen.rowCount ? forbidden('You cannot edit a job belonging to another company.')
-                            : notFound('That job no longer exists.');
+        const seen = await c.query(`select app_row_exists('job',$1) as e`, [id]);
+        throw seen.rows[0].e ? forbidden('You cannot edit a job that is not yours.')
+                             : notFound('That job no longer exists.');
       }
-      const { rows } = await c.query(`select * from jobs_with_counts where id=$1`, [id]);
+      const { rows } = await c.query(`select *, ${JOB_RECORD_COLS} from jobs_with_counts where id=$1`, [id]);
       return rows[0];
     });
 
     // A walk-in closed before its date tells its applicants (0106).
     kickWalkinNotices();
-    res.json({ job: toJob(job) });
+    res.json({ job: toStaffJob(job) });
   }));
 
   /** Publish / unpublish — the candidate portal reads the database state. */
@@ -389,11 +416,11 @@ export default function jobRoutes() {
           where id = $2 returning id`,
         [publish ? 'open' : 'draft', req.params.id]);
       if (!upd.rowCount) {
-        const seen = await c.query(`select 1 from jobs where id=$1`, [req.params.id]);
-        throw seen.rowCount ? forbidden('You cannot publish a job belonging to another company.')
-                            : notFound('That job no longer exists.');
+        const seen = await c.query(`select app_row_exists('job',$1) as e`, [req.params.id]);
+        throw seen.rows[0].e ? forbidden('You cannot publish a job that is not yours.')
+                             : notFound('That job no longer exists.');
       }
-      const { rows } = await c.query(`select * from jobs_with_counts where id=$1`, [req.params.id]);
+      const { rows } = await c.query(`select *, ${JOB_RECORD_COLS} from jobs_with_counts where id=$1`, [req.params.id]);
       return rows[0];
     });
 
@@ -404,7 +431,7 @@ export default function jobRoutes() {
     if (publish) runJobAlertsInBackground(req.params.id);
     else kickWalkinNotices();
 
-    res.json({ job: toJob(job), alerting: publish });
+    res.json({ job: toStaffJob(job), alerting: publish });
   }));
 
   /**
@@ -451,6 +478,49 @@ export default function jobRoutes() {
       (c) => c.query(`select job_match_clicked($1)`, [req.params.id]))
       .catch((err) => { console.error('[alerts] click not recorded:', err.message); });
     res.json({ ok: true });
+  }));
+
+  /**
+   * GET /api/admin/job-source-audit - how every job is classified (0113):
+   * per dataset, source type and source name, open and in total, and the
+   * classification log (the first audit and any reclassification).
+   */
+  r.get('/admin/job-source-audit', requireAuth(), requireRole('admin'), wrap(async (req, res) => {
+    const out = await withUser(req.session, async (c) => ({
+      summary: (await c.query(`select * from job_source_summary()`)).rows.map((x) => ({
+        dataset: x.dataset, sourceType: x.source_type, sourceName: x.source_name,
+        open: Number(x.open_jobs), total: Number(x.all_jobs),
+      })),
+      log: (await c.query(
+        `select job_id, source_type, source_name, reason, audited_at from job_source_audit
+          order by audited_at desc, id desc limit 500`)).rows.map((x) => ({
+        jobId: x.job_id, sourceType: x.source_type, sourceName: x.source_name, reason: x.reason,
+        at: new Date(x.audited_at).toISOString(),
+      })),
+    }));
+    res.json(out);
+  }));
+
+  /**
+   * POST /api/jobs/:id/archive  { archived: true | false }
+   *
+   * Archive (out of every list a candidate sees, kept with its applications and history) or restore.
+   * The same rule as publishing: a recruiter their own jobs (row level security), an admin any. The 0125
+   * trigger records it in the audit log as the person who did it.
+   */
+  r.post('/jobs/:id/archive', requireAuth(), requireRole('recruiter', 'admin'), wrap(async (req, res) => {
+    const archived = req.body?.archived !== false;
+    const job = await withUser(req.session, async (c) => {
+      const upd = await c.query(`update jobs set archived = $1 where id = $2 returning id`, [archived, req.params.id]);
+      if (!upd.rowCount) {
+        const seen = await c.query(`select app_row_exists('job',$1) as e`, [req.params.id]);
+        throw seen.rows[0].e ? forbidden('You cannot archive a job that is not yours.')
+                             : notFound('That job no longer exists.');
+      }
+      const { rows } = await c.query(`select *, ${JOB_RECORD_COLS} from jobs_with_counts where id=$1`, [req.params.id]);
+      return rows[0];
+    });
+    res.json({ job: toStaffJob(job) });
   }));
 
   r.delete('/jobs/:id', requireAuth(), requireRole('admin'), wrap(async (req, res) => {

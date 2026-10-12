@@ -6,6 +6,7 @@ import { canSeePortalApplications, canImportPortalApplication } from '../../perm
 import Pager, { usePaged } from '../Pager.jsx';
 import Combo from '../Combo.jsx';
 import AtsDataTools from '../AtsDataTools.jsx';
+import { DupChip, AlreadyInAtsChip } from '../duplicates/DupChip.jsx';
 
 // ---------------------------------------------------------------------------
 // JOB PORTAL — the pre-ATS view of Candidates & Pipeline
@@ -59,7 +60,7 @@ function screeningAction(a) {
 
 const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const pct = (v) => (v == null || v === '' ? '—' : `${v}%`);
-const EMPTY_FILTERS = { search: '', department: '', hiring: '' };
+const EMPTY_FILTERS = { search: '', department: '', hiring: '', origin: '' };
 
 export default function JobPortalCandidates({ onSentToAts }) {
   const { user } = useAuth();
@@ -72,7 +73,10 @@ export default function JobPortalCandidates({ onSentToAts }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [tab, setTab] = useState('all');
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  // ?source=Naukri (the Naukri card's "New from Naukri" link) opens this list already narrowed to that board.
+  const [filters, setFilters] = useState(() => {
+    try { return { ...EMPTY_FILTERS, origin: new URLSearchParams(window.location.search).get('source') || '' }; } catch { return EMPTY_FILTERS; }
+  });
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
 
   const load = useCallback(() => {
@@ -126,6 +130,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
     () => [...new Set(applications.map((a) => a.department).filter(Boolean))].sort(),
     [applications],
   );
+  const origins = useMemo(() => [...new Set(applications.map((a) => a.origin).filter(Boolean))].sort(), [applications]);
   // Search / department / hiring first; the tab counts follow them.
   const narrowed = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
@@ -133,6 +138,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
       if (q && !`${a.candidate || ''} ${a.email || ''} ${a.phone || ''} ${a.reqCode || ''} ${a.job || ''}`.toLowerCase().includes(q)) return false;
       if (filters.department && a.department !== filters.department) return false;
       if (filters.hiring && a.hiring !== filters.hiring) return false;
+      if (filters.origin && a.origin !== filters.origin) return false;
       return true;
     });
   }, [applications, filters]);
@@ -184,6 +190,12 @@ export default function JobPortalCandidates({ onSentToAts }) {
           <option value="Client">Client jobs</option>
           <option value="Internal">TeamLink internal</option>
         </Combo>
+        {(origins.length > 1 || filters.origin) && (
+          <Combo value={filters.origin} onChange={(e) => setFilter({ origin: e.target.value })}>
+            <option value="">Where from: everywhere</option>
+            {[...new Set([...origins, ...(filters.origin ? [filters.origin] : [])])].map((o) => <option key={o} value={o}>{o === 'Naukri' ? 'New from Naukri' : o}</option>)}
+          </Combo>
+        )}
         <button type="button" className="btn btn-sm" disabled={!filtersOn} onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</button>
         <span style={{ marginLeft: 'auto' }}>
           <AtsDataTools
@@ -207,10 +219,12 @@ export default function JobPortalCandidates({ onSentToAts }) {
               <tr key={a.id}>
                 <td className="row-link" onClick={() => navigate(`/candidates/${a.candidateId}`)}>
                   <span className="link-btn">{a.candidate}</span>
+                  {/* dup_: red chip when the person looks like someone already in the ATS; blue when the portal applicant WAS already in the ATS */}
+                  <span onClick={(e) => e.stopPropagation()}> <DupChip dup={a.dup} candidateId={a.candidateId} onChanged={() => load && load()} /> <AlreadyInAtsChip info={a.alreadyInAts} /></span>
                   {(a.email || a.phone) && <div className="small-muted">{a.email || a.phone}</div>}
                   <div className="small-muted" style={{ fontSize: 11 }}>{`Applied ${fmt(a.appliedAt)}`}</div>
                 </td>
-                <td><span className="status new">{a.source}</span></td>
+                <td><span className="status new" title={a.sourceRaw && a.sourceRaw !== a.sourceKey ? `Recorded as: ${a.sourceRaw}` : undefined}>{a.sourceKey || a.source}</span></td>
                 <td className="cell-muted">
                   {a.reqCode ? `${a.reqCode} · ` : ''}{a.job}
                   <div className="small-muted">{[a.hiring === 'Internal' ? 'TeamLink (internal)' : null, a.department].filter(Boolean).join(' · ')}</div>

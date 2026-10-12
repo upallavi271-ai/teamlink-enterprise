@@ -165,22 +165,31 @@ module.exports = function mountExtra(router, { loadForView, readUpload, dropFile
       const kept = await prisma.auditLog.findFirst({ where: { entity: 'Client', entityId: client.id, action: KEPT_ACTION, createdAt: { gte: new Date(new Date(client.agreementSignedAt || 0).getTime() - 1000) } } });
       if (!kept && client.agreementSignedAt) await keepSignedPdf(client);
       // eslint-disable-next-line global-require
-      const { buildAgreementDocument, consultantParty } = require('../utils/agreement');
+      const { buildAgreementDocument, consultantParty, withAgreementId } = require('../utils/agreement');
       const files = ['agreementCompanyStampFile', 'agreementCompanySignFile', 'agreementClientStampFile', 'agreementClientSignFile'].map((k) => client[k]).filter(Boolean);
+      // A NEW VERSION is made today: its "made on" date is today (user, 2026-10-10),
+      // not the date of the version it replaces. The old signed copy keeps its own.
+      // eslint-disable-next-line global-require
+      const vendor = require('../utils/vendorAgreement');
+      const madeOn = vendor.todayYmd();
+      const endNow = String(client.agreementEnd || '');
       const updated = await prisma.client.update({
         where: { id: client.id },
-        data: {
+        data: await withAgreementId(client, {
           ...signing.RESET_EXECUTION,
           agreementStatus: 'DRAFT',
           agreementActivatedAt: null,
           agreementSource: 'Generated',
-          agreementDocument: buildAgreementDocument(client, await consultantParty()),
-        },
+          agreementStart: madeOn,
+          // An end date before the new start would be nonsense: the new version renews again.
+          ...(endNow && endNow < madeOn ? { agreementEnd: null } : {}),
+          agreementDocument: buildAgreementDocument({ ...client, agreementStart: madeOn }, await consultantParty()),
+        }),
       });
       files.forEach(dropFile);
       await logAudit({
         userId: req.user.id, action: 'Agreement new version started — the signed copy is kept in history', entity: 'Client', entityId: client.id,
-        fromValue: st, toValue: 'DRAFT', reason,
+        fromValue: st, toValue: 'DRAFT', reason: `${reason} · made on ${vendor.ddmmyyyy(madeOn)} (was ${client.agreementStart ? vendor.ddmmyyyy(client.agreementStart) : 'not set'})`.slice(0, 500),
       });
       return res.json({ ...signing.executedSummary(updated), newVersion: true });
     } catch (err) { return next(err); }

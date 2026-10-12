@@ -80,12 +80,48 @@ router.get('/', async (req, res) => {
   if (req.query.requirementId) where.requirementId = req.query.requirementId;
   if (req.query.candidateId) where.candidateId = req.query.candidateId;
   if (req.query.stage && !where.stage) where.stage = req.query.stage;
+  // ?stages=A,B — several stages at once (the client dashboard's "awaiting
+  // your review"). Only ever narrows: a CLIENT login keeps the shared-stage gate.
+  if (req.query.stages) {
+    const want = String(req.query.stages).split(',').map((x) => x.trim()).filter(Boolean);
+    if (want.length) {
+      if (typeof where.stage === 'string') where.stage = want.includes(where.stage) ? where.stage : '__none__';
+      else where.stage = { in: where.stage && where.stage.in ? where.stage.in.filter((x) => want.includes(x)) : want };
+    }
+  }
   // ?recruiter= / ?tl= / ?bde= ("id:<userId>" or "name:<name>") and
   // ?positionCode= — the work attributed to that person or seat
   // (utils/workers.js), former people included.
   if (hasPersonQuery(req.query)) {
     const att = await attributedApplications(req.user, req.query, { scope: applicationWhere(req.user) });
     where.id = { in: [...att.ids] };
+  }
+  // SERVER PAGING. The whole pipeline is 130-190 MB and over a minute, so a
+  // call that does not name ONE job or ONE candidate (both naturally small) is
+  // paged: { rows, total, page, pageSize, pages }, newest change first, page
+  // size 50 (max 200), with only what screens read — the person's id and name
+  // and the job's id, title, code and client.
+  if (!req.query.requirementId && !req.query.candidateId) {
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize || req.query.limit) || 50));
+    const total = await prisma.application.count({ where });
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(pages, Math.max(1, Number(req.query.page) || 1));
+    const rows = await prisma.application.findMany({
+      where,
+      include: {
+        candidate: { select: { id: true, name: true } },
+        requirement: {
+          select: {
+            id: true, title: true, reqCode: true, clientId: true, internal: true, department: true, status: true,
+            client: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+    return res.json({ rows, total, page, pageSize, pages });
   }
   const applications = await prisma.application.findMany({
     where,
@@ -427,9 +463,11 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     if (!Number.isFinite(n) || n <= 0 || n > 50) return { status: 400, body: { error: 'Commission must be a number between 0 and 50 %.' } };
     feeOverride = feeOverrideFor(user, n);
   }
-  if (stage === 'JOINED' && body.offeredCtc !== undefined && body.offeredCtc !== null && body.offeredCtc !== '') {
-    const n = Number(body.offeredCtc);
-    if (!Number.isFinite(n) || n <= 0 || n > 100000000) return { status: 400, body: { error: 'Final CTC must be the yearly amount in rupees, e.g. 850000.' } };
+  // Any stage that carries a CTC is checked (a zero on a non-Joined move is "none", as before; "abc" or -5 is refused).
+  if ((stage === 'JOINED' || Number(body.offeredCtc) !== 0) && body.offeredCtc !== undefined && body.offeredCtc !== null && body.offeredCtc !== '') {
+    // CTC sanity (utils/ctcCheck.js): a nonsense figure is refused, an odd one needs body.confirmCtc.
+    const ctcProblem = await require('../utils/ctcCheck').check(body.offeredCtc, body.confirmCtc); // eslint-disable-line global-require
+    if (ctcProblem) return { status: ctcProblem.status, body: ctcProblem.body };
   }
 
   let refusal;
@@ -464,6 +502,41 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     // eslint-disable-next-line no-unused-vars
     const { candidate: _c, requirement: _r, ...plain } = existing;
     return { status: 200, body: { ...plain, unchanged: true } };
+  }
+
+  // DUPLICATES ARE CHECKED AT THE FIRST STEP (user, 2026-10-10: "Duplicate profiles anni first stage lone verify avvali").
+  // A person with an open CERTAIN / LIKELY duplicate flag cannot leave New / Recruiter review for a later step until the
+  // flag is resolved (Merge · Not a duplicate · Same person, different job · Reject). Hold and Reject stay possible.
+  // Every move path ends here (board, popup, bulk, portal, API, AI assistant) — so this is the one place it is enforced.
+  // Only flags that exist count: with no flags nothing is held. utils/candidateDupes.js.
+  const dupHold = await require('../utils/candidateDupes').gateCheck(existing, stage); // eslint-disable-line global-require
+  if (dupHold) return dupHold;
+
+  // SALARY IS NEEDED BEFORE A PERSON GOES TO THE CLIENT (user note 2026-10-10: current + expected salary "must & should").
+  // The first step into TL check and the step that shares with the client both need both salaries on file, on a CLIENT job.
+  // Old records with no salary are not blocked from being EDITED; they are asked to add it (inline, in the step popup) here.
+  // The BDE team is never asked at the share step (they cannot see or type a candidate's salary); Admins stay exempt.
+  // utils/salaryFit.js missingOf(): a "Fresher" current salary counts as given.
+  {
+    const toTl = stage === 'TL_REVIEW' && ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED', 'RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(existing.stage);
+    const toShare = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage) && !['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(existing.stage);
+    if ((toTl || toShare) && existing.requirement && !existing.requirement.internal && !stageGlobal(user)) {
+      // eslint-disable-next-line global-require
+      const privacy = require('../utils/clientRedact').privacyFlagsFor(user);
+      const SAL = require('../utils/salaryFit'); // eslint-disable-line global-require
+      const missing = SAL.missingOf(existing.candidate);
+      if (missing && !(toShare && privacy && privacy.bde)) {
+        const who = existing.candidate ? existing.candidate.name : 'This person';
+        const what = missing === 'both' ? 'current and expected salary' : `${missing} salary`;
+        return {
+          status: 409,
+          body: {
+            error: `Add ${what} for ${who} first (0 if fresher). Then send to the client.`,
+            code: 'SALARY_NEEDED', missing, candidateId: existing.candidateId, applicationId: existing.id,
+          },
+        };
+      }
+    }
   }
 
   // OFFER / OFFER ACCEPTED / JOINED / HIRED HAVE THEIR OWN FLOWS (e2e gap 2).
@@ -760,6 +833,8 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
       toStage: stage,
       user: user,
       comment,
+      stageEventId: stageEvent.id,
+      silent: opts.silent === true, // imports / historical loads: no message at all
     });
   } catch (err) {
     // A communication record must never roll back a stage change that already
@@ -855,7 +930,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
   // prototype's pushNotification() on every stage transition. Stages the
   // client acts on also notify that client's users.
   // The TL is in the audience too: a move INTO TL Review is the TL's work.
-  const audience = stageMoveAudience(existing.requirement);
+  const audience = await require('../utils/stageEvents').withClientBdesForMove(stageMoveAudience(existing.requirement), existing.requirement, existing.stage, stage); // eslint-disable-line global-require
   if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)) {
     const clientUsers = await prisma.user.findMany({
       where: { clientId: existing.requirement.clientId, role: 'CLIENT' },

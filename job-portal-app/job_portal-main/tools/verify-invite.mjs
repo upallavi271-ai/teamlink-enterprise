@@ -210,22 +210,28 @@ console.log('\nthe first look at the page');
 await check('the resume is the FIRST thing the registration form asks for', async () => {
   const p = (await open()).page;
   await p.evaluate(() => { location.hash = '#/register/candidate'; });
+  await p.evaluate(() => { if (window.TLResumeFirst) window.TLResumeFirst.manual(); }); /* 0117: the seven-step form is the manual path */
   await p.waitForTimeout(1300);
 
-  const sections = await p.$$eval('#registerForm .panel-head h2',
-    (ns) => ns.map((n) => n.textContent.trim()));
-  must(/Resume/.test(sections[0]),
-    `the form opens with "${sections[0]}" - it asks for typing before offering to read the file`);
+  /* 0109: seven steps now (teamlink-registration.js). The resume upload
+     is still the first thing on the first step; the panels moved onto
+     steps, and the steps carry the section numbers. */
+  await p.waitForFunction(() => window.TLRegistration && document.getElementById('tlrStep1'), null, { timeout: 15000 });
+  const first = await p.$eval('#tlrStep1 .panel', (n) => n.querySelector('.panel-head').textContent.trim());
+  must(/resume/i.test(first),
+    `step 1 opens with "${first}" - it asks for typing before offering to read the file`);
 
   // The numbers are part of the page's own design and must still run 1..n.
   const nums = await p.$$eval('#registerForm .reg-section-num',
     (ns) => ns.map((n) => n.textContent.trim()));
-  must(nums.join(',') === nums.map((_, i) => String(i + 1)).join(','),
+  must(nums.length >= 7 && nums.join(',') === nums.map((_, i) => String(i + 1)).join(','),
     `the section numbers read ${nums.join(', ')}`);
 
-  // Every original section is still there - moved, not dropped.
-  for (const want of ['Personal Information', 'Professional Information',
-                      'Preferences', 'Consent', 'Resume']) {
+  // Every original section is still there - moved onto a step, not dropped.
+  const sections = await p.$$eval('#registerForm .panel-head h2, #registerForm .panel-head h3',
+    (ns) => ns.map((n) => n.textContent.trim()));
+  for (const want of ['Personal Information', 'Experience',
+                      'Job Preferences', 'Consent', 'Resume']) {
     must(sections.some((x) => x.indexOf(want) >= 0), `${want} is gone`);
   }
 });
@@ -256,6 +262,7 @@ await check('no header offers Home twice', async () => {
   must(homes.length <= 1, `the public header shows Home ${homes.length} times`);
 
   await p.evaluate(() => { location.hash = '#/register/candidate'; });
+  await p.evaluate(() => { if (window.TLResumeFirst) window.TLResumeFirst.manual(); }); /* 0117: the seven-step form is the manual path */
   await p.waitForTimeout(1200);
   homes = await visibleHomes();
   must(homes.length <= 1, `the register header shows Home ${homes.length} times`);

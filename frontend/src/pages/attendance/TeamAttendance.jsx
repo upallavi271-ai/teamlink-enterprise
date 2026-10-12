@@ -3,13 +3,15 @@ import api from '../../api';
 import { Panel, PanelHead, StatRow } from '../../components/proto.jsx';
 import Modal from '../../components/Modal.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
-import { ScrollTable } from './DayReport.jsx';
+import { ScrollTable, PersonDayTiles } from './DayReport.jsx';
 import MoreFilters from '../../components/ui/MoreFilters.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import '../../components/ui/ListFilters.css';
+import MonthCalendar from './MonthCalendar.jsx';
 import './attendance-self.css';
+import './attendance-calendar.css';
 
 // ---------------------------------------------------------------------------
 // HRMS-24 §11 — the MONTHLY SUMMARY (with the old "Reports (Monthly)" merged
@@ -80,10 +82,30 @@ function useRoles() {
 }
 
 const HR_STATUS_CHOICES = ['Active', 'Inactive', 'Notice Period', 'Suspended', 'Exit'];
+// THE COUNTS (user, 2026-10-10: same numbers as the Biometric list): one tile definition for every attendance screen.
+// Present INCLUDES late / early logout / missing check-in / missing check-out (notes inside it). Present + Absent + Half day +
+// On leave + Week off / Holiday = Days on the rolls. Clicking a count opens the Biometric list with exactly those days.
+const TILE_COLS = [
+  { key: 'days', label: 'Days on the rolls', title: 'Present + Absent + Half day + On leave + Week off / Holiday (+ No device data / Not checked in yet / coming days)', plain: true },
+  { key: 'present', label: 'Present', title: 'Came to work. Includes the late, early logout and missing check-in / check-out days counted in the columns after Working days' },
+  { key: 'absent', label: 'Absent', title: 'No check-in, and no leave or request' },
+  { key: 'halfDay', label: 'Half day', title: 'Worked one half, or has a half-day leave' },
+  { key: 'onLeave', label: 'On leave', title: 'Leave (approved or waiting) or told the manager' },
+  { key: 'offDay', label: 'Week off / Holiday', title: 'Sunday and company holidays' },
+  { key: 'noRecord', label: 'No device data', title: 'Days the device has not sent yet (not counted as Absent)' },
+  { key: 'late', label: 'of Present: Late', title: 'Inside Present: came after the Late-after time (approved ones stay Present and are not payroll lates)' },
+  { key: 'earlyLogout', label: 'of Present: Early logout', title: 'Inside Present: left before the end of the working day' },
+  { key: 'missingCheckIn', label: 'of Present: Missing check-in', title: 'Inside Present: only a check-out was recorded' },
+  { key: 'missingCheckOut', label: 'of Present: Missing check-out', title: 'Inside Present: came in, never pressed check-out' },
+  { key: 'workingDays', label: 'Working days', title: 'Days on the rolls minus Week off / Holiday and coming days', plain: true },
+  { key: 'punchDays', label: 'Days with a punch', title: 'Plain fact, not a status: days with at least one punch (device, web, mobile or import)' },
+];
+// What payroll reads (one raw status per column) - kept, but under "Payroll detail" so nobody compares it with the counts above.
 const NUM_COLS = [
   { key: 'workingDays', label: 'Working Days', title: 'Days that count: every day except weekly offs and holidays (with nothing worked), before joining or after leaving' },
   { key: 'present', label: 'Present' },
-  { key: 'late', label: 'Late', title: 'Present, but checked in after the grace time' },
+  { key: 'late', label: 'Late Coming', title: 'Present, but checked in after the Late time set in the Attendance policy' },
+  { key: 'missingCheckIn', label: 'Missing Check-In', title: 'Only a check-out was recorded - no check-in' },
   { key: 'missingCheckOut', label: 'Missing Check-Out', title: 'Came in, never pressed check-out' },
   { key: 'earlyLogout', label: 'Early Logout', title: 'Left between 5:00 PM and 6:00 PM (a full day, flagged)' },
   { key: 'halfDay', label: 'Half Day', title: 'Left before 5:00 PM (1st half) or came after 1:30 PM (2nd half), no leave for the other half' },
@@ -97,7 +119,24 @@ const NUM_COLS = [
   { key: 'paidDays', label: 'Paid Days', title: 'Present + leave (half days at ½). Leave still waiting is not paid until it is approved.' },
 ];
 
-export function MonthlySummaryTab() {
+// The Monthly Summary tab: the CALENDAR (tap a day) and the per-person TABLE.
+export function MonthlySummaryTab({ preset = null, goList = null }) {
+  const [view, setView] = useState(() => (preset ? 'table' : 'calendar'));
+  useEffect(() => { if (preset) setView('table'); }, [preset && preset.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div>
+      <div style={{ padding: '12px 18px 0' }}>
+        <div className="att-cal-switch" role="group" aria-label="How to look at the month">
+          <button type="button" className={`btn btn-sm${view === 'calendar' ? ' btn-primary' : ''}`} onClick={() => setView('calendar')}>Calendar</button>
+          <button type="button" className={`btn btn-sm${view === 'table' ? ' btn-primary' : ''}`} onClick={() => setView('table')}>Table (one row per person)</button>
+        </div>
+      </div>
+      {view === 'calendar' ? <div style={{ padding: '0 18px' }}><MonthCalendar /></div> : <MonthlyTable preset={preset} goList={goList} />}
+    </div>
+  );
+}
+
+function MonthlyTable({ preset = null, goList = null }) {
   const departments = useDepartments();
   const roles = useRoles();
   const thisMonth = localToday().slice(0, 7);
@@ -105,7 +144,10 @@ export function MonthlySummaryTab() {
   const [month, setMonth] = useState(thisMonth);
   const [period, setPeriod] = useState({ from: `${thisMonth}-01`, to: localToday() });
   const [f, setF] = useState({ code: '', name: '', department: '', role: '', hrStatus: '' });
-  const [applied, setApplied] = useState({ month: thisMonth });
+  const [applied, setApplied] = useState(() => (preset ? { from: preset.from, to: preset.to } : { month: thisMonth }));
+  const [payroll, setPayroll] = useState(false); // show the payroll detail columns
+  // opened from the Biometric list for the same dates
+  useEffect(() => { if (preset) { setMode('period'); setPeriod({ from: preset.from, to: preset.to }); setApplied({ from: preset.from, to: preset.to }); } }, [preset && preset.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -219,6 +261,12 @@ export function MonthlySummaryTab() {
             ))}
           </div>
         )}
+        <div style={{ marginBottom: 8 }}>
+          <label className="small-muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', margin: 0 }}>
+            <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={payroll} onChange={(e) => setPayroll(e.target.checked)} />
+            Also show the payroll detail columns (one raw status per column: what payroll reads, not the same as the counts above)
+          </label>
+        </div>
         <div className="small-muted" style={{ marginBottom: 8, fontSize: 12 }}>
           Counted day by day from actual records — biometric, web and mobile punches, the imported CSV days, marked days, approved leave,
           holidays and weekly offs. Each person counts once per day. A past working day with no check-in and no leave or request is <b>Absent</b>;
@@ -232,15 +280,10 @@ export function MonthlySummaryTab() {
           <div style={{ margin: '4px 0 12px' }}>
             <StatRow cells={[
               { value: rows.length, label: 'Employees in this summary' },
-              { value: t.workingDays, label: 'Working days (person-days)' },
-              { value: t.present + t.late + t.missingCheckOut, label: 'Days attended (Present + Late + Missing Check-Out)' },
-              { value: t.halfDay, label: 'Half days' },
-              { value: t.absent, label: 'Absent days' },
-              { value: t.onLeave + (t.leaveUnderReview || 0) + (t.informed || 0), label: 'Leave days (approved + pending + informed)' },
-              ...(t.noData ? [{ value: t.noData, label: 'No device data (days)' }] : []),
               { value: `${t.attendancePct}%`, label: 'Attendance %' },
               ...(isMonth ? [{ value: t.lateCut, label: 'Late half-day cuts (payroll)' }] : []),
             ]} />
+            <PersonDayTiles tiles={t.tiles} equation={t.equation} from={data.from} to={data.to} active="" onPick={goList ? (key) => goList(data.from, data.to, key, '') : null} />
           </div>
         )}
         {imp && (
@@ -259,13 +302,15 @@ export function MonthlySummaryTab() {
             {imp && (
               <tr>
                 <th colSpan={5} />
-                <th colSpan={NUM_COLS.length + 1 + (isMonth ? 1 : 0)} className="att-group-head">TeamLink (counted day by day)</th>
+                <th colSpan={TILE_COLS.length + 2 + (isMonth ? 1 : 0) + (payroll ? NUM_COLS.length : 0)} className="att-group-head">TeamLink (counted day by day)</th>
                 <th colSpan={6} className="att-group-head">Old HRMS (imported summary)</th>
               </tr>
             )}
             <tr>
               <th>Code</th><th>Employee</th><th>Department</th><th>Status</th><th>Left on</th>
-              {NUM_COLS.map((c) => <th key={c.key} title={c.title}>{c.label}</th>)}
+              {TILE_COLS.map((c) => <th key={c.key} title={c.title}>{c.label}</th>)}
+              <th title="Each row adds up like this">Adds up to</th>
+              {payroll && NUM_COLS.map((c) => <th key={`p-${c.key}`} title={c.title} className="att-payroll-col">Payroll: {c.label}</th>)}
               <th>Attendance %</th>
               {isMonth && <th title="Late days beyond the free allowance — what payroll deducts">Late cut</th>}
               {imp && <><th>Present</th><th>Half Day</th><th>Week-offs</th><th>Holidays</th><th>Leaves</th><th>Payable</th></>}
@@ -279,7 +324,15 @@ export function MonthlySummaryTab() {
                 <td className="cell-muted">{r.department || '—'}</td>
                 <td className="cell-muted">{r.hrStatus}</td>
                 <td className="cell-muted" title="Last recorded attendance day of someone who has left">{r.lastDay || '—'}</td>
-                {NUM_COLS.map((c) => <td key={c.key} className="att-num">{r[c.key]}</td>)}
+                {TILE_COLS.map((c) => (
+                  <td key={c.key} className="att-num">
+                    {goList && (!c.plain || c.key === 'punchDays')
+                      ? <button type="button" className="link-btn" onClick={() => goList(data.from, data.to, `pd:${c.key === 'punchDays' ? 'punched' : c.key}`, r.employeeCode)} title="Open these days in the Biometric list">{r.tiles[c.key]}</button>
+                      : r.tiles[c.key]}
+                  </td>
+                ))}
+                <td className="small-muted att-eqcell">{r.equation}</td>
+                {payroll && NUM_COLS.map((c) => <td key={`p-${c.key}`} className="att-num att-payroll-col">{r[c.key]}</td>)}
                 <td className="att-num"><b>{r.attendancePct}%</b></td>
                 {isMonth && <td className="att-num">{r.lateCut}</td>}
                 {imp && (r.imported
@@ -299,7 +352,9 @@ export function MonthlySummaryTab() {
             <tfoot>
               <tr>
                 <td colSpan={5}>Total — {rows.length} employee(s)</td>
-                {NUM_COLS.map((c) => <td key={c.key} className="att-num">{t[c.key]}</td>)}
+                {TILE_COLS.map((c) => <td key={c.key} className="att-num">{t.tiles[c.key]}</td>)}
+                <td className="small-muted att-eqcell">{t.equation}</td>
+                {payroll && NUM_COLS.map((c) => <td key={`p-${c.key}`} className="att-num att-payroll-col">{t[c.key]}</td>)}
                 <td className="att-num">{t.attendancePct}%</td>
                 {isMonth && <td className="att-num">{t.lateCut}</td>}
                 {imp && <><td className="att-num">{imp.present}</td><td className="att-num">{imp.halfDay}</td><td className="att-num">{imp.weekOffs}</td>

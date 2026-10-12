@@ -11,15 +11,16 @@ import Documents from './Documents.jsx';
 import ShiftRoster from './ShiftRoster.jsx';
 import Timesheet from './Timesheet.jsx';
 import Expenses from './Expenses.jsx';
+import './employee-services-kind.css';
 
 // The prototype's five Employee Services tabs, each with its own page head
 // (servicesView, line 4466). The remaining self-service areas main carries —
 // documents, shift roster, timesheet and expenses — follow them.
 const PROTO_TABS = [
   ['helpdesk', 'Help Desk', 'Helpdesk', 'Track and resolve employee IT/HR/Admin/Grievance/Facilities/Payroll tickets.'],
-  ['assets', 'Assets', 'Asset Management', 'Company asset inventory, allocation, transfers, maintenance and audit.'],
-  // Counted things (notepads, pens …): pages/hrms/Stationery.jsx.
-  ['stationery', 'Stationery', 'Stationery', 'Notepads, pens and other office things — how many each person got.'],
+  // ONE tab for both (user, 2026-10-09): Assets, and Stationery (counted things
+  // like notepads and pens - pages/hrms/Stationery.jsx) behind a switch inside it.
+  ['assets', 'Assets', 'Assets & Stationery', 'Things the company owns (laptops, SIMs, headsets) and things that get used up (notepads, pens): who has what, repairs, stock.'],
   ['announcements', 'Announcements', 'Announcements', 'Company-wide notice board.'],
   ['survey', 'Engagement Survey', 'Employee Engagement Surveys', 'Create pulse surveys and review aggregated results.'],
   ['resignation', 'Resignation', 'Resignation', 'Notice period, last working day, exit checklist and relieving.'],
@@ -39,13 +40,17 @@ const EXTRA_TABS = [
 export default function EmployeeServices() {
   const { user } = useAuth();
   const [tab, setTab] = useState('helpdesk');
+  // Inside the Assets tab: Assets | Stationery.
+  const [kind, setKind] = useState('assets');
   // Which feature-tile screen is open, per tab — the prototype's svcView.
   const [view, setView] = useState(null);
   // ?tab=announcements — a notification links straight to a tab.
   const [params] = useSearchParams();
   const urlTab = params.get('tab');
   useEffect(() => {
-    if (urlTab && [...PROTO_TABS, ...EXTRA_TABS].some(([k]) => k === urlTab)) { setTab(urlTab); setView(null); }
+    // The old ?tab=stationery address lands on Assets with the Stationery switch on.
+    if (urlTab === 'stationery') { setTab('assets'); setKind('stationery'); setView(null); return; }
+    if (urlTab && [...PROTO_TABS, ...EXTRA_TABS].some(([k]) => k === urlTab)) { setTab(urlTab); setView(null); if (urlTab === 'assets') setKind('assets'); }
   }, [urlTab, params]);
 
   // §17 — SHIFT ROSTER IS NOT SHOWN TO A TL. Rostering is scheduling other
@@ -58,7 +63,8 @@ export default function EmployeeServices() {
     [isTl],
   );
 
-  function selectTab(k) { setTab(k); setView(null); }
+  function selectTab(k) { setTab(k); setView(null); if (k === 'assets') setKind('assets'); }
+  function selectKind(k) { setKind(k); setView(null); }
   const open = (key) => setView(key);
   const back = () => setView(null);
 
@@ -66,12 +72,14 @@ export default function EmployeeServices() {
   const extra = extraTabs.find(([k]) => k === tab);
   // A TL who arrives on the hidden tab by URL gets the first tab, not a crash.
   const chosen = proto || extra || PROTO_TABS[0];
-  const [, , title, sub] = chosen;
+  const [, , title0, sub0] = chosen;
+  const stationeryOn = tab === 'assets' && kind === 'stationery';
+  const title = stationeryOn ? 'Stationery' : title0;
+  const sub = stationeryOn ? 'Notepads, pens and other office things — how many each person got.' : sub0;
 
   let body = null;
   if (tab === 'helpdesk') body = <Helpdesk view={view} onOpen={open} onBack={back} />;
-  else if (tab === 'assets') body = <Assets view={view} onOpen={open} onBack={back} />;
-  else if (tab === 'stationery') body = <Stationery />;
+  else if (tab === 'assets') body = kind === 'stationery' ? <Stationery /> : <Assets view={view} onOpen={open} onBack={back} />;
   else if (tab === 'announcements') body = <Announcements view={view} onOpen={open} onBack={back} />;
   else if (tab === 'survey') body = <Surveys view={view} onOpen={open} onBack={back} />;
   else if (tab === 'resignation') body = <Resignation />;
@@ -85,6 +93,17 @@ export default function EmployeeServices() {
           <button key={k} className={'tab-btn' + (tab === k ? ' active' : '')} onClick={() => selectTab(k)}>{label}</button>
         ))}
       </div>
+      {/* Assets and Stationery are two kinds of "things" in ONE place: pick which. */}
+      {tab === 'assets' && (
+        <div className="es-kind" role="group" aria-label="Which kind of thing">
+          <button type="button" className={`es-kind-btn${kind === 'assets' ? ' on' : ''}`} onClick={() => selectKind('assets')}>
+            <b>Assets</b><span>Things the company owns and tracks one by one: laptops, SIM cards, mouse, headsets</span>
+          </button>
+          <button type="button" className={`es-kind-btn${kind === 'stationery' ? ' on' : ''}`} onClick={() => selectKind('stationery')}>
+            <b>Stationery</b><span>Things that get used up and are counted: notepads, pens</span>
+          </button>
+        </div>
+      )}
       <div className="tab-content">{body}</div>
     </div>
   );

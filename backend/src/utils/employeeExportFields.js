@@ -36,6 +36,8 @@
 // ---------------------------------------------------------------------------
 const { Prisma } = require('@prisma/client');
 const { DOC_TYPES, SENSITIVE_DOC_TYPES } = require('./employeeDocTypes');
+// Manage Fields: a PAUSED field is not ticked by default in a new export (it can still be picked).
+const fieldDefs = require('./employeeFieldDefs');
 
 // WHO MAY EXPORT WHICH SENSITIVITY — the single definition.
 const SENSITIVITY_ACCESS = {
@@ -299,8 +301,10 @@ function documentFilesAccess(user) {
 
 // What the panel draws: every field, with whether THIS caller may pick it.
 function fieldsFor(user) {
+  const paused = fieldDefs.pausedCols();
   return registry().map((f) => {
     const allowed = mayExportSensitivity(user, f.sensitivity);
+    const isPaused = paused.has(f.key) || (f.key === 'aadhaarLast4' && paused.has('aadhaarNumber'));
     const rule = SENSITIVITY_ACCESS[f.sensitivity];
     return {
       key: f.key,
@@ -308,7 +312,8 @@ function fieldsFor(user) {
       sensitivity: f.sensitivity,
       group: SENSITIVITY_LABEL[f.sensitivity] || f.sensitivity,
       sensitive: rule !== 'any',
-      default: !!f.default && allowed,
+      default: !!f.default && allowed && !isPaused,
+      paused: isPaused,
       allowed,
       lockedReason: allowed ? null : `Only ${rule.map((r) => ROLE_LABEL[r] || r).join(', ')} may export this field.`,
     };

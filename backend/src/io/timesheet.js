@@ -27,6 +27,7 @@ const io = require('../utils/moduleIo');
 const { scopeOf } = require('../utils/scope');
 
 const STATUSES = ['Not Started', 'In Progress', 'On Hold', 'Completed', 'Cancelled'];
+const PRIORITIES = ['High', 'Medium', 'Low'];
 const OPEN = ['Not Started', 'In Progress', 'On Hold'];
 
 const columns = [
@@ -37,6 +38,7 @@ const columns = [
   { key: 'subTaskName', label: 'Sub Task', example: '' },
   { key: 'description', label: 'Description', example: '' },
   { key: 'status', label: 'Status', list: 'Status', example: 'Not Started', note: 'Blank = Not Started for a new task.' },
+  { key: 'priority', label: 'Priority', list: 'Priority', example: 'Medium', note: 'High, Medium or Low. Blank = Medium for a new task.' },
   { key: 'startDate', label: 'Start Date', type: 'date', required: true, example: '2026-10-01' },
   { key: 'endDate', label: 'End Date', type: 'date', example: '2026-10-03' },
   { key: 'assignedBy', label: 'Assigned By', readOnly: true, example: '' },
@@ -71,7 +73,7 @@ module.exports = {
 
   async lists() {
     const depts = await prisma.department.findMany({ select: { name: true }, orderBy: { name: 'asc' } });
-    return { Department: depts.map((d) => d.name), Status: STATUSES };
+    return { Department: depts.map((d) => d.name), Status: STATUSES, Priority: PRIORITIES };
   },
 
   async exportRows(ctx, { employeeIds, filters }) {
@@ -100,6 +102,7 @@ module.exports = {
         subTaskName: t.subTaskName || '',
         description: t.description || '',
         status: t.status,
+        priority: t.priority || 'Medium',
         startDate: t.startDate || '',
         endDate: t.endDate || '',
         assignedBy: t.assignedByName || '',
@@ -129,6 +132,8 @@ module.exports = {
       if (start.value && end.value && end.value < start.value) errors.push({ field: 'End Date', message: 'End date cannot be before start date.' });
       const status = io.str(r.status) ? io.pick(STATUSES, r.status) : null;
       if (io.str(r.status) && !status) errors.push({ field: 'Status', message: `"${r.status}" is not one of ${STATUSES.join(', ')}.` });
+      const priority = io.str(r.priority) ? io.pick(PRIORITIES, r.priority) : null;
+      if (io.str(r.priority) && !priority) errors.push({ field: 'Priority', message: `"${r.priority}" is not one of ${PRIORITIES.join(', ')}.` });
       const deptAsked = io.str(r.department);
       const dept = deptAsked ? io.pick(depts, deptAsked) : null;
       if (deptAsked && !dept) errors.push({ field: 'Department', message: `"${deptAsked}" is not a department.` });
@@ -143,7 +148,7 @@ module.exports = {
       if (errors.length) return { line: r.line, label, errors, action: 'error' };
       const match = existing.find((t) => t.assigneeId === e.userId && io.str(t.name).toLowerCase() === name.toLowerCase() && (t.startDate || '') === start.value);
       const want = {
-        department: dept, subTaskName: io.str(r.subTaskName) || null, description: io.str(r.description) || null, status, endDate: end.value || null,
+        department: dept, subTaskName: io.str(r.subTaskName) || null, description: io.str(r.description) || null, status, priority, endDate: end.value || null,
       };
       if (!match) {
         const department = dept || e.department;
@@ -151,7 +156,7 @@ module.exports = {
         return {
           line: r.line, label, errors: [], action: 'create',
           changes: [{ field: 'Task', from: '', to: name }, { field: 'Status', from: '', to: status || 'Not Started' }],
-          data: { employee: e, name, startDate: start.value, ...want, department, status: status || 'Not Started' },
+          data: { employee: e, name, startDate: start.value, ...want, department, status: status || 'Not Started', priority: priority || 'Medium' },
         };
       }
       const changes = [];
@@ -160,6 +165,7 @@ module.exports = {
       cmp('Sub Task', match.subTaskName, want.subTaskName);
       cmp('Description', match.description, want.description);
       cmp('Status', match.status, want.status);
+      cmp('Priority', match.priority, want.priority);
       cmp('End Date', match.endDate, want.endDate);
       if (want.endDate && !want.status && match.startDate && want.endDate < match.startDate) {
         return { line: r.line, label, errors: [{ field: 'End Date', message: 'End date cannot be before start date.' }], action: 'error' };
@@ -187,7 +193,7 @@ module.exports = {
             const t = await tx.task.create({
               data: {
                 name: x.name, department: x.department, description: x.description, subTaskName: x.subTaskName,
-                status: x.status, startDate: x.startDate, endDate: x.endDate,
+                status: x.status, priority: x.priority || 'Medium', startDate: x.startDate, endDate: x.endDate,
                 assigneeId: x.employee.userId, assignedById: ctx.user.id, assigneeName: x.employee.name, assignedByName: ctx.user.name || actor,
                 startedAt: x.status === 'Not Started' ? null : now,
                 completedAt: x.status === 'Completed' ? now : null,
@@ -205,7 +211,7 @@ module.exports = {
         } else if (v.action === 'update') {
           const cur = x.task;
           const data = {};
-          ['department', 'subTaskName', 'description', 'endDate'].forEach((k) => { if (x[k]) data[k] = x[k]; });
+          ['department', 'subTaskName', 'description', 'endDate', 'priority'].forEach((k) => { if (x[k]) data[k] = x[k]; });
           if (x.status && x.status !== cur.status) {
             data.status = x.status;
             // The lifecycle stamps, as the screen keeps them: started once it

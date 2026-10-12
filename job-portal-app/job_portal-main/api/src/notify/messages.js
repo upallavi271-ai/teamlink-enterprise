@@ -47,6 +47,23 @@ const jobFacts = (c) => [
  * @type {Record<string, Message>}
  */
 export const MESSAGES = {
+  /* 0133: the job's last day, for a candidate who applied and has not taken the AI interview */
+  AI_INTERVIEW_CLOSING_TODAY: {
+    subject: (c) => `The job closes today – attend your AI interview for ${c.jobTitle}`,
+    body: (c) => `You applied for the ${c.jobTitle} position (Job ID ${c.jobId}`
+      + (c.reference ? `, Application ID ${c.reference}` : '')
+      + ') but have not attended the AI interview yet. The job closes today, so please attend '
+      + 'the interview before it closes.',
+    facts: (c) => [
+      ...jobFacts(c),
+      ['Job ID', c.jobId],
+      ['Application ID', c.reference],
+      ['Closes', c.dueText],
+    ],
+    instruction: () => 'Once the job closes, the interview can no longer be taken.',
+    cta: (c) => ({ label: 'Attend AI Interview', url: c.portalUrl }),
+  },
+
   INTERVIEW_SCHEDULED: {
     subject: (c) => `Interview Scheduled – ${c.jobTitle} | TeamLink Consultants`,
     body: (c) => 'We are pleased to inform you that your interview has been scheduled '
@@ -275,19 +292,21 @@ export const MESSAGES = {
   },
 
   APPLICATION_SUBMITTED: {
-    subject: (c) => (c.walkin ? `Walk-in Registration Confirmed – ${c.jobTitle}` : `Application Submitted – ${c.jobTitle}`),
+    /* 0130: "You applied for <job>", and the moment it was made (IST). */
+    subject: (c) => (c.walkin ? `Walk-in Registration Confirmed – ${c.jobTitle}` : `You applied for ${c.jobTitle}`),
     body: (c) => (c.walkin
       ? `Your application for the ${c.jobTitle} walk-in interview has been received. `
         + 'Please come to the venue on the date and time below.'
-      : `Your application for the ${c.jobTitle} position has been successfully `
-        + 'submitted using your registered TeamLink resume.'),
+      : `You applied for ${c.jobTitle}. Your application has been successfully `
+        + 'submitted using your registered TeamLink resume.'
+        + (c.appliedOnText ? `\n\nApplied on ${c.appliedOnText}.` : '')),
     /* 0106: the Application ID always, and a walk-in's date, time, venue,
        address, map, documents and contact - from the job's own record.
        A walk-in names the role and the place, not the company. */
     facts: (c) => [
       ...(c.walkin ? jobFacts({ ...c, company: '' }) : jobFacts(c)),
       ['Application ID', c.reference],
-      ['Applied On', c.applicationDate],
+      ['Applied On', c.appliedOnText || c.applicationDate],
       ...walkinFacts(c.walkin),
     ],
     instruction: (c) => (c.walkin

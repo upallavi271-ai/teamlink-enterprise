@@ -66,7 +66,7 @@ function collect(children, group, out) {
 export default function Combo({
   value, onChange, children, creatable = false, disabled = false, required = false,
   className = '', style, placeholder, title, id, name, autoFocus,
-  emptyText = 'No match', ...rest
+  emptyText = 'No match', onSearch, ...rest
 }) {
   const options = useMemo(() => collect(children, null, []), [children]);
   const current = value === null || value === undefined ? '' : String(value);
@@ -89,10 +89,15 @@ export default function Combo({
   const inputRef = useRef(null);
   const listRef = useRef(null);
   const listId = `${useId()}-list`;
+  // Optional: tell the owner what is being typed, so it can search on the server.
+  const searchRef = useRef(onSearch);
+  searchRef.current = onSearch;
+  useEffect(() => { if (searchRef.current) searchRef.current(open ? query : ''); }, [open, query]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return options;
+    // onSearch = the options already come filtered from the server.
+    if (!q || onSearch) return options;
     return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
   }, [options, query]);
 

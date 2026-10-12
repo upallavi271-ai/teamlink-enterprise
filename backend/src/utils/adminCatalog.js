@@ -17,6 +17,9 @@ const WA_FIELDS = {
   linkTpl: 'Template name — agreement link',
   otpTpl: 'Template name — OTP (Authentication)',
   bulkTpl: 'Template name — bulk / general',
+  // Webhook (delivery ticks + replies): Meta posts to /api/webhooks/whatsapp.
+  appSecret: 'App secret (checks Meta webhook calls)',
+  verifyToken: 'Webhook verify token (any text you choose)',
 };
 const SMS_FIELDS = {
   provider: 'Provider (MSG91 / Fast2SMS / Twilio)',
@@ -26,6 +29,8 @@ const SMS_FIELDS = {
   linkTpl: 'DLT template ID — agreement link',
   otpTpl: 'DLT template ID — OTP',
   bulkTpl: 'DLT template ID — bulk / general',
+  // Delivery reports: the provider calls /api/webhooks/sms/<provider>?key=<this text>.
+  dlrSecret: 'Delivery-report webhook secret (any text you choose)',
 };
 
 const INTEGRATION_CATALOG = [
@@ -35,14 +40,17 @@ const INTEGRATION_CATALOG = [
       [WA_FIELDS.token, ''], [WA_FIELDS.namespace, 'optional (legacy)'], [WA_FIELDS.language, 'en'],
       [WA_FIELDS.linkTpl, 'body {{1}} name, {{2}} agreement no., {{3}} link'],
       [WA_FIELDS.otpTpl, 'authentication template, {{1}} code'],
-      [WA_FIELDS.bulkTpl, 'body {{1}} = the message']] },
+      [WA_FIELDS.bulkTpl, 'body {{1}} = the message'],
+      [WA_FIELDS.appSecret, 'Meta app → Settings → Basic → App secret'],
+      [WA_FIELDS.verifyToken, 'type any text; paste the same in Meta → Webhooks']] },
   { id: 'sms', name: 'SMS Gateway', group: 'Messaging', glyph: '\u{1F4F1}',
     desc: 'Transactional SMS (MSG91, Fast2SMS or Twilio) for signing OTPs, agreement links, interview alerts and bulk messages.',
     fields: [[SMS_FIELDS.provider, 'MSG91'], [SMS_FIELDS.sender, 'TMLINK'], [SMS_FIELDS.key, ''],
       [SMS_FIELDS.sid, 'Twilio only (AC…)'],
       [SMS_FIELDS.linkTpl, 'vars: name, agreement no., link'],
       [SMS_FIELDS.otpTpl, 'vars: code, minutes'],
-      [SMS_FIELDS.bulkTpl, 'one var: the message']] },
+      [SMS_FIELDS.bulkTpl, 'one var: the message'],
+      [SMS_FIELDS.dlrSecret, 'type any text; use the same in the delivery-report URL of your SMS provider']] },
   // REAL. nodemailer talks to this host — see utils/mailer.js. The last two
   // fields were added with the sending worker: "Encryption" chooses SSL vs
   // STARTTLS (587/STARTTLS is the common case, 465/SSL the other), and the
@@ -54,9 +62,14 @@ const INTEGRATION_CATALOG = [
   { id: 'email-inbox', name: 'Shared Inbox (IMAP)', group: 'Email', glyph: '\u{1F4E5}',
     desc: 'Pull candidate replies and client mail into the requirement timeline.',
     fields: [['IMAP host', ''], ['Port', '993'], ['Mailbox address', ''], ['Password / app key', '']] },
-  { id: 'telephony', name: 'Cloud Telephony / IVR', group: 'Calling', glyph: '\u{1F4DE}',
-    desc: 'Click-to-call from a candidate profile, IVR routing and call recording.',
-    fields: [['Provider', ''], ['Account SID', ''], ['Auth token', ''], ['Caller ID number', ''], ['Recording storage URL', '']] },
+  // REAL (utils/callGateway.js): Exotel click-to-call. The agent's own phone rings first, then
+  // the person is connected; the result (answered / no answer / duration / recording link)
+  // comes back to /api/webhooks/call/exotel and lands in the call log.
+  { id: 'telephony', name: 'Cloud Telephony / IVR', group: 'Calling', glyph: '📞',
+    desc: 'Click-to-call through Exotel: your phone rings first, then the person is connected, and the result is logged. Needs an Exotel account with KYC and an ExoPhone (a virtual number). Without it, "Call now" uses the dialler of your own phone and you log how it went.',
+    fields: [['Provider (Exotel)', 'Exotel'], ['Account SID', 'Exotel → Settings → API Settings'], ['API key', ''], ['API token', ''],
+      ['Region (Mumbai or Singapore)', 'Mumbai'], ['Caller ID (your ExoPhone number)', '0XXXXXXXXXX'], ['Record calls (Yes or No)', 'No'],
+      ['Call-result webhook secret (any text you choose)', 'type any text']] },
   { id: 'click-to-call', name: 'Click-to-Call Widget', group: 'Calling', glyph: '\u{1F4F2}',
     desc: 'Dial a candidate or client contact straight from any list or profile page.',
     fields: [['Agent extension prefix', ''], ['Default country code', '+91']] },
@@ -166,7 +179,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

@@ -40,7 +40,10 @@ const TOKEN_URL = 'https://apis.indeed.com/oauth/v2/tokens';
 const GRAPHQL_URL = 'https://apis.indeed.com/graphql';
 const SCOPE = 'employer_access employer.hosted_job';
 
-const FIELDS = [[F.clientId, 'from the Indeed Partner Console'], [F.secret, ''], [F.employer, 'only for a token per employer'],
+// The posting method (a choice on the Integrations card): the Job Sync API needs Indeed's partner
+// approval; the XML feed only needs the feed link given to your Indeed representative.
+const METHOD = 'Posting method (Job Sync API / XML feed)';
+const FIELDS = [[METHOD, 'Job Sync API'], [F.clientId, 'from the Indeed Partner Console'], [F.secret, ''], [F.employer, 'only for a token per employer'],
   [F.contact, 'jobs@your-company'], [F.sourceName, PUBLIC_COMPANY]];
 const NEED = [F.clientId, F.secret, F.contact];
 const SETUP = 'Indeed needs a partner account: sign Indeed\'s Developer Agreement and apply at partners.indeed.com, then enter the Client ID, Client secret and a contact email from the Indeed Partner Console in Administration → Integrations → Indeed.';
@@ -54,6 +57,11 @@ function unpackId(v) {
 const shownId = (v) => unpackId(v).sp;
 
 async function config() {
+  const any = await boardSettings('indeed', [], LABEL);
+  if (/xml/i.test(String(any.values[METHOD] || '')) && !any.off) {
+    if (String(any.values[F.contact] || '').trim()) return { ...any, ready: true, feed: true, method: 'XML feed' };
+    return { ...any, ready: false, configured: true, missing: [F.contact], hint: 'Indeed XML feed: fill in the "Contact email for Indeed" (the email of your Indeed account) in Administration → Integrations → Indeed.' };
+  }
   const s = await boardSettings('indeed', NEED, LABEL);
   if (s.ready || s.hint) return s;
   return { ...s, hint: s.missing.length === NEED.length ? SETUP : `Indeed: fill in ${s.missing.join(', ')} in Administration → Integrations → Indeed.` };
@@ -71,6 +79,14 @@ async function token(cfg) {
   if (!res.body || !res.body.access_token) return { ok: false, error: 'Indeed did not return an access token.' };
   http.rememberToken(key, res.body.access_token, res.body.expires_in);
   return { ok: true, token: res.body.access_token };
+}
+
+// CHECK CONNECTION: ask Indeed for a fresh sign-in token (the real handshake; nothing is posted).
+async function handshake(cfg) {
+  const v = cfg.values;
+  http.forgetToken(`indeed|${v[F.clientId]}|${v[F.employer] || ''}`);
+  const t = await token(cfg);
+  return t.ok ? { ok: true, text: 'Indeed accepted the Client ID and secret (sign-in worked). No job was sent.' } : { ok: false, text: t.error };
 }
 
 async function gql(cfg, query) {
@@ -160,5 +176,5 @@ async function status(r, row, cfg) {
 }
 
 module.exports = {
-  id: 'indeed', label: LABEL, integrationId: 'indeed', FIELDS, SETUP, config, publish, update: publish, remove, status, shownId,
+  id: 'indeed', label: LABEL, integrationId: 'indeed', FIELDS, SETUP, config, handshake, publish, update: publish, remove, status, shownId,
 };

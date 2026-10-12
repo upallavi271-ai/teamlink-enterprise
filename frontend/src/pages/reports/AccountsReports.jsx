@@ -12,6 +12,9 @@ import EmptyState from '../../components/ui/EmptyState.jsx';
 import AtsReports from './AtsReports.jsx';
 // B2 — Placement margin (fee − credit notes − incentive − partner payouts) per placement / client / recruiter / month.
 import PlacementMargin from './PlacementMargin.jsx';
+// Every number opens its list (reconciliation 2026-10-06): the same list component the Accounts Dashboard uses.
+import { DrillPanel } from '../accounts/dash/Drill.jsx';
+import '../accounts/dash/accDash.css';
 
 const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
 const RECV_SORTS = [
@@ -38,6 +41,8 @@ export default function AccountsReports() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sort, setSort] = useState('pending');
+  // The list behind a number, opened right under the block it was clicked in.
+  const [drill, setDrill] = useState(null);
 
   useEffect(() => {
     setError('');
@@ -75,6 +80,16 @@ export default function AccountsReports() {
       </td>
     </tr>
   );
+
+  const D = data.drill || { invoices: [], bills: [], bank: [] };
+  const show = (where, title, kind, rows, note) => setDrill((d) => (d && d.title === title ? null : { where, title, kind, rows, note }));
+  const panel = (where) => (drill && drill.where === where ? <div className="acd" style={{ margin: '10px 0' }}><DrillPanel drill={drill} onClose={() => setDrill(null)} /></div> : null);
+  // A figure that opens its list.
+  const Num = ({ where, title, kind = 'inv', rows, note, children }) => (
+    <button type="button" className="link-btn" style={{ font: 'inherit', textDecoration: 'underline dotted', cursor: 'pointer', padding: 0 }} title="Click to see the list" onClick={() => show(where, title, kind, rows, note)}>{children}</button>
+  );
+  const ofClient = (name) => D.invoices.filter((i) => i.client === name);
+  const owing = (i) => i.pending > 0.5 || i.pending < -0.5;
 
   const viewSwitch = (
     <div className="report-groupby" style={{ margin: '0 0 12px' }} role="tablist" aria-label="Accounts reports">
@@ -142,7 +157,10 @@ export default function AccountsReports() {
           <tbody>
             {receivables.map((r) => (
               <tr key={r.client}>
-                <td>{r.client}</td><td>{money(r.invoiced)}</td><td>{money(r.paid)}</td><td>{money(r.pending)}</td>
+                <td>{r.client}</td>
+                <td><Num where="recv" title={`${r.client} — invoices`} rows={ofClient(r.client)}>{money(r.invoiced)}</Num></td>
+                <td><Num where="recv" title={`${r.client} — invoices with money received`} rows={ofClient(r.client).filter((i) => i.received > 0.005)}>{money(r.paid)}</Num></td>
+                <td><Num where="recv" title={`${r.client} — invoices with money still to come`} rows={ofClient(r.client).filter(owing)}>{money(r.pending)}</Num></td>
               </tr>
             ))}
             {receivables.length === 0 && noMatch(4)}
@@ -150,17 +168,19 @@ export default function AccountsReports() {
         </table>
       </div>
 
+      {panel('recv')}
       <div className="small-muted" style={{ margin: '16px 0 8px' }}>
         Invoiced is amount + GST − TDS and Paid is the money actually received, so a part-paid invoice reads correctly.
       </div>
 
       <div className="statbar">
-        <Stat n={money(data.profitAndLoss.incomeNet)} l="Income (excl. GST)" />
-        <Stat n={money(data.profitAndLoss.spendNet)} l="Spend (excl. GST)" />
-        <Stat n={money(data.profitAndLoss.profit)} l="Profit" />
-        <Stat n={money(data.tdsDeducted)} l="TDS deducted" />
-        <Stat n={data.reconciliation.unmatched} l="Unmatched bank lines" />
+        <Stat n={<Num where="stat" title="Income: the invoices (before GST)" rows={D.invoices}>{money(data.profitAndLoss.incomeNet)}</Num>} l="Income (excl. GST)" />
+        <Stat n={<Num where="stat" title="Spend: the office bills (before GST)" kind="bill" rows={D.bills}>{money(data.profitAndLoss.spendNet)}</Num>} l="Spend (excl. GST)" />
+        <Stat n={money(data.profitAndLoss.profit)} l="Profit = income − spend" />
+        <Stat n={<Num where="stat" title="TDS deducted: the invoices" rows={D.invoices.filter((i) => i.tds > 0.005)}>{money(data.tdsDeducted)}</Num>} l="TDS deducted" />
+        <Stat n={<Num where="stat" title="Unmatched bank lines" kind="bank" rows={D.bank.filter((t) => t.state === 'Unmatched')}>{data.reconciliation.unmatched}</Num>} l="Unmatched bank lines" />
       </div>
+      {panel('stat')}
 
       <div className="card section">
         <h3>Invoices by status</h3>
@@ -177,13 +197,14 @@ export default function AccountsReports() {
             <thead><tr><th>Status</th><th>Count</th><th>Total</th><th>Outstanding</th></tr></thead>
             <tbody>
               {data.byStatus.map((r) => (
-                <tr key={r.status}><td>{r.status}</td><td>{r.count}</td><td>{money(r.amount)}</td><td>{money(r.outstanding)}</td></tr>
+                <tr key={r.status}><td>{r.status}</td><td><Num where="status" title={`${r.status} invoices`} rows={D.invoices.filter((i) => i.status === r.status)}>{r.count}</Num></td><td>{money(r.amount)}</td><td>{money(r.outstanding)}</td></tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
 
+      {panel('status')}
       <div className="card section">
         <h3>Receivables ageing</h3>
         {/* Left in bucket order, not sorted by size: the order IS the
@@ -200,13 +221,14 @@ export default function AccountsReports() {
             <thead><tr><th>Bucket</th><th>Invoices</th><th>Outstanding</th></tr></thead>
             <tbody>
               {data.ageing.map((r) => (
-                <tr key={r.bucket}><td>{r.bucket}</td><td>{r.count}</td><td>{money(r.outstanding)}</td></tr>
+                <tr key={r.bucket}><td>{r.bucket}</td><td><Num where="ageing" title={`Open invoices — ${r.bucket}`} rows={D.invoices.filter((i) => i.bucket === r.bucket)}>{r.count}</Num></td><td>{money(r.outstanding)}</td></tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
 
+      {panel('ageing')}
       <div className="card section">
         <h3>Outstanding by client</h3>
         {byClient.length > 0 && (
@@ -225,7 +247,7 @@ export default function AccountsReports() {
             <thead><tr><th>Client</th><th>Open invoices</th><th>Outstanding</th></tr></thead>
             <tbody>
               {byClient.map((r) => (
-                <tr key={r.client}><td>{r.client}</td><td>{r.count}</td><td>{money(r.outstanding)}</td></tr>
+                <tr key={r.client}><td>{r.client}</td><td><Num where="client" title={`${r.client} — open invoices`} rows={ofClient(r.client).filter((i) => i.status !== 'Paid')}>{r.count}</Num></td><td>{money(r.outstanding)}</td></tr>
               ))}
               {byClient.length === 0 && noMatch(3)}
             </tbody>
@@ -233,11 +255,12 @@ export default function AccountsReports() {
         </div>
       </div>
 
+      {panel('client')}
       <div className="grid-2">
         <div className="card section">
           <h3>GST position</h3>
-          <div className="kv"><span className="k">Charged to clients</span><span>{money(data.gstPosition.charged)}</span></div>
-          <div className="kv"><span className="k">Paid to vendors</span><span>− {money(data.gstPosition.paid)}</span></div>
+          <div className="kv"><span className="k">Charged to clients</span><span><Num where="gst" title="Invoices that carry GST" rows={D.invoices.filter((i) => i.gst > 0.005)}>{money(data.gstPosition.charged)}</Num></span></div>
+          <div className="kv"><span className="k">Paid to vendors</span><span>− <Num where="gst" title="Bills that carry GST" kind="bill" rows={D.bills.filter((b) => b.gst > 0.005)}>{money(data.gstPosition.paid)}</Num></span></div>
           <div className="kv">
             <span className="k">{data.gstPosition.payable >= 0 ? 'Payable' : 'Credit carried'}</span>
             <span style={{ fontWeight: 700 }}>{money(Math.abs(data.gstPosition.payable))}</span>
@@ -245,13 +268,15 @@ export default function AccountsReports() {
         </div>
         <div className="card section">
           <h3>Reconciliation position</h3>
-          <div className="kv"><span className="k">Statement lines</span><span>{data.reconciliation.total}</span></div>
-          <div className="kv"><span className="k">Unmatched</span><span>{data.reconciliation.unmatched}</span></div>
-          <div className="kv"><span className="k">Matched, not reconciled</span><span>{data.reconciliation.matched}</span></div>
-          <div className="kv"><span className="k">Reconciled</span><span>{data.reconciliation.reconciled}</span></div>
-          <div className="kv"><span className="k">Ignored</span><span>{data.reconciliation.ignored}</span></div>
+          <div className="kv"><span className="k">Statement lines</span><span><Num where="recon" title="All statement lines" kind="bank" rows={D.bank}>{data.reconciliation.total}</Num></span></div>
+          <div className="kv"><span className="k">Unmatched</span><span><Num where="recon" title="Unmatched statement lines" kind="bank" rows={D.bank.filter((t) => t.state === 'Unmatched')}>{data.reconciliation.unmatched}</Num></span></div>
+          <div className="kv"><span className="k">Matched, not reconciled</span><span><Num where="recon" title="Matched statement lines" kind="bank" rows={D.bank.filter((t) => t.state === 'Matched')}>{data.reconciliation.matched}</Num></span></div>
+          <div className="kv"><span className="k">Reconciled</span><span><Num where="recon" title="Reconciled statement lines" kind="bank" rows={D.bank.filter((t) => t.state === 'Reconciled')}>{data.reconciliation.reconciled}</Num></span></div>
+          <div className="kv"><span className="k">Ignored</span><span><Num where="recon" title="Ignored statement lines" kind="bank" rows={D.bank.filter((t) => t.state === 'Ignored')}>{data.reconciliation.ignored}</Num></span></div>
         </div>
       </div>
+      {panel('gst')}
+      {panel('recon')}
     </div>
   );
 }

@@ -6,19 +6,33 @@ import { JobStatusChip } from '../jobs/reqStatus.jsx';
 import { PriorityChip, slaInfo, ageText, fmtShort, nf } from '../jobs/reqFormat.jsx';
 import { waitingText } from '../jobs/reqActions.js';
 import { ClientPausedBadge } from '../clients/ClientLifecycle.jsx';
+import { DeptTag, PersonName, rowPrimary, nextStepSentence } from './JobsListBits.jsx';
 import './crq4.css';
 
 // ---------------------------------------------------------------------------
-// "Selected Requirement" — the right-hand panel beside the list (reference
-// layout). It shows the row the person clicked, from the LIST ROW the page
-// already holds (no new fields), plus the latest events from the existing
-// GET /requirements/:id/activity (the same call the quick drawer makes).
+// "Selected job" — the panel for the row the person clicked (beside the list
+// on a big screen, sliding over it on a smaller one). It shows the LIST ROW
+// the page already holds (no new fields), plus the latest events from the
+// existing GET /requirements/:id/activity.
 //
 //   onAction(key)  the row's main action (the same pickRowAction the table uses)
 //   onQuickView()  opens the existing quick drawer (every other row action)
+//   actions        the row's other actions (menuFor(row)): shown as plain
+//                  buttons — Edit, Pause / Resume, Change team lead ... — no menu.
+//
+// Layout: label / value rows on a fixed grid (never clipped, long names wrap),
+// ONE sentence + ONE button in the Next step box, then the other buttons.
 // ---------------------------------------------------------------------------
+const SECONDARY = {
+  edit: 'Edit job',
+  hold: 'Pause job',
+  reopen: null, // label comes from the action itself (Resume / Reopen)
+  'assign-tl': 'Change team lead',
+  'assign-recruiter': 'Change recruiter',
+};
+
 export default function SelectedRequirement({
-  row: r, onAction, onQuickView, role,
+  row: r, onAction, onQuickView, role, actions = [],
 }) {
   const [activity, setActivity] = useState(null);
   useEffect(() => {
@@ -32,19 +46,26 @@ export default function SelectedRequirement({
   }, [r && r.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!r) {
-    return <div className="ak-empty">Click a requirement in the list to see it here.</div>;
+    return <div className="ak-empty">Click a job in the list to see it here.</div>;
   }
   const sla = slaInfo(r.sla);
-  const act = r.primaryAction || { key: 'open', label: 'View' };
-  const wait = waitingText(r);
+  const primary = rowPrimary(r, role);
+  const wait = role === 'accounts' ? '' : waitingText(r);
+  const live = r.live !== false;
   const kv = (k, v) => (
     <div className="crq4-sel-kv"><span>{k}</span><span>{v === null || v === undefined || v === '' ? '—' : v}</span></div>
   );
+  // The other buttons: what this login may do on the row, minus the main one.
+  const others = actions
+    .filter((a) => SECONDARY[a.key] !== undefined && a.key !== primary.key)
+    .map((a) => ({ key: a.key, label: SECONDARY[a.key] || a.label }));
+  const ageLine = r.ageDays !== undefined && r.ageDays !== null ? `${ageText(r.ageDays)}` : null;
   return (
     <div className="crq4-sel">
       <div className="crq4-sel-top">
-        <span className="crq4-sel-id"><span>Req ID</span><b>{r.reqCode || r.id.slice(0, 8)}</b></span>
-        <JobStatusChip job={r} />
+        <span className="crq4-sel-id"><span>Job ID</span><b>{r.reqCode || r.id.slice(0, 8)}</b></span>
+        {r.internal && <span className="rr-type internal">Internal</span>}
+        <span className="crq4-sel-status"><JobStatusChip job={r} /></span>
       </div>
       <div className="crq4-sel-title" title={r.title}>{r.title || '—'}</div>
 
@@ -58,18 +79,25 @@ export default function SelectedRequirement({
           {r.location && <span className="crq4-sel-sub">{r.location}</span>}
         </span>
       </div>
-      <div className="crq4-sel-line">
-        <span className="crq4-sel-ic"><Icon name="team" size={15} /></span>
-        <span className="crq4-sel-main">{[r.department, r.section].filter(Boolean).join(' · ') || '—'}</span>
-      </div>
+      {(r.department || r.section) && (
+        <div className="crq4-sel-line">
+          <span className="crq4-sel-ic"><Icon name="team" size={15} /></span>
+          <span className="crq4-sel-main crq4-sel-dept">
+            {r.department && <DeptTag name={r.department} />}
+            {r.section && <span className="crq4-sel-sub">{r.section}</span>}
+          </span>
+        </div>
+      )}
 
       <div className="crq4-sel-kvs">
         {kv('Openings', `${nf(r.openings || 1)}${r.filled ? ` · ${nf(r.filled)} filled` : ''}`)}
-        {kv('Team Lead', r.tlName)}
-        {kv('Recruiter', r.workedBy ? `${r.workedBy}${r.coRecruiterNames?.length ? ` +${r.coRecruiterNames.length}` : ''}` : null)}
+        {kv('Team lead', <PersonName name={r.tlName} tone="red" live={live} />)}
+        {kv('Recruiter', <PersonName name={r.workedBy} extra={r.coRecruiterNames?.length || 0} tone="amber" live={live} />)}
         {r.bde?.name && kv('Client manager', r.bde.name)}
         {kv('Priority', r.priority ? <PriorityChip value={r.priority} /> : null)}
-        {kv('SLA', sla ? <span className={`crq4-sla ${sla.cls}`} title={sla.title}>{sla.text}</span> : (r.ageDays !== undefined && r.ageDays !== null ? ageText(r.ageDays) : null))}
+        {kv('Age / SLA', sla
+          ? <span className={`crq4-sla ${sla.cls}`} title={sla.title}>{[ageLine, sla.text].filter(Boolean).join(' · ')}</span>
+          : ageLine)}
       </div>
 
       {role !== 'accounts' && (
@@ -77,22 +105,24 @@ export default function SelectedRequirement({
           <span className="crq4-sel-nextic"><Icon name="bolt" size={15} /></span>
           <div className="crq4-sel-nextbody">
             <span className="crq4-sel-nexthead">Next step</span>
-            <b>{act.label}</b>
-            {wait && <span className="crq4-sel-sub">{wait}</span>}
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => onAction(act.key)}>{act.label}</button>
+            <p className="crq4-sel-sentence">{nextStepSentence(r, primary, wait)}</p>
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => onAction(primary.key)}>{primary.label}</button>
           </div>
         </div>
       )}
 
       <div className="crq4-sel-btns">
-        <button type="button" className="btn btn-sm" onClick={onQuickView}>Quick view</button>
-        <Link className="btn btn-sm" to={`/requirements/${r.id}`}>Open job</Link>
+        {primary.key !== 'open' && <Link className="btn btn-sm" to={`/requirements/${r.id}`}>Open job</Link>}
+        {others.map((a) => (
+          <button key={a.key} type="button" className="btn btn-sm" onClick={() => onAction(a.key)}>{a.label}</button>
+        ))}
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onQuickView}>Quick view</button>
       </div>
 
       <div className="crq4-sel-trail">
-        <span className="crq4-sel-nexthead">Audit trail</span>
+        <span className="crq4-sel-nexthead">History (audit trail)</span>
         {activity === null ? <div className="crq4-sel-sub">Loading…</div>
-          : activity.length === 0 ? <div className="crq4-sel-sub">No activity yet</div> : (
+          : activity.length === 0 ? <div className="crq4-sel-sub">Nothing yet</div> : (
             <ul>
               {activity.map((a) => (
                 <li key={a.id}>

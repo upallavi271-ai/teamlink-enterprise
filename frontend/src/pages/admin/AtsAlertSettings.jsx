@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../../components/ui/StatusChip.jsx';
+import PendingWorkSettings from '../../components/team/PendingWorkSettings.jsx'; // "Reminders to team leads" card (2026-10-10)
+import InterviewReminderSettings from './InterviewReminderSettings.jsx'; // who is reminded of an interview, when and how (2026-10-10)
 
 // ---------------------------------------------------------------------------
 // Administration → STEP TIMING — every per-step day in ONE table (spec
@@ -212,6 +214,13 @@ export default function AtsAlertSettings() {
           </div>
         </div>
       )}
+
+      <InterviewReminderSettings />
+
+      <div className="panel">
+        <div className="panel-head"><h3>Reminders to team leads</h3></div>
+        <PendingWorkSettings embedded />
+      </div>
 
       <div className="panel">
         <div className="panel-head"><h3>Bell</h3></div>

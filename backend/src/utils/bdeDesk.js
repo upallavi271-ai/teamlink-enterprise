@@ -60,4 +60,47 @@ function isBdeDepartment(departments = []) {
   return departments.some((d) => canonicalDepartment(d) === 'BDE');
 }
 
-module.exports = { canonicalDepartment, desksInText, bdeDesks, isBdeDepartment };
+// ---------------------------------------------------------------------------
+// SEAT CODES (user, 2026-10-09). A BDE sits in a seat whose code names the
+// desk it works: BDE-EDU-1, BDE-EDU-2, BDE-MED, BDE-MFG, BDE-TL … (also
+// written "BDE MFG-2", "EDU BDE 1"). ONE helper turns a code into
+//   desk   the canonical department the BDE's clients belong to
+//          ('Education' / 'Medical' / 'Manufacturing' / 'IT' …), or null
+//   isTl   the BDE team lead's seat (sees every client)
+//   label  what people read: "BDE EDU 1", "BDE MED", "BDE TL"
+// ---------------------------------------------------------------------------
+function seatTokens(code) {
+  return String(code || '').split(/[\s_\-/]+/).map((t) => t.trim()).filter(Boolean);
+}
+
+// A seat (code string, or { code, name, team, department }) -> its BDE parts.
+// isBde is false for any seat that is not a BDE seat (MED-1, MFG TL, HR …).
+function parseBdeSeat(seat) {
+  const code = typeof seat === 'string' ? seat : (seat && seat.code) || '';
+  const tokens = seatTokens(code);
+  const isBde = tokens.some((t) => /^bde$/i.test(t));
+  if (!isBde) return { isBde: false, desk: null, isTl: false, code, label: String(code || '').replace(/[-_]+/g, ' ').trim() };
+  const rest = tokens.filter((t) => !/^bde$/i.test(t));
+  const isTl = rest.some((t) => /^tl$/i.test(t));
+  let desk = null;
+  rest.some((t) => { const d = desksInText(t)[0]; if (d) { desk = d; return true; } return false; });
+  // The seat's own name / team can name the desk when the code does not
+  // ("BDE-1" named "Medical BDE") — never the department field: every BDE seat
+  // sits in the BDE department.
+  if (!desk && seat && typeof seat === 'object' && !isTl) desk = desksInText(`${seat.name || ''} ${seat.team || ''}`)[0] || null;
+  return { isBde: true, desk, isTl, code, label: ['BDE', ...rest.map((t) => t.toUpperCase())].join(' ') };
+}
+
+// The department a BDE seat works for ('Education' for BDE-EDU-1), null for a
+// seat that names none (BDE-1, BDE-TL, BDE FIELD) or is not a BDE seat.
+function deptOfBdeSeat(seat) {
+  const p = parseBdeSeat(seat);
+  return p.isBde && !p.isTl ? p.desk : null;
+}
+
+// "BDE-EDU-1" -> "BDE EDU 1"
+function seatLabel(code) {
+  return parseBdeSeat(code).label;
+}
+
+module.exports = { canonicalDepartment, desksInText, bdeDesks, isBdeDepartment, parseBdeSeat, deptOfBdeSeat, seatLabel };

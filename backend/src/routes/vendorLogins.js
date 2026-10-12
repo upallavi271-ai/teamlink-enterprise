@@ -23,6 +23,7 @@ const { logAudit } = require('../utils/audit');
 const VA = require('../utils/vendorAuth');
 const VP = require('../utils/vendorPortal');
 const VC = require('../utils/vendorConfig');
+const INV = require('../utils/vendorInvite');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -72,6 +73,9 @@ const tempExpired = (vu) => !!(vu.mustChangePassword && vu.tempPasswordExpiresAt
 
 async function rowOf(vu) {
   const locked = lockedNow(vu);
+  const openLink = await prisma.vendorLoginToken.findFirst({
+    where: { vendorUserId: vu.id, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' },
+  });
   const vendorOff = vu.vendor && vu.vendor.isActive === false;
   return {
     id: vu.id,
@@ -87,6 +91,9 @@ async function rowOf(vu) {
     lastLoginAt: vu.lastLoginAt,
     lastLoginIp: vu.lastLoginIp || null,
     mustChangePassword: vu.mustChangePassword,
+    linkOpen: !!openLink,
+    linkExpiresAt: openLink ? openLink.expiresAt : null,
+    linkPurpose: openLink ? openLink.purpose : null,
     tempPasswordExpiresAt: vu.mustChangePassword ? vu.tempPasswordExpiresAt : null,
     tempPasswordExpired: tempExpired(vu),
     canEdit: vu.canEdit,
@@ -219,15 +226,17 @@ async function emailProblem(email, exceptId) {
   return null;
 }
 
-// Hands the temporary password to the vendor by email (only when the switch
-// is on and the admin asked). Never logs the password.
-async function mailTempPassword(vu, vendorName, password, wanted) {
+// PASSWORDS ARE NEVER EMAILED (spec 2026-10-09). A password that Admin typed or
+// generated is shown to Admin and nowhere else. What CAN be emailed, when the
+// "Vendor emails" switch is on and Admin ticks it, is the single-use invite
+// link (utils/vendorInvite.js) - the vendor then chooses their own password.
+async function mailInviteLink(vu, vendorName, link, expiresAt, wanted, purpose) {
   if (!wanted) return { sent: false, reason: 'not asked' };
-  const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '');
+  const when = new Date(expiresAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
   return VC.sendVendorEmail({
     to: vu.email,
-    subject: 'Your TeamLink Vendor Portal login',
-    text: `Hello ${vu.name},\n\nA Vendor Portal login was made for ${vendorName}.\n\nSign in: ${base}/vendor-login\nEmail: ${vu.email}\nTemporary password: ${password}\n\nIt works for ${VC.CFG.tempPasswordDays} days. You will be asked to set your own password the first time you sign in.\n\nTeamLink`,
+    subject: purpose === 'reset' ? 'Reset your TeamLink Vendor Portal password' : 'Your TeamLink Vendor Portal invitation',
+    text: `Hello ${vu.name},\n\n${purpose === 'reset' ? 'Use this link to choose a new password' : `A Vendor Portal login was made for ${vendorName}. Use this link to choose your password and sign in`}:\n${link}\n\nThe link works once and expires on ${when}. If you did not expect this message, ignore it.\n\nTeamLink`,
   });
 }
 
@@ -241,9 +250,12 @@ router.post('/', async (req, res) => {
   const email = VP.normEmail(b.email);
   const ep = await emailProblem(email);
   if (ep) return res.status(400).json({ error: ep, field: 'email' });
+  // DEFAULT = a secure invite link (no password is set or shown). autoPassword /
+  // password stay only for older callers; the screen no longer offers them.
+  const invite = !b.autoPassword && !b.password;
   const auto = !!b.autoPassword;
-  const password = auto ? generatePassword() : String(b.password || '');
-  if (!auto) {
+  const password = invite ? crypto.randomBytes(48).toString('base64url') : (auto ? generatePassword() : String(b.password || ''));
+  if (!auto && !invite) {
     const weak = VC.vendorPasswordProblem(password, { email, name });
     if (weak) return res.status(400).json({ error: weak, field: 'password' });
   }
@@ -264,13 +276,23 @@ router.post('/', async (req, res) => {
     toValue: `${vendor.name} · ${name} · ${email} · ${status} · edit ${vu.canEdit ? 'ON' : 'OFF'} · purchase value ${vu.canViewCost ? 'ON' : 'OFF'} · ${accessText(acc.assetIds, acc.categories)}`,
   });
   await adminEvent(req, { vendorId: vendor.id, vendorUserId: vu.id, action: 'Vendor login created', newValue: `${email} · edit ${vu.canEdit ? 'ON' : 'OFF'} · purchase value ${vu.canViewCost ? 'ON' : 'OFF'} · ${accessText(acc.assetIds, acc.categories)}` });
-  const mail = auto ? await mailTempPassword(vu, vendor.name, password, b.emailPassword === true) : { sent: false };
+  let link = null;
+  let mail = { sent: false };
+  if (invite) {
+    link = await INV.createLink(vu.id, 'invite', req.user);
+    await prisma.vendorUser.update({ where: { id: vu.id }, data: { tempPasswordExpiresAt: link.expiresAt } });
+    await adminEvent(req, { vendorId: vendor.id, vendorUserId: vu.id, action: 'Invite link created', status: `expires ${link.expiresAt.toISOString()}` });
+    mail = await mailInviteLink(vu, vendor.name, link.link, link.expiresAt, b.emailLink === true, 'invite');
+  }
   const full = await prisma.vendorUser.findUnique({ where: { id: vu.id }, include: { vendor: true, access: true } });
   return res.status(201).json({
     login: await rowOf(full),
     ...(auto ? { tempPassword: password } : {}),
+    ...(link ? { inviteLink: link.link, inviteExpiresAt: link.expiresAt } : {}),
     emailed: !!mail.sent,
-    message: `Vendor login created. They must set a new password the first time they sign in${auto ? `; the temporary password works for ${VC.CFG.tempPasswordDays} days` : ''}.${b.emailPassword && !mail.sent ? ` Not emailed (${mail.reason}).` : ''}`,
+    message: invite
+      ? `Vendor login created. Copy the secure link and send it to the vendor: they choose their own password. The link works once and expires in ${INV.hours('invite')} hours.${b.emailLink && !mail.sent ? ` Not emailed (${mail.reason}).` : ''}`
+      : `Vendor login created. They must set a new password the first time they sign in${auto ? `; the temporary password works for ${VC.CFG.tempPasswordDays} days` : ''}. Passwords are never emailed.`,
   });
 });
 
@@ -373,8 +395,29 @@ router.post('/:id/reset-password', async (req, res) => {
   await VA.revokeSessions(vu.id, 'password reset');
   await adminEvent(req, { vendorId: vu.vendorId, vendorUserId: vu.id, action: 'Vendor password reset by Admin', status: 'change required at next sign-in' });
   await logAudit({ userId: req.user.id, actorName: actorOf(req), action: 'Vendor password reset', entity: 'VendorUser', entityId: vu.id, toValue: 'Reset (change required at next sign-in)' });
-  const mail = auto ? await mailTempPassword(vu, vu.vendor ? vu.vendor.name : '', password, b.emailPassword === true) : { sent: false };
-  return res.json({ ...(auto ? { tempPassword: password } : {}), emailed: !!mail.sent, message: `Password reset. They must set a new one when they sign in (within ${VC.CFG.tempPasswordDays} days).${b.emailPassword && !mail.sent ? ` Not emailed (${mail.reason}).` : ''}` });
+  return res.json({ ...(auto ? { tempPassword: password } : {}), emailed: false, message: `Password reset. They must set a new one when they sign in (within ${VC.CFG.tempPasswordDays} days). Passwords are never emailed - prefer "Send secure link".` });
+});
+
+// SECURE LINK (invite for a login that never signed in, reset for one that did):
+// the vendor chooses their own password. Old unused links stop working, open
+// sessions end, and the old password stops working once the link is used.
+router.post('/:id/invite', async (req, res) => {
+  const b = req.body || {};
+  const vu = await prisma.vendorUser.findUnique({ where: { id: String(req.params.id) }, include: { vendor: true } });
+  if (!vu || vu.deletedAt) return res.status(404).json({ error: 'Vendor login not found.' });
+  if (vu.status !== 'Active') return res.status(400).json({ error: 'This login is switched off. Switch it on first.' });
+  if (vu.vendor && vu.vendor.isActive === false) return res.status(400).json({ error: `${vu.vendor.name} is switched off in the vendor list.` });
+  const purpose = vu.lastLoginAt || vu.passwordChangedAt ? 'reset' : 'invite';
+  const link = await INV.createLink(vu.id, purpose, req.user);
+  await prisma.vendorUser.update({ where: { id: vu.id }, data: { mustChangePassword: true, tempPasswordExpiresAt: link.expiresAt, failedLoginAttempts: 0, lockedUntil: null } });
+  if (purpose === 'reset') await VA.revokeSessions(vu.id, 'reset link made');
+  await adminEvent(req, { vendorId: vu.vendorId, vendorUserId: vu.id, action: purpose === 'reset' ? 'Reset link created' : 'Invite link created', status: `expires ${link.expiresAt.toISOString()}` });
+  await logAudit({ userId: req.user.id, actorName: actorOf(req), action: purpose === 'reset' ? 'Vendor reset link created' : 'Vendor invite link created', entity: 'VendorUser', entityId: vu.id, toValue: `Expires ${link.expiresAt.toISOString()}` });
+  const mail = await mailInviteLink(vu, vu.vendor ? vu.vendor.name : '', link.link, link.expiresAt, b.emailLink === true, purpose);
+  return res.json({
+    purpose, inviteLink: link.link, inviteExpiresAt: link.expiresAt, emailed: !!mail.sent,
+    message: `Secure link ready. Copy it and send it to ${vu.name}. It works once and expires in ${INV.hours(purpose)} hours.${b.emailLink && !mail.sent ? ` Not emailed (${mail.reason}).` : ''}`,
+  });
 });
 
 // Soft delete: the row stays (history), the login is gone for good.
@@ -384,6 +427,7 @@ router.delete('/:id', async (req, res) => {
   await prisma.vendorUser.update({ where: { id: vu.id }, data: { deletedAt: new Date(), status: 'Inactive' } });
   await prisma.vendorAssetAccess.deleteMany({ where: { vendorUserId: vu.id } });
   await VA.revokeSessions(vu.id, 'deleted');
+  await prisma.vendorLoginToken.updateMany({ where: { vendorUserId: vu.id, usedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
   await adminEvent(req, { vendorId: vu.vendorId, vendorUserId: vu.id, action: 'Vendor login removed' });
   await logAudit({ userId: req.user.id, actorName: actorOf(req), action: 'Vendor login removed', entity: 'VendorUser', entityId: vu.id, fromValue: vu.email });
   return res.json({ ok: true, message: 'Removed. The login cannot sign in; its history is kept.' });

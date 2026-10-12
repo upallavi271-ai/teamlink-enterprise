@@ -898,7 +898,7 @@ async function managementBoard(c, req) {
   b.widgets.push({
     id: 'timing', type: 'kv', title: 'Speed', to: '/reports/ats?tab=sla',
     rows: [
-      { label: 'Average time-to-fill', value: fill.length >= 5 ? `${avg(fill)} days` : `Not enough data (${fill.length})`, sub: 'requirement raised → first joining, joinings in the period' },
+      { label: 'Average time-to-fill', value: fill.length >= 5 ? `${avg(fill)} days` : `Not enough data (${fill.length})`, sub: `requirement raised → first joining · based on ${fill.length} jobs, from ${joinedApps.length} joined people` },
       { label: 'Average time-to-submit', value: submit.length >= 5 ? `${avg(submit)} days` : `Not enough data (${submit.length})`, sub: 'application added → client submission (recorded moves only)' },
     ],
   });

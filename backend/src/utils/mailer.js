@@ -187,8 +187,10 @@ function isReservedTestAddress(to) {
 
 // Returns { ok, providerRef, error, transient }. Throws nothing: the worker
 // and the test button both want the failure as data.
+// html / attachments (optional): a report mail with tables and an Excel file (utils/eodReport.js);
+// `text` stays the plain-text fallback every mail carries.
 async function sendMail({
-  to, subject, text, senderEmail, senderName, useEmployeeFrom = true, fromName,
+  to, subject, text, html, attachments, senderEmail, senderName, useEmployeeFrom = true, fromName,
 }) {
   const cfg = await emailConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, error: cfg.reason, transient: false };
@@ -211,6 +213,8 @@ async function sendMail({
       to: String(to).trim(),
       subject: subject || '(no subject)',
       text: text || '',
+      ...(html ? { html } : {}),
+      ...(attachments && attachments.length ? { attachments } : {}),
       envelope: { from: addr.envelopeFrom, to: String(to).trim() },
     });
     // A message the provider did not accept for THIS recipient is not sent,

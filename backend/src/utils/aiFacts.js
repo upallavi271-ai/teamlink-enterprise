@@ -187,7 +187,8 @@ async function sectionHrOrg(user, rich) {
   }
   if (present && present.employeesInScope > 1) {
     const by = Object.entries(present.counts || {}).map(([k, v]) => `${clean(k, 30)} ${v}`).join(', ');
-    lines.push(`Attendance today (${present.date}): ${present.recorded} of ${present.employeesInScope} marked${by ? ` — ${by}` : ''}; ${present.noRecord} with no record yet.`);
+    const inc = present.presentIncludes || {};
+    lines.push(`Attendance today (${present.date}): ${present.headcountOnTheRolls} on the rolls${by ? ` — ${by}` : ''} (these add up to the headcount). Present includes ${inc.late || 0} late, ${inc.earlyLogout || 0} early logout, ${inc.missingCheckIn || 0} missing check-in and ${inc.missingCheckOut || 0} missing check-out.`);
   }
   return lines.length ? { title: 'PEOPLE IN YOUR SCOPE (HRMS)', lines } : null;
 }

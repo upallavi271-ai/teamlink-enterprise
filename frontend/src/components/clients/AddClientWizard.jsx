@@ -12,6 +12,7 @@ import { clientFieldsToForm, CLIENT_FIELD_NAMES } from '../ui/fillMaps.js';
 import AgreementLivePreview from '../agreements/AgreementLivePreview.jsx';
 import '../agreements/agreementLink.css';
 import './clientsrole.css';
+import './addClientModal.css';
 
 // ---------------------------------------------------------------------------
 // ADD CLIENT (2026-10-05) — two columns: the form in 9 sections on the left
@@ -164,9 +165,11 @@ export default function AddClientWizard({ user, meta, onClose, onSaved }) {
       }
       setSaving('');
       const docNote = `${failed ? ` ${failed} document${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} again in Edit.` : ''}${sourceNote}`;
+      // Show the numbers that were made for this client.
+      const nums = [created.clientCode && `Client ID ${created.clientCode}`, created.agreementId && `Agreement ${created.agreementId}`].filter(Boolean).join(' · ');
       const msg = mode === 'draft'
-        ? `Saved as a draft.${created.missing?.length ? ` Still missing: ${created.missing.join(', ')}.` : ''}${docNote}`
-        : `Saved. ${created.name} added and the agreement is ready${created.agreementMatchesPreview === true ? ' — exactly as previewed' : ''}.${docNote}`;
+        ? `Saved as a draft${nums ? ` (${nums})` : ''}.${created.missing?.length ? ` Still missing: ${created.missing.join(', ')}.` : ''}${docNote}`
+        : `Saved. ${created.name} added${nums ? ` (${nums})` : ''} and the agreement is ready${created.agreementMatchesPreview === true ? ' — exactly as previewed' : ''}.${docNote}`;
       onSaved?.(created, msg);
       navigate(`/clients/${created.id}?tab=agreement&saved=${mode}`);
     } catch (err) {
@@ -203,7 +206,7 @@ export default function AddClientWizard({ user, meta, onClose, onSaved }) {
   return (
     <Modal
       title="Add client"
-      size="xwide"
+      size="xwide acw-modal"
       onClose={onClose}
       footer={(
         <div className="cf-bar">

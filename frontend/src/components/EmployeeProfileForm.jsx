@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import Combo from './Combo.jsx';
 import api from '../api';
 // LIVE MASTERS (2026-09-29): branches, statuses, genders … come from
 // GET /api/masters; the constants below are only the first-paint fallback.
 import { useMasters, withCurrent } from '../utils/masters';
+// MANAGE FIELDS: labels, help text, required star, order and Pause of the
+// built-in fields — set in Employee Management -> Manage Fields.
+import { useFieldLayout } from '../utils/employeeFieldLayout';
 
 // ---------------------------------------------------------------------------
 // THE EMPLOYEE FORM — one set of sections and fields for both doors.
@@ -88,6 +91,11 @@ export default function EmployeeProfileForm({
 }) {
   const full = mode === 'hr' && !readOnly && !!hrOptions;
   const masters = useMasters();
+  const FL = useFieldLayout();
+  // The label HR gave the field, its ✱ when required, and its help text.
+  const labelOf = (k, fallback) => FL.label(k, fallback);
+  const star = (k) => (FL.enforced(k) ? <b className="xf-req"> ✱</b> : null);
+  const help = (k) => (FL.help(k) ? <small className="cell-muted">{FL.help(k)}</small> : null);
   const writable = (who) => !readOnly && (who === 'both' || (who === 'hr' && mode === 'hr'));
   const inForm = (k) => Object.prototype.hasOwnProperty.call(form, k);
   const value = (k) => (inForm(k) ? (form[k] ?? '') : display(employee, k));
@@ -118,13 +126,62 @@ export default function EmployeeProfileForm({
       .catch(() => { if (alive) setDesignations([]); });
     return () => { alive = false; };
   }, [designationWritable]);
+  // REPORTING MANAGER FOLLOWS THE DEPARTMENT (user, 2026-10-10). The pickers below are fed by the
+  // server for the Department (and role) chosen IN THIS FORM: a recruiter sees the team leads of
+  // their own department, with a count. Changing the department re-filters and clears a manager that
+  // no longer fits. "Other departments" is off unless HR switches it on.
+  const [cross, setCross] = useState(false);
+  const [mgr, setMgr] = useState(null);
+  const formDept = inForm('department') ? form.department : employee?.department;
+  const formDesig = inForm('designation') ? form.designation : employee?.designation;
+  useEffect(() => {
+    if (!full || !employee) return undefined;
+    let alive = true;
+    api.get('/employees/management/manager-options', {
+      params: { department: formDept || '', designation: formDesig || '', employeeId: employee.id, roleCode: form.roleCode || '', cross: cross ? 1 : 0 },
+    }).then((r) => { if (alive) setMgr(r.data); }).catch(() => { if (alive) setMgr(null); });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full, employee?.id, formDept, formDesig, form.roleCode, cross]);
+  const mgrIds = new Set(((mgr && mgr.options) || []).map((o) => o.id));
+  const mgrNames = new Set(((mgr && mgr.options) || []).map((o) => o.name));
+  useEffect(() => {
+    if (!full || !mgr || !employee) return;
+    const deptMoved = formDept !== employee.department;
+    const patch = {};
+    const cur = form.reportingManagerId || '';
+    // Exactly one fits and nothing is chosen yet -> choose it. A manager that no longer fits -> clear it.
+    if (!cur && mgr.single) patch.reportingManagerId = mgr.single;
+    else if (cur && !mgrIds.has(cur) && (deptMoved || cur !== (employee.reportingManagerId || ''))) patch.reportingManagerId = '';
+    ['tl', 'stl'].forEach((k) => {
+      const v = form[k] || '';
+      if (v && !mgrNames.has(v) && (deptMoved || v !== (employee[k] || ''))) patch[k] = '';
+    });
+    if (cross !== !!form.crossDepartment) patch.crossDepartment = cross;
+    if (Object.keys(patch).length) setForm({ ...form, ...patch });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mgr, cross]);
+  const mgrBlock = () => {
+    const opts = (mgr && mgr.options) || [];
+    const kindOpts = (kinds) => opts.filter((o) => kinds.includes(o.role));
+    return {
+      note: mgr && (
+        <span className="small-muted" data-testid="manager-count">
+          {opts.length ? mgr.title : (mgr.empty || '')}
+        </span>
+      ),
+      options: opts,
+      tl: kindOpts(['TL', 'MANAGER', 'ASSISTANT_MANAGER', 'ADMIN', 'SUPER_ADMIN']),
+      stl: kindOpts(['STL']),
+    };
+  };
   const designationField = () => {
     if (!designationWritable || !designations || !designations.length) return text('designation', 'Designation', 'hr');
     const current = value('designation');
     const inMaster = designations.some((d) => d.designation.toLowerCase() === String(current).toLowerCase());
     return (
       <label className="field" key="designation">
-        <span>Designation</span>
+        <span>{labelOf('designation', 'Designation')}{star('designation')}</span>
         <Combo value={current} onChange={set('designation')}>
           <option value="">Select designation</option>
           {current && !inMaster && <option value={current}>{`${current} (current — not in the master)`}</option>}
@@ -132,6 +189,7 @@ export default function EmployeeProfileForm({
             <option key={d.designation} value={d.designation}>{d.label || d.designation}</option>
           ))}
         </Combo>
+        {help('designation')}
       </label>
     );
   };
@@ -140,27 +198,43 @@ export default function EmployeeProfileForm({
   // with the value on record — the whole form, every section, is always visible.
   const text = (k, label, who = 'both', props = {}) => (
     <label className="field" key={k}>
-      <span>{label}</span>
+      <span>{labelOf(k, label)}{star(k)}</span>
       <input value={value(k)} disabled={!writable(who)} onChange={set(k)} {...props} />
+      {help(k)}
     </label>
   );
   const pick = (k, label, choices, who = 'both', { creatable = false, blank = 'Select' } = {}) => (
     <label className="field" key={k}>
-      <span>{label}</span>
+      <span>{labelOf(k, label)}{star(k)}</span>
       {writable(who) ? (
         <Combo creatable={creatable} value={value(k)} onChange={set(k)}>
           {blank !== null && <option value="">{blank}</option>}
           {choices.map((c) => <option key={c}>{c}</option>)}
         </Combo>
       ) : <input value={value(k)} disabled />}
+      {help(k)}
     </label>
   );
   const shown = (k, label) => (
     <label className="field" key={k}>
-      <span>{label}</span>
+      <span>{labelOf(k === 'reportingManager' ? 'reportingManagerId' : k, label)}</span>
       <input value={display(employee, k)} disabled />
+      {help(k === 'reportingManager' ? 'reportingManagerId' : k)}
     </label>
   );
+  // A section: its fields in the order HR set, the paused ones left out; a
+  // section with nothing left shows no heading at all.
+  const section = (title, items, { first = false, note = null } = {}) => {
+    const list = FL.sort(items.filter(([, node]) => node), (it) => it[0]);
+    if (!list.length) return null;
+    return (
+      <>
+        <h3 style={first ? undefined : { marginTop: 14 }}>{title}</h3>
+        {note}
+        <div className="grid-2">{list.map(([k, node]) => (node && node.key ? node : <Fragment key={k}>{node}</Fragment>))}</div>
+      </>
+    );
+  };
 
   // Aadhaar: HR keeps the field it always had; the employee sees only what
   // verification kept — never the full number, and never an input for it.
@@ -183,122 +257,156 @@ export default function EmployeeProfileForm({
 
   return (
     <>
-      <h3>Personal Information</h3>
-      <div className="grid-2">
-        {text('name', 'Full name', 'hr')}
-        <label className="field">
-          <span>Date of Birth</span>
-          {writable('both')
-            ? <input type="date" value={value('dateOfBirth')} onChange={set('dateOfBirth')} />
-            : <input value={dobShown} disabled />}
-        </label>
-        {pick('gender', 'Gender', live('genders', ['Male', 'Female', 'Other'], 'gender'))}
-        {pick('bloodGroup', 'Blood Group', live('bloodGroups', BLOOD_GROUPS, 'bloodGroup'))}
-      </div>
+      {section('Personal Information', [
+        ['name', text('name', 'Full name', 'hr')],
+        ['dateOfBirth', (
+          <label className="field" key="dateOfBirth">
+            <span>{labelOf('dateOfBirth', 'Date of Birth')}{star('dateOfBirth')}</span>
+            {writable('both')
+              ? <input type="date" value={value('dateOfBirth')} onChange={set('dateOfBirth')} />
+              : <input value={dobShown} disabled />}
+            {help('dateOfBirth')}
+          </label>
+        )],
+        ['gender', pick('gender', 'Gender', live('genders', ['Male', 'Female', 'Other'], 'gender'))],
+        ['bloodGroup', pick('bloodGroup', 'Blood Group', live('bloodGroups', BLOOD_GROUPS, 'bloodGroup'))],
+      ], { first: true })}
 
-      <h3 style={{ marginTop: 14 }}>Contact Information</h3>
-      <div className="grid-2">
-        {text('phone', 'Phone')}
-        {text('email', 'Email')}
-      </div>
+      {section('Contact Information', [
+        ['phone', text('phone', 'Phone')],
+        ['email', text('email', 'Email')],
+      ])}
 
-      <h3 style={{ marginTop: 14 }}>Address</h3>
-      <div className="grid-2">
-        {pick('addressType', 'Address Type', live('addressTypes', ['Current', 'Permanent'], 'addressType'), 'both', { blank: 'Select type' })}
-        {text('addressLine1', 'Address Line 1')}
-        {text('addressLine2', 'Address Line 2')}
-        {text('city', 'City / Town')}
-        {text('district', 'District')}
-        {text('state', 'State / Province')}
-        {text('country', 'Country')}
-        {text('postalCode', 'Postal Code')}
-      </div>
+      {section('Address', [
+        ['addressType', pick('addressType', 'Address Type', live('addressTypes', ['Current', 'Permanent'], 'addressType'), 'both', { blank: 'Select type' })],
+        ['addressLine1', text('addressLine1', 'Address Line 1')],
+        ['addressLine2', text('addressLine2', 'Address Line 2')],
+        ['city', text('city', 'City / Town')],
+        ['district', text('district', 'District')],
+        ['state', text('state', 'State / Province')],
+        ['country', text('country', 'Country')],
+        ['postalCode', text('postalCode', 'Postal Code')],
+      ])}
 
-      <h3 style={{ marginTop: 14 }}>Emergency Contact</h3>
-      <div className="grid-2">
-        {text('emergencyContactName', 'Name')}
-        {text('emergencyContactRelation', 'Relation')}
-        {text('emergencyContactPhone', 'Number')}
-      </div>
+      {section('Emergency Contact', [
+        ['emergencyContactName', text('emergencyContactName', 'Name')],
+        ['emergencyContactRelation', text('emergencyContactRelation', 'Relation')],
+        ['emergencyContactPhone', text('emergencyContactPhone', 'Number')],
+      ])}
 
-      <h3 style={{ marginTop: 14 }}>Employment Details</h3>
-      {mode === 'self' && (
-        <div className="small-muted" style={{ marginBottom: 8 }}>
-          Department, designation, position, team and joining details are set by HR.
-        </div>
-      )}
-      <div className="grid-2">
-        {/* Super Admin can change the Employee ID right here (user, 2026-09-29).
-            Saving sends it through the same checked endpoint as "Change ID"
-            (unique, audited old → new); everyone else sees it read-only. */}
-        {canEditCode && mode === 'hr' && !readOnly
+      {section('Employment Details', [
+        // Super Admin can change the Employee ID right here (user, 2026-09-29).
+        // Saving sends it through the same checked endpoint as "Change ID"
+        // (unique, audited old -> new); everyone else sees it read-only.
+        ['employeeCode', canEditCode && mode === 'hr' && !readOnly
           ? text('employeeCode', 'Employee ID (Super Admin can change)', 'hr', { maxLength: 20, spellCheck: false })
-          : shown('employeeCode', 'Employee ID')}
-        {mode === 'hr' && !readOnly && hrEmployment ? hrEmployment : (
+          : shown('employeeCode', 'Employee ID')],
+        ['department', mode === 'hr' && !readOnly && hrEmployment ? hrEmployment : (
           <>
             {shown('department', 'Department')}
             {shown('position', 'Position')}
             {shown('team', 'Team')}
           </>
-        )}
-        {designationField()}
-        {text('location', 'Location', 'hr')}
-        {pick('branch', 'Branch', branchList, 'both', { creatable: true, blank: 'Select branch' })}
-        {pick('shift', 'Shift', live('shifts', [], 'shift'), 'both', { creatable: true, blank: 'Select shift' })}
-        {mode === 'hr' && (isAdmin || full)
+        )],
+        ['designation', designationField()],
+        ['location', text('location', 'Location', 'hr')],
+        ['branch', pick('branch', 'Branch', branchList, 'both', { creatable: true, blank: 'Select branch' })],
+        ['shift', pick('shift', 'Shift', live('shifts', [], 'shift'), 'both', { creatable: true, blank: 'Select shift' })],
+        ['employmentStatus', mode === 'hr' && (isAdmin || full)
           ? pick('employmentStatus', 'Status', statusList, 'hr', { blank: null })
-          : shown('employmentStatus', 'Status')}
-        {full ? pick('employeeType', 'Employee Type', live('employmentTypes', hrOptions.empTypes || [], 'employeeType'), 'hr', { creatable: true, blank: 'Select type' }) : shown('employeeType', 'Employee Type')}
-        {full ? (
+          : shown('employmentStatus', 'Status')],
+        ['employeeType', full ? pick('employeeType', 'Employee Type', live('employmentTypes', hrOptions.empTypes || [], 'employeeType'), 'hr', { creatable: true, blank: 'Select type' }) : shown('employeeType', 'Employee Type')],
+        ['dateOfJoining', full ? (
           <label className="field" key="dateOfJoining">
-            <span>Date of Joining</span>
+            <span>{labelOf('dateOfJoining', 'Date of Joining')}{star('dateOfJoining')}</span>
             <input type="date" value={form.dateOfJoining || ''} onChange={set('dateOfJoining')} />
+            {help('dateOfJoining')}
           </label>
-        ) : shown('dateOfJoining', 'Date of Joining')}
-        {full ? (
-          <label className="field" key="reportingManagerId">
-            <span>Reporting Manager</span>
-            <Combo value={form.reportingManagerId || ''} onChange={set('reportingManagerId')}>
-              <option value="">No reporting manager</option>
-              {(hrOptions.reportingManagers || []).filter((m) => m.id !== employee?.id).map((m) => <option key={m.id} value={m.id}>{m.label || m.name}</option>)}
-              {/* The manager on file stays pickable even if they have since left. */}
-              {form.reportingManagerId && employee?.reportingManager && form.reportingManagerId === employee.reportingManagerId && !(hrOptions.reportingManagers || []).some((m) => m.id === form.reportingManagerId)
-                && <option value={form.reportingManagerId}>{employee.reportingManager.name} (no longer active)</option>}
-            </Combo>
-          </label>
-        ) : shown('reportingManager', 'Reporting Manager')}
-        {full && text('tl', 'TL', 'hr')}
-        {full && text('stl', 'STL', 'hr')}
-        {full && hrOptions.hasLogin && (
+        ) : shown('dateOfJoining', 'Date of Joining')],
+        ['reportingManagerId', full ? (() => {
+          const b = mgrBlock();
+          return (
+            <label className="field" key="reportingManagerId">
+              <span>{labelOf('reportingManagerId', 'Reporting Manager')}{star('reportingManagerId')}</span>
+              <Combo value={form.reportingManagerId || ''} onChange={set('reportingManagerId')}>
+                <option value="">{b.options.length ? 'No reporting manager' : (mgr && mgr.empty) || 'No reporting manager'}</option>
+                {b.options.map((m) => <option key={m.id} value={m.id}>{m.label}{m.otherDept ? ' (other department)' : ''}</option>)}
+                {/* The manager on file stays shown (labelled) when they no longer fit or have left - never dropped silently. */}
+                {form.reportingManagerId && !b.options.some((m) => m.id === form.reportingManagerId)
+                  && <option value={form.reportingManagerId}>{(employee?.reportingManager?.name) || 'Current manager'} (not in this department)</option>}
+              </Combo>
+              {b.note}
+              <span className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, cursor: 'pointer' }} onClick={() => setCross(!cross)}>
+                <input type="checkbox" checked={cross} onClick={(e) => e.stopPropagation()} onChange={(e) => setCross(e.target.checked)} />
+                Also show team leads of other departments
+              </span>
+              {help('reportingManagerId')}
+            </label>
+          );
+        })() : shown('reportingManager', 'Reporting Manager')],
+        ['tl', full && (() => {
+          const b = mgrBlock();
+          const names = [...new Set(b.tl.map((o) => o.name))];
+          return (
+            <label className="field" key="tl">
+              <span>{labelOf('tl', 'TL')}{star('tl')}</span>
+              <Combo value={form.tl || ''} onChange={set('tl')}>
+                <option value="">No TL</option>
+                {names.map((n) => <option key={n}>{n}</option>)}
+                {form.tl && !names.includes(form.tl) && <option value={form.tl}>{form.tl} (not in this department)</option>}
+              </Combo>
+              {help('tl')}
+            </label>
+          );
+        })()],
+        ['stl', full && (() => {
+          const b = mgrBlock();
+          const names = [...new Set(b.stl.map((o) => o.name))];
+          return (
+            <label className="field" key="stl">
+              <span>{labelOf('stl', 'STL')}{star('stl')}</span>
+              <Combo value={form.stl || ''} onChange={set('stl')}>
+                <option value="">No STL</option>
+                {names.map((n) => <option key={n}>{n}</option>)}
+                {form.stl && !names.includes(form.stl) && <option value={form.stl}>{form.stl} (not in this department)</option>}
+              </Combo>
+              {help('stl')}
+            </label>
+          );
+        })()],
+        ['roleCode', full && hrOptions.hasLogin && (
           <label className="field" key="roleCode">
-            <span>Role (login)</span>
+            <span>{labelOf('roleCode', 'Role (login)')}</span>
             <Combo value={form.roleCode || ''} onChange={set('roleCode')}>
               <option value="">Keep the current role</option>
               {(hrOptions.roles || []).map((r) => <option key={r.code} value={r.code}>{r.name}{r.isSystem ? '' : ' (custom)'}</option>)}
             </Combo>
           </label>
-        )}
-      </div>
+        )],
+      ], {
+        note: mode === 'self' ? (
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            Department, designation, position, team and joining details are set by HR.
+          </div>
+        ) : null,
+      })}
 
-      <h3 style={{ marginTop: 14 }}>Education & Work Experience</h3>
-      <div className="grid-2">
-        {pick('employmentExperience', 'Employment Type', live('experience', ['Fresher', 'Experienced'], 'employmentExperience'), 'both', { blank: null })}
-        {text('educationDetails', 'Education details')}
-        {text('skills', 'Skills & certifications')}
-      </div>
+      {section('Education & Work Experience', [
+        ['employmentExperience', pick('employmentExperience', 'Employment Type', live('experience', ['Fresher', 'Experienced'], 'employmentExperience'), 'both', { blank: null })],
+        ['educationDetails', text('educationDetails', 'Education details')],
+        ['skills', text('skills', 'Skills & certifications')],
+      ])}
 
-      <h3 style={{ marginTop: 14 }}>Bank & Statutory Details</h3>
-      <div className="small-muted" style={{ marginBottom: 8 }}>Restricted — shown on payslips.</div>
-      <div className="grid-2">
-        {text('bankName', 'Bank name')}
-        {text('bankAccountNumber', 'Account number')}
-        {text('ifscCode', 'IFSC code')}
-        {text('panNumber', 'PAN number')}
-        {aadhaar}
-        {text('uanNumber', 'UAN number')}
-        {text('pfNumber', 'PF number')}
-        {text('esiNumber', 'ESI number')}
-      </div>
+      {section('Bank & Statutory Details', [
+        ['bankName', text('bankName', 'Bank name')],
+        ['bankAccountNumber', text('bankAccountNumber', 'Account number')],
+        ['ifscCode', text('ifscCode', 'IFSC code')],
+        ['panNumber', text('panNumber', 'PAN number')],
+        ['aadhaarNumber', aadhaar],
+        ['uanNumber', text('uanNumber', 'UAN number')],
+        ['pfNumber', text('pfNumber', 'PF number')],
+        ['esiNumber', text('esiNumber', 'ESI number')],
+      ], { note: <div className="small-muted" style={{ marginBottom: 8 }}>Restricted — shown on payslips.</div> })}
 
       {documents}
     </>

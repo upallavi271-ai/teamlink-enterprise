@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
+const { requireInternal, can } = require('../utils/permissions');
 const { invoiceWhere, matches, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const {
@@ -28,6 +29,8 @@ router.use(requireProduct('accounts'));
 router.use(requirePerm('accounts', 'accounts', 'Invoices', 'view'));
 // B2 — credit / debit notes + placement margin (routes/creditNotes.js), before '/:id'.
 router.use(require('./creditNotes'));
+// Recon spec: maker-checker adjustments (short payment, TDS difference, bank charge, write-off).
+router.use(require('./invoiceAdjustments'));
 const CNU = require('../utils/creditNotes');
 
 
@@ -380,6 +383,40 @@ async function placementFacts(invoices, hier) {
   };
 }
 
+// Spec 7/8/9: the ACTUAL payment date (the date of the last real receipt - never the day it was
+// imported), the bank lines behind the receipts, the proof on file and a plain reconciliation word.
+function paymentFacts(i, received, txnById) {
+  const pays = i.payments || [];
+  const positive = pays.filter((p) => Number(p.amount) > 0);
+  const lastReceipt = positive.map((p) => p.date).filter(Boolean).sort().pop() || null;
+  const byTxn = new Map();
+  pays.filter((p) => p.bankTxnId).forEach((p) => {
+    const t = txnById.get(p.bankTxnId);
+    if (!t) return;
+    const e = byTxn.get(p.bankTxnId) || { txnId: t.id, date: t.date, reference: t.reference || null, state: t.reconStatus, applied: 0 };
+    e.applied = ROUND(e.applied + Number(p.amount || 0));
+    byTxn.set(p.bankTxnId, e);
+  });
+  const hasReceipt = received > 0.005;
+  const rowsWithBank = positive.filter((p) => p.bankTxnId && txnById.has(p.bankTxnId)).length;
+  let recon;
+  if (!hasReceipt && !pays.length) recon = 'No payment yet';
+  else if (pays.some((p) => Number(p.amount) < 0) && !hasReceipt) recon = 'Reversed';
+  else if (!positive.length) recon = 'Not matched';
+  else if (rowsWithBank === positive.length) recon = 'Bank matched';
+  else if (rowsWithBank > 0) recon = 'Part matched';
+  else recon = 'Not matched';
+  return {
+    paymentDate: hasReceipt ? (lastReceipt || i.paidDate || null) : null,
+    paymentDateKnown: !hasReceipt || !!(lastReceipt || i.paidDate),
+    bankLines: [...byTxn.values()].sort((a, b) => String(a.date).localeCompare(String(b.date))),
+    proofFile: !!i.proofFile,
+    proofName: i.proofName || null,
+    proofRef: i.proofRef || null,
+    reconStatus: recon,
+  };
+}
+
 async function buildRegister(user, query) {
   const where = invoiceWhere(user);
   const invoices = await prisma.invoice.findMany({
@@ -404,6 +441,13 @@ async function buildRegister(user, query) {
   // B2 — issued credit / debit notes per invoice (utils/invoiceTax.js withNotes).
   const notesOf = await CNU.notesByInvoice(null, { issuedOnly: true });
 
+  // The statement lines behind the receipts (one query), for the Bank Line links and the reconciliation status.
+  const txnIds = [...new Set(invoices.flatMap((x) => x.payments.map((p) => p.bankTxnId)).filter(Boolean))];
+  const txnRows = txnIds.length
+    ? await prisma.bankTransaction.findMany({ where: { id: { in: txnIds } }, select: { id: true, date: true, reference: true, reconStatus: true, amount: true } })
+    : [];
+  const txnById = new Map(txnRows.map((t) => [t.id, t]));
+
   const row = (i) => {
     const status = deriveInvoiceStatus(i);
     const fx = facts.get(i.id) || {};
@@ -416,7 +460,9 @@ async function buildRegister(user, query) {
     const billing = wn.hasNotes ? wn.billing : ROUND(Number(i.amount || 0));
     const gst = wn.hasNotes ? wn.gst : ROUND(Number(i.gst || 0));
     const tds = wn.hasNotes ? wn.tds : ROUND(Number(i.tds || 0));
-    const receivable = wn.hasNotes ? wn.receivable : invoiceTotal(i);
+    // Recon spec: receivable is after approved adjustments too (0 on every invoice without one).
+    const adjusted = ROUND(Number(i.adjustedAmount || 0));
+    const receivable = wn.hasNotes ? wn.receivable : ROUND(invoiceTotal(i) - adjusted);
     const received = ROUND(Number(i.receivedAmount || 0));
     const who = fx.who || {};
     const sec = who.sectionKey ? hier.sectionByKey.get(who.sectionKey) : null;
@@ -482,6 +528,7 @@ async function buildRegister(user, query) {
       noteDebit: wn.debit.count ? { count: wn.debit.count, base: wn.debit.base, gst: wn.debit.gst, tds: wn.debit.tds, net: wn.debit.net, numbers: wn.debit.numbers } : null,
       refundDue: wn.refundDue,
       refundOpen: wn.refundOpen,
+      adjusted,
       applicationId: fx.app ? fx.app.id : null,
       paymentCount: i.payments.length,
       paymentMethods: [...new Set(i.payments.map((p) => p.method || '—'))],
@@ -519,7 +566,8 @@ async function buildRegister(user, query) {
       tdsDeductedOn: tx.tdsDeductedOn,
       tdsStatus: status === 'Cancelled' ? 'Not Applicable' : tx.tdsStatus,
       taxCheck: tx.check.level === 'ok' ? null : { level: tx.check.level, issues: tx.check.issues.filter((x) => x.level !== 'info').map((x) => x.text) },
-      payments: i.payments.map((p) => ({ id: p.id, date: p.date, amount: p.amount, method: p.method, reference: p.reference, recordedBy: p.recordedBy })),
+      payments: i.payments.map((p) => ({ id: p.id, date: p.date, amount: p.amount, method: p.method, reference: p.reference, recordedBy: p.recordedBy, bankTxnId: p.bankTxnId || null })),
+      ...paymentFacts(i, received, txnById),
     };
   };
 
@@ -662,7 +710,9 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
     'Pending', 'Status', 'Due date', 'Age', 'Sent to client', 'TDS certificate',
     'GST type', 'GST %', 'CGST', 'SGST', 'IGST', 'TDS %', 'TDS on', 'TDS status',
     // B2 — money columns above are after issued notes; these say by how much.
-    'Credit notes (net)', 'Debit notes (net)', 'Refund due', 'Note numbers'];
+    'Credit notes (net)', 'Debit notes (net)', 'Refund due', 'Note numbers',
+    // Recon spec 7/8: the actual payment date, the bank line(s) behind it and the reconciliation word; Client ID keeps two clients with the same name apart.
+    'Payment date', 'Bank reference(s)', 'Reconciliation', 'Client ID'];
   const aoa = [
     ['Invoices'],
     [`Period: ${periodLabel}`],
@@ -678,7 +728,8 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
       r.gstTypeLabel || '', r.gstPercent || 0, r.cgst || 0, r.sgst || 0, r.igst || 0, r.tdsPercent || 0,
       r.tdsApplicable ? (r.tdsBase === 'gross' ? 'After GST' : 'Before GST') : '', r.tdsStatus || '',
       r.noteCredit ? r.noteCredit.net : 0, r.noteDebit ? r.noteDebit.net : 0, r.refundDue || 0,
-      [...(r.noteCredit ? r.noteCredit.numbers : []), ...(r.noteDebit ? r.noteDebit.numbers : [])].join(', ')]);
+      [...(r.noteCredit ? r.noteCredit.numbers : []), ...(r.noteDebit ? r.noteDebit.numbers : [])].join(', '),
+      r.paymentDate || (Number(r.received) > 0.005 ? 'not recorded' : ''), (r.bankLines || []).map((b) => b.reference || b.date).join(', '), r.reconStatus || '', r.clientId || '']);
   });
   if (!list.length) aoa.push(['No invoice matches these filters']);
   const sumOf = (k) => ROUND(list.reduce((a, r) => a + Number(r[k] || 0), 0));
@@ -691,10 +742,35 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
       if (ws[ref] && typeof ws[ref].v === 'number') ws[ref].z = '#,##0.00';
     }
   }
-  ws['!cols'] = [14, 12, 34, 18, 22, 24, 22, 24, 14, 18, 8, 13, 12, 13, 12, 13, 13, 13, 14, 12, 12, 18, 14, 12, 7, 12, 12, 12, 7, 11, 18, 13, 13, 12, 22].map((wch) => ({ wch }));
-  ws['!autofilter'] = { ref: `A5:AI${aoa.length}` };
+  ws['!cols'] = [14, 12, 34, 18, 22, 24, 22, 24, 14, 18, 8, 13, 12, 13, 12, 13, 13, 13, 14, 12, 12, 18, 14, 12, 7, 12, 12, 12, 7, 11, 18, 13, 13, 12, 22, 14, 26, 14, 26].map((wch) => ({ wch }));
+  ws['!autofilter'] = { ref: `A5:AM${aoa.length}` };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+  // One line per client (by the client's own id, never by name), over the SAME invoices as the sheet above,
+  // so its totals equal the invoice-level totals exactly (no invoice is counted twice).
+  {
+    const groups = new Map();
+    list.filter((r) => r.status !== 'Cancelled').forEach((r) => {
+      const k = r.clientId || r.client;
+      if (!groups.has(k)) groups.set(k, { clientId: r.clientId, client: r.client, rows: [] });
+      groups.get(k).rows.push(r);
+    });
+    const gs = [...groups.values()].sort((a, b) => a.client.localeCompare(b.client));
+    const sm = (rs, k) => ROUND(rs.reduce((a, r) => a + Number(r[k] || 0), 0));
+    const cAoa = [['Invoices - by client'], [`Period: ${periodLabel}`], [`Filters: ${String(req.body?.filters || '').slice(0, 400) || 'none'}`], [],
+      ['Client', 'Client ID', 'Invoices', 'Candidates', 'Before GST', 'GST', 'After GST', 'TDS', 'Receivable', 'Received', 'Pending', 'Paid', 'Part paid', 'Pending / overdue', 'Bank matched']];
+    gs.forEach((g) => {
+      const rs = g.rows;
+      cAoa.push([g.client, g.clientId || '', rs.length, new Set(rs.map((r) => r.candidateName).filter(Boolean)).size, sm(rs, 'billing'), sm(rs, 'gst'), sm(rs, 'invoiceValue'), sm(rs, 'tds'), sm(rs, 'receivable'), sm(rs, 'received'), sm(rs, 'pending'),
+        rs.filter((r) => r.status === 'Paid').length, rs.filter((r) => r.status === 'Partially Paid').length, rs.filter((r) => ['Pending', 'Overdue'].includes(r.status)).length, rs.filter((r) => r.reconStatus === 'Bank matched').length]);
+    });
+    const live = list.filter((r) => r.status !== 'Cancelled');
+    cAoa.push(['TOTAL', '', live.length, new Set(live.map((r) => r.candidateName).filter(Boolean)).size, sm(live, 'billing'), sm(live, 'gst'), sm(live, 'invoiceValue'), sm(live, 'tds'), sm(live, 'receivable'), sm(live, 'received'), sm(live, 'pending')]);
+    const cws = XLSX.utils.aoa_to_sheet(cAoa);
+    moneyCols(cws, 5, cAoa.length, [4, 5, 6, 7, 8, 9, 10]);
+    cws['!cols'] = [34, 26, 10, 11, 14, 12, 14, 12, 14, 14, 14, 8, 10, 16, 13].map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, cws, 'By client');
+  }
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   await logAudit({
     userId: req.user.id, action: 'Invoices exported', entity: 'Invoice', toValue: `${list.length} invoice(s) · ${periodLabel}`,
@@ -739,15 +815,23 @@ router.post('/register/accounts.xlsx', requirePerm('accounts', 'accounts', 'Invo
   const { list, filtersLine } = await pickedRegister(req);
   const live = list.filter((r) => r.status !== 'Cancelled');
   const byClient = new Map();
-  live.forEach((r) => { if (!byClient.has(r.client)) byClient.set(r.client, []); byClient.get(r.client).push(r); });
-  const clients = [...byClient.keys()].sort((a, b) => a.localeCompare(b));
+  // Grouped by the client's id: two different clients that share a name stay two clients.
+  const nameOfKey = new Map();
+  live.forEach((r) => {
+    const k = r.clientId || r.client;
+    if (!byClient.has(k)) { byClient.set(k, []); nameOfKey.set(k, r.client); }
+    byClient.get(k).push(r);
+  });
+  const dupNames = new Set([...nameOfKey.values()].filter((n, ix, arr) => arr.indexOf(n) !== ix));
+  const labelOf = (k) => (dupNames.has(nameOfKey.get(k)) ? `${nameOfKey.get(k)} (id ${String(k).slice(-6)})` : nameOfKey.get(k));
+  const clients = [...byClient.keys()].sort((a, b) => labelOf(a).localeCompare(labelOf(b)));
   const s = (rs, k) => ROUND(rs.reduce((a, r) => a + Number(r[k] || 0), 0));
   const sumHead = ['Client', 'Invoices', 'Before GST', 'GST', 'After GST', 'TDS', 'Receivable', 'Received', 'Pending', 'Overdue invoices', 'Oldest open due date'];
   const sumAoa = [['Invoice accounts — by client'], [`Filters: ${filtersLine}`], [], sumHead];
   clients.forEach((c) => {
     const rs = byClient.get(c);
     const open = rs.filter((r) => r.pending > 0.5);
-    sumAoa.push([c, rs.length, s(rs, 'billing'), s(rs, 'gst'), s(rs, 'invoiceValue'), s(rs, 'tds'), s(rs, 'receivable'), s(rs, 'received'), s(rs, 'pending'),
+    sumAoa.push([labelOf(c), rs.length, s(rs, 'billing'), s(rs, 'gst'), s(rs, 'invoiceValue'), s(rs, 'tds'), s(rs, 'receivable'), s(rs, 'received'), s(rs, 'pending'),
       open.filter((r) => r.daysOverdue != null && r.daysOverdue > 0).length,
       open.map((r) => r.dueDate).filter(Boolean).sort()[0] || '']);
   });
@@ -767,11 +851,11 @@ router.post('/register/accounts.xlsx', requirePerm('accounts', 'accounts', 'Invo
         date: p.date, no: r.invoiceNumber, text: `Received · ${p.method || '—'}${p.reference ? ` · ${p.reference}` : ''}`, debit: 0, credit: ROUND(Number(p.amount || 0)),
       }));
       const extra = unrecordedOf(r);
-      if (extra > 0.5) lines.push({ date: r.paidDate || r.invoiceDate, no: r.invoiceNumber, text: 'Received (imported total, no receipt detail)', debit: 0, credit: extra });
+      if (extra > 0.5) lines.push({ date: r.paidDate || null, no: r.invoiceNumber, text: `Received (imported total, no receipt detail${r.paidDate ? '' : ' · payment date not recorded'})`, debit: 0, credit: extra });
     });
-    lines.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.inv ? -1 : 1));
+    lines.sort((a, b) => String(a.date || '9999-12-31').localeCompare(String(b.date || '9999-12-31')) || (a.inv ? -1 : 1));
     let bal = 0;
-    lines.forEach((l) => { bal = ROUND(bal + l.debit - l.credit); ledAoa.push([c, l.date || '', l.no, l.text, l.debit || '', l.credit || '', bal]); });
+    lines.forEach((l) => { bal = ROUND(bal + l.debit - l.credit); ledAoa.push([labelOf(c), l.date || '', l.no, l.text, l.debit || '', l.credit || '', bal]); });
   });
   const ws2 = XLSX.utils.aoa_to_sheet(ledAoa);
   moneyCols(ws2, 4, ledAoa.length, [4, 5, 6]);
@@ -1091,14 +1175,14 @@ router.get('/:id', async (req, res) => {
       bank: acc ? `${acc.bank}${acc.accNo ? ` · xxxx${String(acc.accNo).slice(-4)}` : ''}` : null,
     };
   }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const { tdsCertFile, ...rest } = decorate(synced);
+  const { tdsCertFile, proofFile, ...rest } = decorate(synced);
   // P4 — the GST / TDS summary and what the Edit form offers.
   const company = (await prisma.company.findFirst()) || {};
   // B2 — this invoice's credit / debit notes and its figures after them.
   const notes = CNU.ready() ? ((await CNU.notesByInvoice([invoice.id])).get(invoice.id) || []) : [];
   const wn = TAX.withNotes(synced, notes);
   res.json({
-    ...rest, tdsCertHasFile: !!tdsCertFile, proofLines, ...taxPayload(synced, company),
+    ...rest, tdsCertHasFile: !!tdsCertFile, proofHasFile: !!proofFile, proofLines, ...taxPayload(synced, company),
     notesReady: CNU.ready(),
     creditNotes: notes.map((n) => CNU.shapeNote(n, invoice)),
     afterNotes: wn.hasNotes ? {
@@ -1106,6 +1190,32 @@ router.get('/:id', async (req, res) => {
     } : null,
     canApproveNotes: CNU.ready() ? await CNU.isNoteApprover(req.user) : false,
     margin: await invoiceMargin(synced, wn),
+  });
+});
+
+// "View Transaction" under the Proof section: the REAL bank line behind one of
+// this invoice's receipts. Only a line that one of THIS invoice's payments
+// points at can be opened from here (never a look-up of any statement line), and
+// what it shows about other invoices the same line paid is the amount only.
+router.get('/:id/bank-line/:txnId', requireInternal, async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  if (!(await can(req.user, 'accounts', 'accounts', 'Invoices', 'view'))) return res.status(403).json(OUT_OF_SCOPE);
+  const mine = await prisma.invoicePayment.findMany({ where: { invoiceId: invoice.id, bankTxnId: req.params.txnId } });
+  if (!mine.length) return res.status(404).json({ error: 'That bank line is not linked to a payment on this invoice.' });
+  const d = await require('./bank').lineDetail(req.params.txnId);
+  const here = d.allocations.filter((a) => a.invoiceId === invoice.id);
+  const other = d.allocations.filter((a) => a.invoiceId !== invoice.id);
+  res.json({
+    ...d,
+    allocations: here,
+    otherInvoices: { count: other.length, amount: ROUND(other.reduce((x, a) => x + Number(a.amount || 0), 0)) },
+    appliedHere: ROUND(here.reduce((x, a) => x + Number(a.amount || 0), 0)),
+    invoice: { id: invoice.id, invoiceNumber: invoice.invoiceNumber, client: invoice.client ? invoice.client.name : null },
+    sourceRow: undefined,
+    bills: [],
+    import: d.import ? { file: d.import.file, importedOn: d.import.importedOn } : null,
   });
 });
 
@@ -1194,14 +1304,15 @@ router.get('/client-account/:clientId', async (req, res) => {
     // the received figure only) still belongs in the account.
     const unrecorded = ROUND(Number(i.receivedAmount || 0) - recorded);
     if (unrecorded > 0.5) {
+      // Spec 7: no payment date on record = no date shown (never the invoice date).
       lines.push({
-        date: i.paidDate || i.invoiceDate, kind: 'receipt', invoiceId: i.id, invoiceNumber: no,
-        particulars: `Received (imported total, no receipt detail) · against ${no}`,
+        date: i.paidDate || null, dateKnown: !!i.paidDate, kind: 'receipt', invoiceId: i.id, invoiceNumber: no,
+        particulars: `Received (imported total, no receipt detail${i.paidDate ? '' : ' · payment date not recorded'}) · against ${no}`,
         debit: 0, credit: unrecorded,
       });
     }
   });
-  lines.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.kind === 'invoice' ? -1 : 1));
+  lines.sort((a, b) => String(a.date || '9999-12-31').localeCompare(String(b.date || '9999-12-31')) || (a.kind === 'invoice' ? -1 : 1));
   let bal = 0;
   lines.forEach((l) => { bal = ROUND(bal + l.debit - l.credit); l.balance = bal; });
   const live = invoices.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled');
@@ -1351,9 +1462,16 @@ router.patch('/:id', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), as
     return res.json({ ...decorate(invoice), ...taxPayload(invoice, company), unchanged: true });
   }
   const status = deriveInvoiceStatus({ ...invoice, ...data });
-  const today = new Date().toISOString().slice(0, 10);
   data.status = status;
-  data.paidDate = status === 'Paid' ? (invoice.paidDate || today) : (invoice.status === 'Paid' ? null : invoice.paidDate);
+  // Accounts spec 7: editing the tax fields is not a payment, so it never
+  // invents a payment date. A newly settled invoice takes the date of its last
+  // real receipt; with none on file it stays undated (shown as "date not recorded").
+  let lastReceipt = null;
+  if (status === 'Paid' && !invoice.paidDate) {
+    const lastRow = await prisma.invoicePayment.findFirst({ where: { invoiceId: invoice.id }, orderBy: { date: 'desc' }, select: { date: true } });
+    lastReceipt = lastRow ? lastRow.date : null;
+  }
+  data.paidDate = status === 'Paid' ? (invoice.paidDate || lastReceipt) : (invoice.status === 'Paid' ? null : invoice.paidDate);
   const updated = await prisma.invoice.update({ where: { id: invoice.id }, data, include: { client: true } });
   await logAudit({
     userId: req.user.id, action: 'Invoice GST / TDS edited', entity: 'Invoice', entityId: invoice.id,
@@ -1374,11 +1492,15 @@ router.post('/:id/payments', requirePerm('accounts', 'accounts', 'Payments', 'cr
   const problem = receiptProblem(invoice, amount);
   if (problem) return res.status(400).json({ error: problem });
 
-  const date = req.body.date || new Date().toISOString().slice(0, 10);
+  // Spec 7: no payment is dated by the day it was keyed in.
+  const date = String(req.body.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Enter the date the money arrived.' });
+  if (date > new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'A payment date cannot be in the future.' });
   const payment = await prisma.invoicePayment.create({
     data: {
       invoiceId: invoice.id,
       date,
+      dateSource: 'entered',
       amount,
       method: req.body.method || 'Bank Transfer',
       reference: req.body.reference || null,
@@ -1429,11 +1551,15 @@ router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit')
   const outstanding = invoiceOutstanding(invoice);
   if (outstanding <= 0.5) return res.status(400).json({ error: 'Already marked paid' });
 
-  const date = req.body?.date || new Date().toISOString().slice(0, 10);
+  // Spec 7: the payment date is the day the money arrived, typed by the person -
+  // never silently "today" (the day the button was pressed).
+  const date = String(req.body?.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Enter the date the money arrived.' });
+  if (date > new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'A payment date cannot be in the future.' });
   await prisma.invoicePayment.create({
     data: {
       invoiceId: invoice.id, date, amount: outstanding,
-      method: req.body?.method || 'Bank Transfer',
+      method: req.body?.method || 'Bank Transfer', dateSource: 'entered',
       notes: 'Settled in full', recordedBy: req.user.name || req.user.email || null,
     },
   });

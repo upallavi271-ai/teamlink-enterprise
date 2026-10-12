@@ -46,8 +46,35 @@ async function warm() {
   })).find((u) => !TEST_LOGIN.test(`${u.name} ${u.email}`));
   if (sa) {
     const user = await require('./identity').resolveIdentity(sa.id);
-    if (user) await require('../routes/candidates').pipelineRowsFor(user);
+    if (user) {
+      const C = require('../routes/candidates');
+      await C.pipelineRowsFor(user);
+      await C.pagedRowsFor(user).catch(() => null); // the People tab and the cards' "available" count
+    }
   }
+  // Batch 1 perf: the lists of the people who signed in lately (a BDE's or a Manager's list is
+  // 2-6 s of work the first time), one at a time, a few at most, so their first Candidates page
+  // after a restart is quick. Same builder the page uses; a test login is never warmed.
+  try {
+    const recent = await prisma.user.findMany({
+      where: { status: 'Active', atsAccess: true, lastLoginAt: { gte: new Date(Date.now() - 3 * 86400000) } },
+      select: { id: true, name: true, email: true }, orderBy: { lastLoginAt: 'desc' }, take: 12,
+    });
+    const C = require('../routes/candidates');
+    let n = 0;
+    for (const u of recent) {
+      if (n >= 6) break;
+      if ((sa && u.id === sa.id) || TEST_LOGIN.test(`${u.name} ${u.email}`)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const idn = await require('./identity').resolveIdentity(u.id).catch(() => null);
+      if (!idn) continue;
+      n += 1;
+      // eslint-disable-next-line no-await-in-loop
+      await C.pipelineRowsFor(idn).catch(() => null);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } catch { /* the page builds it on first use */ }
   // eslint-disable-next-line no-console
   console.log(`[warmup] candidate list ready in ${((Date.now() - t0) / 1000).toFixed(1)} s (data ${(caches / 1000).toFixed(1)} s)`);
 }

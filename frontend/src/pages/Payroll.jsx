@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
+import Incentives from './payroll/Incentives.jsx';
 import { inr } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, Modal } from '../components/proto.jsx';
 import { canRunPayroll, isAdmin as hasAdminAccess, can } from '../permissions';
@@ -529,7 +530,7 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
               <>
                 <SectionLabel style={{ color: 'var(--blue)', margin: '12px 0 4px' }}>How attendance affects pay</SectionLabel>
                 {cb('unmarkedDaysUnpaid', 'Unmarked working days are unpaid')}
-                {cb('weekendsPaid', 'Weekends are paid')}
+                {cb('weekendsPaid', 'Week-off days are paid (pay basis = every calendar day; off: Monday to Saturday)')}
                 {cb('payByHours', 'Pay by hours worked')}
                 {cb('halfDayBySession', 'Half day is measured by session')}
                 <div className="grid-2" style={{ marginTop: 10 }}>
@@ -1061,6 +1062,8 @@ export default function Payroll() {
           { key: 'compliance', label: 'Compliance', element: <CompliancePanel /> },
         ] : []),
         { key: 'payslips', label: canRun || viewOnly ? 'Payslips' : 'My Payslips', element: <PayslipsTab seesOthers={canRun || viewOnly} /> },
+        // Department-wise incentive rules, approval and history (Incentives.jsx).
+        { key: 'incentives', label: canRun || viewOnly ? 'Incentives' : 'My Incentives', element: <Incentives /> },
       ]}
     />
   );

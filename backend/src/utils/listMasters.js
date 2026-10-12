@@ -22,9 +22,10 @@ const SIDES = ['Client', 'Internal', 'Candidate'];
 // The built-in lists — the same words the screens offer today
 // (frontend/src/atsVocab.js CANDIDATE_SOURCES ∪ CANDIDATE_FILTER_SOURCES,
 // REJECTION_REASONS_BY_SIDE, PRIORITIES, LOCS).
-const DEFAULT_SOURCES = [
-  'Direct', 'Referral', 'Job Portal', 'Naukri', 'Indeed', 'Shine', 'LinkedIn', 'TeamLink Website', 'Social Media',
-];
+// SOURCES ARE NOT AN ADMIN LIST ANY MORE (user, 2026-10-10): ONE clean list lives in code
+// (utils/candidateSource.js) and every picker, filter, export and report reads it, so two
+// words can never mean the same place. The Master lists screen shows it read-only.
+const DEFAULT_SOURCES = require('./candidateSource').PICKER_SOURCES; // eslint-disable-line global-require
 const DEFAULT_REASONS_BY_SIDE = {
   Client: [
     'Skills Mismatch', 'Insufficient Experience', 'Interview Performance', 'Communication',
@@ -84,7 +85,7 @@ async function load() {
   } catch { saved = null; }
   const out = {};
   LISTS.forEach((l) => {
-    const list = saved && Array.isArray(saved[l]) ? saved[l] : base[l];
+    const list = l === 'sources' ? base.sources : (saved && Array.isArray(saved[l]) ? saved[l] : base[l]);
     out[l] = list.filter((x) => x && clean(x.name)).map((x) => ({
       name: clean(x.name),
       active: x.active !== false,
@@ -164,6 +165,7 @@ const bad = (status, message) => Object.assign(new Error(message), { status });
 // One change at a time: { action: 'add' | 'rename' | 'off' | 'on' | 'remove' | 'sides', name, newName, sides }
 async function change(list, body, user) {
   if (!LISTS.includes(list)) throw bad(404, 'No such list.');
+  if (list === 'sources') throw bad(409, 'The source list is fixed in the app so every screen says the same word. Ask the developer to change it.');
   const m = await load();
   const items = m[list].map((x) => ({ ...x }));
   const name = clean(body.name);

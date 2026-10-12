@@ -14,14 +14,18 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { withUser } from '../db.js';
 import { wrap, badRequest, notFound, forbidden, ApiError, CODES } from '../errors.js';
+import { walkinCompletedError } from '../portal/walkin-jobs.js';
 import { requireAuth, requireRole } from '../auth.js';
 import { toApplication, toNotification, toJob, toCandidate } from '../shapes.js';
 import { dispatchEvent } from '../notify/events.js';
 import { sendApplyMessages } from '../notify/apply-messages.js';
+import { kickApplicationNotices } from '../notify/application-notices.js';
 import { holdSeconds, scheduleHold } from '../notify/apply-hold.js';
 import { matchCandidate } from '../ai/match.js';
 import { screenApplication } from '../ai/screening.js';
 import { applyScreeningAnswers, storeApplyScreening } from '../screening/apply.js';
+import { hiddenError } from '../scope.js';
+import { istDateTime, appliedRangeSql, sourceLabel } from '../applied-date.js';
 
 const newId = (p) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
@@ -65,18 +69,22 @@ export default function applicationRoutes() {
     const limit  = Math.min(parseInt(req.query.limit, 10) || 200, 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const { jobId, candidateId, stage } = req.query;
+    // 0130: "Applied Date" - India days, both ends inclusive - and the order.
+    const order = req.query.sort === 'applied_asc' ? 'applied_at asc, id' : 'applied_at desc, id desc';
 
     const out = await withUser(req.session, async (c) => {
       const where = [], params = [];
       if (jobId)       { params.push(jobId);       where.push(`job_id=$${params.length}`); }
       if (candidateId) { params.push(candidateId); where.push(`candidate_id=$${params.length}`); }
       if (stage)       { params.push(stage);       where.push(`stage=$${params.length}`); }
+      where.push(...appliedRangeSql('applied_at', req.query.from, req.query.to,
+        (v) => { params.push(v); return `$${params.length}`; }));
       const clause = where.length ? `where ${where.join(' and ')}` : '';
       const total = await c.query(`select count(*)::int n from applications ${clause}`, params);
       params.push(limit, offset);
       const rows = await c.query(
         `select * from applications ${clause}
-         order by applied_at desc limit $${params.length - 1} offset $${params.length}`, params);
+         order by ${order} limit $${params.length - 1} offset $${params.length}`, params);
       return { total: total.rows[0].n, rows: rows.rows };
     });
 
@@ -119,10 +127,14 @@ export default function applicationRoutes() {
 
     const out = await withUser(req.session, async (c) => {
       const job = await c.query(
-        `select id, title, company_id, employment_type, posting_kind, status, paused, archived
+        `select id, title, company_id, employment_type, posting_kind, status, paused, archived, source_type, recruiter_id
            from jobs where id=$1`, [body.jobId]);
       if (!job.rowCount) throw new ApiError(404, CODES.JOB_UNAVAILABLE, 'This role is no longer available.');
       const j = job.rows[0];
+      /* 0113: the TeamLink application flow is for TeamLink jobs. */
+      if (req.session.role === 'candidate' && j.source_type === 'EXTERNAL') {
+        throw new ApiError(409, CODES.JOB_UNAVAILABLE, 'This is an external job: apply on its original website.');
+      }
       if (j.status !== 'open' || j.paused || j.archived) {
         throw new ApiError(409, CODES.JOB_UNAVAILABLE, 'This role is no longer accepting applications.');
       }
@@ -140,7 +152,9 @@ export default function applicationRoutes() {
       // pressing Submit for the last seat cannot both get it.
       const walkin = (await c.query(`select walkin_apply_check($1) as v`, [body.jobId])).rows[0].v;
       if (walkin === 'closed') {
-        throw new ApiError(409, CODES.JOB_UNAVAILABLE, 'This walk-in is closed - its date and time have passed.', { reason: 'walkin_closed' });
+        /* 0137: said as what it is - the walk-in's dates are over - with the date as posted */
+        const when = (await c.query(`select walkin_completed($1) as d`, [body.jobId])).rows[0].d;
+        throw walkinCompletedError(when);
       }
       if (walkin === 'full') {
         throw new ApiError(409, 'WALKIN_FULL', 'Registrations full - every seat for this walk-in is taken.', { reason: 'walkin_full' });
@@ -161,12 +175,15 @@ export default function applicationRoutes() {
        * `undefined%` for every candidate who applied through the portal,
        * which is worse than a wrong number because it looks broken.
        *
-       * Same engine as the job alerts, so the percentage a recruiter sees
-       * on an application means the same thing as the one on an alert.
+       * The recruiter's screening score (matchCandidate, multi-factor). It
+       * is not the candidate's AI Match (ai/ai-match.js, skills only),
+       * which is what candidates and the alerts see.
        */
       let matchScore = null;
+      let candName = '';
       try {
         const cand = (await c.query(`select * from candidates where id=$1`, [candidateId])).rows[0];
+        candName = (cand && cand.name) || '';
         if (cand) matchScore = matchCandidate(toJob(j), toCandidate(cand)).score;
       } catch (err) {
         console.error('[applications] could not score the match:', err.message);
@@ -198,13 +215,35 @@ export default function applicationRoutes() {
       // Same transaction — see the header note.
       const company = await c.query(`select name from companies where id=$1`, [j.company_id]);
       const coName = company.rows[0]?.name || 'the company';
+      // 0130: both notices carry the applied date and time (IST), from
+      // the row's own applied_at - the one value every screen shows.
+      const appliedAt = ins.rows[0].applied_at;
+      const appliedText = istDateTime(appliedAt);
       const notif = await c.query(
         `select notify_create($1,$2,'candidate','APPLICATION_SUBMITTED',$3,$4,$5,$6,$7,null,$8) as id`,
         [newId('ntf'), candidateId,
-         'Application Submitted',
-         `Your application for ${j.title} at ${coName} has been submitted successfully.`,
+         `You applied for ${j.title}`,
+         `Your application for ${j.title} at ${coName} has been submitted successfully. Applied on ${appliedText}.`,
          j.id, id, candidateId,
-         JSON.stringify({ jobTitle: j.title, company: coName })]);
+         JSON.stringify({ jobTitle: j.title, company: coName, appliedAt: new Date(appliedAt).toISOString() })]);
+
+      // The recruiter who owns the job (or the application's own
+      // recruiter) hears about it at once: "<candidate> applied for <job>".
+      // Same transaction, so an Undo takes it away with the application.
+      const owner = ins.rows[0].recruiter_id || j.recruiter_id;
+      if (owner) {
+        const src = sourceLabel(ins.rows[0].source);
+        await c.query(
+          `select notify_create($1,$2,'recruiter','APPLICATION_RECEIVED',$3,$4,$5,$6,$7,$2,$8)`,
+          [newId('ntf'), owner,
+           `${candName || 'A candidate'} applied for ${j.title}`,
+           `${candName || 'A candidate'} applied for ${j.title}. Applied on ${appliedText}. `
+             + `Came from: ${src}.` + (matchScore != null ? ` AI Match ${Math.round(matchScore)}%.` : ''),
+           j.id, id, candidateId,
+           JSON.stringify({ jobTitle: j.title, candidateName: candName, source: src,
+             matchScore, reference: ins.rows[0].reference || null,
+             appliedAt: new Date(appliedAt).toISOString() })]);
+      }
 
       let notification = null;
       if (notif.rows[0]?.id) {
@@ -231,6 +270,10 @@ export default function applicationRoutes() {
     // invitation (notify/apply-messages.js). Sent now, after the commit,
     // unless this is a one-click application inside its Undo window: then
     // they go when the hold falls due, and only if it was not undone.
+    /* 0139: HR hears about a walk-in application now - not after the AI interview, and not only
+       when a recruiter is assigned. The notice row was made with the application; this sends it. */
+    kickApplicationNotices();
+
     let messages = null;
     if (heldUntil) {
       scheduleHold(out.application.id, heldUntil);
@@ -322,8 +365,8 @@ export default function applicationRoutes() {
         const upd = await c.query(
           `update applications set stage=$1 where id=$2 returning *`, [stage, req.params.id]);
         if (!upd.rowCount) {
-          const seen = await c.query(`select 1 from applications where id=$1`, [req.params.id]);
-          throw seen.rowCount
+          const seen = await c.query(`select app_row_exists('application',$1) as e`, [req.params.id]);
+          throw seen.rows[0].e
             ? forbidden('You do not have access to this application.')
             : notFound('That application no longer exists.');
         }
@@ -422,7 +465,7 @@ export default function applicationRoutes() {
       // for it as the caller is what enforces that.
       const mine = await withUser(req.session, async (c) => (await c.query(
         `select id from applications where id=$1`, [req.params.id])).rows[0]);
-      if (!mine) throw notFound('That application does not exist.');
+      if (!mine) throw await hiddenError(req.session, 'application', req.params.id, notFound('That application does not exist.'));
 
       const out = await screenApplication(req.params.id,
         { actor: req.session.userId || 'recruiter', force: true });
@@ -443,7 +486,7 @@ export default function applicationRoutes() {
       return { summary: s.rows[0], rows: rows.rows };
     });
 
-    if (!out) throw notFound('That application could not be found.');
+    if (!out) throw await hiddenError(req.session, 'application', req.params.id, notFound('That application could not be found.'));
 
     const sum = out.summary;
     res.json({
@@ -478,6 +521,11 @@ export default function applicationRoutes() {
           where h.application_id=$1 order by h.id`, [req.params.id]);
       return rows;
     });
+    if (!rows.length) {
+      /* Nothing came back: either no history, or not theirs to read (0118). */
+      const denied = await hiddenError(req.session, 'application', req.params.id, null);
+      if (denied) throw denied;
+    }
     res.json({ history: rows });
   }));
 

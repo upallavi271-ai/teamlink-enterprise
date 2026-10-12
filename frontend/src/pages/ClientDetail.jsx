@@ -34,9 +34,13 @@ import {
 } from '../components/clients/ClientLifecycle.jsx';
 // ATS layout v3 — the Performance tab, the job status chain, Signed / Unsigned.
 import ClientPerformance from '../components/clients/ClientPerformance.jsx';
+import ClientWork from '../components/clients/ClientWork.jsx'; // 4th tab: what is waiting on this client + all activity (2026-10-10)
 import { JobStatusChip } from '../components/jobs/reqStatus.jsx';
 import { agreementIsSigned } from '../atsVocab';
 import ClientSlaCard from '../components/clients/ClientSlaCard.jsx'; // B9.2: per-client SLA
+import ConversationView from '../components/messaging/ConversationView.jsx'; // the client's Conversation: Call / Mail / WhatsApp / SMS in one place
+import ContactDialog from '../components/messaging/ContactDialog.jsx'; // Message the client contact: Call / Mail / WhatsApp / SMS with templates
+import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message clients
 import '../components/clients/ccr.css';
 
 // ---------------------------------------------------------------------------
@@ -94,6 +98,8 @@ const TABS = [
   ['details', 'Details & Agreement', ['overview', 'contacts', 'portal', 'agreement', 'activity']],
   ['requirements', 'Requirements', []],
   ['performance', 'Performance', ['candidates', 'interviews', 'selected', 'replacements', 'invoices', 'payments']],
+  // Shown only when GET /clients/:id/work answers (the internal client desk); see tabShown.
+  ['work', 'Client work', []],
 ];
 // Every older link (?tab=overview / contacts / agreement / candidates /
 // invoices / joining / payments …) lands on the tab that now carries it, and
@@ -196,6 +202,10 @@ export default function ClientDetail() {
   const [activityKind, setActivityKind] = useState('all');
   // Pause / Reactivate / Request pause / Archive / Un-archive / Delete dialog.
   const [lcDialog, setLcDialog] = useState('');
+  // "Message" on the client's contact person (only when the server allows this login to).
+  const mayMessage = useMayMessage('clients');
+  const [msgOpen, setMsgOpen] = useState(false);
+  const [convOpen, setConvOpen] = useState(false);
 
   function load() {
     if (!allowed) return;
@@ -207,6 +217,17 @@ export default function ClientDetail() {
       .catch(() => setData(EMPTY_OVERVIEW));
   }
   useEffect(load, [id]);
+  // Client work (2026-10-10): asked once per client; a 403 means no client desk, so the tab is not drawn.
+  const [work, setWork] = useState(null);
+  useEffect(() => {
+    setWork(null);
+    if (!allowed) return undefined;
+    let live = true;
+    api.get(`/clients/${id}/work`, { params: { kind: 'all', limit: 30 } })
+      .then((res) => { if (live) setWork(res.data); })
+      .catch(() => { if (live) setWork(null); });
+    return () => { live = false; };
+  }, [id, allowed]);
   // An older ?tab= key (agreement, interviews, invoices …) scrolls to its section.
   const clientReady = !!client;
   useEffect(() => {
@@ -422,6 +443,7 @@ export default function ClientDetail() {
   // A merged tab shows when the login may open ANY of the sections it carries.
   const tabShown = (k) => {
     const def = TABS.find(([key]) => key === k);
+    if (k === 'work') return !!work && !data.redacted;
     return !!def && (tabOk(k) || (def[2] || []).some(tabOk));
   };
   const activeTab = tabShown(tab) ? tab : (TABS.find(([k]) => tabShown(k)) || ['details'])[0];
@@ -460,9 +482,13 @@ export default function ClientDetail() {
         <div>
           <h1 style={{ fontSize: 20 }}>{c.name}</h1>
           <div className="page-sub">
-            {[c.displayCode, c.legalName && c.legalName !== c.name ? `Legal: ${c.legalName}` : null, c.industry, c.businessType,
+            {[c.displayCode, c.agreementId ? `Agreement ${c.agreementId}` : null, c.legalName && c.legalName !== c.name ? `Legal: ${c.legalName}` : null, c.industry, c.businessType,
               [c.location, c.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || '—'}
           </div>
+          {/* Who looks after this client: Name · Position (user, 2026-10-09). */}
+          {!data.redacted && (
+            <div className="page-sub">{`Client manager (BDE): ${c.bdeLabel || c.bdeOwner || data.summary?.bdeLabel || 'Nobody yet'}${c.ownerDepartment ? ` · ${c.ownerDepartment}` : ''}`}</div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <LifecycleChip lifecycle={c.lifecycle} />
@@ -520,10 +546,14 @@ export default function ClientDetail() {
         {TABS.filter(([key]) => tabShown(key)).map(([key, label]) => (
           <div key={key} className={`tab${activeTab === key ? ' active' : ''}`} onClick={() => setTab(key)}>
             {label}
-            {counts[key] != null && counts[key] > 0 ? ` (${counts[key]})` : ''}
+            {key === 'work'
+              ? (work && work.pending && work.pending.total > 0 ? ` (${work.pending.total} waiting)` : '')
+              : (counts[key] != null && counts[key] > 0 ? ` (${counts[key]})` : '')}
           </div>
         ))}
       </div>
+
+      {activeTab === 'work' && work && <ClientWork key={c.id} clientId={c.id} initial={work} onGoTab={setTab} />}
 
       {/* ---------------------------------------------------------------- */}
       {activeTab === 'details' && (
@@ -636,7 +666,8 @@ export default function ClientDetail() {
             {!data.redacted && (
               <div className="card section">
                 <h3 style={{ fontSize: 13, marginBottom: 10 }}>Client manager (BDE)</h3>
-                <Row k="Client manager (BDE)">{c.bdeOwner || data.summary?.bdeName || 'Nobody yet'}</Row>
+                <Row k="Client manager (BDE)">{c.bdeLabel || c.bdeOwner || data.summary?.bdeLabel || data.summary?.bdeName || 'Nobody yet'}</Row>
+                {c.secondaryBde ? <Row k="Second BDE">{c.secondaryBdeLabel || c.secondaryBde}</Row> : null}
                 <Row k="Account manager">{c.accountManager}</Row>
                 {bdes.length > 0 && (
                   <Row k="On its jobs">{bdes.map(([n, k]) => `${n} (${k})`).join(', ')}</Row>
@@ -683,6 +714,13 @@ export default function ClientDetail() {
         return (
           <div id="ccr-sec-contacts" className="ccr-section">
             <div className="section-label">{cards.length ? `Contacts (${cards.length})` : 'Contacts'}</div>
+            {mayMessage && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '6px 0 10px' }}>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setMsgOpen(true)}>{meta?.level === 'billing' ? 'Send a payment reminder' : 'Message the client'}</button>
+                <button type="button" className="btn btn-sm" onClick={() => setConvOpen((v) => !v)}>{convOpen ? 'Hide the conversation' : 'Open the conversation'}</button>
+              </div>
+            )}
+            {convOpen && mayMessage && <ConversationView audience="clients" personId={c.id} name={meta?.level === 'billing' ? `${c.billingContactName || 'Billing contact'} (${c.name})` : (c.contactName ? `${c.contactName} (${c.name})` : c.name)} onChanged={load} />}
             {meta?.level === 'names' && <div className="notice">Names only. The BDE team has phones and emails.</div>}
             {meta?.level === 'billing' && <div className="notice">The billing contact. The BDE team has the others.</div>}
             {cards.length ? (
@@ -702,6 +740,18 @@ export default function ClientDetail() {
           </div>
         );
       })()}
+      {msgOpen && mayMessage && (
+        <ContactDialog
+          audience="clients"
+          personId={c.id}
+          purposeLabel={meta?.level === 'billing' ? 'Payment reminder' : 'Client agreement link'}
+          name={meta?.level === 'billing' ? `${c.billingContactName || 'Billing contact'} (${c.name})` : (c.contactName ? `${c.contactName} (${c.name})` : c.name)}
+          email={c.contactEmail === undefined ? undefined : (c.contactEmail || '')}
+          phone={c.contactPhone === undefined ? undefined : (c.contactPhone || '')}
+          onClose={() => setMsgOpen(false)}
+          onLogged={load}
+        />
+      )}
       {activeTab === 'details' && portalTab && (
         <div id="ccr-sec-portal" className="ccr-section" style={{ marginTop: 16 }}>
           <div className="section-label">Portal access</div>
@@ -1155,7 +1205,7 @@ export default function ClientDetail() {
               ) : (
                 !data.redacted && (
                   <div className="small-muted" style={{ fontSize: 12.5 }}>
-                    {step === 'DRAFT' && c.agreementDocument ? 'Ask an Admin to send the agreement link to the client.' : 'Only an Admin changes or sends it. You can read it here.'}
+                    {step === 'DRAFT' && c.agreementDocument && !p.sendLink ? 'Ask an Admin to send the agreement link to the client.' : (p.sendLink ? 'Use the box below to make the agreement link and send it to the client. An Admin changes the terms.' : 'Only an Admin changes or sends it. You can read it here.')}
                   </div>
                 )
               )}
@@ -1165,7 +1215,7 @@ export default function ClientDetail() {
                 </Modal>
               )}
               {/* 2026-10-05 — the agreement link: make, copy, WhatsApp, email, stop. */}
-              {canManage && c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED'].includes(step) && (
+              {(canManage || p.sendLink) && c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED'].includes(step) && (
                 <AgreementLinkCard clientId={id} onChanged={load} />
               )}
             </div>
@@ -1179,7 +1229,7 @@ export default function ClientDetail() {
                 <div className="agr6-term"><div className="k">Starts</div><div className="v">{c.agreementStart || (c.agreementActivatedAt ? protoDate(c.agreementActivatedAt) : 'Not set')}</div></div>
                 <div className="agr6-term"><div className="k">Ends</div><div className="v">{c.agreementEnd || (c.agreementStart ? 'Renews every 12 months' : 'Not set')}</div></div>
               </div>
-              <div className="small-muted" style={{ fontSize: 12 }}>{`${c.agreementId || 'No agreement number yet'} · ${c.agreementTemplate || 'Standard template'}${c.agreementSource ? ` · ${c.agreementSource === 'Uploaded' ? "the client's own agreement" : 'made from the template'}` : ''}`}</div>
+              <div className="small-muted" style={{ fontSize: 12 }}>{`${c.agreementId ? `Agreement No. ${c.agreementId}` : 'Agreement No. is made when the draft is made'} ·${c.agreementTemplate || 'Standard template'}${c.agreementSource ? ` · ${c.agreementSource === 'Uploaded' ? "the client's own agreement" : 'made from the template'}` : ''}`}</div>
             </div>
 
             <details className="card section agr6-more">

@@ -484,5 +484,5 @@ module.exports = {
   countedPlacements,
   DEFAULT_TARGET, PAYABLE, isMonth, thisMonth, prevMonth, nextMonth, monthLabel, todayIst, lastDay,
   guaranteeDays, targetOf, loadTargetRules, monthApplications, monthBoard, undatedJoinings, personHistory,
-  ownFigure, targetFor, invalidate, toneOf,
+  ownFigure, targetFor, invalidate, toneOf, TONE_WORD,
 };

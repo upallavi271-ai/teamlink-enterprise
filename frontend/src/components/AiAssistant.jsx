@@ -188,25 +188,40 @@ function DueChip({ row }) {
 // --- One proposal card -----------------------------------------------------
 // state: undefined (awaiting Confirm) | 'running' | 'done' | 'failed' | 'cancelled'
 function ProposalCard({ card, onConfirm, onCancel }) {
-  const entries = Object.entries(card.details || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  // The tool-based agent (/agent/do) sends `rows` [{label,value}] and a title;
+  // the older planner sends a `details` object.
+  const entries = card.rows
+    ? card.rows.map((r) => [r.label, r.value])
+    : Object.entries(card.details || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
   const settled = card.state === 'done' || card.state === 'failed' || card.state === 'cancelled';
   const running = card.state === 'running';
   const head = {
-    done: 'Done', failed: 'Failed', cancelled: 'Cancelled', running: 'Working…',
-  }[card.state] || 'Needs your confirmation';
+    done: 'Done', failed: 'Did not go through', cancelled: 'Cancelled', running: 'Working…',
+  }[card.state] || (card.highImpact ? 'Please check — needs your OK' : 'Needs your confirmation');
   return (
-    <div className={`ai-action${card.state === 'done' ? ' ai-action-done' : ''}${card.state === 'failed' || card.state === 'cancelled' ? ' ai-action-failed' : ''}`}>
+    <div
+      className={`ai-action${card.state === 'done' ? ' ai-action-done' : ''}${card.state === 'failed' || card.state === 'cancelled' ? ' ai-action-failed' : ''}${card.highImpact && !settled ? ' ai-action-high' : ''}`}
+      data-testid="ai-confirm-card"
+    >
       <div className="ai-action-head">{head}</div>
-      <div className="ai-action-summary">{card.summary}</div>
+      {card.title && <div className="ai-action-title">{card.title}</div>}
+      {!card.title && <div className="ai-action-summary">{card.summary}</div>}
       {entries.length > 0 && (
         <dl className="ai-action-details">
-          {entries.map(([k, v]) => (
-            <div key={k}>
+          {entries.map(([k, v], i) => (
+            // eslint-disable-next-line react/no-array-index-key
+            <div key={`${k}-${i}`}>
               <dt>{k}</dt>
               <dd>{String(v)}</dd>
             </div>
           ))}
         </dl>
+      )}
+      {card.note && !settled && <div className="ai-action-note small-muted">{card.note}</div>}
+      {card.highImpact && !settled && card.impact && <div className="ai-action-note ai-action-impact">{card.impact}</div>}
+      {card.state === 'done' && card.verifiedMessage && <div className="small-muted" style={{ marginTop: 6 }}>{card.verifiedMessage}</div>}
+      {card.state === 'done' && card.open && (
+        <div className="ai-action-buttons"><a className="btn btn-ghost btn-sm" href={card.open}>Open it</a></div>
       )}
       {card.state === 'done' && card.message && <div className="small-muted" style={{ marginTop: 6 }}>{card.message}</div>}
       {card.autoExecuted && (card.state === 'done' || card.state === 'failed') && (
@@ -226,6 +241,7 @@ function ProposalCard({ card, onConfirm, onCancel }) {
           </div>
           <div className="ai-action-note small-muted">
             Nothing has changed yet. Your permissions are checked again when you confirm.
+            {card.pendingId ? ' This card is good for 10 minutes and works once.' : ''}
           </div>
           {card.heard && card.heard.low && (
             <div className="ai-action-note ai-heard-low">
@@ -277,7 +293,7 @@ function Heard({ heard }) {
 }
 
 function Transcript({
-  turns, busy, onConfirm, onCancel, endRef, local, onPick,
+  turns, busy, onConfirm, onCancel, endRef, local, onPick, onSwitch,
 }) {
   const [copied, setCopied] = useState(null);
   function copy(i, text) {
@@ -299,20 +315,51 @@ function Transcript({
             ? <ProposalCard card={t.card} onConfirm={onConfirm} onCancel={onCancel} />
             : t.content}
           {t.role === 'user' && <Heard heard={t.heard} />}
+          {t.role === 'assistant' && Array.isArray(t.numbers) && t.numbers.length > 0 && (
+            <div className="ai-numbers" data-testid="ai-numbers">
+              {t.numbers.map((n) => (
+                <div className="ai-number" key={n.label}>
+                  <b>{String(n.value)}</b>
+                  <span>{n.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {t.role === 'assistant' && Array.isArray(t.rows) && t.rows.length > 0 && (
+            <table className="ai-rows">
+              <tbody>
+                {t.rows.map((r, ri) => (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <tr key={ri}>{r.map((c, ci) => <td key={`${ri}-${ci}`}>{String(c == null ? '' : c)}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {t.role === 'assistant' && t.source && <div className="ai-source small-muted" data-testid="ai-source">Where this comes from: {t.source}</div>}
+          {t.role === 'assistant' && t.suggestMode === 'do' && onSwitch && (
+            <div className="ai-clarify">
+              <button type="button" className="ai-clarify-chip" onClick={() => onSwitch(t.askedText)} data-testid="ai-switch-do">
+                Switch to Do mode and say it again
+              </button>
+            </div>
+          )}
           {t.role === 'assistant' && Array.isArray(t.options) && t.options.length > 0 && (
             <div className="ai-clarify" role="group" aria-label="Did you mean">
-              {t.options.map((o) => (
-                <button
-                  key={o}
-                  type="button"
-                  className="ai-clarify-chip"
-                  disabled={busy || i !== turns.length - 1}
-                  onClick={() => onPick && onPick(o)}
-                  data-testid="ai-clarify-chip"
-                >
-                  {o}
-                </button>
-              ))}
+              {t.options.map((o) => {
+                const label = typeof o === 'string' ? o : o.label;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    className="ai-clarify-chip"
+                    disabled={busy || i !== turns.length - 1}
+                    onClick={() => onPick && onPick(o)}
+                    data-testid="ai-clarify-chip"
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           )}
           {t.role === 'assistant' && !t.card && !t.error && t.content && (
@@ -367,12 +414,16 @@ export default function AiAssistant() {
   // The last voice transcript per tab — sent with the message only if the
   // text was not edited afterwards.
   const heardRef = useRef({ assistant: null, agent: null });
+  // The half-finished request the Agent is asking about (which person? what time?). Sent back with the next answer.
+  const frameRef = useRef({ agent: null });
 
   // Rule-based ATS half (no model).
   const [data, setData] = useState(null);
   const [failed, setFailed] = useState(false);
   // Agent quick actions — UI hints only; the server decides for real.
   const [agentCtx, setAgentCtx] = useState(null);
+  // What the tool registry can do for this login (GET /agent/tools): drives the example chips.
+  const [toolList, setToolList] = useState(null);
 
   const hasAts = !!(user && user.products && user.products.ats && user.atsRole && user.atsRole !== 'NONE');
   const turns = threads[mode];
@@ -410,6 +461,7 @@ export default function AiAssistant() {
   useEffect(() => {
     if (!open || !mayAgent) return;
     api.get('/agent/context').then((res) => setAgentCtx(res.data)).catch(() => setAgentCtx(null));
+    api.get('/agent/tools').then((res) => setToolList(res.data.tools || [])).catch(() => setToolList([]));
   }, [open, mayAgent]);
 
   // A role without the Agent grant never sits on the Agent tab.
@@ -444,9 +496,11 @@ export default function AiAssistant() {
   }
 
   const chips = useMemo(() => {
-    const list = (agentCtx && agentCtx.chips) || [];
+    const fromTools = (toolList || []).filter((t) => t.allowed && t.status === 'ready' && t.examples && t.examples[0])
+      .map((t) => ({ action: t.name, label: t.label, prompt: t.examples[0], area: t.module }));
+    const list = fromTools.length ? fromTools : ((agentCtx && agentCtx.chips) || []);
     return [...list.filter((c) => c.area === area), ...list.filter((c) => c.area !== area)].slice(0, 6);
-  }, [agentCtx, area]);
+  }, [agentCtx, toolList, area]);
 
   const destinations = useMemo(() => {
     const leaves = flattenGroups(groupsForUser(user));
@@ -477,9 +531,89 @@ export default function AiAssistant() {
     if (tts && text) speak(text, voiceLang);
   }
 
+  // The older planner (/agent/plan): used only for what the tool registry does not
+  // cover (approve a leave, a regularization, a ticket, a task ...). Returns true
+  // when it produced a turn.
+  async function legacyPlan(which, q, history, voice) {
+    const res = await api.post('/agent/plan', {
+      message: q, history, page: pathname, ...(voice ? { voice } : {}),
+    });
+    const plan = res.data;
+    if (plan.action === 'clarify') {
+      addTurn(which, { role: 'assistant', content: plan.summary, options: plan.options || [] });
+      say(plan.summary);
+    } else {
+      addTurn(which, {
+        role: 'assistant',
+        card: {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          action: plan.action,
+          params: plan.params,
+          summary: plan.summary,
+          details: plan.details,
+          heard: plan.heard || null,
+          // Role Catalog "execute without confirm": already carried out.
+          ...(plan.executed ? { state: plan.ok ? 'done' : 'failed', message: plan.message, autoExecuted: true } : {}),
+        },
+      });
+      say(plan.executed ? plan.message : `${plan.summary} Press Confirm to go ahead.`);
+    }
+    return true;
+  }
+
+  // A turn for one /agent/do answer.
+  function showDo(which, out, voice) {
+    frameRef.current.agent = out.frame || null;
+    if (out.kind === 'confirm' && out.card) {
+      addTurn(which, {
+        role: 'assistant',
+        card: {
+          id: out.card.pendingId,
+          pendingId: out.card.pendingId,
+          title: out.card.title,
+          rows: out.card.rows,
+          note: out.card.note,
+          highImpact: out.card.highImpact,
+          impact: out.card.impact,
+          summary: out.message,
+          heard: voice ? { ...voice, low: !!out.card.heardLow } : null,
+        },
+      });
+      say(`${out.message} Press Confirm to go ahead.`);
+      return;
+    }
+    if (out.kind === 'done' || out.kind === 'failed') {
+      addTurn(which, {
+        role: 'assistant',
+        card: {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          title: out.label,
+          rows: out.display ? out.display.rows : [],
+          summary: out.summary,
+          state: out.kind === 'done' ? 'done' : 'failed',
+          message: out.message,
+          verifiedMessage: out.verifiedMessage,
+          open: out.open,
+          autoExecuted: true,
+        },
+      });
+      say(out.message);
+      return;
+    }
+    // clarify / denied / refused / unavailable / unhandled: a plain turn
+    addTurn(which, {
+      role: 'assistant',
+      content: out.message,
+      options: out.options || [],
+      error: out.kind === 'denied',
+    });
+    say(out.message);
+  }
+
   // `voiceArg` = { lang, confidence } when the text is an unedited transcript.
-  async function send(which, text, voiceArg) {
-    const q = String(text || '').trim();
+  // `extra` = { choices, label } when a quick-reply button with a hidden choice was pressed.
+  async function send(which, text, voiceArg, extra) {
+    const q = String((extra && extra.label) || text || '').trim();
     if (!q || busy[which]) return;
     const heard = heardRef.current[which];
     const voice = voiceArg || (heard && heard.text === q ? { lang: heard.lang, confidence: heard.confidence } : null);
@@ -494,40 +628,45 @@ export default function AiAssistant() {
         const res = await api.post('/assistant/ask', {
           message: q, history, page: pathname, ...(voice ? { voice } : {}),
         });
+        const d = res.data;
         addTurn(which, {
-          role: 'assistant', content: res.data.answer, options: res.data.options || [], lang: voice ? voice.lang : undefined,
+          role: 'assistant',
+          content: d.answer,
+          options: d.options || [],
+          lang: voice ? voice.lang : undefined,
+          numbers: d.numbers,
+          rows: d.rows,
+          source: d.source,
+          suggestMode: d.suggestMode,
+          askedText: q,
         });
-        say(res.data.answer);
+        say(d.answer);
       } else {
-        const res = await api.post('/agent/plan', {
-          message: q, history, page: pathname, ...(voice ? { voice } : {}),
+        const choices = extra && extra.choices ? extra.choices : undefined;
+        const res = await api.post('/agent/do', {
+          message: choices ? '' : q,
+          frame: frameRef.current.agent || undefined,
+          choices,
+          page: pathname,
+          ...(voice ? { voice } : {}),
         });
-        const plan = res.data;
-        if (plan.action === 'clarify') {
-          addTurn(which, { role: 'assistant', content: plan.summary, options: plan.options || [] });
-          say(plan.summary);
+        const out = res.data;
+        if (out.kind === 'unhandled') {
+          frameRef.current.agent = null;
+          let handled = false;
+          try { handled = await legacyPlan(which, q, history, voice); } catch { handled = false; }
+          if (!handled) showDo(which, out, voice);
         } else {
-          addTurn(which, {
-            role: 'assistant',
-            card: {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              action: plan.action,
-              params: plan.params,
-              summary: plan.summary,
-              details: plan.details,
-              heard: plan.heard || null,
-              // Role Catalog "execute without confirm": already carried out.
-              ...(plan.executed ? { state: plan.ok ? 'done' : 'failed', message: plan.message, autoExecuted: true } : {}),
-            },
-          });
-          say(plan.executed ? plan.message : `${plan.summary} Press Confirm to go ahead.`);
+          showDo(which, out, voice);
         }
       }
     } catch (err) {
       // §26 — the assistant's OWN error, word for word (e.g. the AI provider
       // refusing for want of credit), never a softened stand-in.
-      const msg = err.response?.data?.error
-        || (err.response ? 'The AI could not answer. Please try again.' : 'The AI is not reachable right now. Please try again later.');
+      const msg = err.response?.data?.error || err.response?.data?.message
+        || (which === 'agent'
+          ? 'I could not reach the app just now (it may be restarting). Nothing was changed - please try again in a moment.'
+          : (err.response ? 'The AI could not answer. Please try again.' : 'The AI is not reachable right now. Please try again later.'));
       if (err.response && err.response.status === 503) refreshStatus();
       addTurn(which, { role: 'assistant', error: true, content: msg });
     } finally {
@@ -535,21 +674,50 @@ export default function AiAssistant() {
     }
   }
 
+  // A quick-reply button: a plain phrase, or one that carries a hidden choice (which person, which job ...).
+  function pick(which, o) {
+    if (typeof o === 'string') { send(which, o); return; }
+    if (o && o.choice) { send(which, '', undefined, { choices: o.choice, label: o.label }); return; }
+    if (o && o.text) send(which, o.text);
+  }
+
+  // Ask mode noticed an action: move to Do with the same words in the box.
+  function switchToDo(text) {
+    setMode('agent');
+    setDrafts((d) => ({ ...d, agent: text || '' }));
+  }
+
   // THE ONLY THING THAT PERFORMS A CHANGE.
   async function confirmCard(card) {
     patchCard(card.id, { state: 'running' });
     try {
+      if (card.pendingId) {
+        // Only the id travels: the server runs the parameters it stored, once.
+        const res = await api.post('/agent/confirm', { pendingId: card.pendingId });
+        const out = res.data;
+        if (out.kind === 'done') {
+          patchCard(card.id, {
+            state: 'done', message: out.message, verifiedMessage: out.verifiedMessage, open: out.open,
+          });
+        } else {
+          patchCard(card.id, { state: 'failed', message: out.message || 'That did not go through. Nothing was changed.' });
+        }
+        frameRef.current.agent = null;
+        return;
+      }
       const res = await api.post('/agent/execute', { action: card.action, params: card.params });
       patchCard(card.id, { state: 'done', message: res.data.message });
       // Counts on the agent tab (things waiting on me) may have moved.
       api.get('/agent/context').then((r) => setAgentCtx(r.data)).catch(() => {});
     } catch (err) {
-      patchCard(card.id, { state: 'failed', message: err.response?.data?.error || 'That did not work. Please try again.' });
+      patchCard(card.id, { state: 'failed', message: err.response?.data?.message || err.response?.data?.error || 'That did not work. Please try again.' });
     }
   }
 
   function cancelCard(card) {
     patchCard(card.id, { state: 'cancelled' });
+    frameRef.current.agent = null;
+    if (card.pendingId) api.post('/agent/cancel', { pendingId: card.pendingId }).catch(() => {});
   }
 
   // --- Voice --------------------------------------------------------------
@@ -676,8 +844,11 @@ export default function AiAssistant() {
   const offlineBanner = status && !online && (
     <div className="notice amber" style={{ margin: '10px 12px 0' }}>
       <div>
-        <b>AI is offline.</b>
-        <div style={{ marginTop: 2 }}>{status.reason || 'The model is not available.'}</div>
+        <b>The language model is offline.</b>
+        <div style={{ marginTop: 2 }}>
+          Counts, lists and comparisons from your records, and everything in Do, still work. Only open-ended chat needs the model.
+        </div>
+        <div className="small-muted" style={{ marginTop: 2 }}>{status.reason || 'The model is not available.'}</div>
       </div>
     </div>
   );
@@ -725,7 +896,7 @@ export default function AiAssistant() {
               className={`ai-mode${mode === 'assistant' ? ' active' : ''}`}
               onClick={() => setMode('assistant')}
             >
-              Assistant
+              Ask
             </button>
             {mayAgent && (
               <button
@@ -734,12 +905,17 @@ export default function AiAssistant() {
                 className={`ai-mode${mode === 'agent' ? ' active' : ''}`}
                 onClick={() => setMode('agent')}
               >
-                Agent
+                Do
                 {agentCtx && agentCtx.actionableCount > 0 ? <span className="n">{agentCtx.actionableCount}</span> : null}
               </button>
             )}
           </div>
-          {offlineBanner}
+          <div className="ai-mode-note" data-testid="ai-mode-note">
+            {mode === 'assistant'
+              ? 'Ask: look things up, count, compare. It only reads — it never changes anything.'
+              : 'Do: it makes changes for you — but only after you press Confirm.'}
+          </div>
+          {mode === 'assistant' && offlineBanner}
 
           {/* ------------------------------ ASSISTANT ------------------------ */}
           {mode === 'assistant' && (
@@ -830,7 +1006,8 @@ export default function AiAssistant() {
                     local={!status || status.provider !== 'claude'}
                     onConfirm={confirmCard}
                     onCancel={cancelCard}
-                    onPick={(o) => send(mode, o)}
+                    onPick={(o) => pick(mode, o)}
+                    onSwitch={switchToDo}
                     endRef={streamEnd}
                   />
                 )}
@@ -859,8 +1036,8 @@ export default function AiAssistant() {
                 {turns.length === 0 && (
                   <>
                     <div className="ai-note">
-                      Tell the Agent what to do — &ldquo;apply casual leave next Monday for a family function&rdquo;,
-                      &ldquo;approve Ravi&apos;s leave&rdquo;, &ldquo;schedule Priya&apos;s interview on Friday at 11&rdquo;.
+                      Tell it what to do — &ldquo;move Rahul to Interview&rdquo;, &ldquo;apply casual leave tomorrow&rdquo;,
+                      &ldquo;schedule Priya&apos;s interview on Friday at 11&rdquo;. You can type or speak, in English or Telugu-English.
                       It shows you exactly what it will do, and <b>nothing happens until you press Confirm</b>.
                     </div>
                     {agentCtx && agentCtx.actionableCount > 0 && (
@@ -893,10 +1070,11 @@ export default function AiAssistant() {
                   <Transcript
                     turns={turns}
                     busy={busy.agent}
-                    local={!status || status.provider !== 'claude'}
+                    local={false}
                     onConfirm={confirmCard}
                     onCancel={cancelCard}
-                    onPick={(o) => send(mode, o)}
+                    onPick={(o) => pick(mode, o)}
+                    onSwitch={switchToDo}
                     endRef={streamEnd}
                   />
                 )}

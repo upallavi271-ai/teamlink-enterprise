@@ -1,0 +1,20 @@
+/* The new-job-request pop-up (components/JobRequestPopup.jsx). Scoped under .jrp-*. */
+.jrp-overlay{z-index:1200}
+.jrp-box{width:440px;max-width:calc(100vw - 24px);border-top:5px solid #1d4ed8}
+.jrp-head{display:flex;align-items:center;gap:10px;padding:16px 18px 4px}
+.jrp-head h3{margin:0;font-size:18px}
+.jrp-ico{font-size:24px}
+.jrp-more{margin-left:auto;font-size:12.5px;color:#92400e;background:#fef3dc;border-radius:12px;padding:2px 9px;font-weight:600}
+.jrp-body{padding:6px 18px 4px}
+.jrp-line{margin:6px 0 2px;font-size:15px}
+.jrp-job{margin:2px 0 6px;font-size:19px;font-weight:700;color:var(--navy, #1f3a8a);line-height:1.3}
+.jrp-sub{margin:0 0 4px;font-size:12.5px;color:var(--ink-soft, #5b6577)}
+.jrp-done{margin:8px 0 0;font-size:13px;color:#166534;background:#e8f6ec;border-radius:8px;padding:7px 10px}
+.jrp-foot{display:flex;gap:10px;padding:14px 18px 18px}
+.jrp-open{flex:2;font-size:15.5px;padding:12px 14px;min-height:46px}
+.jrp-later{flex:1;font-size:14.5px;min-height:46px}
+@media (max-width:520px){
+  .jrp-box{width:calc(100vw - 20px)}
+  .jrp-foot{flex-direction:column}
+  .jrp-open,.jrp-later{flex:none;width:100%}
+}

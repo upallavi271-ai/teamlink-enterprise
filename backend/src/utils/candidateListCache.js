@@ -56,7 +56,8 @@ const APPLICATION_SELECT = {
   // Candidates structure (2026-09-29): pre-ATS vs in-ATS (source +
   // portalImportedAt), Client vs Internal per application (hiringType), and
   // the client-feedback test (interviewResult / interviewCompletedAt).
-  source: true, portalImportedAt: true, hiringType: true,
+  // firstSource: the board a portal application came through (utils/candidateSource.js).
+  source: true, firstSource: true, portalImportedAt: true, hiringType: true,
   interviewResult: true, interviewCompletedAt: true,
 };
 // The requirement stays whole (scope matching reads a dozen of its fields);

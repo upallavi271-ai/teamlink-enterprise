@@ -50,6 +50,13 @@ if (!['check', 'commit'].includes(MODE) || !FILE) {
   console.error('usage: node scripts/run-import.js <check|commit> <file.xlsx>');
   process.exit(1);
 }
+// SAFETY (security review, 2026-10-09): a COMMIT writes into whatever server BASE points at, and BASE
+// defaults to the real one (port 4010 = prisma/dev.db). It refuses the real server unless
+// TL_ALLOW_REAL=1 is set on purpose. Test on the sandbox: TL_API=http://localhost:4011/api
+if (MODE === 'commit' && /:4010(\/|$)/.test(BASE) && process.env.TL_ALLOW_REAL !== '1') {
+  console.error('REFUSED: this would write into the REAL TeamLink server (port 4010). Run "check" first, then, if you really mean it, set TL_ALLOW_REAL=1 for the commit. For a test use the sandbox: TL_API=http://localhost:4011/api');
+  process.exit(2);
+}
 
 (async () => {
   const lr = await fetch(`${BASE}/auth/login`, {

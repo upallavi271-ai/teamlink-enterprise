@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import JobAutoMessages from '../components/automsg/JobAutoMessages.jsx'; // automatic stage messages: this job's setting
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api';
@@ -16,6 +17,7 @@ import { LocationCandidatesPanel } from '../components/jobs/RequirementReach.jsx
 // Change list 2026-10-03 §5: Pause / Close / Delete, and the six posting sites.
 import { JobLifecycleBar } from '../components/jobs/JobLifecycle.jsx';
 import JobPostingSites from '../components/jobs/JobPostingSites.jsx';
+import PostingStatusPanel from '../components/jobs/PostingStatusPanel.jsx'; // Save & Post: what happened on each site, right after saving
 import PartnerShare from '../components/jobs/PartnerShare.jsx'; // B7: share the job with agencies / freelancers
 import {
   PriorityChip, candidatesLink, ageText, slaInfo, lastActivityText, fmtWhen, fmtShort, nf,
@@ -41,6 +43,9 @@ import '../components/clients/ccr.css';
 import RequirementMatchTabs from '../components/rejections/RequirementMatchTabs.jsx';
 // docfill_: the JD / e-mail this job was filled from (downloadable, audited).
 import SourceDocuments from '../components/ui/SourceDocuments.jsx';
+import MultiFacetSelect from '../components/ui/MultiFacetSelect.jsx'; // the Source filter (tick boxes with counts)
+import { recordedAs } from '../utils/candidateSource.js';
+import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the people on this job (templates, preview, confirm)
 import { RequirementMatchesPanel } from '../components/resume/MatchSplit.jsx'; // fit_: top matches on the Overview
 // B8: Similar people (Match by meaning), Fit version, Added by override badge.
 import SimilarCandidatesPanel from '../components/match/SimilarCandidates.jsx';
@@ -216,11 +221,14 @@ export default function RequirementDetail() {
   const [linkHits, setLinkHits] = useState([]);
   const [error, setError] = useState('');
   const [dialog, setDialog] = useState(null); // 'jd' | 'posting' | 'assign' | 'edit'
+  const [postPanel, setPostPanel] = useState(false); // the Save & Post panel (summary + the by-hand tasks)
   const [assign, setAssign] = useState(null);
   const [notice, setNotice] = useState('');
   const [clients, setClients] = useState(null);
   const [decision, setDecision] = useState(null);
   const [pipeFilter, setPipeFilter] = useState('all');
+  const [srcFilter, setSrcFilter] = useState(''); // Source filter: a comma list of clean sources
+  const [msgOpen, setMsgOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false); // the one "Share" button's choices
   // Department-wise assign (RequirementBulk → /requirements/assignable-people?forJobs=<id>).
   const [bulkAssign, setBulkAssign] = useState(null); // 'assign-recruiter' | 'assign-tl'
@@ -369,7 +377,17 @@ export default function RequirementDetail() {
 
   const applications = (requirement && requirement.applications) || [];
   const pipeFn = (PIPE_FILTERS.find(([k]) => k === pipeFilter) || [])[2];
-  const pipeRows = pipeFn ? applications.filter((a) => pipeFn(a.stage)) : applications;
+  // Source filter, cascading with the Step filter: the Source numbers count the people at the chosen step, the
+  // Step numbers count the people from the chosen sources.
+  const srcWanted = new Set(String(srcFilter || '').split(',').map((x) => x.trim()).filter(Boolean));
+  const srcOk = (a) => !srcWanted.size || srcWanted.has(a.sourceKey);
+  const atStep = (a) => !pipeFn || pipeFn(a.stage);
+  const pipeRows = applications.filter((a) => atStep(a) && srcOk(a));
+  const srcOptions = (() => {
+    const m = new Map();
+    applications.filter(atStep).forEach((a) => { if (a.sourceKey) m.set(a.sourceKey, (m.get(a.sourceKey) || 0) + 1); });
+    return [...m.entries()].map(([value, count]) => ({ value, label: value, count })).sort((x, y) => y.count - x.count || x.label.localeCompare(y.label));
+  })();
   const paged = usePaged(pipeRows, 25);
   // Interviews tab — client / recruitment interviews only (AI kept apart).
   const interviewRows = applications.filter((a) => a.interviewAt || a.interviewStatus || INTERVIEW_STAGES.includes(a.stage))
@@ -383,6 +401,8 @@ export default function RequirementDetail() {
   const p = r.permissions || {};
   const movableStages = workflowStages(user);
   const clientName = r.internal ? 'TeamLink (internal)' : r.client?.name || '—';
+  // A client's job request nobody has opened yet: a Draft client job this login may edit AND open.
+  const isNewRequest = r.status === 'DRAFT' && !r.internal && !!p.edit && !!p.approve;
   // §7 Fee / Agreement terms — BDE, Accounts, Admin, Management only.
   const showAgreementTab = r.internal || !r.sections || !!r.sections.commercial;
   const pct = (v) => (v !== null && v !== undefined && v !== '' ? `${v}%` : null);
@@ -515,7 +535,7 @@ export default function RequirementDetail() {
   const roleOf = (t) => t.atsRole || t.role;
   const byRole = (code) => peopleList.filter((t) => roleOf(t) === code);
   const aiRows = applications.filter((a) => a.aiInterviewScore !== null && a.aiInterviewScore !== undefined);
-  const toCandidatesPage = () => navigate(`/candidates?requirementId=${encodeURIComponent(r.id)}`);
+  const toCandidatesPage = () => navigate(`/candidates?requirementId=${encodeURIComponent(r.id)}${srcFilter ? `&source=${encodeURIComponent(srcFilter)}` : ''}`);
 
   // --- tab bodies ------------------------------------------------------------
   const overview = (
@@ -597,6 +617,8 @@ export default function RequirementDetail() {
               See team
             </button>
           </div>
+          {/* Automatic stage messages: this job's own setting (follow the rules / recruiter approves first / off). */}
+          <JobAutoMessages requirementId={r.id} />
           {/* docfill_: the source document (only when there is one). */}
           <SourceDocuments target="job" id={r.id} version={r.updatedAt} />
           {/* Review #3 §4 — Agreement and Job Portal lines of the 360. */}
@@ -685,11 +707,24 @@ export default function RequirementDetail() {
               Show
               <select value={pipeFilter} onChange={(e) => setPipeFilter(e.target.value)}>
                 {PIPE_FILTERS.map(([k, l, fn]) => (
-                  <option key={k} value={k}>{`${l} (${nf(fn ? applications.filter((a) => fn(a.stage)).length : applications.length)})`}</option>
+                  <option key={k} value={k}>{`${l} (${nf(applications.filter((a) => srcOk(a) && (!fn || fn(a.stage))).length)})`}</option>
                 ))}
               </select>
             </label>
+            {srcOptions.length > 0 && (
+              <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={srcFilter} onChange={setSrcFilter} options={srcOptions} title="Where the person came from" />
+            )}
             <button type="button" className="btn btn-sm" onClick={toCandidatesPage}>Open in Candidates →</button>
+            {pipeRows.length > 0 && <button type="button" className="btn btn-sm btn-primary" title="Send an Email, SMS or WhatsApp to the people shown here" onClick={() => setMsgOpen(true)}>Message these {pipeRows.length}</button>}
+            {msgOpen && (
+              <SendManyDialog
+                audience="candidates"
+                ids={[...new Set(pipeRows.map((a) => a.candidateId || (a.candidate && a.candidate.id)).filter(Boolean))]}
+                requirementId={r.id}
+                note={`The message is filled in for the job "${r.title}". People who asked not to be contacted are left out.`}
+                onClose={() => setMsgOpen(false)}
+              />
+            )}
           </div>
         </div>
         <div className="tbl-wrap">
@@ -710,7 +745,7 @@ export default function RequirementDetail() {
                   </td>
                   <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
                   <td>{a.matchScore != null ? <FitWithVersion score={a.matchScore} version={a.matchVersion} /> : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
-                  <td className="cell-muted">{a.firstSource || a.source || '—'}</td>
+                  <td className="cell-muted" title={recordedAs(a)}>{a.sourceKey || a.firstSource || a.source || '—'}</td>
                   <td className="cell-muted">{a.createdAt ? protoDate(a.createdAt) : '—'}</td>
                   <td className="cell-muted">{a.updatedAt ? protoDate(a.updatedAt) : '—'}</td>
                   <td>
@@ -726,7 +761,7 @@ export default function RequirementDetail() {
                 </tr>
               ))}
               {pipeRows.length === 0 && (
-                <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>{applications.length ? 'No one at this step.' : 'No one added yet. Add a candidate below.'}</td></tr>
+                <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>{applications.length ? (srcWanted.size ? 'No one at this step from these sources.' : 'No one at this step.') : 'No one added yet. Add a candidate below.'}</td></tr>
               )}
             </tbody>
           </table>
@@ -1045,6 +1080,12 @@ export default function RequirementDetail() {
           {/* EDIT REQUIREMENT opens the same form Create Requirement uses;
               p.edit is resolved on the server with the record-level check. */}
           <JobStatusChip job={r} />
+          {/* A CLIENT'S NEW JOB REQUEST (2026-10-09): the BDE / BDE TL fills in the rest and posts it - one main button. */}
+          {isNewRequest && (
+            <button className="btn btn-sm btn-primary" onClick={() => { setNotice(''); ensureClients(); ensurePeople(); setDialog('edit'); }}>
+              Complete &amp; post
+            </button>
+          )}
           {p.edit && (
             <button className="btn btn-sm" onClick={() => { setNotice(''); ensureClients(); ensurePeople(); setDialog('edit'); }}>
               Edit job
@@ -1070,9 +1111,19 @@ export default function RequirementDetail() {
           {p.assign && !r.tlId && <button className="btn btn-sm" onClick={() => setBulkAssign('assign-tl')}>Assign TL</button>}
           {p.assign && <button className="btn btn-sm" onClick={() => setBulkAssign('assign-recruiter')}>Assign recruiter</button>}
           {/* The one main button: add people to this job. */}
-          {p.pipelineEdit && <button className="btn btn-sm btn-primary" onClick={() => setTab('candidates')}>Add candidate</button>}
+          {p.pipelineEdit && <button className={`btn btn-sm${isNewRequest ? '' : ' btn-primary'}`} onClick={() => setTab('candidates')}>Add candidate</button>}
         </div>
       </div>
+      {isNewRequest && (
+        <div className="notice blue" role="status" style={{ marginBottom: 10 }}>
+          <span>
+            <b>{`New job request from ${clientName}.`}</b>
+            {' The client gave the main details. Press '}
+            <b>Complete &amp; post</b>
+            {', fill in the rest (description, skills, where to post) and press Save & Post.'}
+          </span>
+        </div>
+      )}
 
       {/* ATS LAYOUT v3 — THE JOB AT A GLANCE: role (the title above), client,
           department, openings, budget, location, urgency, due date, team. */}
@@ -1170,7 +1221,7 @@ export default function RequirementDetail() {
             <span>Client manager (BDE)</span>
             <Combo value={assign.bdeId} onChange={(e) => setAssign({ ...assign, bdeId: e.target.value })}>
               <option value="">— Not assigned —</option>
-              {byRole('BDE').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              {byRole('BDE').map((t) => <option key={t.id} value={t.id}>{t.bdeLabel || t.name}</option>)}
             </Combo>
           </label>
           <label className="field">
@@ -1314,6 +1365,8 @@ export default function RequirementDetail() {
         </Modal>
       )}
 
+      {postPanel && <PostingStatusPanel requirementId={r.id} code={r.reqCode} title={r.title} onChanged={load} onClose={() => setPostPanel(false)} />}
+
       {/* EDIT REQUIREMENT — the Create Requirement form in edit mode.
           `canAssign` comes from the server's per-record permission set, so
           section F is read-only for a login that may edit but not re-assign
@@ -1325,10 +1378,12 @@ export default function RequirementDetail() {
           clients={clients || []}
           team={peopleList}
           canAssign={!!p.assign}
+          canOpen={!!p.approve}
           onClose={() => setDialog(null)}
           onSaved={(saved, meta) => {
             setDialog(null);
             const changed = (meta && meta.changedFields) || [];
+            if (meta && meta.opened) { setNotice(`Saved and opened. ${meta.posting || ''}`.trim()); setPostPanel(true); refreshAfterChange(); return; }
             setNotice(changed.length
               ? `Saved. ${changed.length} field(s) updated: ${changed.join(', ')}. The change is in the Activity tab.`
               : 'Nothing changed — no fields were different.');

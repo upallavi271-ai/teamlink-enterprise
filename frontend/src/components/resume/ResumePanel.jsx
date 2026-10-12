@@ -15,16 +15,9 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
+import ResumeEditForm from './ResumeEditForm.jsx';
 import './ResumePanel.css';
 
-const SECTIONS = [
-  ['headline', 'Headline (role · years)', 2, false],
-  ['summary', 'Professional summary', 5, true],
-  ['skills', 'Key skills (comma separated)', 4, false],
-  ['education', 'Education', 4, false],
-  ['experience', 'Work experience', 12, true],
-  ['other', 'Additional information (free text)', 6, true],
-];
 const when = (v) => (v ? new Date(v).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const kb = (n) => (n ? `${Math.max(1, Math.round(n / 1024))} KB` : '');
 const digits10 = (v) => String(v || '').replace(/\D/g, '').slice(-10);
@@ -119,19 +112,21 @@ function Details({ v }) {
   if (!v) return null;
   if (!p) return null;
   return (
-    <div className="rsm-card">
+    <div className="rsm-card rsm-read">
+      <div className="rsm-sub">What the resume says</div>
       <div className="rsm-details">
         <div><div className="rsm-k">Total experience</div><div className="rsm-v">{p.totalExperienceYears != null ? `${p.totalExperienceYears} yrs` : '—'}{p.experienceSource === 'dates' && <span className="small-muted"> (from job dates)</span>}</div></div>
         <div><div className="rsm-k">Education</div><div className="rsm-v">{p.education && p.education.length ? p.education.join(', ') : '—'}</div></div>
         <div><div className="rsm-k">Current location</div><div className="rsm-v">{p.location || '—'}</div></div>
-        <div><div className="rsm-k">E-mail / phone</div><div className="rsm-v">{[...(p.emails || []), ...(p.phones || [])].slice(0, 3).join(' · ') || '—'}</div></div>
+        <div className="rsm-full"><div className="rsm-k">E-mail</div><div className="rsm-v rsm-contact">{(p.emails || []).slice(0, 2).join(' · ') || '—'}</div></div>
+        <div className="rsm-full"><div className="rsm-k">Phone</div><div className="rsm-v rsm-contact">{(p.phones || []).slice(0, 2).join(' · ') || '—'}</div></div>
         <div className="rsm-skills">
           <div className="rsm-k">{`Skills found in the resume (${(p.skills || []).length})`}</div>
           <div>{(p.skills || []).length ? p.skills.map((s) => <span key={s} className="skillpill match">{s}</span>) : <span className="small-muted">None recognised</span>}</div>
         </div>
       </div>
       {v.extractError && <div className="notice amber" style={{ margin: '10px 0 0' }}>{v.extractError}</div>}
-      <div className="small-muted" style={{ marginTop: 8 }}>
+      <div className="small-muted rsm-note">
         {`Read from ${v.label} by the ${v.parser === 'free+claude' ? 'free parser + Claude' : 'free parser'}. Used for the Resume % in every match.`}
       </div>
     </div>
@@ -290,12 +285,13 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
       >
         <div className="rsm-head">
           <div className="rsm-title">
-            <h3>Resume</h3>
-            <div className="small-muted">
-              {current
-                ? `Uploaded ${when(current.createdAt)}${current.createdByName ? ` by ${current.createdByName}` : ''} · ${current.fileName || ''}`
-                : 'No resume uploaded yet.'}
-            </div>
+            <h3 className="rsm-main-title">Resume</h3>
+            {current ? (
+              <div className="rsm-meta">
+                {current.fileName && <b className="rsm-fname">{current.fileName}</b>}
+                <span className="small-muted">{`Uploaded ${when(current.createdAt)}${current.createdByName ? ` by ${current.createdByName}` : ''}`}</span>
+              </div>
+            ) : <div className="small-muted">No resume uploaded yet.</div>}
           </div>
           <div className="rsm-actions">
             {data.canUpload && (
@@ -426,23 +422,15 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
 
       {mode === 'edit' && draft && (
         <div className="rsm-card">
-          <div className="rsm-head" style={{ marginBottom: 10 }}>
-            <h3>{`Edit resume → Edited resume v${data.edited.length + 1}`}</h3>
-            <span className="small-muted">{`Starting from ${(byId(draftBase) || {}).label || 'the current resume'}. The original file is never changed.`}</span>
-          </div>
-          <div className="rsm-editor">
-            {SECTIONS.map(([key, label, rows, wide]) => (
-              <label key={key} className={wide ? 'rsm-wide' : ''}>
-                {label}
-                <textarea rows={rows} value={draft[key] || ''} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
-              </label>
-            ))}
-          </div>
-          <div className="rsm-foot">
-            <button type="button" className="btn btn-primary btn-sm" disabled={busy === 'save'} onClick={saveEdit}>{busy === 'save' ? 'Saving…' : `Save as Edited resume v${data.edited.length + 1}`}</button>
-            <button type="button" className="btn btn-sm" onClick={() => { setDraft(null); setMode('view'); }}>Cancel</button>
-            <span className="small-muted">Phone numbers, e-mail addresses, street addresses and profile links are removed from the TeamLink-format PDF / DOCX automatically.</span>
-          </div>
+          <ResumeEditForm
+            draft={draft}
+            setDraft={setDraft}
+            nextLabel={`Edited resume v${data.edited.length + 1}`}
+            startsFrom={(byId(draftBase) || {}).label}
+            busy={busy}
+            onSave={saveEdit}
+            onCancel={() => { setDraft(null); setMode('view'); }}
+          />
         </div>
       )}
 

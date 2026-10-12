@@ -16,13 +16,13 @@ import CandidateDrawer from '../../components/CandidateDrawer.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
-import Pager, { usePaged } from '../../components/Pager.jsx';
+import Pager from '../../components/Pager.jsx';
 import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
 import '../../components/interviews/Interviews.css';
 import {
-  fmtDate, money, useWorkspace, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinList,
+  fmtDate, money, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
 } from './intjoinShared.jsx';
 
 const LEFT = ['Replacement Due', 'Replaced', 'Left after Guarantee'];
@@ -54,7 +54,6 @@ const VIEWS = [['waiting', 'Waiting to join'], ['joined', 'Joined'], ['dropped',
 
 export default function Joining() {
   const { user } = useAuth();
-  const { data, error, notice, act, load, setNotice } = useWorkspace('/ats/joining');
   const [dialog, setDialog] = useState(null);
   const [joinedMsg, setJoinedMsg] = useState('');
   const [openCand, setOpenCand] = useState(null); // the candidate window, opened right here
@@ -65,25 +64,15 @@ export default function Joining() {
   const canCreditNote = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canHire = can(user, 'ats', 'interviews', 'Internal Hiring', 'approve');
   const [view, setView] = useState('waiting');
-  const list = useIntJoinList(data.rows, {
-    dateOf: (r) => (r.waitingToJoin ? r.waitingSince : r.joinedAt || r.joiningDate),
-    defaultSort: '',
-  });
-  const counts = useMemo(() => {
-    const c = { all: list.rows.length };
-    list.rows.forEach((r) => { const v = viewOf(r); c[v] = (c[v] || 0) + 1; });
-    return c;
-  }, [list.rows]);
-  // "Waiting to join" is oldest first — the person waiting longest is the risk.
-  const rows = useMemo(() => {
-    const out = list.rows.filter((r) => view === 'all' || viewOf(r) === view);
-    if (view === 'waiting') {
-      const t = (r) => (r.waitingSince ? new Date(r.waitingSince).getTime() : 0);
-      return [...out].sort((a, b) => t(a) - t(b));
-    }
-    return out;
-  }, [list.rows, view]);
-  const page = usePaged(rows);
+  // The server searches, counts and pages the list (utils/intJoinList.js): the tab
+  // counts are for the WHOLE list under the filters, not for this page. "Waiting
+  // to join" comes oldest first (the person waiting longest is the risk).
+  const ws = useIntJoinPaged('/ats/joining', { view });
+  const {
+    data, error, notice, act, load, setNotice, list, counts,
+  } = ws;
+  const rows = data.rows || [];
+  const page = ws.pager;
   const live = dialog && dialog.id ? (data.rows || []).find((r) => r.id === dialog.id) : null;
   const close = () => setDialog(null);
 
@@ -107,7 +96,7 @@ export default function Joining() {
             module="joining"
             kinds={['joining']}
             onImported={load}
-            body={() => ({ ids: rows.length === (data.rows || []).length ? null : rows.map((r) => r.id) })}
+            body={ws.exportBody}
           />
         )}
       />
@@ -127,13 +116,13 @@ export default function Joining() {
       />
       {list.toolbar}
 
-      <div className="tbl-wrap">
+      <div className="tbl-wrap" style={data.loading && rows.length ? { opacity: 0.55, transition: "opacity .15s" } : undefined} aria-busy={data.loading ? "true" : undefined}>
         <table>
           <thead>
             <tr><th>Candidate</th><th>Job</th><th>Joining date</th><th>{view === 'joined' ? 'Guarantee' : 'Checklist'}</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {page.slice.map((r) => {
+            {rows.map((r) => {
               const internal = r.hiringType === 'TeamLink Internal Hire';
               const c = checks(r);
               const v = viewOf(r);
@@ -197,7 +186,7 @@ export default function Joining() {
             {rows.length === 0 && (
               <tr><td colSpan="6" style={{ padding: 0 }}>
                 <IntJoinEmpty
-                  loading={data.loading}
+                  loading={data.loading} failed={data.failed} onRetry={load}
                   filters={list.active ? { q: 'x' } : EMPTY_INTJOIN_FILTERS}
                   onClear={list.clear}
                   noun="people"
@@ -208,7 +197,14 @@ export default function Joining() {
           </tbody>
         </table>
       </div>
-      <Pager page={page} noun="people" />
+      <Pager page={page} noun="people" sizes={PAGE_SIZES_IJ} />
+      <ShowOlder
+        older={ws.older}
+        setOlder={ws.setOlder}
+        count={ws.olderCount}
+        noun="people"
+        openText="Showing people waiting to join, and those who joined in the last 90 days."
+      />
 
       {dialog?.kind === 'checklist' && live && (
         <Checklist

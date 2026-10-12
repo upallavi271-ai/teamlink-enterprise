@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import api from '../api';
-import Combo from './Combo.jsx';
+import { JobPickerCombo } from './JobPicker.jsx';
 import { protoDate } from '../atsVocab';
 
 // ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ import { protoDate } from '../atsVocab';
 const WHY = { phone: 'same phone', email: 'same email', name: 'same name' };
 
 export default function CandidateDuplicatePanel({
-  matches, possible, requirements, defaultRequirementId, canApply, onOpen, onApplied, onCreateNew,
+  matches, possible, defaultRequirementId, canApply, onOpen, onApplied, onCreateNew,
 }) {
   const [reqFor, setReqFor] = useState({});
   const [busy, setBusy] = useState('');
@@ -41,7 +41,6 @@ export default function CandidateDuplicatePanel({
     }
   }
 
-  const open = (requirements || []).filter((r) => r.status !== 'CLOSED');
   return (
     <div className="cdup-exists">
       {matches.length > 0 && (
@@ -89,16 +88,14 @@ export default function CandidateDuplicatePanel({
                 {m.inScope && <button type="button" className="btn btn-sm" onClick={() => onOpen(m)}>Open profile</button>}
                 {canApply && !done[m.id] && (
                   <>
-                    <Combo value={reqFor[m.id] || defaultRequirementId || ''} onChange={(e) => setReqFor((x) => ({ ...x, [m.id]: e.target.value }))}>
-                      <option value="">Choose a job…</option>
-                      {open.map((r) => (
-                        <option key={r.id} value={r.id} disabled={m.applications.some((a) => a.requirementId === r.id)}>
-                          {`${r.title} — ${r.internal ? 'TeamLink Internal' : r.client?.name || '—'}`}
-                        </option>
-                      ))}
-                    </Combo>
+                    <JobPickerCombo
+                      value={reqFor[m.id] || defaultRequirementId || ''}
+                      onChange={(e) => setReqFor((x) => ({ ...x, [m.id]: e.target.value }))}
+                      blank="Choose a job…"
+                      disabledIds={m.applications.map((a) => a.requirementId)}
+                    />
                     <button type="button" className="btn btn-sm btn-primary" disabled={busy === m.id} onClick={() => addTo(m)}>
-                      {busy === m.id ? 'Adding…' : 'Add an application'}
+                      {busy === m.id ? 'Adding...' : 'Add an application'}
                     </button>
                   </>
                 )}

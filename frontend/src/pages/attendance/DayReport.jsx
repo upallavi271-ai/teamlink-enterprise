@@ -10,6 +10,32 @@
 import { useEffect, useState } from 'react';
 import ScrollTable from '../../components/ScrollTable.jsx';
 import './attendance-day.css';
+import './half-leave-chip.css';
+
+// HALF DAY + THE LEAVE FOR THE OTHER HALF (user, 2026-10-09). state = Approved | Pending |
+// Rejected | None (what the server sends as halfLeave); half = '1st half' | '2nd half'.
+const HL_TEXT = { Approved: 'Approved', Pending: 'Pending approval', Rejected: 'Rejected', None: 'No leave applied' };
+const HL_TONE = { Approved: 'green', Pending: 'orange', Rejected: 'red', None: 'red' };
+export function HalfLeaveChip({ state, half, by }) {
+  if (!state) return null;
+  return (
+    <span title={`Half day leave: ${HL_TEXT[state]}${half ? ` (${half})` : ''}${by ? ` - approved by ${by}` : ''}`}>
+      <span className={`hl-chip tone-${HL_TONE[state]}`}>Half day leave: {HL_TEXT[state]}</span>
+      {half ? <span className="hl-by">covers {half}</span> : null}
+      {by ? <span className="hl-by">by {by}</span> : null}
+    </span>
+  );
+}
+// "1st half 1 · 2nd half 0 · Approved 1 · Pending 0 · Rejected 0 · No leave 0" for the Half day tile.
+export function HalfLeaveSub({ c, short = false }) {
+  if (!c) return null;
+  return (
+    <div className="hl-sub">
+      Leave for 1st half <b>{c.firstHalf}</b> · 2nd half <b>{c.secondHalf}</b>
+      {short ? null : <><br />Approved <b>{c.approved}</b> · Pending <b>{c.pending}</b>{c.rejected ? <> · Rejected <b>{c.rejected}</b></> : null} · No leave <b>{c.none}</b></>}
+    </div>
+  );
+}
 
 const pad = (n) => String(n).padStart(2, '0');
 export const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -52,13 +78,15 @@ export function DayBar({ value, onChange, latest, today = localToday(), children
   );
 }
 
-// The buckets that add up to the headcount, in order, with what each counts.
+// THE TILE SET (user, 2026-10-09), in order: Present · Absent · Half day · On leave ·
+// Week off / Holiday. They add up to the headcount. Present = everyone who came to work, so
+// Late · Early logout · Missing check-in · Missing check-out are small notes INSIDE Present.
 export const BUCKETS = [
-  { key: 'present', label: 'Present', hint: 'Came to work (incl. late, early logout and a missing check-out)' },
-  { key: 'halfDay', label: 'Half Day', hint: 'Left before 5 PM or came after 1:30 PM, or marked' },
+  { key: 'present', label: 'Present', hint: 'Came to work' },
   { key: 'absent', label: 'Absent', hint: 'No check-in, no leave or request' },
-  { key: 'onLeave', label: 'On Leave', hint: 'Leave (approved or pending) or told the manager' },
-  { key: 'offDay', label: 'Week off / Holiday', hint: 'Not a working day for them' },
+  { key: 'halfDay', label: 'Half day', hint: 'Worked one half, or marked' },
+  { key: 'onLeave', label: 'On leave', hint: 'Leave (approved or pending) or told the manager' },
+  { key: 'offDay', label: 'Week off / Holiday', hint: 'Sunday and company holidays' },
   { key: 'noRecord', label: 'No device data', hint: 'Nothing came from the device that day' },
   { key: 'notYet', label: 'Not checked in yet', hint: 'Today, no punch yet' },
   { key: 'upcoming', label: 'Upcoming', hint: 'A future date' },
@@ -67,7 +95,7 @@ export const BUCKET_LABEL = Object.fromEntries(BUCKETS.map((b) => [b.key, b.labe
 
 // The KPI block. `active` / `onPick` make the cards filters for a list below
 // (click again to clear). `extra` = more info cells [{ key, value, label, hint }].
-export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
+export function DayKpis({ kpis, date, headcount, active, onPick, extra = [], lateAfter = '' }) {
   if (!kpis) return null;
   const pick = (key) => onPick && onPick(active === key ? '' : key);
   // Buckets that can only be zero on this date are left out (Not checked in
@@ -76,11 +104,31 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
   // Holiday is a small card again. Cards that can only be zero on this date are
   // left out (Not checked in yet is a today thing, Upcoming a future one).
   const shown = BUCKETS.filter((b) => !['notYet', 'upcoming', 'noRecord'].includes(b.key) || kpis[b.key] > 0);
+  // The notes INSIDE Present (they are already counted in Present - never separate tiles).
+  const notes = kpis.notes || {};
+  const noteChips = [
+    { key: 'late', label: `Late${lateAfter ? ` (after ${lateAfter})` : ''}`, value: notes.late || 0 },
+    { key: 'earlyLogout', label: 'Early logout', value: notes.earlyLogout || 0 },
+    { key: 'missingCheckIn', label: 'Missing check-in', value: notes.missingCheckIn || 0 },
+    { key: 'missingCheckOut', label: 'Missing check-out', value: notes.missingCheckOut || 0 },
+  ];
+  // LATE COMING: of the people who came late, how many told why and were approved (an approved one is not a payroll late).
+  const lateStates = kpis.lateStates || null;
+  const lateChips = lateStates ? [
+    { key: 'late:approved', label: 'Late: Approved', value: lateStates.approved, tone: 'green', title: 'Came late, told why, and a manager approved. Stays Present; not counted as a late arrival in payroll. Click to list them.' },
+    { key: 'late:pending', label: 'Waiting for approval', value: lateStates.pending, tone: 'orange', title: 'Told why; the approver has not decided yet. Still counts as late. Click to list them.' },
+    ...(lateStates.rejected ? [{ key: 'late:rejected', label: 'Rejected', value: lateStates.rejected, tone: 'red', title: 'The reason was not accepted. Counts as late. Click to list them.' }] : []),
+    { key: 'late:none', label: 'Not explained', value: lateStates.none, tone: 'red', title: 'Came late and nobody was told why. Counts as late. Click to list them.' },
+  ] : [];
+  // The same notes on Half day and On leave (only the ones somebody has): a missing punch stays
+  // visible when a leave is applied. key = 'halfDay:missingCheckOut'.
+  const NOTE_WORDS = { late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' };
+  const tileChips = (tileKey) => Object.keys(NOTE_WORDS).filter((k) => ((kpis.tileNotes || {})[tileKey] || {})[k] > 0)
+    .map((k) => ({ key: `${tileKey}:${k}`, label: NOTE_WORDS[k], value: kpis.tileNotes[tileKey][k] }));
+  // Plain facts about the day (not statuses): who has a check-in / check-out on record.
   const info = [
-    { key: 'late', value: kpis.late, label: 'Late arrivals', hint: 'Checked in after the grace time' },
     { key: 'checkedIn', value: kpis.checkedIn, label: 'Checked in', hint: 'People with a check-in' },
     { key: 'checkedOut', value: kpis.checkedOut, label: 'Checked out', hint: 'People who pressed check-out' },
-    { key: 'missingCheckOut', value: kpis.missingCheckOut, label: 'Missing check-out', hint: 'Checked in, never checked out (past day)' },
     { key: 'punched', value: kpis.punched, label: 'People with punches', hint: `Biometric device: ${kpis.biometric}` },
     ...extra,
   ];
@@ -93,16 +141,48 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
           <div className="h">Everyone on the rolls — click to list all</div>
         </button>
         {shown.map((b) => (
-          <button key={b.key} type="button" className={`att-kpi${active === b.key ? ' on' : ''}`} onClick={() => pick(b.key)} title={`${b.hint}. Click to list them.`}>
-            <div className="v">{kpis[b.key]}</div>
-            <div className="l">{b.label}</div>
-            <div className="h">{b.hint}</div>
-          </button>
+          <div key={b.key} className={`att-kpi-wrap${b.key === 'present' ? ' has-notes' : ''}`}>
+            <button type="button" className={`att-kpi${active === b.key ? ' on' : ''}`} onClick={() => pick(b.key)} title={`${b.hint}. Click to list them.`}>
+              <div className="v">{kpis[b.key]}</div>
+              <div className="l">{b.label}</div>
+              <div className="h">{b.hint}</div>
+            </button>
+            {b.key === 'halfDay' && kpis.halfDayLeave && <HalfLeaveSub c={kpis.halfDayLeave} />}
+            {(b.key === 'halfDay' || b.key === 'onLeave' || b.key === 'absent') && tileChips(b.key).length > 0 && (
+              <div className="att-kpi-notes" aria-label={`Notes inside ${b.label}`}>
+                {tileChips(b.key).map((n) => (
+                  <button key={n.key} type="button" className={`att-note${active === n.key ? ' on' : ''}`} onClick={() => pick(n.key)} title={`${n.label}: already counted in ${b.label}. Click to list them.`}>
+                    {n.label} <b>{n.value}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+            {b.key === 'present' && (
+              <div className="att-kpi-notes" aria-label="Notes inside Present">
+                {noteChips.map((n) => (
+                  <button key={n.key} type="button" className={`att-note${active === n.key ? ' on' : ''}`} onClick={() => pick(n.key)} title={`${n.label}: already counted in Present. Click to list them.`}>
+                    {n.label} <b>{n.value}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+            {b.key === 'present' && lateStates && lateStates.late > 0 && (
+              <div className="att-kpi-notes att-late-states" aria-label="Late coming: told why?">
+                {lateChips.map((n) => (
+                  <button key={n.key} type="button" className={`att-note att-late-${n.tone}${active === n.key ? ' on' : ''}`} onClick={() => pick(n.key)} title={n.title}>
+                    {n.label} <b>{n.value}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
       </div>
       <div className="att-eq">
         {shown.map((b, i) => <span key={b.key}>{i ? ' + ' : ''}{b.label} <b>{kpis[b.key]}</b></span>)}
-        {' '}= <b>{shown.reduce((n, b) => n + (kpis[b.key] || 0), 0)}</b> = headcount <b>{kpis.headcount}</b>.
+        {' '}= Headcount <b>{kpis.headcount}</b>
+        {shown.reduce((n, b) => n + (kpis[b.key] || 0), 0) === kpis.headcount ? '' : <> (these add up to <b>{shown.reduce((n, b) => n + (kpis[b.key] || 0), 0)}</b>)</>}.
+        {' '}Late, Early logout, Missing check-in and Missing check-out are notes inside Present, not extra tiles.
         {headcount && (
           <> {' '}Of the <b>{headcount.records}</b> employee record(s) in your scope
             {headcount.systemAccounts ? <>, <b>{headcount.systemAccounts}</b> Super Admin (system account) is not counted</> : null}
@@ -113,7 +193,7 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
           </>
         )}
       </div>
-      <div className="att-kpi-sep">Of these (information — already inside the figures above)</div>
+      <div className="att-kpi-sep">About the day (information)</div>
       <div className="att-kpis info">
         {info.map((c) => (
           <button key={c.key} type="button" className={`att-kpi${active === c.key ? ' on' : ''}`} onClick={() => pick(c.key)} title={c.hint}>
@@ -132,11 +212,20 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [] }) {
 // punchRows / checkIn / checkOut; the range's per-person rows carry day counts.
 export function matchesKpi(row, key) {
   if (!key || key === 'headcount') return true;
+  // 'pd:present' = a PERSON-DAY tile of the period (PersonDayTiles): the same test, on the day rows.
+  if (String(key).startsWith('pd:')) return matchesKpi(row, String(key).slice(3));
+  // 'halfDay:missingCheckOut' = a note on Half day / On leave (the person keeps the tile, the note says what HR can fix).
+  // 'late:approved' = a late arrival whose late-coming request is approved / pending / rejected / none (not explained).
+  if (String(key).startsWith('late:')) return !!row.late && row.lateState === String(key).slice(5);
+  if (String(key).includes(':')) { const [t, n] = String(key).split(':'); return row.bucket === t && (row.notes || []).includes(n); }
   if (BUCKET_LABEL[key]) return row.bucket === key;
-  if (key === 'late') return !!row.late;
+  // The four notes inside Present: only people who are Present carry them.
+  if (key === 'late') return 'bucket' in row ? row.bucket === 'present' && !!row.late : !!row.late;
+  if (key === 'earlyLogout') return row.bucket === 'present' && (row.dayStatus || row.status) === 'Early Logout';
+  if (key === 'missingCheckIn') return row.bucket === 'present' && (row.dayStatus || row.status) === 'Missing Check-In';
   if (key === 'checkedIn') return 'checkIn' in row ? !!row.checkIn : !!(row.checkInTimes && row.checkInTimes.length);
   if (key === 'checkedOut') return 'checkOut' in row ? !!row.checkOut : !!(row.checkOutTimes && row.checkOutTimes.length);
-  if (key === 'missingCheckOut') return (row.dayStatus || row.status) === 'Missing Check-Out';
+  if (key === 'missingCheckOut') return row.bucket === 'present' && (row.dayStatus || row.status) === 'Missing Check-Out';
   if (key === 'punched') return (row.punchRows ?? row.punches ?? 0) > 0;
   // Range, per person.
   const any = { presentAny: 'present', halfDayAny: 'halfDay', absentAny: 'absent', onLeaveAny: 'onLeave', noRecordAny: 'noRecord', lateAny: 'late' }[key];
@@ -189,6 +278,9 @@ export function RangeBar({ from, to, onChange, latest, today = localToday(), chi
         <button type="button" className="btn btn-sm" title={len === 1 ? 'Next day' : `Next ${len} days`} aria-label="Next" onClick={() => onChange(addDays(from, len), addDays(to, len))}>▶</button>
       </div>
       <form className="att-day-bar" onSubmit={apply}>
+        <label className="small-muted" style={{ margin: 0 }}>Month</label>
+        <input type="month" aria-label="Whole month" title="A whole calendar month: the same dates as Monthly Summary" value={from.slice(0, 7) === to.slice(0, 7) && from.endsWith('-01') ? from.slice(0, 7) : ''}
+          onChange={(e) => { const m = e.target.value; if (!m) return; const [y, mo] = m.split('-').map(Number); onChange(`${m}-01`, `${m}-${String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0')}`); }} />
         <label className="small-muted" style={{ margin: 0 }}>From</label>
         <input type="date" value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })} aria-label="From date" />
         <label className="small-muted" style={{ margin: 0 }}>To</label>
@@ -198,6 +290,64 @@ export function RangeBar({ from, to, onChange, latest, today = localToday(), chi
         {children}
       </form>
       {err && <div className="notice red">{err}</div>}
+    </div>
+  );
+}
+
+// A PERIOD IN PERSON-DAYS (user, 2026-10-10: the Biometric list and the Monthly Summary must show the same counts).
+// These are the Monthly Summary's totals - one engine definition (attendanceDays.tallyPerson): Present (it INCLUDES late, early
+// logout and missing check-in / check-out, which are notes inside it) + Absent + Half day + On leave + Week off / Holiday = days.
+// Clicking a count lists exactly those person-days below. "Days with a punch" / "Punches received" are plain facts, not statuses.
+export function PersonDayTiles({ tiles, equation, from, to, active, onPick, onOpenSummary }) {
+  if (!tiles) return null;
+  const pick = (key) => onPick && onPick(active === key ? '' : key);
+  const T = tiles;
+  const main = [
+    { key: 'present', label: 'Present', value: T.present, hint: 'Came to work (includes late, early logout and missing punches)' },
+    { key: 'absent', label: 'Absent', value: T.absent, hint: 'No check-in, no leave or request' },
+    { key: 'halfDay', label: 'Half day', value: T.halfDay, hint: 'Worked one half, or half-day leave' },
+    { key: 'onLeave', label: 'On leave', value: T.onLeave, hint: 'Leave (approved, waiting) or told the manager' },
+    { key: 'offDay', label: 'Week off / Holiday', value: T.offDay, hint: 'Sunday and company holidays' },
+    ...(T.noRecord ? [{ key: 'noRecord', label: 'No device data', value: T.noRecord, hint: 'Nothing came from the device that day' }] : []),
+    ...(T.notYet ? [{ key: 'notYet', label: 'Not checked in yet', value: T.notYet, hint: 'Today, no punch yet' }] : []),
+  ];
+  const notes = [
+    { key: 'late', label: 'Late', value: T.late },
+    { key: 'earlyLogout', label: 'Early logout', value: T.earlyLogout },
+    { key: 'missingCheckIn', label: 'Missing check-in', value: T.missingCheckIn },
+    { key: 'missingCheckOut', label: 'Missing check-out', value: T.missingCheckOut },
+  ];
+  const ls = T.lateStates || {};
+  return (
+    <div className="att-pd" data-testid="person-day-tiles">
+      <div className="att-kpi-sep" style={{ marginTop: 0 }}>Person-days {from} → {to} — the same counts as Monthly Summary</div>
+      <div className="att-kpis">
+        <div className="att-kpi total" title="Every person on the rolls, for every day of the period">
+          <div className="v">{T.days}</div><div className="l">Person-days</div><div className="h">people × days on the rolls</div>
+        </div>
+        {main.map((b) => (
+          <button key={b.key} type="button" className={`att-kpi${active === `pd:${b.key}` ? ' on' : ''}`} onClick={() => pick(`pd:${b.key}`)} title={`${b.hint}. Click to list these days.`}>
+            <div className="v">{b.value}</div><div className="l">{b.label}</div><div className="h">{b.hint}</div>
+          </button>
+        ))}
+      </div>
+      <div className="att-eq" data-testid="pd-equation">{equation}. Working days = {T.workingDays} (every day except Week off / Holiday{T.upcoming ? ` and ${T.upcoming} coming days` : ''}).</div>
+      <div className="att-kpi-notes" style={{ margin: '6px 0' }} aria-label="Notes inside Present">
+        <span className="small-muted">Inside Present:</span>
+        {notes.map((n) => (
+          <button key={n.key} type="button" className={`att-note${active === `pd:${n.key}` ? ' on' : ''}`} onClick={() => pick(`pd:${n.key}`)} title={`${n.label}: already counted in Present. Click to list them.`}>{n.label} <b>{n.value}</b></button>
+        ))}
+        {ls.late > 0 && <span className="small-muted">Late: approved {ls.approved} · waiting {ls.pending}{ls.rejected ? ` · rejected ${ls.rejected}` : ''} · not explained {ls.none}</span>}
+      </div>
+      <div className="att-kpi-notes" style={{ margin: '0 0 6px' }} aria-label="Plain facts, not statuses">
+        <span className="small-muted">Plain facts (not statuses):</span>
+        <button type="button" className={`att-note${active === 'pd:punched' ? ' on' : ''}`} onClick={() => pick('pd:punched')} title="Days on which the person has at least one punch (device, web, mobile or import)">Days with a punch <b>{T.punchDays}</b></button>
+        <span className="att-note" title="Every punch row received from the device / web / mobile / import in the period">Punches received <b>{T.punchRows}</b></span>
+      </div>
+      <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>
+        Counts match the Monthly Summary for the same dates and filters (same rule, same people).
+        {onOpenSummary && <> <button type="button" className="link-btn" onClick={onOpenSummary}>Open Monthly Summary</button></>}
+      </div>
     </div>
   );
 }
@@ -227,6 +377,7 @@ export function RangeKpis({ summary, from, to, active, onPick }) {
   ];
   return (
     <div>
+      <div className="att-kpi-sep" style={{ marginTop: 6 }}>People — how many PEOPLE had at least one such day (not person-days)</div>
       <div className="att-kpis">
         <div className="att-kpi total" title="Everyone on the rolls on at least one day of the range">
           <div className="v">{s.people}</div>
@@ -242,7 +393,7 @@ export function RangeKpis({ summary, from, to, active, onPick }) {
         ))}
       </div>
       <div className="att-eq">
-        Each figure above is a number of <b>people</b> (never more than the <b>{s.people}</b> on the rolls). Below: the average per day over the
+        Each figure in this People row is a number of <b>people</b> (never more than the <b>{s.people}</b> on the rolls); the person-day counts are above. Below: the average per day over the
         {' '}<b>{s.days}</b> days. Each day&apos;s buckets add up to that day&apos;s headcount (see the date-wise table).
       </div>
       <div className="att-kpi-sep">Per-day averages</div>

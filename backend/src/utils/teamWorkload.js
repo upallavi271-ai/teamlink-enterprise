@@ -36,6 +36,12 @@
 //                        a requirement naming them as BDE (Requirement.bdeId)
 //   TL's team            the recruiters whose seat reports to their TL seat
 //                        (or whose employee record names them as TL)
+//   BDE TL (user, 2026-10-10)  is NOT a recruiting team lead: she never has a row in the
+//                        Team leads / Dept Head tables and no company-wide numbers
+//                        sit on her. Her team is the BDE desk only: every client
+//                        manager (BDE) seat holder (BDE EDU 1, BDE MED, BDE MFG ...),
+//                        listed as BDE rows with their own numbers (GET /team
+//                        also says { bdeTl } so her Team page can say so).
 //
 // WHO SEES WHAT (server-side; the UI only hides):
 //   Super Admin / Admin   everything
@@ -51,8 +57,9 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const {
-  applicationWhere, requirementWhere, atsScopeOf: scopeOf, atsViewRole,
+  applicationWhere, requirementWhere, atsScopeOf: scopeOf, atsViewRole, isBdeTl,
 } = require('./scope');
+const { isBdeDepartment, parseBdeSeat } = require('./bdeDesk');
 const {
   REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel,
 } = require('./atsVocab');
@@ -93,6 +100,16 @@ function seatTeamOf(p) {
   if (!team || /^team$/i.test(team)) return `${dept} Team`;
   return /^team\b/i.test(team) ? `${dept} ${team}` : `${dept} · ${team}`;
 }
+// A client manager's seat reads "BDE EDU 1" / "BDE MED" (the desk they work), anyone else "MED-3 · Medical Team".
+const bdeSeatText = (u, seat) => {
+  if (u && u.atsRole === 'BDE') {
+    const p = parseBdeSeat(seat.code);
+    if (p.isBde) return p.label;
+  }
+  return [seat.code, seatTeamOf(seat)].filter(Boolean).join(' · ');
+};
+// THE BDE TL leads the client managers: she is not a recruiting team lead (user, 2026-10-10).
+const isBdeTlPerson = (p) => !!p && p.role === 'TL' && isBdeDepartment([p.department]);
 const sectionOf = (seat, department) => seatTeamOf(seat) || (department ? seatTeamOf({ department }) : null);
 
 // Logins that only ever see their own row.
@@ -121,6 +138,11 @@ function teamPeopleWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
   const departments = uniq([...(s.departments || []), ...((s.positions && s.positions.departments) || [])]);
+  // THE BDE TL (user, 2026-10-10): the BDE desk, nobody else (she is not a recruiting TL
+  // and has no recruiters under her). Her own row is left out in buildWorld.
+  if (isBdeTl(user)) return { atsRole: 'BDE' };
+  // MANAGER (user, 2026-10-09, Q2): reads every department, view-only: the whole team.
+  if (s.atsRole === 'MANAGER') return {};
   if (SELF_ONLY.includes(s.atsRole)) return { id: s.userId || '__none__' };
   if (s.atsRole === 'HR') return { id: '__none__' }; // HR: see peopleFor()
   if (s.atsRole === 'TL' && s.teamUserIds) return { id: { in: [s.userId, ...s.teamUserIds] } };
@@ -213,31 +235,83 @@ async function peopleFor(user) {
   }
   const users = await prisma.user.findMany({
     where: { AND: [{ atsRole: { in: TEAM_ROLES } }, where] },
-    select: {
-      id: true, name: true, email: true, status: true, atsRole: true, atsDepartment: true, atsScopeClients: true,
-      employee: { select: { id: true, employeeCode: true, designation: true, department: true, tl: true, stl: true, employmentStatus: true, email: true } },
-    },
+    select: PERSON_SELECT,
   });
   return users.filter((u) => !isTestPerson(u) || isTestViewer(user));
 }
+const PERSON_SELECT = {
+  id: true, name: true, email: true, status: true, atsRole: true, atsDepartment: true, atsScopeClients: true,
+  employee: { select: { id: true, employeeCode: true, designation: true, department: true, tl: true, stl: true, employmentStatus: true, email: true } },
+};
+
 // A ZZTEST caller (the automated tests) does see its own fixtures.
 const isTestViewer = (user) => isTestPerson(user);
 
 // Concurrent requests from one screen (the three tabs load together) share
 // one read.
+//
+// A world older than 20 s is not thrown away blindly: building one is the
+// 4-12 s the Recruiter & BDE page waited for on every visit. It is kept up to
+// WORLD_MAX_AGE_MS and reused while a cheap STAMP of everything it was built
+// from is unchanged — counts + newest change of applications, requirements,
+// follow-ups, stage events, people, seats (the next-action snapshot's own
+// stamp already covers events, follow-ups, notes, messages, feedback and
+// audit) — and the IST day is the same. Any write changes the stamp, so the
+// next read rebuilds; ?fresh=1 always rebuilds. Clients have no change date,
+// so a changed client owner shows up at the latest after WORLD_MAX_AGE_MS.
+const WORLD_MAX_AGE_MS = 3 * 60 * 1000;
+// Same stamp but older than WORLD_MAX_AGE_MS: nothing the world is built from
+// was written, so it is still right (only an edited client owner could differ).
+// Serve it at once and read a new one behind it, so the person never waits for
+// a rebuild that would come back the same. Beyond this age it is rebuilt first.
+const WORLD_STALE_OK_MS = 30 * 60 * 1000;
+const { dataStamp, snapshotCurrent } = require('./dataStamp');
+const STARTING = new Map();
 async function loadWorld(user, { fresh = false } = {}) {
   const key = user.id;
   const hit = WORLD.get(key);
-  if (!fresh && hit && Date.now() - hit.at < WORLD_TTL_MS) return hit.promise;
-  const promise = buildWorld(user);
-  WORLD.set(key, { at: Date.now(), promise });
-  while (WORLD.size > 30) WORLD.delete(WORLD.keys().next().value);
-  promise.catch(() => { if (WORLD.get(key) && WORLD.get(key).promise === promise) WORLD.delete(key); });
-  return promise;
+  // A world with a stamp is checked against the data (a few ms) however young it is,
+  // so a write made a moment ago shows on the very next call. Without a stamp (the
+  // next-action snapshot was still catching up) it is only trusted for 20 s.
+  if (!fresh && hit && !hit.stamp && Date.now() - hit.at < WORLD_TTL_MS) return hit.promise;
+  if (!fresh && hit && hit.stamp && Date.now() - hit.at < WORLD_STALE_OK_MS) {
+    const now = await dataStamp().catch(() => null);
+    if (now && now.all === hit.stamp && WORLD.get(key) === hit) {
+      if (Date.now() - hit.at >= WORLD_MAX_AGE_MS && !STARTING.has(key)) {
+        loadWorldNow(user, key, true).catch((err) => console.error('[teamWorkload] world refresh failed:', err.message)); // eslint-disable-line no-console
+      }
+      return hit.promise;
+    }
+  }
+  // Tabs that load together share one rebuild.
+  if (!fresh && STARTING.has(key)) return STARTING.get(key);
+  return loadWorldNow(user, key);
+}
+// background: the old (still right) world keeps being served until the new one is ready.
+function loadWorldNow(user, key, background = false) {
+  const starting = (async () => {
+    // The stamp is taken BEFORE the read: a write that lands while the world
+    // is being built makes the next stamp differ, so it is never missed.
+    const stamp = await dataStamp().catch(() => null);
+    const promise = buildWorld(user);
+    const entry = { at: Date.now(), promise, stamp: stamp ? stamp.all : null };
+    if (background) promise.then(() => { WORLD.set(key, entry); }, () => {});
+    else WORLD.set(key, entry);
+    // Built while the next-action snapshot still lagged behind a write: keep it
+    // for the 20 s window only, never on the strength of the stamp.
+    promise.then(() => { if (!snapshotCurrent(stamp)) entry.stamp = null; }, () => {});
+    while (WORLD.size > 30) WORLD.delete(WORLD.keys().next().value);
+    promise.catch(() => { if (!background && WORLD.get(key) && WORLD.get(key).promise === promise) WORLD.delete(key); });
+    return promise;
+  })();
+  STARTING.set(key, starting);
+  const done = () => { if (STARTING.get(key) === starting) STARTING.delete(key); };
+  starting.then(done, done);
+  return starting;
 }
 
 async function buildWorld(user) {
-  const [, people, positions, current, reqs, apps, joinedApps, dir] = await Promise.all([
+  const [, basePeople, positions, current, reqs, apps, joinedApps, dir] = await Promise.all([
     nextAction.ensureNextActionContext(),
     peopleFor(user),
     prisma.position.findMany({ select: { id: true, code: true, kind: true, department: true, team: true, reportsToId: true, active: true } }),
@@ -258,6 +332,8 @@ async function buildWorld(user) {
     readApplications({ AND: [applicationWhere(user), { stage: { in: JOINED_STAGES } }] }, APP_SELECT),
     loadDirectory(),
   ]);
+
+  const people = basePeople;
 
   // --- Seats: who holds what, and the TL each recruiter seat reports to ----
   const posById = new Map(positions.map((p) => [p.id, p]));
@@ -309,7 +385,7 @@ async function buildWorld(user) {
       section: sectionOf(seat, department),
       seat: seat ? seat.code : null,
       recruiterCode: seat ? seat.code : null,
-      seatLabel: seat ? [seat.code, seatTeamOf(seat)].filter(Boolean).join(' · ') : null,
+      seatLabel: seat ? bdeSeatText(u, seat) : null,
       employeeCode: (u.employee && u.employee.employeeCode) || null,
       designation: (u.employee && u.employee.designation) || null,
       email: (u.employee && u.employee.email) || u.email || null,
@@ -319,7 +395,7 @@ async function buildWorld(user) {
       status: (u.status || 'Active') === 'Active' && !LEFT_STATUSES.includes(u.employee && u.employee.employmentStatus) ? 'Active' : 'Left',
       scopeClients: csv(u.atsScopeClients),
     };
-  });
+  }).filter((p) => !isBdeTlPerson(p));
   // Seats of people outside this screen's list still count for requirement
   // sections / TLs.
   current.forEach((a) => {
@@ -331,6 +407,7 @@ async function buildWorld(user) {
 
   // --- Requirements: section, TL, recruiter(s), BDE -------------------------
   const clientOwnerId = (client) => (client && client.bdeOwner ? personByName(client.bdeOwner) : null);
+  const bdeDir = await require('./bdeSeats').bdeDirectory(); // eslint-disable-line global-require
   const shapeReq = (r) => {
     const seat = (r.positionCode && posByCode.get(r.positionCode)) || (r.recruiterId && seatByUserId.get(r.recruiterId)) || null;
     const recruiterIds = uniq([r.recruiterId, ...csv(r.recruiterIds)]);
@@ -346,6 +423,7 @@ async function buildWorld(user) {
     if (!r.internal) {
       if (r.bdeId) bde = { id: r.bdeId, name: userName(r.bdeId) || '—', source: 'requirement' };
       else if (r.client && r.client.bdeOwner) bde = { id: clientOwnerId(r.client), name: r.client.bdeOwner, source: 'client' };
+      if (bde) bde.label = bdeDir.pickerLabelFor(bde.name) || bde.name; // "Name · BDE MED" for the filter
     }
     const missing = [];
     if (!recruiters.length) missing.push('Recruiter');
@@ -447,8 +525,17 @@ async function buildWorld(user) {
     : [];
   const clientById = new Map(clients.map((c) => [c.id, c]));
 
+  // The last time one of each recruiter's people moved (a team lead's "last activity").
+  const lastActive = new Map();
+  [...activeApps, ...joined].forEach((a) => {
+    if (!a.recruiterUserId || !a.updatedAt) return;
+    const t = new Date(a.updatedAt).getTime();
+    if (!lastActive.has(a.recruiterUserId) || t > lastActive.get(a.recruiterUserId)) lastActive.set(a.recruiterUserId, t);
+  });
+
   const world = {
     at: Date.now(),
+    lastActive,
     people: shapedPeople,
     peopleById: new Map(shapedPeople.map((p) => [p.id, p])),
     reqs: shapedReqs,
@@ -563,6 +650,8 @@ function personSets(world, person) {
     sets.clients = { kind: 'clients', ids: [...clientIds] };
     sets.activeClients = { kind: 'clients', ids: [...clientIds].filter((c) => activeClientIds.has(c)) };
     sets.openRequirements = { kind: 'requirements', ids: reqs.filter((r) => r.live).map((r) => r.id) };
+    // People in process on their clients' jobs (the people-list column; the BDE's own screens use the client-step numbers below).
+    sets.activeCandidates = { kind: 'applications', ids: apps.map((a) => a.id) };
     sets.submitted = { kind: 'applications', ids: apps.filter((a) => SUBMITTED_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.feedbackPending = { kind: 'applications', ids: apps.filter((a) => FEEDBACK_PENDING_STAGES.includes(a.stage)).map((a) => a.id) };
     sets.interviews = { kind: 'applications', ids: apps.filter((a) => INTERVIEW_STAGES.includes(a.stage)).map((a) => a.id) };
@@ -595,6 +684,17 @@ function personSets(world, person) {
   return sets;
 }
 
+// The last time one of a person's people moved: a recruiter's attributed work, a client
+// manager's work on their clients' jobs.
+function lastActiveOf(world, p, sets) {
+  let t = world.lastActive.get(p.id) || 0;
+  if (p.roleGroup === 'BDE' && sets.activeCandidates) {
+    const mine = new Set(sets.activeCandidates.ids);
+    world.apps.forEach((a) => { if (mine.has(a.id) && a.updatedAt) t = Math.max(t, new Date(a.updatedAt).getTime()); });
+  }
+  return t ? new Date(t).toISOString() : null;
+}
+
 const METRIC_LABELS = {
   openRequirements: 'Open Requirements',
   activeCandidates: 'Active Candidates',
@@ -606,7 +706,7 @@ const METRIC_LABELS = {
   clients: 'Clients',
   activeClients: 'Active Clients',
   submitted: 'Submitted Candidates',
-  feedbackPending: 'Client Feedback Pending',
+  feedbackPending: 'Client has not replied',
   clientActions: 'Client Actions',
   recruiters: 'Recruiters',
   requirements: 'Requirements',
@@ -658,10 +758,11 @@ async function teamWorkloadRows(user, { includeLeft = true, fresh = false } = {}
         ...p,
         scopeClients: undefined,
         counts: c,
+        lastActiveAt: lastActiveOf(world, p, sets),
         ...extra,
         // Legacy readers (export, older screens).
         openRequirements: c.openRequirements !== undefined ? c.openRequirements : c.requirements,
-        activePipeline: c.activeCandidates !== undefined ? c.activeCandidates : c.candidates !== undefined ? c.candidates : c.submitted,
+        activePipeline: p.roleGroup === 'BDE' ? c.submitted : c.activeCandidates !== undefined ? c.activeCandidates : c.candidates !== undefined ? c.candidates : c.submitted,
         activeApplications: c.activeCandidates !== undefined ? c.activeCandidates : c.candidates,
         pending: world.helperReady ? c.needsAction : null,
         interviews: c.interviews,
@@ -670,7 +771,11 @@ async function teamWorkloadRows(user, { includeLeft = true, fresh = false } = {}
       };
     });
   rows.sort((a, b) => (TEAM_ROLE_ORDER[a.role] - TEAM_ROLE_ORDER[b.role]) || a.name.localeCompare(b.name));
-  return { rows, helperReady: world.helperReady };
+  // The BDE TL's Team page opens with one line about her desk (never a row of company numbers).
+  const bdeTl = isBdeTl(user)
+    ? { name: user.name, clientManagers: rows.filter((r) => r.roleGroup === 'BDE' && r.status === 'Active').length }
+    : null;
+  return { rows, helperReady: world.helperReady, bdeTl };
 }
 
 // ---------------------------------------------------------------------------
@@ -738,7 +843,10 @@ function listRows(world, kind, ids, { clientDesk }) {
   if (kind === 'people') {
     return world.people.filter((p) => want.has(p.id)).map((p) => {
       const c = countsOf(personSets(world, p));
-      return { id: p.id, name: p.name, seatLabel: p.seatLabel, department: p.department, section: p.section, status: p.status, counts: c };
+      return {
+        id: p.id, name: p.name, role: p.role, roleLabel: p.roleLabel, seatLabel: p.seatLabel, department: p.department,
+        section: p.section, status: p.status, counts: c,
+      };
     }).sort((a, b) => a.name.localeCompare(b.name));
   }
   return [];
@@ -794,7 +902,7 @@ const SECTIONS_360 = {
     ['clients', 'Clients', 'clients'],
     ['requirements', 'Requirements', 'openRequirements'],
     ['submissions', 'Candidate Submissions', 'submitted'],
-    ['feedback', 'Client Feedback', 'feedbackPending'],
+    ['feedback', 'Client has not replied', 'feedbackPending'],
     ['interviews', 'Interviews', 'interviews'],
     ['selections', 'Selections', 'selected'],
     ['joining', 'Joining', 'joined'],
@@ -964,6 +1072,38 @@ async function formerWorkloadRows(user, currentIds) {
   return rows;
 }
 
+// THE BDE TEAM'S VIEW OF A TEAM PAYLOAD (user, 2026-10-10): the client managers and their lead see
+// client work by client manager. No recruiter and no team lead (name, id or column) in any Team
+// payload; a step that belongs to a recruiter / TL names the side ("Recruiter team"), not the person;
+// a job is "fully assigned" when its client manager is named.
+const BDE_TEAM_DROP = new Set(['recruiter', 'recruiters', 'recruiterUserId', 'recruiterName', 'tl', 'tlUserId', 'tlName', 'stl', 'reqTl']);
+function forBdeTeam(value) {
+  if (Array.isArray(value)) return value.map(forBdeTeam);
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  const out = {};
+  Object.keys(value).forEach((k) => { if (!BDE_TEAM_DROP.has(k)) out[k] = forBdeTeam(value[k]); });
+  if (out.ownerRole && out.ownerRole !== 'BDE') { out.owner = `${out.ownerRole} team`; out.ownerUserId = null; out.ownerSource = null; }
+  if (Array.isArray(out.missing) && 'assignment' in out) {
+    out.missing = out.missing.filter((m) => m === 'BDE');
+    out.assignment = out.missing.length ? 'BDE Missing' : 'Fully Assigned';
+  }
+  if (value && Array.isArray(value.rows) && value.rows.some((r) => r && r.ownerRole)) out.peopleHidden = true;
+  return out;
+}
+
+// A client step whose job names no client manager falls back to the job's recruiter as its owner. The BDE team
+// is not shown that person: the step then reads "No BDE named" (the honest answer for that job).
+async function dropNonBdeOwners(rows) {
+  const ids = uniq((rows || []).filter((r) => r.ownerRole === 'BDE' && r.ownerUserId).map((r) => r.ownerUserId));
+  if (!ids.length) return rows;
+  const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, atsRole: true, atsDepartment: true } });
+  const isBde = new Set(users.filter((u) => u.atsRole === 'BDE' || isBdeDepartment([u.atsDepartment])).map((u) => u.id));
+  rows.forEach((r) => {
+    if (r.ownerRole === 'BDE' && r.ownerUserId && !isBde.has(r.ownerUserId)) { r.ownerUserId = null; r.owner = null; r.ownerSource = null; }
+  });
+  return rows;
+}
+
 // Kept for older callers; the world cache replaces the old row memo.
 function rememberRows() {}
 function forgetWorld(user) { if (user) WORLD.delete(user.id); else WORLD.clear(); }
@@ -975,4 +1115,6 @@ module.exports = {
   // The ATS dashboard's Team leads section (utils/atsHome.js, 2026-10-05)
   // reads the same team and the same sets, so its numbers match this page.
   teamWorld: loadWorld, personSets,
+  // The BDE TL leads the client managers, not a recruiting team: Team-leads tables leave her out.
+  isBdeTlPerson, forBdeTeam, dropNonBdeOwners,
 };

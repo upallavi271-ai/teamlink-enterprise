@@ -57,6 +57,9 @@ const { applyStageMove } = require('./applications');
 const { canMoveToStage } = require('../utils/permissions');
 const { autoPost } = require('../utils/jobPosting');
 
+const CSRC = require('../utils/candidateSource'); // the clean source list
+const sourceOfApp = (a) => CSRC.sourceOfApplication(a, a.candidate);
+
 const router = express.Router();
 router.use(requireAuth);
 // The portal is an ATS surface. A login without ATS access — an Accountant,
@@ -427,7 +430,7 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
   const apps = await prisma.application.findMany({
     where: { ...PORTAL_APPLICATION_FILTER, ...applicationWhere(req.user) },
     include: {
-      candidate: { select: { id: true, name: true, email: true, phone: true, source: true, skills: true } },
+      candidate: { select: { id: true, name: true, email: true, phone: true, source: true, firstSource: true, skills: true } },
       requirement: { select: { id: true, reqCode: true, title: true, department: true, portalPublished: true, internal: true, hiringType: true, recruiterId: true, recruiterIds: true, tlId: true, stlId: true, bdeId: true, clientId: true, client: { select: { name: true } } } },
     },
     orderBy: { createdAt: 'desc' },
@@ -450,6 +453,12 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
       published: !!a.requirement.portalPublished,
       // The brief's "source = TeamLink Job Portal". Stored, not inferred.
       source: a.source || a.candidate.source,
+      // WHERE they first came from (Naukri, Shine, TeamLink Job Portal …): the portal's mailbox reader and the
+      // board's own apply link both stamp it. The "Where from" filter on this list reads it.
+      // (the clean list, utils/candidateSource.js: Naukri, Shine, Job Portal …; the stored word is sourceRaw)
+      origin: sourceOfApp(a).key,
+      sourceKey: sourceOfApp(a).key,
+      sourceRaw: sourceOfApp(a).raw,
       stage: a.stage,
       stageLabel: stageLabel(a.stage),
       appliedAt: a.createdAt,
@@ -469,6 +478,9 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
     r.aiScore = r.screening ? r.screening.aiInterviewScore : null;
     r.resumeScore = r.screening ? r.screening.resumeScore : null;
   });
+  // dup_: the red "Duplicate" chip and "Already in ATS (matched by phone)" on the screening list.
+  await require('../utils/candidateDupes').attachFlags(rows); // eslint-disable-line global-require
+  await require('../utils/candidateDupes').attachAlreadyInAts(rows); // eslint-disable-line global-require
   const counts = { all: rows.length };
   PORTAL_TABS.forEach((t) => { counts[t] = rows.filter((r) => r.portalTab === t).length; });
   res.json({
@@ -675,6 +687,9 @@ async function sendToAts(req, res) {
   if (!st.readyToSend) {
     return res.status(409).json({ error: `Not ready to send to the ATS: ${st.blockers.join('; ')}.`, blockers: st.blockers });
   }
+  // Sending to the ATS is leaving the first step: a duplicate must be sorted out first (utils/candidateDupes.js).
+  const dupHold = await require('../utils/candidateDupes').gateCheck(application, 'TL_REVIEW'); // eslint-disable-line global-require
+  if (dupHold) return res.status(dupHold.status).json(dupHold.body);
   const internal = hiringTypeOf(application, application.requirement) === 'TeamLink Internal Hire';
   const lands = internal ? 'HR Review' : 'Recruiter Review';
   const source = application.source || application.candidate.source;
@@ -836,12 +851,22 @@ const CLIENT_DECISIONS = {
   HOLD: { stage: null, action: 'Put on hold by client' },
 };
 
+// The tick a client decision needs: interview = INTERVIEW, the rest = DECIDE.
+// eslint-disable-next-line global-require
+const ticksAllow = async (user, decision) => require('../utils/clientPortalTypes').hasCap(user, decision === CLIENT_DECISIONS.REQUEST_INTERVIEW ? 'INTERVIEW' : 'DECIDE');
+
 router.post('/client/applications/:id/decision', perm(CLIENT_VIEW, 'edit'), wrap(async (req, res) => {
   const decision = CLIENT_DECISIONS[String((req.body && req.body.decision) || '').toUpperCase()];
   if (!decision) {
     return res.status(400).json({ error: 'decision must be SHORTLIST, HOLD, REJECT or REQUEST_INTERVIEW' });
   }
 
+  // CLIENT TICK BOXES (2026-10-09): asking for an interview and shortlisting /
+  // holding / rejecting are two separate ticks. can() above only said "may take
+  // some decision"; this is the exact one. A staff login is not narrowed.
+  if (!(await ticksAllow(req.user, decision))) {
+    return res.status(403).json({ error: decision === CLIENT_DECISIONS.REQUEST_INTERVIEW ? 'Asking for an interview is not part of your access.' : 'Shortlisting, holding or rejecting candidates is not part of your access.' });
+  }
   // Scope first: applicationWhere() pins a client to their own company's
   // requirements, so Client B cannot name Client A's application id here.
   const application = await prisma.application.findFirst({
@@ -912,6 +937,18 @@ router.post('/client/applications/:id/decision', perm(CLIENT_VIEW, 'edit'), wrap
     },
   });
   if (decision.stage && decision.stage !== application.stage) {
+    // Automatic stage messages (utils/autoMessages.js): a client's decision in the portal is a step move
+    // too. The engine only acts after Admin / HR have started it; before that nothing is sent (as before).
+    try {
+      // eslint-disable-next-line global-require
+      await require('../utils/autoMessages').handleStageMove({
+        application: { ...application, stage: decision.stage }, candidate: application.candidate, requirement: application.requirement,
+        fromStage: application.stage, toStage: decision.stage, user: req.user,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[portal decision] automatic message not scheduled:', err.message);
+    }
     // e2e gap 3: the same-client warning reads the rejection index — a
     // client's own reject must reach it at once, like a pipeline reject.
     if (decision.stage === 'REJECTED') {

@@ -1,0 +1,7 @@
+/* Department rules + carried target (RjParts.jsx DeptRules) */
+.rj-deptrules{display:flex;flex-direction:column;gap:6px;margin:8px 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.rj-deptrule{display:flex;gap:10px;font-size:12.5px;line-height:1.45;align-items:baseline}
+.rj-deptrule b{min-width:110px;flex:0 0 auto}
+.rj-deptrule.unset{color:var(--amber)}
+.rj-deptrule.unset b{color:var(--ink)}
+@media (max-width:640px){.rj-deptrule{flex-direction:column;gap:2px}.rj-deptrule b{min-width:0}}

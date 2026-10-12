@@ -70,12 +70,24 @@ function targetStageFor(col, app, internal) {
   return col.entry[0];
 }
 
+// dup_: the red "Duplicate" chip on a card (one query for the column's cards).
+async function dupCards(cards, rows) {
+  try {
+    const tmp = cards.map((c, i) => ({ candidateId: rows[i].candidateId, card: c }));
+    await require('../utils/candidateDupes').attachFlags(tmp); // eslint-disable-line global-require
+    tmp.forEach((t) => { if (t.dup) t.card.dup = t.dup; t.card.candidateId = t.card.candidateId || t.candidateId; });
+  } catch { /* optional */ }
+  return cards;
+}
+
 function cardOf(r, moved, now, heldAt = null) {
   const since = r.stageEnteredAt || (moved && moved.at) || r.appliedDate || r.createdAt;
   const days = since ? Math.max(0, Math.floor((now - new Date(since).getTime()) / DAY)) : null;
   const live = ['Active', 'Hold'].includes(r.pipelineStatus);
   return {
     recruiter: r.recruiterName || null,
+    sourceKey: r.sourceKey || null, // where from (utils/candidateSource.js)
+    sourceRaw: r.sourceRaw || null,
     // The Verify checklist shows these next to its ticks.
     facts: {
       skills: r.skills || null,
@@ -104,6 +116,8 @@ function cardOf(r, moved, now, heldAt = null) {
     movedAt: moved ? moved.at : null,
     matchScore: r.matchScore ?? null,
     pipelineStatus: r.pipelineStatus,
+    // Salary fit chips on the card (utils/salaryFit.js): already shaped for this viewer on the pipeline row.
+    ...(r.salaryFit ? { salaryFit: r.salaryFit } : {}),
   };
 }
 
@@ -179,6 +193,20 @@ module.exports = function mountCandidatesBoard(router, deps) {
         const k = COLUMN_OF.get(r.currentStage);
         if (k) byCol.get(k).push(r);
       });
+      // idsOnly=1 (bulk Call / Message): every person of ONE step (column=) or of every live step.
+      if (q.idsOnly === '1') {
+        const oc = q.column ? columnByKey(String(q.column)) : null;
+        const cols = BOARD_COLUMNS.filter((c) => (oc ? c.key === oc.key : !c.side));
+        const rowsAll = cols.flatMap((c) => sortForColumn(c.key, byCol.get(c.key)));
+        return res.json({
+          total: rowsAll.length,
+          capped: rowsAll.length > 5000,
+          items: rowsAll.slice(0, 5000).map((r) => ({
+            id: r.candidateId, rowId: r.id, latestApplicationId: r.id, name: r.name, phone: r.phone || null,
+            requirementTitle: r.requirementTitle || null, clientName: r.clientName || null, stageLabel: r.stageDetailLabel || r.currentStageLabel || null,
+          })),
+        });
+      }
       const onlyCol = q.column ? columnByKey(String(q.column)) : null;
       const only = onlyCol ? onlyCol.key : null;
       const offset = only ? Math.max(0, parseInt(q.offset, 10) || 0) : 0;
@@ -206,7 +234,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
           count: byCol.get(col.key).length,
           held: byCol.get(col.key).filter((r) => r.pipelineStatus === 'Hold').length,
           canDrop: drops.some((x) => !x),
-          cards: slice.map((r) => cardOf(r, moves.get(r.id), now, r.pipelineStatus === 'Hold' ? stageLabel(heldFrom.get(r.id) || '') || null : null)),
+          cards: await dupCards(slice.map((r) => cardOf(r, moves.get(r.id), now, r.pipelineStatus === 'Hold' ? stageLabel(heldFrom.get(r.id) || '') || null : null)), slice),
           offset,
           more: byCol.get(col.key).length > offset + slice.length,
         });
@@ -295,7 +323,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
         return res.status(400).json({ error: 'Add a short note saying what happened.' });
       }
       const pass = {};
-      ['rejectedBy', 'rejectKind', 'reasonCategory', 'reasonDetail', 'joiningDate', 'offeredCtc', 'feePercent', 'confirmSameClient', 'reviewOn']
+      ['rejectedBy', 'rejectKind', 'reasonCategory', 'reasonDetail', 'joiningDate', 'offeredCtc', 'confirmCtc', 'feePercent', 'confirmSameClient', 'reviewOn']
         .forEach((k) => { if (b[k] !== undefined && b[k] !== null && b[k] !== '') pass[k] = b[k]; });
       // eslint-disable-next-line global-require
       const { applyStageMove } = require('./applications');
@@ -325,6 +353,17 @@ module.exports = function mountCandidatesBoard(router, deps) {
   // queue, contact age, available) are ignored, so a card never zeroes
   // itself after it is clicked.
   const SOURCED = BOARD_COLUMNS[0].stages;
+  async function availableCount(user, q, qq, ctx) {
+    try {
+      const all = await deps.pagedRowsFor(user);
+      // eslint-disable-next-line no-unused-vars
+      const { requirementId: _r, ...mq } = qq;
+      const mqq = { ...mq, ...(q.requirementId ? { requirementId: q.requirementId } : {}) };
+      return all.filter((r) => r.profileStatus !== 'Archived' && deps.rowMatches(r, mqq, ctx) && deps.availableForMatching(r)).length;
+    } catch (err) {
+      return null;
+    }
+  }
   router.get('/cards', async (req, res, next) => {
     try {
       if (viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'These counts are for TeamLink staff.' });
@@ -334,6 +373,9 @@ module.exports = function mountCandidatesBoard(router, deps) {
       const qq = {
         ...q, stage: '', status: '', contactAge: '', available: '', followUp: '',
       };
+      // ?only=available: just the "available for matching" number (it needs the people rows,
+      // the slow build) so the other cards need not wait for it (Batch 1 perf).
+      if (q.only === 'available') return res.json({ available: await availableCount(req.user, q, qq, ctx) });
       const built = await pipelineRowsFor(req.user);
       const rows = built.rows.filter((r) => pipelineRowMatches(r, qq, ctx));
       const people = new Set(rows.map((r) => r.candidateId)).size;
@@ -345,23 +387,12 @@ module.exports = function mountCandidatesBoard(router, deps) {
         if (d != null && d >= 7) nf7 += 1;
         if (d != null && d >= 30) nf30 += 1;
       });
-      let available = null;
-      try {
-        const all = await deps.pagedRowsFor(req.user);
-        // eslint-disable-next-line no-unused-vars
-        const { requirementId: _r, ...mq } = qq;
-        const mqq = { ...mq, ...(q.requirementId ? { requirementId: q.requirementId } : {}) };
-        available = all.filter((r) => r.profileStatus !== 'Archived' && deps.rowMatches(r, mqq, ctx) && deps.availableForMatching(r)).length;
-      } catch (err) {
-        available = null;
-      }
       return res.json({
         people,
         applications: rows.length,
         unverified,
         notFollowed7: nf7,
         notFollowed30: nf30,
-        available,
       });
     } catch (err) {
       return next(err);

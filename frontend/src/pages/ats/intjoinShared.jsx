@@ -204,9 +204,20 @@ export function sortIntJoin(rows, sort, getDate) {
 }
 
 // "No X match these filters — Clear filters" / "No X yet."
-export function IntJoinEmpty({ filters, onClear, noun, title, hint, loading }) {
+export function IntJoinEmpty({
+  filters, onClear, noun, title, hint, loading, failed, onRetry,
+}) {
   // Still fetching: say so, rather than an empty-state that reads as "none".
   if (loading) return <div className="small-muted" style={{ padding: 16 }}>Loading {noun}…</div>;
+  // The list could not be loaded: say THAT (never "No {noun}", which would read as an empty list).
+  if (failed) {
+    return (
+      <div className="small-muted" style={{ padding: 16 }}>
+        {`The list of ${noun} could not be loaded. `}
+        {onRetry && <button type="button" className="btn btn-sm" onClick={onRetry}>Try again</button>}
+      </div>
+    );
+  }
   return <ListEmpty lf={{ activeCount: intJoinActive(filters), clear: onClear }} noun={noun} title={title} hint={hint} />;
 }
 
@@ -410,4 +421,153 @@ export function useIntJoinList(allRows, {
     />
   );
   return { rows, toolbar, active: chips.length, clear: () => setF(EMPTY_LIST) };
+}
+
+// ---------------------------------------------------------------------------
+// THE SERVER-PAGED VERSION (Feedback / Offers / Joining).
+// The list no longer arrives whole: the server searches, filters, counts and
+// cuts the page (utils/intJoinList.js — read its header for the contract), and
+// starts with the OPEN work only; "Show older" adds the rest. The toolbar, the
+// chips and the words are the same as useIntJoinList's.
+//   const ws = useIntJoinPaged('/ats/offers', { view })
+//   ws.data.rows      the rows of THIS page          ws.counts   per-tab counts (whole list)
+//   ws.pager          for <Pager page={ws.pager} sizes={PAGE_SIZES_IJ} />
+//   ws.list           { toolbar, active, clear }     ws.exportBody  async body for AtsDataTools
+//   ws.older / ws.setOlder / ws.olderCount           for <ShowOlder />
+// ---------------------------------------------------------------------------
+export const PAGE_SIZES_IJ = [25, 50, 100, 200];
+const FILTER_KEYS_IJ = ['department', 'client', 'job', 'recruiter', 'hiringType', 'status'];
+export function useIntJoinPaged(url, {
+  view = 'all', status = null, placeholder = 'Search name or job…', sortOptions = null, defaultSort = '',
+} = {}) {
+  const { user } = useAuth();
+  const clientDesk = can(user, null, 'clients', 'Client List', 'view');
+  const [f, setF] = useState(EMPTY_LIST);
+  const [qSent, setQSent] = useState('');
+  const [sort, setSort] = useState(defaultSort);
+  const [older, setOlder] = useState(false);
+  const [size, setSize] = useState(25);
+  const [tick, setTick] = useState(0);
+  const [data, setData] = useState({ rows: [], loading: true });
+  const [fetching, setFetching] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const set = (patch) => setF((x) => ({ ...x, ...patch }));
+  useEffect(() => {
+    const t = setTimeout(() => setQSent(f.q.trim()), 250);
+    return () => clearTimeout(t);
+  }, [f.q]);
+  const filterParams = useMemo(() => {
+    const p = { view, window: older ? 'all' : 'open' };
+    if (qSent) p.q = qSent;
+    FILTER_KEYS_IJ.forEach((k) => { if (f[k]) p[k] = f[k]; });
+    if (sort) p.sort = sort;
+    return p;
+  }, [qSent, f, sort, view, older]);
+  const fkey = `${JSON.stringify(filterParams)}|${size}`;
+  // Page 1 again whenever the filters, the tab or the page size change.
+  const [pg, setPg] = useState({ key: fkey, page: 1 });
+  const page = pg.key === fkey ? pg.page : 1;
+  const setPage = (n) => setPg({ key: fkey, page: n });
+
+  useEffect(() => {
+    let live = true;
+    setFetching(true);
+    api.get(url, { params: { ...filterParams, page, pageSize: size } })
+      .then((res) => { if (live) { setData({ ...res.data, loading: false }); setFetching(false); setError(''); } })
+      .catch((err) => {
+        if (!live) return;
+        setData((d) => ({ ...d, loading: false })); setFetching(false);
+        setError(err.response?.data?.error || 'Could not load the list. Please try again.');
+      });
+    return () => { live = false; };
+  }, [url, fkey, page, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const load = () => setTick((t) => t + 1);
+  async function act(fn, successMessage) {
+    setError(''); setNotice(''); setBusy(true);
+    try {
+      const res = await fn();
+      if (successMessage) setNotice(successMessage);
+      else if (res && res.data && res.data.message) setNotice(res.data.message);
+      load();
+      return true;
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not save that change. Please try again.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const facets = data.facets || {};
+  const label = (key, v) => ((facets[key] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
+  const fields = [
+    ...(status ? [{ key: 'status' }] : []),
+    { key: 'department' }, ...(clientDesk ? [{ key: 'client' }] : []), { key: 'job' }, { key: 'recruiter' }, { key: 'hiringType' },
+  ];
+  const NAMES = { department: 'Department', client: 'Client', job: 'Job', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
+  const chips = [
+    ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
+    f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
+  ].filter(Boolean);
+  const clear = () => setF(EMPTY_LIST);
+  const toolbar = (
+    <ListToolbar
+      search={f.q}
+      onSearch={(v) => set({ q: v })}
+      placeholder={placeholder}
+      filterCount={chips.filter((c) => c.key !== 'q').length}
+      sort={sort}
+      sortOptions={sortOptions || [['', 'Latest change'], ['newest', 'Newest'], ['oldest', 'Oldest'], ['name', 'Name A–Z']]}
+      onSort={setSort}
+      chips={chips}
+      onClearAll={clear}
+      panel={(
+        <>
+          {status && <FacetSelect label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
+          <FacetSelect label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
+          {clientDesk && <FacetSelect label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
+          <FacetSelect label="Job" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All jobs" />
+          <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
+          <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
+        </>
+      )}
+    />
+  );
+  const total = Number(data.total) || 0;
+  const cur = data.page || page;
+  const pager = {
+    total, pages: data.pages || 1, size, setSize, page: cur, setPage, from: total === 0 ? 0 : (cur - 1) * size + 1, to: Math.min(cur * size, total),
+  };
+  // Export "This list" = the whole list under the filters and the tab, not just this page.
+  const exportBody = async () => {
+    if (!chips.length && view === 'all' && older) return { ids: null };
+    const res = await api.get(url, { params: { ...filterParams, idsOnly: 1 } });
+    return { ids: res.data.ids || [] };
+  };
+  return {
+    data: { ...data, loading: data.loading || fetching, failed: !!error && !(data.rows || []).length },
+    error, notice, busy, act, load, setError, setNotice,
+    list: { toolbar, active: chips.length, clear },
+    pager, counts: data.counts || {}, older, setOlder, olderCount: data.olderCount || 0, exportBody,
+  };
+}
+
+// "Showing the open ones. [Show older (3,025)]" — a plain button, not a menu.
+export function ShowOlder({
+  older, setOlder, count, noun, openText,
+}) {
+  if (!older && !count) return null;
+  return (
+    <div className="small-muted" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, margin: '10px 0' }}>
+      {older
+        ? <span>{`Showing older ${noun} too.`}</span>
+        : <span>{openText}</span>}
+      {older
+        ? <button type="button" className="btn btn-sm" onClick={() => setOlder(false)}>{`Show only open ${noun}`}</button>
+        : <button type="button" className="btn btn-sm" onClick={() => setOlder(true)}>{`Show older ${noun} (${Number(count).toLocaleString('en-IN')})`}</button>}
+    </div>
+  );
 }

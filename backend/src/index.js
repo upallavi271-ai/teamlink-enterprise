@@ -34,12 +34,13 @@ const requirementRoutes = require('./routes/requirements');
 const jobPortalRoutes = require('./routes/jobPortal');
 const candidateRoutes = require('./routes/candidates');
 const applicationRoutes = require('./routes/applications');
-const followUpRoutes = require('./routes/followups');
+const followUpRoutes = require('./routes/followUps');
 const dashboardRoutes = require('./routes/dashboard');
 const employeeRoutes = require('./routes/employees');
 const employeeFieldRoutes = require('./routes/employeeFields'); // HRMS item 15 — Manage Fields
 const attendanceRoutes = require('./routes/attendance');
 const leaveRoutes = require('./routes/leave');
+const latePermissionRoutes = require('./routes/latePermission'); // late coming: apply + approve (same chain as leave)
 const payrollRoutes = require('./routes/payroll');
 const invoiceRoutes = require('./routes/invoices');
 const bankRoutes = require('./routes/bank');
@@ -77,6 +78,8 @@ const mailWorker = require('./utils/mailWorker');
 // engine at request time (req.user.caps.hrmsManage), not by a role list here.
 
 const app = express();
+// WEB HARDENING (utils/webSecurity.js): no X-Powered-By; 'trust proxy' only when TRUST_PROXY is set (default off).
+require('./utils/webSecurity').configureApp(app);
 // CREDENTIAL MATERIAL NEVER LEAVES THE SERVER (hrms-24 §12). Many routes
 // include a related User row (a requirement's recruiter / BDE, an audit
 // entry's actor) and res.json() would otherwise serialise its bcrypt hash and
@@ -91,11 +94,23 @@ app.use(require('./utils/vendorAuth').vendorSessionGuard);
 // PARTNER PORTAL ISOLATION (B7, utils/partnerAuth.js): a partner session may
 // reach /api/partner-portal/* and NOTHING else — every other path answers 403.
 app.use(require('./utils/partnerAuth').partnerSessionGuard);
+// CLIENT + CANDIDATE PORTAL ISOLATION (utils/externalPortalAuth.js): these two
+// logins share the staff secret, so they get a deny-by-default allow-list of
+// the portal paths instead of a separate token. Every other /api path = 403.
+app.use(require('./utils/externalPortalAuth').externalSessionGuard);
 // THE TEAMLINK JOB PORTAL at /jobs (utils/jobPortalEmbed.js): the customer's
 // portal, unchanged, proxied from its internal port. Ahead of every body
 // parser so uploads stream through. JOB_PORTAL_EMBED=0 switches it off.
 app.use(require('./utils/jobPortalEmbed').proxy());
-app.use(cors());
+// Security headers (nosniff, frame, referrer, HSTS in production over https, report-only CSP on /api).
+// After the /jobs proxy on purpose: the embedded Job Portal keeps its own headers.
+app.use(require('./utils/webSecurity').securityHeaders);
+// Provider callbacks (WhatsApp delivery ticks + replies, SMS delivery reports, call
+// results): public, each proves itself; brings its own body parser to keep the raw
+// bytes for the signature check (routes/webhooks.js).
+app.use('/api/webhooks', require('./routes/webhooks'));
+// CORS: open only for the public paths third parties use; everything else = CORS_ORIGINS / this site / localhost in dev.
+app.use(require('./utils/webSecurity').corsMiddleware());
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -158,6 +173,12 @@ app.use([
   '/api/requirements', '/api/job-portal', '/api/candidates', '/api/applications', '/api/followups',
   '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats', '/api/assistant', '/api/agent',
 ], require('./utils/clientRedact').clientFieldGuard);
+// The same BDE / "Candidate contact and salary" cut for the ATS routers that
+// answer outside the list above and embed candidates (client detail, rejections,
+// resumes, ATS import / export previews). Client fields are not touched here.
+app.use([
+  '/api/clients', '/api/rejections', '/api/candidate-resumes', '/api/ats-io', '/api/candidate-duplicates',
+], require('./utils/clientRedact').atsPrivacyGuard);
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/client-merge', require('./routes/clientMerge')); // Duplicate clients (SA/Admin)
@@ -184,6 +205,8 @@ app.use('/api/portal', require('./routes/portal'));
 app.use('/api/candidates', candidateRoutes);
 // resume_: resume files, versions, edits and the 3-number match (routes/candidateResumes.js).
 app.use('/api/candidate-resumes', require('./routes/candidateResumes'));
+// dup_: candidate duplicates — the worklist, the Check duplicates panel, the resolutions (routes/candidateDuplicates.js).
+app.use('/api/candidate-duplicates', require('./routes/candidateDuplicates'));
 // docfill_: "Fill from a file" for Add job / Add candidate / Add client (routes/docFill.js).
 app.use('/api/doc-fill', require('./routes/docFill'));
 // Rejections read-back, "Do not use" approvals, the Matching tabs (routes/rejections.js).
@@ -196,6 +219,7 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/employee-fields', employeeFieldRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/leave', leaveRoutes);
+app.use('/api/late-permissions', latePermissionRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/bank', bankRoutes);
@@ -217,10 +241,16 @@ app.get('/sitemap.xml', require('./routes/careersPublic').sitemap);
 app.get('/robots.txt', require('./routes/careersPublic').robots);
 // Job feeds a board pulls (Naukri XML feed mode) — routes/jobFeeds.js (Save & Post).
 app.use('/api/public/feeds', require('./routes/jobFeeds'));
+// The candidate's "How to prepare" page (signed link, no login) - routes/interviewPrep.js.
+app.use('/api/public/interview-prep', require('./routes/interviewPrep').publicRouter);
+// What TeamLink can really do with Naukri (methods, setup steps, applicant counts) — routes/naukri.js.
+app.use('/api/naukri', require('./routes/naukri'));
 app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
 app.use('/api/recruiter-joinings', require('./routes/recruiterJoinings'));
+// Payroll -> Incentives: department-wise rules, awards, approval (routes/incentives.js).
+app.use('/api/incentives', require('./routes/incentives'));
 // ATS-100 B6: employee referrals, campus drives, campaign costs (routes/sourcing.js).
 app.use('/api/sourcing', require('./routes/sourcing'));
 app.use('/api/lms', lmsRoutes);
@@ -236,6 +266,9 @@ app.use('/api/masters', require('./routes/masters'));
 app.use('/api/specialisations', require('./routes/specialisations'));
 // Email / SMS / WhatsApp channel status and queued bulk send (utils/bulkMessaging.js).
 app.use('/api/messaging', require('./routes/messaging'));
+// Automatic stage messages: rules, scheduled list, approvals (routes/autoMessages.js).
+app.use('/api/auto-messages', require('./routes/autoMessages'));
+app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/admin/view-as', require('./routes/viewAs')); // Super Admin read-only View as
 app.use('/api/admin/integration-health', require('./routes/integrationHealth')); // Job Portal / Email / eSSL / AI health (read-only + person-pressed retry)
 app.use('/api/admin', adminRoutes);
@@ -244,11 +277,19 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/ats-reports', atsReportRoutes);
 // Recruiter daily report, "Who has pending work", report e-mail setting (routes/atsDaily.js).
 app.use('/api/ats-daily', require('./routes/atsDaily'));
+// Team-wise / person-wise reports, day / week / month, with Excel + PDF exports and individual packs (routes/atsReportPack.js).
+app.use('/api/ats-report-pack', require('./routes/atsReportPack'));
+// Pending work -> the TL (digest, escalation, Remind), the BDE's client work, the end-of-day report.
+app.use('/api/pending-work', require('./routes/pendingWork'));
 app.use('/api/office-expenses', officeRoutes);
 // Vendor portal (P3): Accounts review of bills vendors sent (routes/vendorBills.js).
 app.use('/api/vendor-bills', require('./routes/vendorBills'));
 // Admin → Company Setup → Vendor logins (routes/vendorLogins.js).
 app.use('/api/vendor-logins', require('./routes/vendorLogins'));
+// Admin Vendor Management: the vendor master (routes/vendorMaster.js).
+app.use('/api/vendor-master', require('./routes/vendorMaster'));
+// Invoices -> Add Client + client picker (routes/invoiceClients.js).
+app.use('/api/invoice-clients', require('./routes/invoiceClients'));
 // The vendor portal itself — the only API a vendor token can reach.
 app.use('/api/vendor-portal', require('./routes/vendorPortal'));
 // B7 agency / freelancer partners: the master + logins + job shares + report
@@ -272,6 +313,12 @@ app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
 // shares the /api/ats prefix with the calendar above.
 app.use('/api/ats', interviewsJoiningRoutes);
+// "Now tell them" after an interview is booked / moved / cancelled, and the interview reminder plan
+// (routes/interviewTell.js, utils/interviewTell.js, utils/interviewEngine.js).
+app.use('/api/ats', require('./routes/interviewTell'));
+// Interview preparation: suggested questions from the JD for a client / team / AI interview (routes/interviewPrep.js,
+// utils/interviewPrep.js). The candidate's own page is public by signed link: /api/public/interview-prep/:token.
+app.use('/api/ats', require('./routes/interviewPrep'));
 // The AI Assistant (answers) and AI Agent (proposes, acts only on Confirm).
 // One model wrapper behind both — utils/ai.js: local Ollama by default, Claude
 // with AI_PROVIDER=claude, whose key stays in the encrypted credential store.
@@ -379,13 +426,27 @@ const server = app.listen(PORT, () => {
   // ATS late-work escalation (owner → TL → Manager), every 15 min, IN-APP
   // only — does nothing until an Admin switches it on (utils/atsEscalation.js).
   require('./utils/atsEscalation').startSweep();
+  // Pending-work digest to the TL (10:30), escalation, BDE client-work digest, end-of-day report (18:45):
+  // one tick every 5 minutes, each part sent once a day (utils/pendingWork.js).
+  require('./utils/pendingWork').startSweep();
   // Interview reminders (day before / 1 hour before / feedback missing /
   // guarantee ending), every 15 min — OFF until an Admin switches it on
   // (utils/interviewNotices.js).
   require('./utils/interviewNotices').startSweep();
+  // Automatic stage messages: sends the scheduled ones that are due (reads the table, so a restart
+  // loses nothing). Does nothing until Admin / HR first save the rules (utils/autoMessages.js).
+  require('./utils/autoMessages').startSweep();
+  // Default stationery kit (1 notepad + 1 pen) for people created since it was
+  // switched on, every 10 minutes (utils/stationeryKit.js).
+  require('./utils/stationeryKit').startSweep();
+  // "Post by hand" reminders: a job ticked for a board that is not connected and not yet
+  // posted by hand (or still up after the job closed) reminds its TL / recruiters.
+  require('./utils/jobBoards/manual').startSweep();
   // Daily backup of the database + upload folders, then a restore test, in a
   // child process (utils/backup.js; BACKUP_HOUR default 2, BACKUP_SCHEDULE=0 = off).
   require('./utils/backup').startSchedule();
+  // A seat is freed when its holder leaves; this is the daily safety net (utils/seatRelease.js).
+  require('./utils/seatRelease').startSweep();
 });
 // LMS course videos (up to 300 MB, utils/lmsMedia.js) arrive as ONE streamed
 // request; Node's default 5-minute requestTimeout would cut a slow upload off.

@@ -17,12 +17,14 @@
 // reach the client (server: utils/clientProfile.js + clientRedact.js).
 // The server checks everything again — this is the friendly version.
 // ---------------------------------------------------------------------------
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
 import { Help } from '../ui/Guide.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { deptOptions, LOCS, INDIAN_STATES, CLIENT_INDUSTRIES } from '../../atsVocab';
+import { deptOptions, CLIENT_INDUSTRIES } from '../../atsVocab';
+import PlaceFields from './PlaceFields.jsx';
+import { loadClientsMeta } from './clientsMeta.js';
 import './clientForm.css';
 
 export const COMPANY_TYPES = ['Corporate', 'MNC', 'Startup', 'SME', 'Consultancy', 'Other'];
@@ -53,10 +55,10 @@ export function emptyClientForm(user, ownerLocked, defaults) {
   const d = defaults || {};
   return {
     name: '', clientCode: '', companyType: '', industry: '', website: '', companyEmail: '', landline: '',
-    street: '', area: '', location: LOCS[0], state: '', country: 'India', pincode: '',
+    street: '', area: '', location: '', state: '', country: 'India', pincode: '',
     contactName: '', contactDesignation: '', contactEmail: '', contactPhone: '', contactAltPhone: '', contactWhatsApp: '',
     waSame: true, commPrimary: 'Email',
-    ownerDepartment: deptOptions(user)[0] || '', bdeOwner: ownerLocked || '', secondaryBde: '', accountManager: '', clientSource: ownerLocked ? 'BDE' : '',
+    ownerDepartment: '', bdeOwner: ownerLocked || '', secondaryBde: '', accountManager: '', clientSource: ownerLocked ? 'BDE' : '',
     feeType: 'PERCENT_CTC', agreementFeePercent: str(d.feePercent ?? 8.33), feeAmount: '',
     gstApplicable: 'Yes', gstPercent: '18', tdsApplicable: 'No', tdsPercent: '10',
     paymentDays: str(d.paymentDays ?? 6), invoiceMode: 'after', invoiceDays: '6', invoiceOther: '',
@@ -356,29 +358,88 @@ export default function ClientForm({
   const auth = useAuth();
   const user = userProp || (auth && auth.user) || null;
   const [owners, setOwners] = useState([]);
+  // The login's own desk (a BDE adds clients of their desk only) — GET /clients/meta.
+  const [mine, setMine] = useState({});
+  useEffect(() => {
+    if (!user) return;
+    loadClientsMeta(user.id).then((m) => setMine({ dept: m.lockedDepartment || '', ownerLabel: m.ownerLockedLabel || '', depts: m.clientDepartments || null })).catch(() => {});
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The department is the BDE's own desk: set it for them on a NEW client.
+  useEffect(() => {
+    if (mode === 'add' && mine.dept && form.ownerDepartment !== mine.dept) set({ ownerDepartment: mine.dept });
+  }, [mine.dept]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showBank, setShowBank] = useState(!!(client && (client.bankAccountMasked || client.bankIfsc || client.bankAccountHolder)));
   const templates = (defaults && defaults.templates) || [{ name: 'Vendor Services Agreement', note: 'TeamLink standard' }];
+  // THE BDE LISTS FOLLOW THE DEPARTMENT (user, 2026-10-09): pick Education and
+  // only Education's BDEs (and the BDE TL, who covers all) are offered; no
+  // department yet = everybody, grouped by department.
+  const [ownersFor, setOwnersFor] = useState(null); // the department the shown list was made for
+  const everyBde = useRef(new Set()); // every BDE name the server has told us about
+  const startDept = useRef(form.ownerDepartment || '');
+  const [bdeNotice, setBdeNotice] = useState('');
+  useEffect(() => { // all BDE names once, so a BDE that no longer fits can be recognised
+    api.get('/clients/owner-options').then((r) => (r.data || []).forEach((o) => everyBde.current.add(o.name))).catch(() => {});
+  }, []);
   useEffect(() => {
-    if (ownerLocked) return;
-    api.get('/clients/owner-options', { params: { department: form.ownerDepartment || '' } })
-      .then((r) => setOwners(r.data || [])).catch(() => setOwners([]));
-  }, [ownerLocked, form.ownerDepartment]);
+    const dept = form.ownerDepartment || '';
+    api.get('/clients/owner-options', { params: { department: dept } })
+      .then((r) => { const list = r.data || []; list.forEach((o) => everyBde.current.add(o.name)); setOwners(list); setOwnersFor(dept); })
+      .catch(() => { setOwners([]); setOwnersFor(dept); });
+  }, [ownerLocked, form.ownerDepartment]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The department changed and the chosen BDE does not work for it: clear the
+  // BDE, and say so in a few plain words.
+  useEffect(() => {
+    const dept = form.ownerDepartment || '';
+    if (ownersFor !== dept || !dept || dept === startDept.current) return;
+    const gone = [['bdeOwner', 'client manager'], ['secondaryBde', 'second BDE']].filter(([k]) => {
+      const v = String(form[k] || '').trim();
+      return v && everyBde.current.has(v) && !owners.some((o) => o.name === v);
+    });
+    if (!gone.length) return;
+    set(Object.fromEntries(gone.map(([k]) => [k, ''])));
+    setBdeNotice(gone.map(([k, label]) => `The ${label} ${form[k]} is not in ${dept}`).join('; ') + '. Pick a ' + dept + ' BDE.');
+  }, [ownersFor, form.ownerDepartment]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inp = (k, props = {}) => <input value={form[k] ?? ''} onChange={(e) => set({ [k]: e.target.value })} {...props} />;
   const toggle = (id) => setOpen({ ...open, [id]: !open[id] });
   const lock = !canCommercial;
   const lockNote = lock ? <div className="cf-lock">These are the standard terms. Only an Admin changes them.</div> : null;
-  const ownerLabel = (u) => `${u.name}${u.department ? ` · ${u.department}` : ''} · ${u.clients} client${u.clients === 1 ? '' : 's'}`;
-  const deptOwners = owners.filter((u) => u.inDepartment);
-  const otherOwners = owners.filter((u) => !u.inDepartment);
+  // "Vasavi V · BDE MED · 12 clients" — the name, the seat, how many clients they hold.
+  const ownerLabel = (u) => `${u.isTl ? u.label : (u.position ? `${u.name} · ${u.position}` : `${u.name}${u.department ? ` · ${u.department}` : ''}`)} · ${u.clients} client${u.clients === 1 ? '' : 's'}`;
+  // The BDE options: the department's BDEs, then the BDE TL (all departments);
+  // with no department yet, grouped by department. A department with no BDE
+  // says so (the BDE TL is still there).
+  const bdeOptions = () => {
+    const opt = (u) => <option key={u.id} value={u.name}>{ownerLabel(u)}</option>;
+    if (ownersFor !== (form.ownerDepartment || '') && owners.length === 0) return null;
+    if (!form.ownerDepartment) {
+      const groups = {};
+      owners.filter((u) => !u.isTl).forEach((u) => { const g = u.department || 'No department yet'; (groups[g] = groups[g] || []).push(u); });
+      return (
+        <>
+          {Object.entries(groups).map(([g, list]) => <optgroup key={g} label={g}>{list.map(opt)}</optgroup>)}
+          {owners.some((u) => u.isTl) && <optgroup label="All departments">{owners.filter((u) => u.isTl).map(opt)}</optgroup>}
+        </>
+      );
+    }
+    const inDept = owners.filter((u) => !u.isTl);
+    return (
+      <>
+        {!inDept.length && <option value="__none__" disabled>No BDE in this department yet</option>}
+        {inDept.map(opt)}
+        {owners.filter((u) => u.isTl).map(opt)}
+      </>
+    );
+  };
   const gw = guaranteeWords(form.guaranteeDays);
 
   const body = {
     basic: (
       <div className="cf-grid">
         <Field id="name" label="Company name" req error={errors.name}>{inp('name', { placeholder: 'e.g. Acme Technologies Pvt Ltd', onBlur: onBlurIdentity, autoFocus: mode === 'add' })}</Field>
-        <Field id="clientCode" label="Client ID" tip="A short code for this client. Leave it empty and we make one (CLI0001…)." hint={canEditCode ? 'Empty = made for you' : 'Made for you'}>
-          {inp('clientCode', { placeholder: client?.displayCode || 'CLI0001', disabled: !canEditCode })}
+        {/* Automatic: a new client always gets its number when saved; nobody types one. */}
+        <Field id="clientCode" label="Client ID" tip="Made for you when you save (CLI0001…). You will see it right after saving." hint={mode === 'add' ? 'Made for you when you save' : (canEditCode ? 'Empty = keeps the number we made' : 'Made for you')}>
+          {inp('clientCode', { placeholder: mode === 'add' ? 'Made when you save' : (client?.clientCode || client?.displayCode || 'CLI0001'), disabled: mode === 'add' || !canEditCode })}
         </Field>
         <Field id="companyType" label="Company type">
           <select value={form.companyType} onChange={(e) => set({ companyType: e.target.value })}>
@@ -396,19 +457,8 @@ export default function ClientForm({
         <Field id="companyEmail" label="Company email" error={errors.companyEmail}>{inp('companyEmail', { type: 'email', placeholder: 'e.g. info@acme.com' })}</Field>
         <Field id="landline" label="Company phone">{inp('landline', { inputMode: 'tel', placeholder: 'e.g. 040 2345 6789' })}</Field>
         <Field id="street" label="Company address" wide>{inp('street', { placeholder: 'e.g. Plot 12, Road No 5, Banjara Hills' })}</Field>
-        <Field id="location" label="City">
-          <Combo creatable value={form.location} onChange={(e) => set({ location: e.target.value })}>
-            {LOCS.map((x) => <option key={x}>{x}</option>)}
-          </Combo>
-        </Field>
-        <Field id="state" label="State">
-          <Combo creatable value={form.state} onChange={(e) => set({ state: e.target.value })}>
-            <option value="">Pick a state</option>
-            {INDIAN_STATES.map((x) => <option key={x}>{x}</option>)}
-          </Combo>
-        </Field>
-        <Field id="country" label="Country">{inp('country', { placeholder: 'India' })}</Field>
-        <Field id="pincode" label="Pincode" error={errors.pincode}>{inp('pincode', { inputMode: 'numeric', placeholder: 'e.g. 500072', maxLength: 6 })}</Field>
+        {/* Country -> State -> District / City -> Pincode: dropdowns, "Other…" opens a text box. */}
+        <PlaceFields Field={Field} form={form} set={set} errors={errors} />
       </div>
     ),
     contact: (
@@ -432,29 +482,38 @@ export default function ClientForm({
     owner: (
       <div className="cf-grid">
         <Field id="ownerDepartment" label="Department" req error={errors.ownerDepartment} tip="The team that works on this client's jobs.">
-          <Combo creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
-            <option value="">— Pick —</option>
-            {deptOptions(user).map((x) => <option key={x}>{x}</option>)}
-          </Combo>
+          {mine.dept ? (
+            <>
+              <input value={mine.dept} disabled />
+              <small className="cf-hint">Your own department. The BDE team lead or an Admin can move a client.</small>
+            </>
+          ) : (
+            <Combo creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
+              <option value="">— Pick —</option>
+              {(mine.depts || deptOptions(user)).filter((x) => !/^(bde|business development)$/i.test(x)).map((x) => <option key={x}>{x}</option>)}
+            </Combo>
+          )}
         </Field>
-        <Field id="bdeOwner" label="Client manager (BDE)" req error={errors.bdeOwner} tip="The TeamLink person (BDE) who owns this client and talks to them. The chosen department's BDEs are shown first, with how many clients each has.">
+        <Field id="bdeOwner" label="Client manager (BDE)" req error={errors.bdeOwner} tip="The TeamLink person (BDE) who owns this client and talks to them. Only the chosen department's BDEs are offered (the BDE TL covers all), with how many clients each has.">
           {ownerLocked ? (
             <>
-              <input value={ownerLocked} disabled />
+              <input value={(mode === 'edit' && client?.bdeLabel) || mine.ownerLabel || ownerLocked} disabled />
               <small className="cf-hint">{mode === 'edit' ? 'Only an Admin changes who owns a client.' : 'You own the clients you add.'}</small>
             </>
           ) : (
-            <Combo creatable value={form.bdeOwner} onChange={(e) => set({ bdeOwner: e.target.value })}>
-              <option value="">— Pick —</option>
-              {deptOwners.map((u) => <option key={u.id} value={u.name}>{ownerLabel(u)}</option>)}
-              {otherOwners.map((u) => <option key={u.id} value={u.name}>{ownerLabel(u)}</option>)}
-            </Combo>
+            <>
+              <Combo creatable value={form.bdeOwner} onChange={(e) => { setBdeNotice(''); set({ bdeOwner: e.target.value }); }}>
+                <option value="">— Pick —</option>
+                {bdeOptions()}
+              </Combo>
+              {bdeNotice && <small className="cf-hint" role="status" style={{ color: 'var(--amber)' }}>{bdeNotice}</small>}
+            </>
           )}
         </Field>
         <Field id="secondaryBde" label="Second BDE">
           <Combo creatable value={form.secondaryBde} onChange={(e) => set({ secondaryBde: e.target.value })}>
             <option value="">— Nobody —</option>
-            {owners.map((u) => <option key={u.id} value={u.name}>{ownerLabel(u)}</option>)}
+            {bdeOptions()}
           </Combo>
         </Field>
         <Field id="accountManager" label="Relationship owner" tip="The senior person who keeps the relationship (optional).">{inp('accountManager', { placeholder: 'e.g. a Manager\'s name' })}</Field>
@@ -531,7 +590,7 @@ export default function ClientForm({
             {` · Payment within ${form.paymentDays || '—'} days`}
             {canCommercial && <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setOpen({ ...open, commercial: true }); setTimeout(() => document.getElementById('cf-sec-commercial')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}>Change them in section 4</button>}
           </div>
-          <Field id="agreementStart" label="Effective date" tip="The day the agreement starts. It is printed at the top of the agreement.">{inp('agreementStart', { type: 'date', disabled: lock })}</Field>
+          <Field id="agreementStart" label="Agreement date" hint="Empty = today's date (filled in for you)" tip="The 'made on' date printed at the top of the agreement. It is filled in automatically with the day the agreement is made. Change it only to correct it.">{inp('agreementStart', { type: 'date', disabled: lock })}</Field>
           <Field id="agreementEnd" label="Expiry date" error={errors.agreementEnd} hint="Empty = it renews by itself">{inp('agreementEnd', { type: 'date', disabled: lock })}</Field>
           <Field id="specialTerms" label="Special terms" wide tip="Anything extra agreed with this client. It is printed in the agreement under 'Special terms'.">
             <textarea rows="2" value={form.specialTerms} disabled={lock} placeholder="e.g. Leadership roles are charged at 12%" onChange={(e) => set({ specialTerms: e.target.value })} />

@@ -42,6 +42,80 @@ const personLabel = (e) => `${e.name}${e.employeeCode ? ` · ${e.employeeCode}` 
 const errText = (err, fallback) => (err && err.response && err.response.data && err.response.data.error) || fallback;
 const NO_DEPT = '__none__';
 
+// ---- The default kit: every ACTIVE employee gets 1 Notepad + 1 Pen -----------------------
+function KitModal({ kit, onClose, onSaved }) {
+  const [on, setOn] = useState(kit.on);
+  const [lines, setLines] = useState(kit.lines.map((l) => ({ itemId: l.itemId || '', quantity: String(l.quantity) })));
+  const { busy, error, setError, run } = useSubmit();
+  const setLine = (i, patch) => setLines((ls) => ls.map((l, k) => (k === i ? { ...l, ...patch } : l)));
+  async function submit() {
+    if (on && lines.some((l) => !l.itemId)) { setError('Pick an item for every line, or remove the empty line.'); return; }
+    const res = await run(() => api.put('/stationery/default-kit', { on, lines: lines.map((l) => ({ itemId: l.itemId, quantity: Number(l.quantity) })) }), 'Could not save the kit');
+    if (res) onSaved(res.data.message);
+  }
+  return (
+    <ComposeModal title="Default kit" onClose={onClose} onSubmit={submit} submitLabel="Save" busy={busy} error={error}>
+      <label className="stn-check"><input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} /> Give the kit to every new active employee automatically</label>
+      <div className="small-muted" style={{ margin: '6px 0 10px' }}>Only Active people get it (not people on notice, relieved or exited), and only once. Nothing is taken out of stock until you enter the real stock.</div>
+      {lines.map((l, i) => (
+        <div className="stn-back-row" key={i}>
+          <select value={l.itemId} onChange={(e) => setLine(i, { itemId: e.target.value })} aria-label="Item">
+            <option value="">Pick an item…</option>
+            {(kit.items || []).map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+          </select>
+          <input inputMode="numeric" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value.replace(/[^0-9]/g, '') })} aria-label="How many each" style={{ maxWidth: 80 }} />
+          <button type="button" className="btn btn-sm" onClick={() => setLines((ls) => ls.filter((_, k) => k !== i))} disabled={lines.length < 2}>Remove</button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-sm" onClick={() => setLines((ls) => [...ls, { itemId: '', quantity: '1' }])}>+ Add an item to the kit</button>
+    </ComposeModal>
+  );
+}
+
+function KitPanel({ onChanged, flashSet }) {
+  const [kit, setKit] = useState(null);
+  const [modal, setModal] = useState(null); // 'edit' | 'give'
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const load = () => api.get('/stationery/default-kit').then((r) => setKit(r.data)).catch(() => setKit(null));
+  useEffect(() => { load(); }, []);
+  if (!kit || !kit.canManage) return null;
+  const sentence = kit.lines.map((l) => countOf(l.name, l.quantity)).join(' + ');
+  async function give() {
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post('/stationery/default-kit/apply');
+      setModal(null); flashSet({ text: r.data.message, undoKit: r.data.people > 0 }); load(); onChanged();
+    } catch (e) { setErr(errText(e, 'Could not give the kit.')); } finally { setBusy(false); }
+  }
+  const pv = kit.preview;
+  return (
+    <div className="stn-kit">
+      <div className="stn-kit-main">
+        <b>Default kit</b>
+        <span className={`stn-kit-state ${kit.on ? 'on' : 'off'}`}>{kit.on ? 'On' : 'Off'}</span>
+        <span>Every active employee gets <b>{sentence || 'nothing yet'}</b>{kit.on ? ', automatically when they join.' : ' (switched off).'}</span>
+      </div>
+      <div className="stn-kit-actions">
+        <button type="button" className="btn btn-sm" onClick={() => { setErr(''); setModal('edit'); }}>Change the kit</button>
+        <button type="button" className="btn btn-primary btn-sm" disabled={!kit.on || !pv || pv.willGet === 0} onClick={() => { setErr(''); setModal('give'); }}>
+          Give the default kit to everyone who is missing it{pv && pv.willGet ? ` (${pv.willGet})` : ''}
+        </button>
+      </div>
+      {pv && pv.willGet === 0 && <div className="small-muted">Everybody active already has the kit.</div>}
+      {modal === 'edit' && <KitModal kit={kit} onClose={() => setModal(null)} onSaved={(t) => { setModal(null); flashSet({ text: t }); load(); onChanged(); }} />}
+      {modal === 'give' && (
+        <Modal title="Give the default kit" onClose={() => setModal(null)}
+          foot={<><button type="button" className="btn btn-primary" disabled={busy} onClick={give}>{busy ? 'Giving…' : 'Yes, give it'}</button><button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button></>}>
+          <p style={{ fontSize: 15 }}><b>{pv.willGet} {pv.willGet === 1 ? 'person' : 'people'}</b> will get <b>{pv.what}</b>; {pv.already} already {pv.already === 1 ? 'has' : 'have'} it.</p>
+          <p className="small-muted">Only active people (not people on notice, relieved or exited). Nobody gets it twice. The stock numbers are not changed: when the real stock is entered, the counts add up. You can undo this right after.</p>
+          {err && <div className="error-text">{err}</div>}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 // ---- Give to one employee ----------------------------------------------------------
 function GiveModal({ items, people, onClose, onSaved }) {
   const [department, setDepartment] = useState('');
@@ -351,7 +425,7 @@ function HistoryModal({ employeeId, canManage, onClose, onChanged }) {
                   <tr key={r.id}>
                     <td>{fmtDate(r.date)}</td><td>{r.item}</td>
                     <td><b>{r.kind === 'RETURN' ? `−${r.quantity}` : r.quantity}</b></td>
-                    <td><span className={`status ${r.kind === 'RETURN' ? 'pending' : 'active'}`}>{r.kind === 'RETURN' ? 'Taken back' : r.batch ? 'Given (to many)' : 'Given'}</span></td>
+                    <td><span className={`status ${r.kind === 'RETURN' ? 'pending' : 'active'}`}>{r.kind === 'RETURN' ? 'Taken back' : r.kit ? 'Default kit' : r.batch ? 'Given (to many)' : 'Given'}</span></td>
                     <td className="cell-muted">{r.by || '—'}</td><td className="cell-muted">{r.note || ''}</td>
                   </tr>
                 ))}
@@ -379,7 +453,7 @@ export function MyStationery({ compact = false }) {
       {!compact && data.rows.length > 0 && (
         <ul className="stn-mine-list">
           {data.rows.slice(0, 20).map((r) => (
-            <li key={r.id}><span>{fmtDate(r.date)}</span><span>{r.kind === 'RETURN' ? `${countOf(r.item, r.quantity)} taken back` : countOf(r.item, r.quantity)}</span></li>
+            <li key={r.id}><span>{fmtDate(r.date)}</span><span>{r.kind === 'RETURN' ? `${countOf(r.item, r.quantity)} taken back` : countOf(r.item, r.quantity)}{r.kit ? <span className="stn-kit-badge">Default kit</span> : null}</span></li>
           ))}
         </ul>
       )}
@@ -388,7 +462,7 @@ export function MyStationery({ compact = false }) {
 }
 
 // ---- Employee-wise counts (the main thing) ---------------------------------------------------
-const EMPTY = { department: '', employeeId: '', itemId: '', from: '', to: '', q: '', all: '' };
+const EMPTY = { department: '', employeeId: '', itemId: '', kit: '', from: '', to: '', q: '', all: '' };
 function WhoGotWhat({ reloadKey, onOpen, scope }) {
   const [f, setF] = useState(EMPTY);
   const [data, setData] = useState(null);
@@ -430,6 +504,7 @@ function WhoGotWhat({ reloadKey, onOpen, scope }) {
         <FacetSelect label="Department" value={f.department} onChange={set('department')} options={facets.department} allLabel="All departments" loading={loading} />
         <FacetSelect label="Employee" value={f.employeeId} onChange={set('employeeId')} options={facets.employeeId} allLabel="Everyone" loading={loading} />
         <FacetSelect label="Item" value={f.itemId} onChange={set('itemId')} options={facets.itemId} allLabel="All items" loading={loading} />
+        <FacetSelect label="Default kit" value={f.kit} onChange={set('kit')} options={facets.kit} allLabel="With or without the kit" loading={loading} />
         <label className="lph-facet"><span className="lph-facet-lbl">From</span><input type="date" value={f.from} onChange={(e) => set('from')(e.target.value)} /></label>
         <label className="lph-facet"><span className="lph-facet-lbl">To</span><input type="date" value={f.to} onChange={(e) => set('to')(e.target.value)} /></label>
         <label className="lph-facet"><span className="lph-facet-lbl">Search</span><input value={f.q} onChange={(e) => set('q')(e.target.value)} placeholder="Name or ID" /></label>
@@ -461,7 +536,7 @@ function WhoGotWhat({ reloadKey, onOpen, scope }) {
             )}
             {page.slice.map((r) => (
               <tr key={r.id} className="stn-click" onClick={() => onOpen(r.id)}>
-                <td><button type="button" className="stn-link" onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}>{r.name}</button>
+                <td><button type="button" className="stn-link" onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}>{r.name}</button>{r.kit && <span className="stn-kit-badge" title="Got the default kit">Default kit</span>}
                   <div className="small-muted">{[r.employeeCode, (r.seats || []).join(', ')].filter(Boolean).join(' · ')}</div></td>
                 <td className="cell-muted">{r.department || '—'}</td>
                 {items.map((i) => <td key={i.id} className="num">{r.counts[i.id] ? <b>{r.counts[i.id]}</b> : <span className="cell-muted">—</span>}</td>)}
@@ -594,6 +669,10 @@ export default function Stationery() {
 
   const reload = () => setReloadKey((k) => k + 1);
   const saved = (text, undoStockId) => { setModal(null); setFlash({ text, undoStockId }); reload(); };
+  async function undoKit() {
+    try { const r = await api.post('/stationery/default-kit/undo-last'); setFlash({ text: r.data.message }); } catch (e) { setFlash({ text: errText(e, 'Could not undo.') }); }
+    reload();
+  }
   async function undoStock(id) {
     try { const r = await api.delete(`/stationery/stock/${id}`); setFlash({ text: `Undone. ${r.data.message}` }); } catch (e) { setFlash({ text: errText(e, 'Could not undo.') }); }
     reload();
@@ -620,6 +699,7 @@ export default function Stationery() {
 
       {me.team && me.employee && <MyStationery compact />}
 
+      {me.canManage && <KitPanel key={reloadKey} onChanged={reload} flashSet={setFlash} />}
       {me.canManage && (
         <div className="stn-actions">
           <button type="button" className="btn btn-primary stn-big" onClick={() => { setFlash(null); setModal('stock'); }}>+ Add stock</button>
@@ -630,6 +710,7 @@ export default function Stationery() {
       {flash && (
         <div className="stn-flash" role="status">{flash.text}
           {flash.undoStockId && <button type="button" className="btn btn-ghost btn-sm" onClick={() => undoStock(flash.undoStockId)}>Undo</button>}
+          {flash.undoKit && <button type="button" className="btn btn-ghost btn-sm" onClick={undoKit}>Undo</button>}
         </div>
       )}
 
@@ -643,10 +724,11 @@ export default function Stationery() {
                   <b>{i.name}</b>
                   {me.canManage && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setModal({ item: i })}>Edit</button>}
                 </div>
-                <div className="stn-card-left"><span>{i.left}</span> left</div>
+                <div className="stn-card-left"><span>{Math.max(0, i.left)}</span> left</div>
                 <div className="stn-card-nums"><span>Added <b>{i.added}</b></span><span>Given <b>{i.given}</b></span></div>
                 {!i.active && <div className="small-muted">Hidden from the lists</div>}
-                {i.active && i.left <= 0 && <div className="stn-card-warn">{i.added ? 'None left — add stock' : 'No stock yet — add stock'}</div>}
+                {i.stockNotEntered > 0 && <div className="stn-card-warn">{`${i.stockNotEntered} issued, stock not entered yet: add stock`}</div>}
+                {i.active && i.left <= 0 && !(i.stockNotEntered > 0) && <div className="stn-card-warn">{i.added ? 'None left — add stock' : 'No stock yet — add stock'}</div>}
                 {i.active && i.left > 0 && i.low && <div className="stn-card-warn">{`Running low (warn at ${i.reorderLevel})`}</div>}
               </div>
             );

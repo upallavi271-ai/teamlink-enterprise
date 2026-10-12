@@ -77,8 +77,8 @@ export function buildTiles(data, ws) {
       if (v !== null) {
         const at = Math.max(0, tiles.findIndex((t) => t.id === 'interviews') + 1) || tiles.length;
         tiles.splice(at, 0, {
-          id: 'client-feedback', label: 'Client feedback pending', value: v, drill: 'client-feedback',
-          zero: 'No feedback pending', help: 'People sent to the client with no reply yet.',
+          id: 'client-feedback', label: 'Client has not replied', value: v, drill: 'client-feedback',
+          zero: 'Every client has replied', help: 'People sent to the client with no reply yet (the client has not answered).',
         });
       }
     } else if (L === 'tl' && !has('overdue')) {
@@ -97,7 +97,7 @@ export function buildTiles(data, ws) {
       t && { id: 'my-action', label: 'My tasks', value: Number(t.more) || 0, drill: t.drill, zero: 'No open tasks', help: 'Everything waiting for you to act.' },
       t && { id: 'tasks-today', label: 'Due today', value: t.total, zero: 'Nothing due today', help: 'Steps and calls due today (late ones included).' },
       iv && { id: 'iv-today', label: 'Interviews today', value: iv.total, drill: iv.drill, zero: iv.zero },
-      fb && { id: 'feedback', label: 'Feedback pending', value: fb.total, drill: fb.drill, zero: fb.zero },
+      fb && { id: 'feedback', label: 'Interview done, no feedback', help: 'Interviews that have happened but nobody has recorded the feedback yet.', value: fb.total, drill: fb.drill, zero: fb.zero },
       jobs && { id: 'my-jobs', label: 'My open jobs', value: jobs.total, drill: jobs.drill, zero: jobs.zero },
       tg && { id: 'my-joins', label: 'Joinings this month', value: tg.value, drill: tg.drill, zero: tg.zero, sub: tg.target ? `of ${fmt(tg.target)} target` : null },
     ].filter(Boolean);
@@ -255,56 +255,122 @@ function JobsTable({ w, onDrill }) {
 }
 
 // ---- Department performance -----------------------------------------------------------
+// Every column says what it counts, in the second line of its header (the server sends
+// w.columns with a plain "basis"): as of today / the dates picked / in total. A real zero is
+// a quiet grey 0 (never a dash: a dash would look like "no data loaded"); a dash only
+// means "does not apply" (the No department row has no team leads).
 const DEPT_COLS = [['openJobs', 'Open jobs', 'Jobs open now'], ['active', 'In process', 'People on a job now'], ['interviews', 'Interviews', 'Interviews in the dates you picked'], ['selected', 'Selected', 'Selected or offered, not joined yet'], ['joined', 'Joined', 'Joined in the dates you picked'], ['late', 'Late', 'Work past its due date']];
 const DOTS = ['blue', 'green', 'amber', 'violet', 'teal', 'pink', 'red', 'slate'];
+const BASIS_TIP = { now: 'as of today', period: 'in the dates you picked', total: 'in total, whatever the date' };
+function Zero({ what }) {
+  return <span className="av4-zero" title={what ? `None: ${what}` : 'None'}>0</span>;
+}
 function DeptPerf({ w, onDrill, onPickDept, tls }) {
+  const tlRows = tls && tls.data ? arr(tls.data.rows) : null;
   const tlCount = (d) => {
     const g = tls && tls.data && arr(tls.data.groups).find((x) => x.department === (d || 'No department'));
     return g ? arr(g.rows).length : 0;
   };
+  const cols = arr(w.columns).length ? w.columns : DEPT_COLS.map(([key, label, hint]) => ({ key, label, hint, basis: '', kind: 'now' }));
+  const jn = w.joinNote;
+  const cell = (r, c, drills) => {
+    const v = r[c.key];
+    const tone = c.key === 'late' ? ' is-red' : c.key === 'joined' || c.key === 'joinedTotal' ? ' is-green' : '';
+    return v
+      ? <button type="button" className={`av4-n${tone}`} title={`${c.label} ${c.basis} — open the list`} onClick={(e) => { e.stopPropagation(); onDrill(drills[c.key]); }}>{fmt(v)}</button>
+      : <Zero what={`${c.label} ${c.basis}`} />;
+  };
+  const joinWord = (cols.find((c) => c.key === 'joined') || {}).basis;
   return (
     <Panel title="Department performance" sub="Click a department to see only it" icon="chart" className="av4-dept" flush>
       {!arr(w.rows).length ? <div className="ak-empty">No department in your area yet.</div> : (
-        <div className="av4-scroll">
-          <table className="ak-table av4-tbl">
-            <thead><tr><th>Department</th>{DEPT_COLS.map(([k, l, h]) => <th key={k} className="num" title={h}>{l}</th>)}<th className="num" title="Team leads in this department">Team leads</th></tr></thead>
-            <tbody>
-              {w.rows.map((r, i) => (
-                <tr key={r.department || 'none'} className={`ak-row-click${r.picked ? ' av4-picked' : ''}`} onClick={() => r.active && onDrill(r.drills.active)}>
-                  <td>
-                    {r.fixNeeded
-                      ? <Pill tone="red">No department</Pill>
-                      : (
-                        <button type="button" className="av4-dept-pick" title={`Show only ${r.department}`} onClick={(e) => { e.stopPropagation(); onPickDept(r.department); }}>
-                          <span className={`av4-dot ak-f-${DOTS[i % DOTS.length]}`} aria-hidden="true" />{r.department}
-                        </button>
-                      )}
-                  </td>
-                  {DEPT_COLS.map(([k]) => (
-                    <td key={k} className="num">
-                      {r[k]
-                        ? <button type="button" className={`av4-n${k === 'late' ? ' is-red' : ''}`} onClick={(e) => { e.stopPropagation(); onDrill(r.drills[k]); }}>{fmt(r[k])}</button>
-                        : <span className="av4-dash">–</span>}
-                    </td>
+        <>
+          <div className="av4-scroll">
+            <table className="ak-table av4-tbl av4-dtbl">
+              <thead>
+                <tr>
+                  <th>Department</th>
+                  {cols.map((c) => (
+                    <th key={c.key} className={`num av4-th is-${c.kind}`} title={`${c.hint || c.label} (${BASIS_TIP[c.kind] || c.basis})`}>
+                      <span className="av4-th-l">{c.label}</span><small className="av4-th-b">{c.basis}</small>
+                    </th>
                   ))}
-                  <td className="num">
-                    {tlCount(r.department)
-                      ? <button type="button" className="av4-n" title={`Show ${r.department || 'this department'} and its team leads`} onClick={(e) => { e.stopPropagation(); if (r.department) onPickDept(r.department); }}>{fmt(tlCount(r.department))}</button>
-                      : <span className="av4-dash">–</span>}
-                  </td>
+                  <th className="num av4-th is-now" title="Team leads in this department"><span className="av4-th-l">Team leads</span><small className="av4-th-b">&nbsp;</small></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {w.rows.map((r, i) => (
+                  <tr key={r.department || 'none'} className={`ak-row-click${r.picked ? ' av4-picked' : ''}`} onClick={() => r.active && onDrill(r.drills.active)}>
+                    <td>
+                      {r.fixNeeded
+                        ? <Pill tone="red">No department</Pill>
+                        : (
+                          <button type="button" className="av4-dept-pick" title={`Show only ${r.department}`} onClick={(e) => { e.stopPropagation(); onPickDept(r.department); }}>
+                            <span className={`av4-dot ak-f-${DOTS[i % DOTS.length]}`} aria-hidden="true" />{r.department}
+                          </button>
+                        )}
+                    </td>
+                    {cols.map((c) => <td key={c.key} className={`num av4-c-${c.kind}`}>{cell(r, c, r.drills)}</td>)}
+                    <td className="num">
+                      {r.fixNeeded
+                        ? <span className="av4-dash" title="Does not apply: these jobs have no department">–</span>
+                        : tlCount(r.department)
+                          ? <button type="button" className="av4-n" title={`Show ${r.department || 'this department'} and its team leads`} onClick={(e) => { e.stopPropagation(); if (r.department) onPickDept(r.department); }}>{fmt(tlCount(r.department))}</button>
+                          : <Zero what="team leads" />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {w.totals && (
+                <tfoot>
+                  <tr className="av4-total">
+                    <td>All departments</td>
+                    {cols.map((c) => <td key={c.key} className={`num av4-c-${c.kind}`}>{cell(w.totals, c, w.totalDrills || {})}</td>)}
+                    <td className="num">{tlRows ? (tlRows.length ? fmt(tlRows.length) : <Zero what="team leads" />) : <span className="av4-dash" title="Loading">…</span>}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          <div className="av4-dnotes">
+            <div className="av4-note">
+              {'Open jobs, In process, Selected and Late are as of today. '}
+              {w.periodAll ? 'Everything else counts from the start. ' : `Interviews and Joined (${joinWord || 'in the dates picked'}) follow the dates you picked. `}
+              {'Joined in total is everyone marked Joined, whatever the date.'}
+            </div>
+            {jn && jn.noDate > 0 && (
+              <div className="av4-note is-warn">
+                <b>{fmt(jn.noDate)}</b> {jn.noDate === 1 ? 'person is' : 'people are'} marked Joined but {jn.noDate === 1 ? 'has' : 'have'} no joining date, so {jn.noDate === 1 ? 'is' : 'are'} in the total but in no month.{' '}
+                <button type="button" className="link-btn" onClick={() => onDrill(jn.drills.noDate)}>See who</button>
+              </div>
+            )}
+            {jn && jn.wrong > 0 && (
+              <div className="av4-note is-bad">
+                <b>{fmt(jn.wrong)}</b> {jn.wrong === 1 ? 'joining date looks' : 'joining dates look'} wrong (like 2203 or 1954){jn.noMonth - jn.noDate >= jn.wrong ? `, so ${jn.wrong === 1 ? 'that person is' : 'those people are'} also in no month` : ''}.{' '}
+                <button type="button" className="link-btn" onClick={() => onDrill(jn.drills.wrong)}>See who</button>
+              </div>
+            )}
+            {jn && jn.moved > 0 && (
+              <div className="av4-note">
+                {fmt(jn.moved)} more {jn.moved === 1 ? 'has' : 'have'} no joining date typed and {jn.moved === 1 ? 'is' : 'are'} counted in the month they were moved to Joined.{' '}
+                <button type="button" className="link-btn" onClick={() => onDrill(jn.drills.moved)}>See who</button>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </Panel>
   );
 }
 
 // ---- Team snapshot: team leads (or a TL's recruiters) · recruiters' waiting work --------
-const TL_COLS = [['openJobs', 'Open jobs'], ['inProcess', 'In process'], ['interviews', 'Interviews'], ['selected', 'Selected'], ['joined', 'Joined'], ['late', 'Late']];
+// [key, label, basis]: the second header line says what the column counts.
+const TL_COLS = [['openJobs', 'Open jobs', 'today'], ['inProcess', 'In process', 'today'], ['interviews', 'Interviews', 'dates'], ['selected', 'Selected', 'today'], ['joined', 'Joined', 'dates'], ['joinedTotal', 'Joined', 'in total'], ['late', 'Late', 'today']];
 function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
+  const periodAll = !!(tls && tls.data && tls.data.periodAll);
+  const word = (tls && tls.data && tls.data.word) || 'in the dates picked';
+  const tlCols = TL_COLS.filter(([k]) => !(periodAll && k === 'joined'));
+  const basisOf = (b) => (b === 'today' ? 'as of today' : b === 'dates' ? word : b);
   const tabs = [tlsW && 'tls', peopleW && 'people'].filter(Boolean);
   const [tab, setTab] = useState(tabs[0]);
   const cur = tabs.includes(tab) ? tab : tabs[0];
@@ -315,8 +381,8 @@ function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
     ? tlRows[0].recruiters.slice().sort((x, y) => y.late - x.late || y.inProcess - x.inProcess).slice(0, 5)
     : tlRows.slice().sort((x, y) => y.late - x.late || y.inProcess - x.inProcess || y.openJobs - x.openJobs).slice(0, 5);
   const N = (r, k) => (r[k]
-    ? <button type="button" className={`av4-n${k === 'late' ? ' is-red' : k === 'joined' ? ' is-green' : ''}`} onClick={() => onDrill(r.drills[k])}>{fmt(r[k])}</button>
-    : <span className="av4-dash">–</span>);
+    ? <button type="button" className={`av4-n${k === 'late' ? ' is-red' : k === 'joined' || k === 'joinedTotal' ? ' is-green' : ''}`} onClick={() => onDrill(r.drills[k])}>{fmt(r[k])}</button>
+    : <span className="av4-zero" title="None">0</span>);
   let action = null;
   if (cur === 'tls' && tlRows.length > 0) action = { label: single ? 'View team' : `View all ${fmt(tlRows.length)}`, onClick: onShowAll };
   if (cur === 'people' && peopleW && peopleW.to && peopleW.total > arr(peopleW.rows).length) action = { label: `View all ${fmt(peopleW.total)}`, to: peopleW.to };
@@ -332,17 +398,19 @@ function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
   return (
     <Panel title="Team snapshot" icon="team" iconTone="blue" className="av4-team" flush extra={extra} action={action}>
       {cur === 'tls' && (
-        !tls || tls.loading ? <div className="ak-empty">Loading the team…</div>
-          : tls.error ? <div className="notice red av4-pad">{tls.error}</div>
+        !tls || tls.loading ? <div className="ak-empty">Loading the team...</div>
+          : tls.error ? <div className="notice red av4-pad">{tls.error}{tls.retry && <> <button type="button" className="btn btn-sm" onClick={tls.retry}>Try again</button></>}</div>
             : !shown.length ? <div className="ak-empty">No team lead here yet. Team leads show once jobs or recruiters are given to them.</div> : (
               <div className="av4-scroll">
                 <table className="ak-table av4-tbl">
-                  <thead><tr><th>{single ? 'Recruiter' : 'Team lead'}</th>{TL_COLS.map(([k, l]) => <th key={k} className="num">{l}</th>)}</tr></thead>
+                  <thead><tr><th>{single ? 'Recruiter' : 'Team lead'}</th>{tlCols.map(([k, l, bs]) => <th key={k} className="num av4-th"><span className="av4-th-l">{l}</span><small className="av4-th-b">{basisOf(bs)}</small></th>)}</tr></thead>
                   <tbody>
                     {shown.map((r) => (
                       <tr key={r.id}>
                         <td><span className="ak-person"><Avatar name={r.name} size={24} /><span title={r.department ? `${r.name} · ${r.department}` : r.name}>{r.name}</span></span></td>
-                        {TL_COLS.map(([k]) => <td key={k} className="num">{N(r, k)}</td>)}
+                        {tlCols.every(([k]) => !r[k])
+                          ? <td colSpan={tlCols.length} className="small-muted">No jobs yet</td>
+                          : tlCols.map(([k]) => <td key={k} className="num">{N(r, k)}</td>)}
                       </tr>
                     ))}
                   </tbody>
@@ -361,7 +429,7 @@ function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
                     <td><span className="ak-person"><Avatar name={r.name} size={24} /><span>{r.name}</span></span></td>
                     <td className="num">{N(r, 'pending')}</td>
                     <td className="num">{N(r, 'dueToday')}</td>
-                    <td className="num">{r.overdue ? <button type="button" className="av4-n is-red" onClick={() => onDrill(r.drills.overdue)}>{fmt(r.overdue)}</button> : <span className="av4-dash">–</span>}</td>
+                    <td className="num">{r.overdue ? <button type="button" className="av4-n is-red" onClick={() => onDrill(r.drills.overdue)}>{fmt(r.overdue)}</button> : <span className="av4-zero" title="None">0</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -377,8 +445,14 @@ function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
 function Joinings({ w, onDrill }) {
   const points = arr(w.points).map((p) => ({ label: p.label, value: p.value, onClick: p.value ? () => onDrill(p.drill) : undefined }));
   return (
-    <Panel title={w.title} icon="chart" className="av4-chart">
+    <Panel title={w.title} sub={w.sub} icon="chart" className="av4-chart">
       <LineChart points={points} height={178} empty="No joinings in the last 6 months" title={w.title} />
+      {w.note && (
+        <div className="av4-note">
+          {w.note}{' '}
+          {w.noMonthDrill && <button type="button" className="link-btn" onClick={() => onDrill(w.noMonthDrill)}>See who</button>}
+        </div>
+      )}
     </Panel>
   );
 }

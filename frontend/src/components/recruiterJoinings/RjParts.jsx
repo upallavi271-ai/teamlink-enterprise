@@ -8,6 +8,7 @@ import { Fragment, useEffect, useState } from 'react';
 import api from '../../api';
 import { Modal } from '../proto.jsx';
 import './rj.css';
+import './rj-carry.css';
 
 export const inr = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -33,6 +34,23 @@ export function Score({ row }) {
     <span title={row.targetSource}>
       <span className={`rj-score ${row.tone}`}>{row.joinings} / {row.target}</span>
       <span className="rj-word">{row.toneWord}</span>
+      {row.carryNote && row.carried > 0 && <div className="rj-sub">{row.carryNote}</div>}
+    </span>
+  );
+}
+
+// The incentive of a month under the department rule, in words.
+function IncentiveCell({ row, mayDecide }) {
+  const i = row.incentive;
+  if (!i) return <span className="rj-sub">—</span>;
+  const word = i.status === 'Waiting for amount' ? 'Target completed - waiting for the amount'
+    : i.status === 'Pending' ? 'Waiting for approval' : i.status === 'Approved' ? 'Approved' : i.status === 'Paid' ? 'Paid' : i.status === 'Rejected' ? 'Rejected' : i.status;
+  const tone = i.status === 'Target not completed' ? 'grey' : i.status === 'Not worked out yet' ? 'blue' : (i.status === 'Approved' || i.status === 'Paid') ? 'green' : i.status === 'Rejected' ? 'red' : 'orange';
+  return (
+    <span>
+      <span className={`rj-tag ${tone}`}>{word}</span>
+      {i.amount ? <div className="rj-sub">{inr(i.amount)}</div> : null}
+      {mayDecide && i.status === 'Not worked out yet' ? <div className="rj-sub">Payroll → Incentives → Work out the month</div> : null}
     </span>
   );
 }
@@ -181,58 +199,63 @@ export function RaiseDialog({ row, month, onClose, onSaved }) {
 }
 
 // ---- One person's joinings + month-by-month history ---------------------------------
-function JoinList({ list, empty, notCounted }) {
-  if (!list.length) return <div className="rj-empty">{empty}</div>;
-  return (
-    <div className="tbl-wrap">
-      <table className="rj-mini">
-        <thead><tr><th>Candidate</th><th>Client</th><th>Job</th><th>Joining date</th><th>{notCounted ? 'Why not counted' : 'Status'}</th></tr></thead>
-        <tbody>
-          {list.map((a) => (
-            <tr key={a.id}>
-              <td>{a.candidate}</td>
-              <td>{a.client}</td>
-              <td>{a.job}{a.jobCode ? <span className="rj-sub"> · {a.jobCode}</span> : null}</td>
-              <td>{dayLabel(a.joiningDate)}</td>
-              <td><span className={`rj-tag ${a.tone}`}>{a.status}</span>{a.note ? <div className="rj-sub">{a.note}</div> : null}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+// HRMS shows COUNTS ONLY (required, achieved, completion %). Who joined, for
+// which client and job is in ATS (Candidates & Pipeline).
+const pct = (a, t) => (t > 0 ? `${Math.round((a * 100) / t)}%` : '—');
 
 export function PersonDetail({ row, month }) {
   const [hist, setHist] = useState(null);
+  const [carry, setCarry] = useState([]);
   const [error, setError] = useState('');
-  function loadHistory() {
-    api.get(`/recruiter-joinings/history/${row.employeeId}`).then((r) => setHist(r.data.months)).catch((e) => setError(errText(e, 'Could not load the history.')));
-  }
+  useEffect(() => {
+    if (!row.employeeId) return;
+    api.get(`/recruiter-joinings/history/${row.employeeId}`, { params: { months: 12 } }).then((r) => { setHist(r.data.months); setCarry(r.data.carry || []); }).catch((e) => setError(errText(e, 'Could not load the history.')));
+  }, [row.employeeId]);
   return (
     <div>
-      <h4>Joinings counted in {monthLabel(month)} ({row.joinings})</h4>
-      <JoinList list={row.joiningList} empty={`No joinings in ${monthLabel(month)}.`} />
-      {row.notCountedList.length > 0 && (
+      <h4>{monthLabel(month)}</h4>
+      <p className="rj-hint">
+        Required <b>{row.required ?? row.target}</b> · Achieved <b>{row.achieved ?? row.joinings}</b> · Completion <b>{pct(row.joinings, row.target)}</b>
+        {row.notCountedCount ? <> · {row.notCountedCount} more had a joining date but did not join</> : null}.
+        {' '}Who joined, and for which client, is in ATS.
+      </p>
+      {carry.length > 0 && (
         <>
-          <h4>Not counted ({row.notCountedList.length})</h4>
-          <JoinList list={row.notCountedList} notCounted empty="" />
+          <h4>Target month by month (the missing joinings are carried forward)</h4>
+          <div className="tbl-wrap">
+            <table className="rj-mini">
+              <thead><tr><th>Month</th><th>Base target</th><th>Carried in</th><th>Target</th><th>Joined</th><th>Completed</th><th>Carried to next month</th></tr></thead>
+              <tbody>
+                {carry.map((c) => (
+                  <tr key={c.month}>
+                    <td>{c.label}</td><td>{c.base}</td><td>{c.carried}</td><td><b>{c.target}</b></td><td>{c.achieved}</td>
+                    <td><span className={`rj-tag ${c.completed ? 'green' : 'orange'}`}>{c.completed ? 'Yes - incentive earned' : 'No'}</span></td><td>{c.missing}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
       {row.employeeId && (hist ? (
         <>
-          <h4>Month by month</h4>
-          <div className="rj-hist">
-            {hist.map((h) => (
-              <div key={h.month} title={h.decision ? h.decision.word : ''}>
-                <div className="rj-sub">{h.label.replace(/ \d{4}$/, '').slice(0, 3)} {h.month.slice(2, 4)}</div>
-                {h.listed ? <span className={`rj-score ${h.tone}`}>{h.joinings} / {h.target}</span> : <span className="rj-sub">—</span>}
-                {h.decision && <div className="rj-sub">{h.decision.decision === 'INCENTIVE' ? `Incentive${h.decision.amount != null ? ` ${inr(h.decision.amount)}` : ''}` : h.decision.word}</div>}
-              </div>
-            ))}
+          <h4>Completion history (last 12 months)</h4>
+          <div className="tbl-wrap">
+            <table className="rj-mini">
+              <thead><tr><th>Month</th><th>Required</th><th>Achieved</th><th>Completion</th><th>Result</th></tr></thead>
+              <tbody>
+                {hist.filter((h) => h.listed).map((h) => (
+                  <tr key={h.month}>
+                    <td>{h.label}</td><td>{h.target}</td><td>{h.joinings}</td><td>{pct(h.joinings, h.target)}</td>
+                    <td><span className={`rj-score ${h.tone}`}>{h.toneWord}</span>{h.decision ? <span className="rj-sub"> · {h.decision.decision === 'INCENTIVE' ? `Incentive${h.decision.amount != null ? ` ${inr(h.decision.amount)}` : ''}` : h.decision.word}</span> : null}</td>
+                  </tr>
+                ))}
+                {!hist.some((h) => h.listed) && <tr><td colSpan="5" className="rj-sub">No months on the recruiter list yet.</td></tr>}
+              </tbody>
+            </table>
           </div>
         </>
-      ) : <button className="btn btn-sm" onClick={loadHistory}>Show month by month</button>)}
+      ) : !error && <div className="rj-empty">Loading the history…</div>)}
       {error && <div className="rj-error">{error}</div>}
     </div>
   );
@@ -246,7 +269,8 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
   const [msg, setMsg] = useState('');
   const v = board.viewer || {};
   const canDecide = !!v.decide;
-  const cols = 5 + (showDecision && v.decisions ? 1 : 0);
+  const hasCarry = rows.some((r) => r.completed !== undefined);
+  const cols = 6 + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
 
   async function undo(row) {
     if (!window.confirm(`Undo the decision for ${row.name}?`)) return;
@@ -271,7 +295,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
         <table>
           <thead>
             <tr>
-              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th>Joinings / target</th><th>Not counted</th>
+              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th>Joinings / required</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}<th>Not counted</th>
               {showDecision && v.decisions && <th>Decision</th>}
             </tr>
           </thead>
@@ -283,11 +307,13 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
                     <button className="rj-name" onClick={() => setOpen(open === r.key ? null : r.key)} title="Show the joinings">
                       {open === r.key ? '▾' : '▸'} {r.name}
                     </button>
-                    <div className="rj-sub">{[r.employeeCode, r.department, r.left ? r.employmentStatus : null].filter(Boolean).join(' · ') || '—'}</div>
+                    <div className="rj-sub">{[r.employeeCode, r.department, r.statusGroup && r.statusGroup !== 'Active' ? r.statusGroup : null].filter(Boolean).join(' · ') || '—'}</div>
                   </td>
                   <td>{r.seat || '—'}</td>
                   <td>{r.tlName || '—'}</td>
                   <td><Score row={r} /></td>
+                  <td><b>{pct(r.joinings, r.target)}</b>{r.completed !== undefined && <div className="rj-sub">{r.completed ? 'Target completed' : 'Not completed yet'}</div>}</td>
+                  {hasCarry && <td>{r.completed !== undefined ? <IncentiveCell row={r} mayDecide={v.decide} /> : <span className="rj-sub">No rule</span>}</td>}
                   <td>{r.notCountedCount ? <span className="rj-tag orange">{r.notCountedCount}</span> : <span className="rj-sub">None</span>}</td>
                   {showDecision && v.decisions && (
                     <td>
@@ -314,6 +340,24 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
       {dialog?.kind === 'incentive' && <IncentiveDialog row={dialog.row} month={board.month} onClose={() => setDialog(null)} onSaved={saved} />}
       {dialog?.kind === 'raise' && <RaiseDialog row={dialog.row} month={board.month} onClose={() => setDialog(null)} onSaved={saved} />}
       {dialog?.kind === 'none' && <NoActionDialog row={dialog.row} month={board.month} onClose={() => setDialog(null)} onSaved={saved} />}
+    </div>
+  );
+}
+
+// The department rules in plain words, and the departments that have none yet.
+export function DeptRules({ rules, example }) {
+  if (!rules || !rules.length) return null;
+  return (
+    <div className="rj-deptrules">
+      {rules.map((r) => (
+        <div key={r.department} className={`rj-deptrule${r.set ? '' : ' unset'}`}>
+          <b>{r.department}</b>
+          <span>{r.sentence}{r.set && !r.amountSet ? ' The incentive amount is not set: Super Admin gives it when the target is completed.' : ''}</span>
+        </div>
+      ))}
+      {example && example.length > 0 && rules.some((r) => r.set) && (
+        <div className="rj-sub">Example (target 4): joined 2 in January, so February&apos;s target is 6; joined 2 in February, so March&apos;s target is 8.</div>
+      )}
     </div>
   );
 }

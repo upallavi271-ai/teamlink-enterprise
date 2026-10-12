@@ -13,6 +13,13 @@
  */
 
 const nz = (v) => (v === null || v === undefined ? undefined : v);
+/* 0113: the 0108 jobSourceType for a jobs row the audit classified EXTERNAL,
+   from its free-text `source` (the same four names external/shapes.js uses). */
+const externalSourceTypeOf = (source) => {
+  const s = String(source || '').toLowerCase();
+  for (const k of ['naukri', 'shine', 'indeed', 'linkedin']) if (s.includes(k)) return k.toUpperCase();
+  return 'OTHER_EXTERNAL';
+};
 const arr = (v) => (Array.isArray(v) ? v : []);
 const numOrU = (v) => (v === null || v === undefined ? undefined : Number(v));
 
@@ -80,7 +87,11 @@ export function walkinStartsAt(date, from) {
 }
 
 function walkinShape(r, now = Date.now()) {
-  const ends = walkinEndsAt(r.walkin_date, r.walkin_to);
+  /* 0137: the database's own answer when the row carries it (JOB_RECORD_COLS) - it also reads a
+     date typed as "6 and 7 october 2026", which walkinEndsAt() above does not */
+  const ends = r.walkin_ends_ts !== undefined
+    ? (r.walkin_ends_ts ? new Date(r.walkin_ends_ts).getTime() : null)
+    : walkinEndsAt(r.walkin_date, r.walkin_to);
   const open = r.status === 'open' && !r.paused && !r.archived;
   const cap = r.walkin_capacity == null ? null : Number(r.walkin_capacity);
   const taken = r.walkin_registered == null ? null : Number(r.walkin_registered);
@@ -93,6 +104,10 @@ function walkinShape(r, now = Date.now()) {
     walkinMapLink: nz(r.walkin_map_link),
     walkinContactPerson: nz(r.walkin_contact),
     walkinContactNumber: nz(r.walkin_phone),
+    walkinContactDesignation: nz(r.walkin_contact_designation),
+    /* 0139: the AI interview, for this walk-in, and the final score that makes an applicant eligible */
+    walkinAiRequired: r.walkin_ai_required === undefined ? undefined : r.walkin_ai_required !== false,
+    walkinAiThreshold: r.walkin_ai_threshold == null ? undefined : Number(r.walkin_ai_threshold),
     walkinDocumentsToCarry: nz(r.walkin_documents),
     walkinInstructions: nz(r.walkin_instructions),
     walkinSlotCapacity: cap == null ? undefined : cap,
@@ -187,15 +202,47 @@ export function toJob(r) {
      present only when set, like the walk-in fields above. */
   if (r.expires_at) j.expiresAt = new Date(r.expires_at).toISOString();
   /* 0108: the TeamLink/external split, named as the owner names it. An
-     external job is never a row here (it is external_jobs, shown beside
-     these), so every job from this table is TeamLink's own. */
-  j.jobSourceType = 'TEAMLINK';
+     imported job is never a row here (it is external_jobs, on the External
+     Jobs page only). 0113: `sourceType` is the normalised TEAMLINK |
+     EXTERNAL from jobs.source_type - TEAMLINK for everything TeamLink
+     posts; EXTERNAL only for a legacy row the 0113 audit classified. */
+  j.sourceType = r.source_type === 'EXTERNAL' ? 'EXTERNAL' : 'TEAMLINK';
+  j.jobSourceType = j.sourceType === 'TEAMLINK' ? 'TEAMLINK' : externalSourceTypeOf(r.source);
+  j.jobSourceName = j.sourceType === 'TEAMLINK' ? 'TeamLink' : (nz(r.source) || 'External');
   j.originalJobUrl = null;
   if (r.urgent && r.urgent_until && new Date(r.urgent_until) > new Date()) {
     j.urgent = true;
     j.urgentUntil = new Date(r.urgent_until).toISOString();
   }
   return j;
+}
+
+/**
+ * 0125: the job's record for STAFF screens - who created it and when, when
+ * it went live or came down, and the last change a person made. Not part
+ * of toJob(): the public board has no business with staff names.
+ *
+ * Select JOB_RECORD_COLS beside the job row so the names come with it.
+ */
+export const JOB_RECORD_COLS =
+  'staff_name_of(created_by) as created_by_name, staff_name_of(last_edited_by) as last_edited_by_name, '
+  /* 0134: "Posted By" tells an Admin-posted job from a recruiter's */
+  + 'staff_role_of(created_by) as created_by_role, '
+  /* 0137: when a walk-in ends, as the database reads its date (typed dates included) */
+  + 'walkin_ends_at(walkin_date, walkin_to) as walkin_ends_ts';
+const isoOrNull = (d) => (d ? new Date(d).toISOString() : null);
+export function toStaffJob(r) {
+  return Object.assign(toJob(r), {
+    createdById: r.created_by || null,
+    createdByName: nz(r.created_by_name) || null,
+    createdByRole: nz(r.created_by_role) || null,
+    createdAt: isoOrNull(r.created_at),
+    publishedAt: isoOrNull(r.published_at),
+    unpublishedAt: isoOrNull(r.unpublished_at),
+    lastEditedAt: isoOrNull(r.last_edited_at),
+    lastEditedById: r.last_edited_by || null,
+    lastEditedByName: nz(r.last_edited_by_name) || null,
+  });
 }
 
 /**
@@ -311,6 +358,8 @@ export function toCandidate(r, opts = {}) {
        when they last did. On the record rather than in the browser, so
        saying "later" on a phone is still "later" on a borrowed laptop. */
     onboardingLaterCount: Number(r.profile_onboarding_later_count || 0),
+    onboardingStatus: r.onboarding_status || 'not_started',
+    onboardingStep: Number(r.onboarding_step || 0),
     onboardingDismissedAt: r.profile_onboarding_dismissed_at
       ? new Date(r.profile_onboarding_dismissed_at).toISOString() : undefined,
     preferredLanguage: nz(r.preferred_language),
@@ -433,6 +482,10 @@ export function toApplication(r) {
     matchScore: numOrU(r.match_score),
     aiScore: numOrU(r.ai_score),
     source: nz(r.source),
+    /* 0139: a walk-in's final AI interview score and the eligibility the database decided from it */
+    walkinAiScore: numOrU(r.walkin_ai_score),
+    walkinEligibility: nz(r.walkin_ai_eligibility),
+    sourceChannel: nz(r.source_channel),
     postingType: nz(r.posting_type),
     // date columns arrive as 'YYYY-MM-DD' strings (see the type parser in
     // db.js); the Date branch is a fallback for any caller that bypasses it
@@ -451,8 +504,12 @@ export function toApplication(r) {
     // When the AI interview window closes. Two days from the invitation,
     // set by the database, so the screen states a deadline rather than
     // counting down from whenever the tab happened to open.
+    /* 0133: the job's last date (or a retake's window); NULL when the job has no date - then the
+       interview stays open as long as the job does */
     aiInterviewDueAt: r.ai_interview_due_at
       ? new Date(r.ai_interview_due_at).toISOString() : undefined,
+    ...(r.ai_interview_open != null ? { aiInterviewOpen: !!r.ai_interview_open } : {}),
+    ...(r.ai_interview_closed_reason ? { aiInterviewClosedReason: r.ai_interview_closed_reason } : {}),
     resumeFile: nz(r.resume_path),
     primary: !!r.is_primary,
     /* 0107: the walk-in ATS. `version` is what a stage save quotes back

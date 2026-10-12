@@ -305,7 +305,7 @@ function taxView(inv, ctx = {}) {
     received,
     credited,
     debited,
-    balance: R(net - received - credited + debited),
+    balance: R(net - received - credited - (hasCol('adjustedAmount') ? R(inv.adjustedAmount) : 0) + debited),
     supply: sup,
     check: checkOf(inv, {
       base, gst, tds, gross, net, received, gstType, tdsBase,
@@ -467,6 +467,8 @@ function withNotes(inv, notes) {
   const tds = R(inv.tds);
   const receivable = R(billing + gst - tds);
   const received = R(inv.receivedAmount);
+  // Recon spec: approved adjustments (InvoiceAdjustment) reduce what is still receivable.
+  const adjusted = R(inv.adjustedAmount);
   const b = R(billing - s.credit.base + s.debit.base);
   const g = R(gst - s.credit.gst + s.debit.gst);
   const t = R(tds - s.credit.tds + s.debit.tds);
@@ -478,9 +480,10 @@ function withNotes(inv, notes) {
     gst: g,
     tds: t,
     invoiceValue: R(b + g),
-    receivable: R(receivable - s.credit.net + s.debit.net),
+    receivable: R(receivable - s.credit.net + s.debit.net - adjusted),
+    adjusted,
     received,
-    pending: R(receivable - received - s.credit.applied + s.debit.net),
+    pending: R(receivable - received - s.credit.applied + s.debit.net - adjusted),
     refundDue: s.credit.refundDue,
     refundOpen: s.credit.refundOpen,
     credit: s.credit,

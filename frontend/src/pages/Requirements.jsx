@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
 import PostingStatusPanel from '../components/jobs/PostingStatusPanel.jsx';
+import PostWalkthrough from '../components/jobs/PostWalkthrough.jsx'; // Save & Post: finish the by-hand boards, one after the other
 import ScopeLine from '../components/ScopeLine.jsx';
 import Pager from '../components/Pager.jsx';
 import {
@@ -47,7 +48,12 @@ import {
   useJobsSummary, JobsKpis, StageFlow, AttentionRows, jobsAttention, ShareBars, RankList, Panel,
 } from '../components/clientsreq-v4/JobsOverview.jsx';
 import SelectedRequirement from '../components/clientsreq-v4/SelectedRequirement.jsx';
-import { CrqHead, MiniPager, FilterCard } from '../components/clientsreq-v4/ListBits.jsx';
+import { CrqHead, FilterCard } from '../components/clientsreq-v4/ListBits.jsx';
+// The neat Jobs list (2026-10-09): department tags, "Not assigned", one main button per row.
+import {
+  useMedia, DeptTag, PersonName, ageSlaLine, rowPrimary,
+} from '../components/clientsreq-v4/JobsListBits.jsx';
+import '../components/clientsreq-v4/crq4-jobs-list.css';
 import { JobStatusChip, jobStatusByKey } from '../components/jobs/reqStatus.jsx';
 // "A new person gets it in 20–30 s" (user, 2026-10-05).
 import {
@@ -222,12 +228,6 @@ function readSize() {
   try { const v = Number(window.localStorage.getItem('tl.requirements.pageSize')); return [25, 50, 100].includes(v) ? v : 25; } catch { return 25; }
 }
 const sameState = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-// v4 dense table: "Imran Qureshi" -> "Imran Q." (the full name is the cell's tooltip).
-const shortName = (n) => {
-  const parts = String(n || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return parts[0] || '';
-  return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
-};
 const money = (v) => (v === undefined || v === null ? '—' : `₹${nf(Math.round(Number(v) || 0))}`);
 
 // One row's file, straight from the server's scoped export.
@@ -371,9 +371,14 @@ export default function Requirements() {
   const [drawer, setDrawer] = useState(null);
   // The row shown in the "Selected requirement" panel: '' = the first row, 'none' = cleared.
   const [pickId, setPickId] = useState('');
+  // A big screen keeps the panel beside the table; a smaller one slides it in
+  // over the table (row click) so the table can use the whole width.
+  const docked = useMedia('(min-width: 1700px)');
   const [bulk, setBulk] = useState(null); // { kind, items }
   const [selected, setSelected] = useState(() => new Map());
   const [rowError, setRowError] = useState('');
+  const [postWaitOn, setPostWaitOn] = useState(false); // quick view: only jobs waiting to be posted by hand
+  const [walkPairs, setWalkPairs] = useState(null); // "Post them one by one" (jobs x boards still waiting)
   const [lifeDialog, setLifeDialog] = useState(null); // { kind: 'pause'|'close', job }
 
   useEffect(() => {
@@ -384,8 +389,9 @@ export default function Requirements() {
     const p = { ...(canFilter.hierarchy ? toRequirementParams(h, tree.data) : {}) };
     Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'bde') p[k] = v; });
     if (filters.bde) { const b = splitPersonValue(filters.bde); if (b.id) p.bdeId = b.id; else if (b.name) p.bdeName = b.name; }
+    if (postWaitOn) p.postWait = '1';
     return p;
-  }, [filters, h, tree.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, h, tree.data, postWaitOn]); // eslint-disable-line react-hooks/exhaustive-deps
   const paramKey = JSON.stringify(params);
 
   useEffect(() => { setPage(1); }, [paramKey, view, sort, dir, size, showClosed]);
@@ -510,11 +516,24 @@ export default function Requirements() {
   const FIRST = ['requirement', 'position'];
   // v4: Next action is always the last column (after Status and Age / SLA).
   const LAST = ['nextAction'];
+  // Neat list: what belongs together is shown together, nothing is dropped.
+  //   Req ID + Job title        -> one "Job" column (ID, Internal tag, title)
+  //   Client + Department       -> the department tag sits under the client name
+  //   Status + Age / SLA        -> the age and the SLA sit under the status
+  const mergedJob = show('requirement') && show('position');
+  const deptInClient = show('client') && show('department');
+  const slaInStatus = show('status') && show('sla');
+  const folded = (k) => (k === 'position' && mergedJob) || (k === 'department' && deptInClient) || (k === 'sla' && slaInStatus);
   const visible = [
-    ...FIRST.map((k) => COLUMNS.find((c) => c.key === k)).filter((c) => c && show(c.key)),
-    ...COLUMNS.filter((c) => !FIRST.includes(c.key) && !LAST.includes(c.key) && show(c.key)),
+    ...FIRST.map((k) => COLUMNS.find((c) => c.key === k)).filter((c) => c && show(c.key) && !folded(c.key)),
+    ...COLUMNS.filter((c) => !FIRST.includes(c.key) && !LAST.includes(c.key) && show(c.key) && !folded(c.key)),
     ...LAST.map((k) => COLUMNS.find((c) => c.key === k)).filter((c) => c && show(c.key)),
-  ];
+  ].map((c) => {
+    if (c.key === 'requirement' && mergedJob) return { ...c, label: 'Job' };
+    if (c.key === 'status' && slaInStatus) return { ...c, label: 'Status', sort: 'sla' };
+    if (c.key === 'nextAction') return { ...c, label: 'Next step' };
+    return c;
+  });
   const counts = data.counts || {};
   const views = data.views || [];
   // How it works: open jobs, then the people at each step (Candidates &
@@ -538,6 +557,15 @@ export default function Requirements() {
   const bulkActions = { assign: !!perms.assign, priority: !!perms.approve && role !== 'bde', export: mayExport };
   const canSelect = !!perms.bulk && (bulkActions.assign || bulkActions.priority || bulkActions.export);
   const rowItem = (r) => ({ id: r.id, reqCode: r.reqCode, title: r.title });
+  // The jobs x boards still waiting for a person (the ticked jobs, or every one in this login's area).
+  async function openWalk(ids) {
+    setRowError('');
+    try {
+      const res = await api.post('/requirements/posting/hand-queue', { ids: ids && ids.length ? ids : undefined });
+      if (!res.data.pairs.length) { setRowError('Nothing is waiting to be posted by hand. Well done.'); return; }
+      setWalkPairs(res.data.pairs);
+    } catch (e) { setRowError(e.response?.data?.error || 'Could not get the list. Please try again.'); }
+  }
   const toggleRow = (r) => setSelected((m) => { const next = new Map(m); if (next.has(r.id)) next.delete(r.id); else next.set(r.id, rowItem(r)); return next; });
   const pageAllSelected = data.rows.length > 0 && data.rows.every((r) => selected.has(r.id));
   const togglePage = () => setSelected((m) => {
@@ -628,11 +656,19 @@ export default function Requirements() {
 
   // v4: with the Recruiter column on screen the "Assigned to" line repeats it,
   // so only the Needs badge stays under the title (the name is in its column).
+  // The "Needs a ..." badge only stays when the Team lead / Recruiter columns
+  // are hidden — otherwise their own "Not assigned" says the same, once.
   const assigneeLine = (r) => (
     <div className="rr-assignee">
+      {r.posting && (
+        <span className="rr-posting" title="Where this job is posted. Open the job to see each site.">
+          {r.posting.text}
+          {r.posting.waitText && <b className="rr-posting-wait">{' · ' + r.posting.waitText}</b>}
+        </span>
+      )}
       {show('recruiter') ? null : r.assignedTo ? <span>{`Assigned to: ${r.assignedTo}`}</span>
         : r.workedBy ? <span title="Worked from the tracker, not formally assigned">{`Worked by: ${r.workedBy}`}</span> : null}
-      {r.needs && <span className="rr-unassigned" title={r.needs === 'tl' ? 'No team lead on this job yet' : 'Has a team lead, no recruiter yet'}>{r.needs === 'tl' ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
+      {r.needs && !show('tl') && !show('recruiter') && <span className="rr-unassigned" title={r.needs === 'tl' ? 'No team lead on this job yet' : 'Has a team lead, no recruiter yet'}>{r.needs === 'tl' ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
     </div>
   );
   // The row checkbox sits in the first column: "Job ID" when shown, else "Job".
@@ -652,30 +688,39 @@ export default function Requirements() {
     switch (c.key) {
       case 'requirement':
         return (
-          <td key={c.key} className="sticky-col">
+          <td key={c.key} className="sticky-col jl-job">
             <div className="req-cell">
               {rowCheck(r)}
-              <div style={{ minWidth: 0 }}>
-                <span className="req-code">{r.reqCode || r.id.slice(0, 8)}</span>
-                <div><span className={`rr-type ${r.internal ? 'internal' : 'client'}`}>{r.internal ? 'Internal' : 'Client'}</span></div>
-                {!show('position') && <div className="req-title" title={r.title}>{r.title}</div>}
-                {!show('position') && assigneeLine(r)}
+              <div className="jl-jobtxt">
+                <div className="jl-jobtop">
+                  <span className="req-code">{r.reqCode || r.id.slice(0, 8)}</span>
+                  {r.internal && <span className="rr-type internal">Internal</span>}
+                </div>
+                {(mergedJob || !show('position')) && <div className="req-title jl-title" title={r.title}>{r.title || '—'}</div>}
+                {(mergedJob || !show('position')) && assigneeLine(r)}
               </div>
             </div>
           </td>
         );
       case 'client':
-        if (r.internal) return <td key={c.key}><span className="rr-org-internal">TeamLink (internal)</span></td>;
+        // The full client name wraps onto a second line; the department is a tag under it.
         return (
-          <td key={c.key} className="cell-muted">
-            {r.clientLink && r.clientId
-              ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} onClick={(e) => e.stopPropagation()} title={`${r.client?.name || ''} — open client`}>{r.client?.name || '—'}</Link>
-              : (r.client?.name || '—')}
-            {/* Spec 2026-10-03 §A — open job of a paused client: warn. */}
-            <ClientPausedBadge lifecycle={r.client?.lifecycle} />
+          <td key={c.key} className="jl-client">
+            {r.internal
+              ? <span className="rr-org-internal">TeamLink (internal)</span>
+              : (
+                <>
+                  {r.clientLink && r.clientId
+                    ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} onClick={(e) => e.stopPropagation()} title={`${r.client?.name || ''} — open client`}>{r.client?.name || '—'}</Link>
+                    : (r.client?.name || '—')}
+                  {/* Spec 2026-10-03 §A — open job of a paused client: warn. */}
+                  <ClientPausedBadge lifecycle={r.client?.lifecycle} />
+                </>
+              )}
+            {deptInClient && r.department && <div className="jl-deptline"><DeptTag name={r.department} /></div>}
           </td>
         );
-      case 'department': return <td key={c.key} className="cell-muted">{r.department || '—'}</td>;
+      case 'department': return <td key={c.key}>{r.department ? <DeptTag name={r.department} /> : <span className="cell-muted">—</span>}</td>;
       case 'position':
         return (
           <td key={c.key} className={`pos${checkKey === 'position' ? ' sticky-col' : ''}`}>
@@ -693,16 +738,15 @@ export default function Requirements() {
       case 'location': return <td key={c.key} className="cell-muted">{r.location || '—'}</td>;
       case 'skills': return <td key={c.key} className="cell-muted" title={r.skills || ''}>{r.skills ? String(r.skills).split(',').slice(0, 3).join(', ') : '—'}</td>;
       case 'section': return <td key={c.key} className="cell-muted">{r.section || '—'}</td>;
-      case 'tl': return <td key={c.key} className="cell-muted" title={r.tlName || undefined}>{r.tlName ? shortName(r.tlName) : '—'}</td>;
+      case 'tl': return <td key={c.key} className="jl-people"><PersonName name={r.tlName} tone="red" live={r.live !== false} /></td>;
       case 'recruiter':
         return (
-          <td key={c.key} title={[r.workedBy, ...(r.coRecruiterNames || [])].filter(Boolean).join(', ') || undefined}>
-            {r.workedBy ? shortName(r.workedBy) : <span className="small-muted">—</span>}
-            {r.coRecruiterNames?.length ? <span className="small-muted">{` +${r.coRecruiterNames.length}`}</span> : null}
-            {role !== 'recruiter' && r.workedByPosition && <div className="small-muted" style={{ fontSize: 11 }}>{r.workedByPosition}</div>}
+          <td key={c.key} className="jl-people" title={[r.workedBy, ...(r.coRecruiterNames || [])].filter(Boolean).join(', ') || undefined}>
+            <PersonName name={r.workedBy} extra={r.coRecruiterNames?.length || 0} tone="amber" live={r.live !== false} />
+            {role !== 'recruiter' && r.workedBy && r.workedByPosition && <div className="small-muted" style={{ fontSize: 11 }}>{r.workedByPosition}</div>}
           </td>
         );
-      case 'bde': return <td key={c.key} className="cell-muted" title={r.bde?.name || undefined}>{r.bde?.name ? shortName(r.bde.name) : '—'}</td>;
+      case 'bde': return <td key={c.key} className="jl-people">{r.bdeLabel || r.bde?.name ||<span className="cell-muted">—</span>}</td>;
       case 'priority': return <td key={c.key}><PriorityChip value={r.priority} /></td>;
       case 'daysOpen':
         return (
@@ -746,7 +790,7 @@ export default function Requirements() {
         );
       case 'candidates':
         return (
-          <td key={c.key} className="jobsws-num" title={`${r.activeCandidates ?? 0} active · ${r.candidates ?? 0} in total (incl. rejected / hold)`}>
+          <td key={c.key} className="jobsws-num" title={`${r.activeCandidates ?? 0} applications still open (in process or joined) · ${r.candidates ?? 0} in total (adding rejected and on hold)`}>
             {nf(r.activeCandidates ?? r.candidates)}
             {r.candidates > (r.activeCandidates ?? 0) && <span className="small-muted">{` / ${nf(r.candidates)}`}</span>}
           </td>
@@ -789,31 +833,42 @@ export default function Requirements() {
       case 'status':
         // ATS layout v3 — Draft → Agreement Approved → Assigned → Open →
         // On Hold → Filled / Closed (display label; the stored status is unchanged).
-        return <td key={c.key}>{r.displayStatus ? <JobStatusChip job={r} /> : <StatusChip status={simpleStatus(r)} />}</td>;
+      {
+        // ONE clear Status: the chip, and — when Age / SLA is on — "15d open · On time" under it.
+        const s = slaInStatus ? slaInfo(r.sla) : null;
+        const line = slaInStatus ? ageSlaLine(r, s, ageText, nf) : null;
+        return (
+          <td key={c.key} className="jl-status">
+            {r.displayStatus ? <JobStatusChip job={r} /> : <StatusChip status={simpleStatus(r)} />}
+            {line && <div className={`jl-sub ${line.cls}`} title={s ? s.title : undefined}>{line.text}</div>}
+          </td>
+        );
+      }
       case 'nextAction': {
-        const act = r.primaryAction || { key: 'open', label: 'View' };
+        // ONE main button in plain words; Edit / Pause show on the hovered or
+        // selected row (they are always in the Selected panel as well).
+        const act = rowPrimary(r, role);
         const wait = waitingText(r);
         const quick = quickFor(r, menuFor(r), act.key);
         return (
-          <td key={c.key} onClick={(e) => e.stopPropagation()}>
-            <div className="jobsws-rowact">
-              <div className="jobsws-next">
-                <button
-                  type="button"
-                  className={`btn btn-sm${act.key === 'open' ? '' : ' btn-primary'}`}
-                  onClick={() => pickRowAction(r, act.key)}
-                >
-                  {act.label}
-                </button>
-                {wait && role !== 'accounts' && <span className="who" title={wait}>{wait}</span>}
+          <td key={c.key} className="jl-act" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className={`btn btn-sm jl-main${act.strong ? ' btn-primary' : ''}`}
+              title={wait && role !== 'accounts' ? wait : undefined}
+              onClick={() => pickRowAction(r, act.key)}
+            >
+              {act.label}
+            </button>
+            {quick.length > 0 && (
+              <div className="jl-sec">
+                {quick.map((q) => (
+                  <button key={q.key} type="button" className="jl-link" onClick={() => pickRowAction(r, q.key)}>
+                    {QUICK_LABEL[q.key] || q.label}
+                  </button>
+                ))}
               </div>
-              {/* At most 2 small buttons; every other action is in the drawer. */}
-              {quick.map((q) => (
-                <button key={q.key} type="button" className="btn btn-sm btn-ghost" onClick={() => pickRowAction(r, q.key)}>
-                  {QUICK_LABEL[q.key] || q.label}
-                </button>
-              ))}
-            </div>
+            )}
           </td>
         );
       }
@@ -880,10 +935,6 @@ export default function Requirements() {
           <FacetSelect label="Specialization" allLabel="Any specialization" value={filters.specialisationId} options={fo('specialisationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ specialisationId: v })} />
         </>
       )}
-      {canFilter.hierarchy && (
-        <FacetSelect label="Team lead" allLabel="All team leads" value={idOf(h.tl)} options={fo('tlId')} loading={facetsLoading}
-          onChange={(v) => setDraftH({ ...h, tl: v ? `id:${v}` : '' })} />
-      )}
       {canFilter.hiring && <FacetSelect label="Client / Internal" allLabel="Client and internal" value={filters.type} options={fo('type')} onChange={(v) => setDraftFilter({ type: v })} />}
     </>
   );
@@ -905,7 +956,7 @@ export default function Requirements() {
   );
   // "Filters (n)" counts what the panel itself holds (the card shows the rest).
   const panelCount = ['deadline', 'type', 'qualificationId', 'specialisationId', 'mine', 'sla', 'closing', 'nocand']
-    .filter((k) => filters[k]).length + (h.section ? 1 : 0) + (h.tl ? 1 : 0);
+    .filter((k) => filters[k]).length + (h.section ? 1 : 0);
 
   // v4 overview — the same GET /requirements/summary the cards used.
   const { sum, loading: sumLoading } = useJobsSummary(params, notice);
@@ -923,13 +974,18 @@ export default function Requirements() {
     onClick: () => removeFilter({ clientId: filters.clientId === x.id ? '' : x.id }),
   }));
   const mayClients = can(user, 'ats', 'clients', 'Client List', 'view');
-  const current = pickId === 'none' ? null : (data.rows.find((r) => r.id === pickId) || data.rows[0] || null);
-  // Row click: the "Selected requirement" panel beside the list; when the
-  // window is too narrow for that column, the quick drawer as before.
-  const pickRow = (r) => {
-    if (typeof window !== 'undefined' && window.innerWidth <= 1180) { setDrawer(r); return; }
-    setPickId(r.id);
-  };
+  // Docked (big screen): the panel always shows a row (the first until one is
+  // clicked). Slide-over (smaller screen): only a row the person clicked.
+  const picked = pickId && pickId !== 'none' ? data.rows.find((r) => r.id === pickId) || null : null;
+  const current = pickId === 'none' ? null : (picked || (docked ? (data.rows[0] || null) : null));
+  // Row click: the "Selected job" panel (beside the list, or sliding in over it).
+  const pickRow = (r) => setPickId(r.id);
+  useEffect(() => {
+    if (docked || !current) return undefined;
+    const esc = (e) => { if (e.key === 'Escape') setPickId('none'); };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, [docked, !!current]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -981,7 +1037,15 @@ export default function Requirements() {
           onChange={setBar}
           facetParams={facetParams}
           show={{ department: canFilter.hierarchy, dateRange: true, client: true, people: canFilter.hierarchy }}
-        />
+          extraSet={activeCount > 0}
+          onClear={clearFilters}
+        >
+          {/* Team lead sits with the others (cascading, with counts). */}
+          {canFilter.hierarchy && (
+            <FacetSelect label="Team lead" allLabel="All team leads" value={idOf(h.tl)} options={fo('tlId')} loading={facetsLoading}
+              onChange={(v) => setDraftH({ ...h, tl: v ? `id:${v}` : '' })} />
+          )}
+        </PageFilterBar>
         {topFilters}
       </FilterCard>
 
@@ -1018,13 +1082,12 @@ export default function Requirements() {
 
       {/* The list, and the "Selected requirement" panel beside it (× hides it
           and gives the table the full width; a row click brings it back). */}
-      <div className={`crq4-layout${current ? '' : ' crq4-noside'}`}>
+      <div className={`crq4-layout${current && docked ? '' : ' crq4-noside'}`}>
         <div className="crq4-main">
           <Panel
             className="crq4-list"
-            title="Requirements List"
+            title="Jobs list"
             sub={tabLabel !== 'Requirements' ? plainWords(tabLabel) : undefined}
-            extra={<MiniPager page={pageObj} />}
           >
             <div className="crq4-list-tools">
               {/* Status tabs with counts — a 0 tab is hidden for everyone. */}
@@ -1056,12 +1119,15 @@ export default function Requirements() {
                 )}
                 savedViews={(
                   /* Up to 4 one-click chips (the saved-view presets). Click again to clear. */
-                  <div className="reqq-chips" role="group" aria-label="Quick views">
-                    {presets.map((pr) => (
-                      <button key={pr.name} type="button" title={pr.hint} aria-pressed={presetOn(pr)} className={`reqq-chip${presetOn(pr) ? ' is-on' : ''}`} onClick={() => pickPreset(pr)}>
-                        {pr.name}
-                      </button>
-                    ))}
+                  <div className="jl-quick" role="group" aria-label="Quick views">
+                    <span className="jl-quick-lbl">Quick views</span>
+                    <div className="reqq-chips">
+                      {presets.map((pr) => (
+                        <button key={pr.name} type="button" title={pr.hint} aria-pressed={presetOn(pr)} className={`reqq-chip${presetOn(pr) ? ' is-on' : ''}`} onClick={() => pickPreset(pr)}>
+                          {pr.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 panelFooter={(
@@ -1070,16 +1136,26 @@ export default function Requirements() {
                   </span>
                 )}
                 chips={chips}
-                onClearAll={activeCount ? clearFilters : undefined}
               />
             </div>
 
               {loadError && <div className="notice red">{loadError}</div>}
               {rowError && <div className="notice red" style={{ display: 'flex', justifyContent: 'space-between' }}>{rowError}<button type="button" className="btn btn-sm btn-ghost" onClick={() => setRowError('')}>×</button></div>}
 
+              {(counts.postWait > 0 || postWaitOn) && (
+                <div className="rr-postwait" role="group" aria-label="Waiting to be posted by hand">
+                  <button type="button" aria-pressed={postWaitOn} className={`reqq-chip${postWaitOn ? ' is-on' : ''}`} onClick={() => setPostWaitOn((v) => !v)}>
+                    {`Waiting to be posted by hand (${nf(counts.postWait || 0)})`}
+                  </button>
+                  <button type="button" className="btn btn-sm btn-primary" onClick={() => openWalk(null)}>Post them one by one</button>
+                  <span className="small-muted">Naukri, Shine, Indeed or LinkedIn jobs that a person still has to post.</span>
+                </div>
+              )}
+
               {canSelect && selected.size > 0 && (
                 <div className="reqbulk-bar" role="region" aria-label="Bulk actions">
                   <span className="count">{`${nf(selected.size)} selected`}</span>
+                  <button type="button" className="btn btn-sm" title="Walk through the boards that wait for a person to post them" onClick={() => openWalk(selectedItems.map((x) => x.id))}>Post by hand, one by one</button>
                   {/* "Needs a TL" → Assign TL is the one main action; "Needs a recruiter" → Assign recruiter. */}
                   {bulkActions.assign && view !== 'needstl' && <button type="button" className={`btn btn-sm${view === 'unassigned' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-recruiter', items: selectedItems })}>Assign recruiter</button>}
                   {bulkActions.assign && view !== 'unassigned' && <button type="button" className={`btn btn-sm${view === 'needstl' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-tl', items: selectedItems })}>Assign team lead</button>}
@@ -1098,7 +1174,7 @@ export default function Requirements() {
               )}
 
               <div style={{ opacity: loading ? 0.6 : 1 }}>
-                <ScrollTable maxHeight={null} bodyClassName={`tbl-fit jobsws-table${visible.length <= 10 ? ' crq4-fit' : ''}`}>
+                <ScrollTable maxHeight={null} bodyClassName={`tbl-fit jobsws-table${visible.length <= 9 ? ' jl-neat' : ''}`}>
                   <table>
                     <thead>
                       <tr>
@@ -1134,7 +1210,7 @@ export default function Requirements() {
                           className={`row-link${selected.has(r.id) ? ' is-selected' : ''}${current && current.id === r.id ? ' crq4-current' : ''}`}
                           onClick={() => pickRow(r)}
                           onDoubleClick={() => setDrawer(r)}
-                          title="Click to see it on the right · double-click for the quick view"
+                          title="Click to see this job's details · double-click for the quick view"
                         >
                           {visible.map((c) => cloneElement(cell(c, r), { 'data-col': c.key }))}
                         </tr>
@@ -1169,22 +1245,32 @@ export default function Requirements() {
           </Panel>
         </div>
 
-        {current && (
-          <aside className="crq4-side" aria-label="The selected requirement">
-            <Panel
-              className="crq4-sticky"
-              title="Selected Requirement"
-              extra={<button type="button" className="ak-panel-link crq4-x" onClick={() => setPickId('none')} aria-label="Close the selected requirement" title="Close">×</button>}
-            >
-              <SelectedRequirement
-                row={current}
-                role={role}
-                onAction={(k) => pickRowAction(current, k)}
-                onQuickView={() => setDrawer(current)}
-              />
-            </Panel>
-          </aside>
-        )}
+        {current && (() => {
+          const sheet = (
+            <aside className={docked ? 'crq4-side' : 'crq4-sheet'} aria-label="The selected job">
+              <Panel
+                className="crq4-sticky"
+                title="Selected job"
+                extra={<button type="button" className="ak-panel-link crq4-x" onClick={() => setPickId('none')} aria-label="Close the selected job" title="Close">×</button>}
+              >
+                <SelectedRequirement
+                  row={current}
+                  role={role}
+                  onAction={(k) => pickRowAction(current, k)}
+                  onQuickView={() => setDrawer(current)}
+                  actions={menuFor(current)}
+                />
+              </Panel>
+            </aside>
+          );
+          // Smaller screen: slides in over the table, dimmed behind; click outside, × or Esc closes it.
+          return docked ? sheet : (
+            <div className="crq4-over" role="dialog" aria-modal="true" aria-label="The selected job">
+              <button type="button" className="crq4-over-back" onClick={() => setPickId('none')} aria-label="Close the selected job" tabIndex={-1} />
+              {sheet}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Not in the reference: kept, lower down. */}
@@ -1230,7 +1316,8 @@ export default function Requirements() {
         />
       )}
 
-      {postPanel && <PostingStatusPanel requirementId={postPanel.id} code={postPanel.code} title={postPanel.title} onClose={() => setPostPanel(null)} />}
+      {postPanel && <PostingStatusPanel requirementId={postPanel.id} code={postPanel.code} title={postPanel.title} onChanged={load} onClose={() => setPostPanel(null)} />}
+      {walkPairs && <PostWalkthrough pairs={walkPairs} onChanged={load} onClose={() => { setWalkPairs(null); load(); }} />}
       {showForm && (
         <RequirementForm
           mode="create"

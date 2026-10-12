@@ -74,4 +74,15 @@ api.interceptors.response.use(undefined, async (error) => {
   return api({ ...config, b8OverrideAsked: true, data: { ...body, overrideReason: reason } });
 });
 
+// DUPLICATE HOLD: a move out of the first step is refused (409 DUPLICATE_OPEN) while the person looks like someone already
+// on file. Every screen shows the server's plain-words message; this opens the "Check duplicates" window for that person
+// as well, so the way out is one click away wherever the move came from.
+api.interceptors.response.use(undefined, (error) => {
+  const data = error.response?.data;
+  if (error.response?.status === 409 && data && data.code === 'DUPLICATE_OPEN' && data.candidateId) {
+    import('./components/duplicates/openDup.jsx').then((m) => m.openDupPanel({ candidateId: data.candidateId, message: data.error })).catch(() => null);
+  }
+  throw error;
+});
+
 export default api;

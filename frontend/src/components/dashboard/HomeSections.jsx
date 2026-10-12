@@ -33,9 +33,9 @@ const ageWords = (d) => (d === null || d === undefined ? '' : d === 0 ? 'today' 
 const STEP_SHORT = ['Added', 'Sent', 'Interview', 'Selected', 'Joined'];
 const errText = (e) => (e && e.response && e.response.data && e.response.data.error) || 'This part could not be loaded. Refresh the page to try again.';
 
-// One number that opens its list; a zero is a quiet dash (never a bare 0).
+// One number that opens its list; a real zero is a quiet grey 0 (a dash would look like missing data).
 function N({ value, drill, onDrill, tone, what }) {
-  if (!value) return <span className="hs-dash" aria-label="none">–</span>;
+  if (!value) return <span className="hs-dash hs-zero" aria-label="none" title={what ? `None: ${what}` : 'None'}>0</span>;
   return (
     <button type="button" className={`hs-n${tone ? ` t-${tone}` : ''}`} title={what ? `${what} — open the list` : 'Open the list'}
       onClick={(e) => { e.stopPropagation(); onDrill(drill); }}>{fmt(value)}</button>
@@ -58,7 +58,7 @@ export function TodayStrip({ w, onDrill }) {
               <b>{fmt(i.value)}</b><span>{i.label}</span>
             </button>
           ) : (
-            <span key={i.id} className="hs-today-i is-none" title={i.hint}><b>–</b><span>{i.label}</span></span>
+            <span key={i.id} className="hs-today-i is-none" title={`${i.hint} None so far today.`}><b>0</b><span>{i.label}</span></span>
           )))}
         </div>
       )}
@@ -67,18 +67,28 @@ export function TodayStrip({ w, onDrill }) {
 }
 
 // ---- TEAM LEADS ---------------------------------------------------------------------------
+// [key, label, hint, basis]: the second header line says what the column counts.
 const TL_COLS = [
-  ['openJobs', 'Open jobs', 'Open jobs they lead or their recruiters hold.'],
-  ['inProcess', 'In process', 'People on their jobs now (not rejected, on hold or joined).'],
-  ['interviews', 'Interviews', 'Interviews in the dates you picked.'],
-  ['selected', 'Selected', 'Selected or offered, not joined yet.'],
-  ['joined', 'Joined', 'People who joined in the dates you picked.'],
-  ['late', 'Late', 'Work past its due date.'],
+  ['openJobs', 'Open jobs', 'Open jobs they lead or their recruiters hold.', 'today'],
+  ['inProcess', 'In process', 'People on their jobs now (not rejected, on hold or joined).', 'today'],
+  ['interviews', 'Interviews', 'Interviews in the dates you picked.', 'dates'],
+  ['selected', 'Selected', 'Selected or offered, not joined yet.', 'today'],
+  ['joined', 'Joined', 'People whose joining date is in the dates you picked.', 'dates'],
+  ['joinedTotal', 'Joined', 'Everyone marked Joined, whatever the joining date.', 'in total'],
+  ['late', 'Late', 'Work past its due date.', 'today'],
 ];
-function PersonCells({ r, onDrill }) {
-  return TL_COLS.map(([k, l]) => (
+const basisOf = (b, word) => (b === 'today' ? 'as of today' : b === 'dates' ? (word || 'in the dates picked') : b);
+function TlHead({ cols, word }) {
+  return cols.map(([k, l, h, b]) => (
+    <th key={k} className="num hs-th" title={`${h} (${basisOf(b, word)})`}><span className="hs-th-l">{l}</span><small className="hs-th-b">{basisOf(b, word)}</small></th>
+  ));
+}
+function PersonCells({ r, onDrill, cols = TL_COLS }) {
+  // A person with nothing yet: one plain line, never a row of zeros.
+  if (cols.every(([k]) => !r[k])) return <td colSpan={cols.length} className="hs-nojobs" style={{ textAlign: 'left' }}><span className="small-muted">No jobs yet</span></td>;
+  return cols.map(([k, l]) => (
     <td key={k} className="num" data-label={l}>
-      <N value={r[k]} drill={r.drills[k]} onDrill={onDrill} tone={k === 'late' ? 'red' : k === 'joined' ? 'green' : null} what={`${r.name} — ${l}`} />
+      <N value={r[k]} drill={r.drills[k]} onDrill={onDrill} tone={k === 'late' ? 'red' : k === 'joined' || k === 'joinedTotal' ? 'green' : null} what={`${r.name} — ${l}`} />
     </td>
   ));
 }
@@ -88,9 +98,10 @@ export function TeamLeads({ w, onDrill, tls, params, onCand }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState(null);
   const data = tls && tls.data;
-  if (!tls || tls.loading) return <section className="panel hs-box"><Head title={w.title} /><div className="hs-empty">Loading the team leads…</div></section>;
-  if (tls.error) return <section className="panel hs-box"><Head title={w.title} /><div className="notice red">{tls.error}</div></section>;
+  if (!tls || tls.loading) return <section className="panel hs-box"><Head title={w.title} /><div className="hs-empty">Loading the team leads...</div></section>;
+  if (tls.error) return <section className="panel hs-box"><Head title={w.title} /><div className="notice red">{tls.error}{tls.retry && <> <button type="button" className="btn btn-sm" onClick={tls.retry}>Try again</button></>}</div></section>;
   const rows = data.rows || [];
+  const cols = TL_COLS.filter(([k]) => !(data.periodAll && k === 'joined'));
   const top = [...rows].sort((x, y) => y.late - x.late || y.inProcess - x.inProcess || y.openJobs - x.openJobs).slice(0, 5);
   const grouped = all && (data.groups || []).length > 1;
   const groups = all ? (data.groups || []) : [{ department: null, rows: top }];
@@ -103,18 +114,18 @@ export function TeamLeads({ w, onDrill, tls, params, onCand }) {
           <span><b>{r.name}</b>{showDept && r.department && <span className="hs-sub">{r.department}</span>}</span>
           <span className="hs-caret" aria-hidden="true">{open === r.id ? '▴' : '▾'}</span>
         </td>
-        <td className="num" data-label="Recruiters">{r.teamSize ? fmt(r.teamSize) : <span className="hs-dash">–</span>}</td>
-        <PersonCells r={r} onDrill={onDrill} />
+        <td className="num" data-label="Recruiters">{r.teamSize ? fmt(r.teamSize) : <span className="hs-dash hs-zero" title="None">0</span>}</td>
+        <PersonCells r={r} onDrill={onDrill} cols={cols} />
       </tr>
       {open === r.id && (
-        <tr className="hs-open-row"><td colSpan={TL_COLS.length + 2}>
+        <tr className="hs-open-row"><td colSpan={cols.length + 2}>
           <div className="hs-inside">
             <h4>{r.name}'s recruiters</h4>
             {!r.recruiters.length ? <div className="hs-empty">No recruiter reports to {r.name} yet.</div> : (
               <table className="hs-tbl hs-tbl-in">
-                <thead><tr><th>Recruiter</th>{TL_COLS.map(([k, l, h]) => <th key={k} className="num" title={h}>{l}</th>)}</tr></thead>
+                <thead><tr><th>Recruiter</th><TlHead cols={cols} word={data.word} /></tr></thead>
                 <tbody>{r.recruiters.map((p) => (
-                  <tr key={p.id}><td className="hs-who" data-label="Recruiter"><span className="hs-avatar" aria-hidden="true">{initials(p.name)}</span><b>{p.name}</b></td><PersonCells r={p} onDrill={onDrill} /></tr>
+                  <tr key={p.id}><td className="hs-who" data-label="Recruiter"><span className="hs-avatar" aria-hidden="true">{initials(p.name)}</span><b>{p.name}</b></td><PersonCells r={p} onDrill={onDrill} cols={cols} /></tr>
                 ))}</tbody>
               </table>
             )}
@@ -135,10 +146,10 @@ export function TeamLeads({ w, onDrill, tls, params, onCand }) {
       {!rows.length ? <div className="hs-empty">No team lead here yet. Team leads show once jobs or recruiters are given to them.</div> : (
         <div className="hs-wrap">
           <table className="hs-tbl">
-            <thead><tr><th>Team lead</th><th className="num" title="Recruiters whose seat reports to them">Recruiters</th>{TL_COLS.map(([k, l, h]) => <th key={k} className="num" title={h}>{l}</th>)}</tr></thead>
+            <thead><tr><th>Team lead</th><th className="num hs-th" title="Recruiters whose seat reports to them"><span className="hs-th-l">Recruiters</span><small className="hs-th-b">&nbsp;</small></th><TlHead cols={cols} word={data.word} /></tr></thead>
             {groups.map((g) => (
               <tbody key={g.department || 'top'}>
-                {grouped && <tr className="hs-group"><td colSpan={TL_COLS.length + 2}>{g.department} · {g.rows.length} {g.rows.length === 1 ? 'team lead' : 'team leads'}</td></tr>}
+                {grouped && <tr className="hs-group"><td colSpan={cols.length + 2}>{g.department} · {g.rows.length} {g.rows.length === 1 ? 'team lead' : 'team leads'}</td></tr>}
                 {g.rows.map(row)}
               </tbody>
             ))}

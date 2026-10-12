@@ -9,6 +9,7 @@
 
 import { emailLayout } from './layout.js';
 import { houseMessage, houseText } from './messages.js';
+import { jobOpportunityMessages } from './job-opportunity.js';
 import { walkinFacts, dateLabel, timeRange } from '../portal/walkin-jobs.js';
 
 const esc = (s) => String(s ?? '')
@@ -185,6 +186,7 @@ const SUBJECTS = {
   AI_INTERVIEW_REMINDER:  (c) => `Reminder: your AI interview for ${c.jobTitle} closes tomorrow`,
   AI_INTERVIEW_FINAL:     (c) => `Last chance: your AI interview for ${c.jobTitle} closes in 2 hours`,
   AI_INTERVIEW_EXPIRED:   (c) => `Your AI interview window for ${c.jobTitle} has closed`,
+  AI_INTERVIEW_CLOSING_TODAY: (c) => `The job closes today – attend your AI interview for ${c.jobTitle}`,
 
   JOB_MATCH_ALERT:        (c) => `A ${c.jobTitle} role matching your profile`,
   AI_CALL_COMPLETED:      (c) => `AI call completed - ${c.candidateName}, ${c.jobTitle}`,
@@ -257,6 +259,11 @@ const BODIES = {
     `You have not yet taken the AI interview for ${c.jobTitle} at ${c.company}.`
     + `\n\nThe window closes ${human(c.dueAt)} — about 24 hours from now. `
     + 'After that the application cannot move forward.',
+
+  /* 0133: SMS / WhatsApp - the short form of the closing-day email */
+  AI_INTERVIEW_CLOSING_TODAY: (c) =>
+    `You applied for ${c.jobTitle} (Job ID ${c.jobId}) but have not attended the AI interview. `
+    + 'The job closes today - please attend the interview before it closes.',
 
   AI_INTERVIEW_FINAL: (c) =>
     `Final reminder: the AI interview for ${c.jobTitle} at ${c.company} closes `
@@ -564,6 +571,22 @@ export function buildSavedSearchMessages(c) {
     + `See all results: ${c.searchUrl}\n\n`
     + `Stop this alert: ${c.stopUrl}\n\n— TeamLink`;
 
+  const note = `You get this because you saved the search "${label}" on TeamLink`
+    + ` with ${c.kind === 'instant' ? 'instant' : c.kind} alerts.`;
+
+  /* One new job: the shared job-opportunity format (job-opportunity.js,
+     owner 2026-10-06), opening with the search it matched. A digest of
+     several jobs stays a list - it is a summary, not one opportunity. */
+  if (one) {
+    const j = jobs[0];
+    const m = jobOpportunityMessages(j.record || j, {
+      kind: 'saved_search', label, applyUrl: j.url, company: j.company,
+      email: { subject, note: `${note} See all results: ${c.searchUrl}`, ctaLabel: 'View job & apply',
+               stopLink: { label: 'Stop this alert', url: c.stopUrl } },
+    });
+    return { email: m.email, sms: m.sms, whatsapp: m.whatsapp, inApp: m.inApp };
+  }
+
   const html = emailLayout({
     title: subject,
     preheader: lead,
@@ -572,8 +595,7 @@ export function buildSavedSearchMessages(c) {
     facts: one ? [['Role', jobs[0].title], ['Company', jobs[0].company],
                   ['Location', jobs[0].location], ['Pay', jobs[0].pay]] : [],
     cta: { label: one ? 'View job & apply' : 'See these jobs', url: one ? jobs[0].url : c.searchUrl },
-    note: `You get this because you saved the search "${label}" on TeamLink`
-      + ` with ${c.kind === 'instant' ? 'instant' : c.kind} alerts.`,
+    note,
     stopLink: { label: 'Stop this alert', url: c.stopUrl },
   });
 

@@ -1,0 +1,35 @@
+/* The thank-you screen after signing (AgreementThanks.jsx). Scoped .agt-* only. */
+.agt-main { max-width: 640px; }
+.agt-logo { display: flex; justify-content: center; padding: 8px 0 6px; }
+.agt-logo .brand-mark { height: auto; max-width: 78vw; }
+.agt-card { text-align: center; }
+.agt-card h1 { font-size: 26px; margin: 4px 0 6px; color: var(--ink); }
+.agt-card h2 { font-size: 16px; margin: 0 0 10px; color: var(--ink); text-align: left; }
+.agt-tick { width: 58px; height: 58px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 32px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 6px; }
+.agt-lead { font-size: 15px; color: var(--ink); margin: 0 0 14px; }
+.agt-dl-line { font-size: 14.5px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+.agt-main-btn { min-height: 50px; padding: 0 28px; font-size: 16px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.agt-main-btn.is-busy { opacity: .75; pointer-events: none; }
+.agt-note { font-size: 13px; margin: 10px 0 0; }
+.agt-ok { color: var(--teal); }
+.agt-bad { color: var(--red); }
+.agt-next { text-align: left; }
+.agt-steps { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.agt-steps li { position: relative; padding: 8px 10px 8px 34px; border-radius: 8px; background: var(--line-soft); color: var(--ink-soft); font-size: 14px; }
+.agt-steps li::before { content: '○'; position: absolute; left: 11px; top: 7px; font-weight: 700; }
+.agt-steps li.done { background: var(--teal-tint); color: var(--teal); }
+.agt-steps li.done::before { content: '✓'; }
+.agt-steps li.now { background: var(--amber-tint); color: var(--amber); }
+.agt-steps li.now::before { content: '…'; }
+.agt-contact { font-size: 14px; margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.agt-sum { margin: 0; text-align: left; display: flex; flex-direction: column; }
+.agt-row { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line-soft); font-size: 14px; }
+.agt-row:first-child { border-top: 0; }
+.agt-row dt { color: var(--ink-soft); }
+.agt-row dd { margin: 0; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .agt-card h1 { font-size: 22px; }
+  .agt-main-btn { width: 100%; }
+  .agt-row { grid-template-columns: 1fr; gap: 0; }
+  .agt-row dd { margin-top: 2px; }
+}

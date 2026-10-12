@@ -12,7 +12,7 @@ import StatusChip from '../ui/StatusChip.jsx';
 // Colours: yellow waiting · blue going on · green filled · grey closed.
 // ---------------------------------------------------------------------------
 export const JOB_STATUSES = [
-  { key: 'draft', label: 'Draft', tone: 'amber', hint: 'Not live yet. Waits for the client agreement.' },
+  { key: 'draft', label: 'Draft', tone: 'amber', hint: 'Not live yet. A new job request waits here until it is checked and opened.' },
   { key: 'approved', label: 'Agreement Approved', tone: 'amber', hint: 'Live, but no recruiter on it yet.' },
   { key: 'assigned', label: 'Assigned', tone: 'blue', hint: 'A recruiter is on it. No people added yet.' },
   { key: 'open', label: 'Open', tone: 'blue', hint: 'People are being worked on this job.' },

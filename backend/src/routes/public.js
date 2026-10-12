@@ -16,30 +16,30 @@ const router = express.Router();
 const PUBLIC_COMPANY = 'TeamLink Consultants';
 
 router.get('/jobs', async (req, res) => {
-  const jobs = await prisma.requirement.findMany({
-    where: { status: { in: REQUIREMENT_LIVE_STATUSES } },
-    include: { client: true },
-    orderBy: { createdAt: 'desc' },
+  // ONLY WHAT IS REALLY POSTED (security review 2026-10-09). This list used to
+  // return EVERY live requirement (2,500+), published or not, with the client's
+  // location as a fallback. It now answers exactly what /api/public/careers/jobs
+  // answers: published to the job portal, live, "Job Portal" ticked on the job
+  // (routes/careersPublic.js isListed), and shows only the job's own location.
+  const rows = await prisma.requirement.findMany({
+    where: { portalPublished: true, status: { in: REQUIREMENT_LIVE_STATUSES } },
+    orderBy: [{ portalPublishedAt: 'desc' }, { createdAt: 'desc' }],
   });
+  // eslint-disable-next-line global-require
+  const { isListed } = require('./careersPublic');
+  const jobs = rows.filter(isListed);
   res.json(
     jobs.map((j) => ({
       id: j.id,
       title: j.title,
       description: j.description,
       department: j.department,
-      priority: j.priority,
       // THE CLIENT STAYS CONFIDENTIAL on anything public — the same rule the
       // job feeds below follow. The company advertising is TeamLink.
       client: PUBLIC_COMPANY,
-      location: j.location || j.client.location,
-      postedAt: j.createdAt,
-      // Whether someone in the ATS has PUBLISHED this requirement to the job
-      // portal. Reported, deliberately NOT used as a filter: this feed has
-      // always listed every live requirement, and narrowing it now would
-      // empty the careers list on any database seeded before publishing
-      // existed. See the migration's backfill and JobPortalWorkspace.jsx,
-      // which both say the same thing.
-      published: !!j.portalPublished,
+      location: j.location || null,
+      postedAt: j.portalPublishedAt || j.createdAt,
+      published: true,
     }))
   );
 });
@@ -198,17 +198,18 @@ function jobPostingLd(j, base) {
 }
 
 router.get('/jobs/:id', async (req, res) => {
-  const job = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
-  if (!job || !requirementIsLive(job.status)) return res.status(404).json({ error: 'Job not found' });
+  // Same rule as the list: only a job that is really posted on the portal.
+  const job = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+  // eslint-disable-next-line global-require
+  if (!job || !require('./careersPublic').isListed(job)) return res.status(404).json({ error: 'Job not found' });
   res.json({
     id: job.id,
     title: job.title,
     description: job.description,
     department: job.department,
-    priority: job.priority,
     client: PUBLIC_COMPANY,
-    location: job.location || job.client.location,
-    postedAt: job.createdAt,
+    location: job.location || null,
+    postedAt: job.portalPublishedAt || job.createdAt,
   });
 });
 
@@ -223,9 +224,14 @@ router.post('/jobs/:id/apply', async (req, res) => {
   const { name, email, phone } = req.body;
   const cameFrom = TRACKED_SOURCES.includes(String(req.body.src || '')) ? String(req.body.src) : null;
   if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
+  // Current + expected salary are required (user note 2026-10-10).
+  const sal = require('../utils/salaryFit').validateSalaries(req.body || {}); // eslint-disable-line global-require
+  if (!sal.ok) return res.status(400).json({ error: sal.message, code: 'SALARY_REQUIRED', errors: sal.errors });
 
   const job = await prisma.requirement.findUnique({ where: { id: req.params.id } });
-  if (!job || !requirementIsLive(job.status)) return res.status(404).json({ error: 'Job not found' });
+  // Only a job really posted on the portal takes applications here (security review 2026-10-09).
+  // eslint-disable-next-line global-require
+  if (!job || !require('./careersPublic').isListed(job)) return res.status(404).json({ error: 'Job not found' });
   // A paused / archived client takes no new applications (spec 2026-10-03 §A).
   // The public is not told why.
   // eslint-disable-next-line global-require
@@ -238,7 +244,7 @@ router.post('/jobs/:id/apply', async (req, res) => {
   // and the portal import use) — applies as that candidate, never as a copy.
   let candidate = await findCandidateByContact({ email, phone });
   if (!candidate) {
-    candidate = await prisma.candidate.create({ data: { name, email: String(email).trim(), phone: phone ? String(phone).trim() : null, source: cameFrom || 'Job Portal' } });
+    candidate = await prisma.candidate.create({ data: { name, email: String(email).trim(), phone: phone ? String(phone).trim() : null, currentSalary: sal.values.currentSalary, expectedSalary: sal.values.expectedSalary, source: cameFrom ? require('../utils/candidateSource').canonicalSource(cameFrom) : 'Job Portal' } }); // eslint-disable-line global-require
     await prisma.syncLog.create({
       data: { entity: 'Candidates', status: 'Success', reason: `${candidate.name} registered from the Job Portal`, recordRef: candidate.id },
     });
@@ -329,7 +335,7 @@ router.get('/agreement/:token', agreementLinkLimit, async (req, res) => {
     });
     await logAudit({
       action: signing.ACTION.opened, entity: 'Client', entityId: client.id, fromValue: 'SENT', toValue: 'VIEWED',
-      reason: `IP ${String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60)}`,
+      reason: `IP ${require('../utils/clientIp').ipOf(req)}`, // eslint-disable-line global-require
     });
   }
   return res.json(await signing.publicView(current));

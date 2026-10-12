@@ -45,6 +45,9 @@ const { DEPTS, LOCS } = require('../utils/atsVocab');
 const mailer = require('../utils/mailer');
 const { senderIdentity } = require('../utils/candidateComms');
 const { today: positionToday, hasLeft: seatHolderLeft, lastWorkingDayOf } = require('../utils/positions');
+// A seat is freed the moment its holder leaves (utils/seatRelease.js): the notice-period state
+// and the safety-net sweep the seat pickers below read first.
+const seatRelease = require('../utils/seatRelease');
 const empVerify = require('../utils/employeeVerification');
 const emailVerify = require('../utils/employeeEmailVerification');
 // Super Admin is a system account, not an employee: it drops out of every
@@ -55,6 +58,8 @@ const { activeOnly, hasColumn } = require('../utils/masters');
 const employeeCodes = require('../utils/employeeCode');
 // Every export / import tells the Super Admin (in-app + throttled email).
 const { notifyDataIo } = require('../utils/dataIoNotify');
+// Manage Fields: which built-in fields HR has paused / made required.
+const fieldDefs = require('../utils/employeeFieldDefs');
 
 const router = express.Router();
 
@@ -78,6 +83,8 @@ const router = express.Router();
 });
 
 router.use(requireAuth);
+// Who is acting, for the audit rows written when somebody's status ends their seat.
+router.use(seatRelease.actorScope);
 
 // STL/TL are themselves employees, scoped to their own department only. Manager
 // and Assistant Manager have cross-department oversight (see Role Catalog) so
@@ -282,8 +289,11 @@ function completionPct(e) {
     'emergencyContactName', 'emergencyContactPhone', 'branch', 'bankName', 'bankAccountNumber', 'ifscCode',
     'panNumber', 'aadhaarNumber', 'educationDetails', 'skills',
   ];
-  const filled = fields.filter((f) => e[f]).length;
-  return Math.round((filled / fields.length) * 100);
+  // A field HR has paused is not on the form, so it is not counted either.
+  const paused = fieldDefs.pausedCols();
+  const counted = fields.filter((f) => !paused.has(f === 'aadhaarNumber' ? 'aadhaarNumber' : f));
+  const filled = counted.filter((f) => e[f]).length;
+  return counted.length ? Math.round((filled / counted.length) * 100) : 100;
 }
 
 function withComputed(e) {
@@ -448,8 +458,17 @@ router.put('/me', async (req, res) => {
   if (employee.pendingChanges) return res.status(409).json({ error: 'Your last submission is still awaiting HR review.' });
 
   const changes = [];
+  await fieldDefs.refresh();
+  const pausedNow = fieldDefs.pausedCols();
+  const requiredNow = fieldDefs.requiredCols();
   for (const [field, label] of Object.entries(SELF_SERVICE_FIELDS)) {
     if (req.body[field] === undefined) continue;
+    // A paused field is off the form: whatever is sent for it is ignored and its saved value stays.
+    if (pausedNow.has(field)) continue;
+    if (requiredNow.has(field) && !String(req.body[field] ?? '').trim()) {
+      const st = fieldDefs.stateOf(field);
+      return res.status(400).json({ error: `"${st ? st.label : label}" is required.` });
+    }
     // A DateTime column comes back as a Date; the form sends "YYYY-MM-DD".
     // Comparing those raw made an unchanged date of birth look like an edit.
     const current = DATE_FIELDS.has(field) && employee[field]
@@ -574,6 +593,10 @@ async function buildExport(req) {
     }),
     seatTimelines(),
   ]);
+  // A paused field is not in a new export (Phone is written 'phone' on the record, 'Mobile' here).
+  await fieldDefs.refresh();
+  const paused = fieldDefs.pausedCols();
+  const exportColumns = EXPORT_COLUMNS.filter(([key]) => !paused.has(key));
   const rows = employees.map((e) => {
     const c = withComputed(e);
     const seat = seatSummary(seats.get(e.id));
@@ -586,11 +609,11 @@ async function buildExport(req) {
     }
     c.reportingManagerName = e.reportingManager ? e.reportingManager.name : '';
     c.dateOfJoining = e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : '';
-    return EXPORT_COLUMNS.map(([key]) => (c[key] === null || c[key] === undefined ? '' : c[key]));
+    return exportColumns.map(([key]) => (c[key] === null || c[key] === undefined ? '' : c[key]));
   });
   const departments = scopeDepartments(req);
   return {
-    headers: EXPORT_COLUMNS.map(([, label]) => label),
+    headers: exportColumns.map(([, label]) => label),
     rows,
     count: employees.length,
     scopeLabel: scopeLabel(req),
@@ -692,7 +715,8 @@ function matchesListFilters(e, f, seatList) {
   return true;
 }
 
-router.get('/export/fields', requirePerm(null, 'hrms', 'Employee Management', 'export'), (req, res) => {
+router.get('/export/fields', requirePerm(null, 'hrms', 'Employee Management', 'export'), async (req, res) => {
+  await fieldDefs.refresh();
   const refusal = globalExportRefusal(req);
   if (refusal) return res.status(403).json({ error: refusal });
   return res.json({
@@ -1119,6 +1143,9 @@ router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view
       assign: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'assign'),
       approve: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'approve'),
       configure: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'configure'),
+      // Manage Fields (the field list): Super Admin and HR only.
+      manageFields: ([req.user.role, req.user.hrmsRole].some((r) => r === 'SUPER_ADMIN' || r === 'HR'))
+        && await can(req.user, 'hrms', 'hrms', 'Employee Management', 'create'),
       delete: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'delete'),
       // Reset Password / Send Password Reset — the HR desk (hrms-24 §12).
       passwords: await mayManagePasswords(req.user),
@@ -1296,6 +1323,85 @@ async function reportingManagerOptions(inScope) {
   return { reportingManagers: shaped, managerNames: [...new Set(shaped.map((m) => m.name))] };
 }
 
+// AFTER SOMEBODY LEAVES - what still points at a person who has left (user, 2026-10-10):
+// clients with no active BDE, jobs with no team lead / recruiter, people whose manager has left,
+// approvals / follow-ups / tasks still waiting on them. Read-only; every list is held to what the
+// caller may see (utils/afterExit.js). Nothing is reassigned silently.
+router.get('/after-exit', async (req, res) => {
+  res.json(await require('../utils/afterExit').lists({ user: req.user }));
+});
+
+// THE REPORTING-MANAGER PICKER (user, 2026-10-10): cascades from the Department chosen in the
+// same form. A recruiter / BDE / staff member is offered the ACTIVE team leads (and the department's
+// manager) of THEIR department; a team lead is offered the manager level; leavers never.
+//   GET /employees/management/manager-options?department=Education&designation=Recruiter[&employeeId=..][&cross=1]
+router.get('/management/manager-options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const reportingLine = require('../utils/reportingLine');
+  const q = req.query || {};
+  let emp = null;
+  if (q.employeeId) emp = await prisma.employee.findUnique({ where: { id: String(q.employeeId) }, include: { user: { select: { role: true, hrmsRole: true, atsRole: true } } } });
+  const designation = q.designation !== undefined ? String(q.designation) : (emp && emp.designation);
+  const sameDesignation = !emp || designation === emp.designation;
+  const roleCode = String(q.roleCode || '').trim();
+  const level = reportingLine.levelOf({ designation, user: roleCode ? { role: roleCode, hrmsRole: roleCode, atsRole: roleCode } : (sameDesignation && emp ? emp.user : null) });
+  const out = await reportingLine.candidatesFor({
+    department: String(q.department !== undefined ? q.department : (emp && emp.department) || ''),
+    level, excludeId: emp ? emp.id : null, cross: q.cross === '1' || q.cross === 'true',
+  });
+  res.json(out);
+});
+
+// "People whose manager has left" -> move them to a new manager in one go. Only the field(s)
+// that named a leaver change (team lead name, senior team lead name, reporting manager); one
+// audit row per change. The new manager must still be working here and visible to the caller.
+router.post('/management/reassign-manager', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body && req.body.employeeIds) ? req.body.employeeIds : []).map(String))].slice(0, 500);
+  const managerId = String((req.body && req.body.managerId) || '').trim();
+  if (!ids.length) return res.status(400).json({ error: 'Tick the people to move.' });
+  if (!managerId) return res.status(400).json({ error: 'Choose their new manager.' });
+  const manager = await prisma.employee.findUnique({ where: { id: managerId }, select: { id: true, name: true, employmentStatus: true } });
+  if (!manager) return res.status(404).json({ error: 'That manager was not found.' });
+  if (seatHolderLeft(manager.employmentStatus)) return res.status(409).json({ error: `${manager.name} has left the company. Choose someone who works here.` });
+  if (ids.includes(manager.id)) return res.status(400).json({ error: 'A person cannot be their own manager.' });
+  const people = await prisma.employee.findMany({ where: { AND: [{ id: { in: ids } }, withoutSystemAccounts(departmentWhere(req))] } });
+  const gone = await prisma.employee.findMany({
+    where: { employmentStatus: { in: ['Relieved', 'Exited', 'Exit Process', 'Terminated'] } }, select: { id: true, name: true },
+  });
+  const goneNames = new Set(gone.map((g) => g.name.trim().toLowerCase()));
+  const goneIds = new Set(gone.map((g) => g.id));
+  let moved = 0;
+  const skipped = [];
+  const reportingLine = require('../utils/reportingLine');
+  for (const p of people) {
+    const data = {};
+    if (p.tl && goneNames.has(p.tl.trim().toLowerCase())) data.tl = manager.name;
+    if (p.stl && goneNames.has(p.stl.trim().toLowerCase())) data.stl = manager.name;
+    if (p.reportingManagerId && goneIds.has(p.reportingManagerId)) data.reportingManagerId = manager.id;
+    if (!Object.keys(data).length) { skipped.push(p.name); continue; }
+    if (data.reportingManagerId === p.id) { skipped.push(p.name); continue; }
+    // The new manager must lead the person's own department (unless "other departments" is on).
+    {
+      const pLogin = p.userId ? await prisma.user.findUnique({ where: { id: p.userId }, select: { role: true, hrmsRole: true, atsRole: true } }) : null; // eslint-disable-line no-await-in-loop
+      const why = await reportingLine.problemFor({ id: p.id, department: p.department, level: reportingLine.levelOf({ designation: p.designation, user: pLogin }) }, { managerId: manager.id }, { cross: req.body.crossDepartment === true }); // eslint-disable-line no-await-in-loop
+      if (why) { skipped.push(`${p.name} (${manager.name} does not lead ${p.department || 'their department'})`); continue; }
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.employee.update({ where: { id: p.id }, data });
+    // eslint-disable-next-line no-await-in-loop
+    await logFieldChanges({
+      userId: req.user.id, actorName: req.user.name, entity: 'Employee', entityId: p.id, action: 'Manager changed (their manager left)', approvalStatus: null,
+      reason: `Moved to ${manager.name}`,
+      changes: [
+        ...(data.tl ? [{ field: 'tl', label: 'Team lead', from: p.tl, to: data.tl }] : []),
+        ...(data.stl ? [{ field: 'stl', label: 'Senior team lead', from: p.stl, to: data.stl }] : []),
+        ...(data.reportingManagerId ? [{ field: 'reportingManagerId', label: 'Reporting manager', from: (gone.find((g) => g.id === p.reportingManagerId) || {}).name || p.reportingManagerId, to: manager.name }] : []),
+      ],
+    });
+    moved += 1;
+  }
+  return res.json({ ok: true, moved, skipped, manager: manager.name });
+});
+
 router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const [employees, departments, rows, nextEmployeeCode, cfg, clients, positions, seatHolders] = await Promise.all([
     prisma.employee.findMany({
@@ -1329,10 +1435,13 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     // Who is sitting in one right now. An open-ended assignment IS the
     // current tenure, so this is the whole occupancy picture in one query
     // rather than one per seat.
-    prisma.positionAssignment.findMany({
-      where: { toDate: null },
-      select: { positionId: true, employee: { select: { name: true } } },
-    }),
+    (async () => {
+      await seatRelease.ensureFresh(); // somebody who has left must not still hold a seat
+      return prisma.positionAssignment.findMany({
+        where: { toDate: null },
+        select: { positionId: true, employee: { select: { id: true, name: true, employmentStatus: true } } },
+      });
+    })(),
   ]);
   // The department and location pickers are CREATABLE (both columns are plain
   // strings by design), so a value typed into Add Employee is not in the
@@ -1350,7 +1459,18 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
   // A seat the form may offer, with its current holder if it has one. The
   // picker needs to SAY a seat is taken rather than silently omit it — a
   // missing MED-3 reads as "no such seat", which is a different fact.
-  const heldBy = new Map(seatHolders.map((a) => [a.positionId, a.employee ? a.employee.name : null]));
+  // A holder who has LEFT does not hold it (the seat is vacant); one on notice still does,
+  // and the picker says when it frees.
+  const noticeEnds = new Map();
+  for (const a of seatHolders) {
+    if (a.employee && seatRelease.isNotice(a.employee.employmentStatus)) {
+      // eslint-disable-next-line no-await-in-loop
+      const l = await seatRelease.lastWorkingDayOf(a.employee.id);
+      noticeEnds.set(a.positionId, l ? l.date : null);
+    }
+  }
+  const liveHolders = seatHolders.filter((a) => !(a.employee && seatHolderLeft(a.employee.employmentStatus)));
+  const heldBy = new Map(liveHolders.map((a) => [a.positionId, a.employee ? a.employee.name : null]));
 
   res.json({
     nextEmployeeCode,
@@ -1362,6 +1482,10 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
       department: r.department || null,
       team: r.team || null,
       holder: heldBy.has(r.id) ? (heldBy.get(r.id) || 'somebody') : null,
+      vacant: !heldBy.has(r.id),
+      // Notice period: the seat is theirs until the last working day, then it is free.
+      onNotice: noticeEnds.has(r.id),
+      freesOn: noticeEnds.has(r.id) ? noticeEnds.get(r.id) : null,
     })),
     scope: scopeLabel(req),
     empTypes: EMP_TYPES,
@@ -1411,15 +1535,8 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     designationRoles: rows,
     productAccess: await defaultProductAccessByRole(),
     email: { configured: cfg.configured, reason: cfg.configured ? null : cfg.reason },
-    // The Documents section of Add Employee (no employee yet, so it cannot ask
-    // GET /:id/documents). The upload itself goes through that route after the
-    // employee is created, under its usual rules.
-    documents: {
-      docTypes: DOC_TYPES,
-      requiredTypes: REQUIRED_DOC_TYPES,
-      maxBytes: attachments.MAX_BYTES,
-      allowedTypes: Object.keys(attachments.ALLOWED),
-    },
+    // No Documents section in Add Employee (user, 2026-10-10): documents are added AFTER the
+    // employee exists, on their profile (GET/POST /:id/documents, My Profile).
   });
 });
 
@@ -1744,6 +1861,7 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     try {
       // eslint-disable-next-line no-await-in-loop
       employee = await prisma.employee.create({ data: { ...employeeData, employeeCode }, include: EMP_MGMT_INCLUDE });
+      require('../utils/stationeryKit').onActive(employee.id); // default stationery kit, once (utils/stationeryKit.js)
     } catch (err) {
       if (autoCode && employeeCodes.isCodeClash(err) && attempt < 5) {
         // Somebody else took this code a moment ago: take the next one.
@@ -2062,6 +2180,16 @@ router.put('/management/:id/roles', requirePerm(null, 'hrms', 'Employee Manageme
     });
   }
   if (stl !== undefined || tl !== undefined) {
+    // Same department rule as the edit form: a CHANGED TL / STL must lead the employee's own department.
+    const reportingLine = require('../utils/reportingLine');
+    const subject = { id: employee.id, department: employee.department, level: reportingLine.levelOf({ designation: employee.designation, user: employee.user }) };
+    const cross = req.body.crossDepartment === true;
+    for (const [val, cur, kind, what] of [[tl, employee.tl, 'TL', 'TL'], [stl, employee.stl, 'STL', 'STL']]) {
+      if (val === undefined || !String(val || '').trim() || String(val).trim() === String(cur || '').trim()) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const why = await reportingLine.problemFor(subject, { managerName: val, kind }, { cross });
+      if (why) return res.status(400).json({ error: `${what}: ${why}` });
+    }
     await prisma.employee.update({
       where: { id: employee.id },
       data: { ...(stl !== undefined ? { stl: stl || null } : {}), ...(tl !== undefined ? { tl: tl || null } : {}) },
@@ -2224,6 +2352,8 @@ router.get('/management/:id', requirePerm(null, 'hrms', 'Employee Management', '
     docCount: extras.docCount || 0,
     lastWorkingDate: extras.lastWorkingDate || null,
     lastWorkingDateSource: extras.lastWorkingDateSource || null,
+    // When (date AND time) and why they resigned - utils/resignationInfo.js.
+    resignation: await require('../utils/resignationInfo').summaryFor(employee.id).catch(() => null),
     isLead: isLead(employee),
     transferHistory: transferHistoryOf(transferAudit, seats),
     seatHistory: seats,
@@ -2270,6 +2400,7 @@ router.get('/:id', async (req, res) => {
   // THE SEAT, and the seats this person could be moved to. Sent with the
   // record rather than fetched separately, because the form that edits the
   // employee is the form that assigns the seat — one screen, one request.
+  await seatRelease.ensureFresh(); // somebody who has left must not still hold a seat
   const [heldNow, deptSeats, occupied] = await Promise.all([
     prisma.positionAssignment.findFirst({
       where: { employeeId: employee.id, toDate: null },
@@ -2281,13 +2412,26 @@ router.get('/:id', async (req, res) => {
     }),
     prisma.positionAssignment.findMany({
       where: { toDate: null },
-      select: { positionId: true, employeeId: true, employee: { select: { name: true, employmentStatus: true } } },
+      select: { positionId: true, employeeId: true, employee: { select: { id: true, name: true, employmentStatus: true } } },
     }),
   ]);
-  // A seat whose holder has LEFT is offered as free (it is released on save).
+  // A seat whose holder has LEFT is free (its tenure was ended when they left). One whose holder
+  // is on notice is still theirs; the picker says the day it frees.
   const heldBy = new Map(occupied
     .filter((a) => !(a.employee && seatHolderLeft(a.employee.employmentStatus)))
     .map((a) => [a.positionId, a]));
+  const freesOn = new Map();
+  for (const a of occupied) {
+    if (a.employeeId !== employee.id && a.employee && seatRelease.isNotice(a.employee.employmentStatus)) {
+      // eslint-disable-next-line no-await-in-loop
+      const l = await seatRelease.lastWorkingDayOf(a.employee.id);
+      freesOn.set(a.positionId, l ? l.date : null);
+    }
+  }
+  // Their own previous seat (ended when they left), so a re-hire can see it is theirs to take back.
+  const lastEnded = await prisma.positionAssignment.findFirst({
+    where: { employeeId: employee.id, toDate: { not: null } }, orderBy: [{ toDate: 'desc' }, { createdAt: 'desc' }], include: { position: { select: { code: true } } },
+  });
 
   res.json({
     ...withComputed(employee),
@@ -2302,6 +2446,10 @@ router.get('/:id', async (req, res) => {
         name: r.name || null,
         holder: a && a.employeeId !== employee.id ? (a.employee ? a.employee.name : 'somebody') : null,
         mine: !!(a && a.employeeId === employee.id),
+        vacant: !a,
+        onNotice: !!(a && freesOn.has(r.id)),
+        freesOn: a && freesOn.has(r.id) ? freesOn.get(r.id) : null,
+        previousSeat: !!(!heldNow && lastEnded && lastEnded.position && lastEnded.position.code === r.code),
       };
     }).sort((a, b) => (a.holder ? 1 : 0) - (b.holder ? 1 : 0)
       || a.code.localeCompare(b.code, undefined, { numeric: true })),
@@ -2367,6 +2515,17 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
   ];
   const data = {};
   editableFields.forEach((f) => { if (req.body[f] !== undefined) data[f] = req.body[f]; });
+  // MANAGE FIELDS: a paused field is off the form, so what a form sends for it
+  // is dropped (its saved value stays); a required one may not be saved empty.
+  await fieldDefs.refresh();
+  const pausedNow = fieldDefs.pausedCols();
+  Object.keys(data).forEach((f) => { if (pausedNow.has(f)) delete data[f]; });
+  for (const f of fieldDefs.requiredCols()) {
+    if (data[f] !== undefined && !String(data[f] ?? '').trim()) {
+      const st = fieldDefs.stateOf(f);
+      return res.status(400).json({ error: `"${st ? st.label : f}" is required.` });
+    }
+  }
   if (data.dateOfBirth !== undefined) data.dateOfBirth = toDate(data.dateOfBirth);
   if (data.dateOfJoining !== undefined) data.dateOfJoining = toDate(data.dateOfJoining);
   // A masked account number (what a non-HR export shows) is never written back.
@@ -2387,6 +2546,36 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
       if (data.reportingManagerId === existingForScope.id) return res.status(400).json({ error: 'An employee cannot report to themselves.' });
       const mgr = await prisma.employee.findUnique({ where: { id: data.reportingManagerId } });
       if (!mgr || !(await assertInScope(req, mgr))) return res.status(400).json({ error: 'Pick a reporting manager from the list (someone in your scope).' });
+    }
+  }
+
+  // THE REPORTING LINE FOLLOWS THE DEPARTMENT (user, 2026-10-10): a CHANGED reporting manager / TL /
+  // STL must be a lead of the employee's own department (utils/reportingLine.js). An unchanged
+  // legacy value is never blocked. "Other departments" (crossDepartment) lifts the department rule.
+  {
+    const reportingLine = require('../utils/reportingLine');
+    const changedRm = data.reportingManagerId !== undefined && data.reportingManagerId && data.reportingManagerId !== existingForScope.reportingManagerId;
+    const changedTl = data.tl !== undefined && String(data.tl || '').trim() && String(data.tl).trim() !== String(existingForScope.tl || '').trim();
+    const changedStl = data.stl !== undefined && String(data.stl || '').trim() && String(data.stl).trim() !== String(existingForScope.stl || '').trim();
+    if (changedRm || changedTl || changedStl) {
+      const loginRow = existingForScope.userId ? await prisma.user.findUnique({ where: { id: existingForScope.userId }, select: { role: true, hrmsRole: true, atsRole: true } }) : null;
+      const desig = data.designation !== undefined ? data.designation : existingForScope.designation;
+      const subject = {
+        id: existingForScope.id,
+        department: data.department !== undefined ? data.department : existingForScope.department,
+        level: reportingLine.levelOf({ designation: desig, user: desig === existingForScope.designation ? loginRow : null }),
+      };
+      const cross = req.body.crossDepartment === true;
+      const checks = [
+        changedRm && { managerId: data.reportingManagerId, what: 'Reporting manager' },
+        changedTl && { managerName: data.tl, kind: 'TL', what: 'TL' },
+        changedStl && { managerName: data.stl, kind: 'STL', what: 'STL' },
+      ].filter(Boolean);
+      for (const c of checks) {
+        // eslint-disable-next-line no-await-in-loop
+        const why = await reportingLine.problemFor(subject, c, { cross });
+        if (why) return res.status(400).json({ error: `${c.what}: ${why}` });
+      }
     }
   }
 
@@ -2474,7 +2663,9 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
             if (held.employee && seatHolderLeft(held.employee.employmentStatus)) departedHolder = held;
             else {
               return res.status(409).json({
-                error: `${seat.code} is held by ${held.employee ? held.employee.name : 'somebody else'} (${held.employee ? held.employee.employmentStatus : 'active'}). Vacate it first.`,
+                error: held.employee && seatRelease.isNotice(held.employee.employmentStatus)
+                  ? `${seat.code} is held by ${held.employee.name}, who is on notice${(await seatRelease.lastWorkingDayOf(held.employee.id)) ? ` until ${(await seatRelease.lastWorkingDayOf(held.employee.id)).date}` : ' (no last working day set yet)'}. The seat is free the day after their last working day.`
+                  : `${seat.code} is held by ${held.employee ? held.employee.name : 'somebody else'} (${held.employee ? held.employee.employmentStatus : 'active'}). Vacate it first.`,
               });
             }
           }
@@ -2485,6 +2676,8 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
   }
 
   const employee = await prisma.employee.update({ where: { id: req.params.id }, data });
+  // Became Active (again): the default stationery kit, once (utils/stationeryKit.js).
+  if (data.employmentStatus === 'Active' || data.employmentStatus === 'On Probation') require('../utils/stationeryKit').onActive(employee.id);
 
   // THE LOGIN FOLLOWS THE DEPARTMENT, exactly as it does on /transfer.
   if (departmentChanged) {
@@ -2552,7 +2745,8 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
     // Leaving a seat ENDS the tenure, it does not delete it: the seat keeps
     // what was done under it, which is the entire point of seats.
     if (current) {
-      await prisma.positionAssignment.update({ where: { id: current.id }, data: { toDate: positionToday() } });
+      // updateMany + toDate:null: if the status in this same save already ended it (they left), keep that date.
+      await prisma.positionAssignment.updateMany({ where: { id: current.id, toDate: null }, data: { toDate: positionToday() } });
     }
     if (wanted) {
       // The previous holder has LEFT: close their tenure on their last working
@@ -2640,6 +2834,7 @@ router.delete('/:id', requirePerm(null, 'hrms', 'Employee Management', 'delete')
     prisma.employee.updateMany({ where: { reportingManagerId: req.params.id }, data: { reportingManagerId: null } }),
     prisma.employeeDocument.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.employeeRecord.deleteMany({ where: { employeeId: req.params.id } }),
+    prisma.stationeryIssue.deleteMany({ where: { employeeId: req.params.id } }), // the default kit etc. (no FK on this table)
     prisma.attendance.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.attendanceRegularization.deleteMany({ where: { employeeId: req.params.id } }),
     prisma.leaveRequest.deleteMany({ where: { employeeId: req.params.id } }),
@@ -3265,11 +3460,14 @@ async function readImportRequest(req) {
   const createLogins = isFile ? String(req.query.createLogins) === 'true' : !!(req.body && req.body.createLogins === true);
   let rows;
   let fileName = '';
+  let ignoredPaused = [];
+  await fieldDefs.refresh();
   if (isFile) {
     fileName = String(req.query.fileName || 'upload.xlsx').slice(0, 200);
     const parsed = bulkImport.parseUpload(req.body, fileName);
     if (parsed.error) return { error: parsed.error };
     rows = parsed.rows;
+    ignoredPaused = parsed.ignoredPaused || [];
   } else if (req.body && Array.isArray(req.body.rows)) {
     rows = bulkImport.rowsFromObjects(req.body.rows);
   } else {
@@ -3278,14 +3476,14 @@ async function readImportRequest(req) {
   if (!rows.length) return { error: 'That file has no data rows.' };
   if (rows.length > bulkImport.MAX_ROWS) return { error: `Import at most ${bulkImport.MAX_ROWS} rows at a time.` };
   const { errors, prepared, skipped } = await bulkImport.validateRows(rows, importContext(req, createLogins));
-  return { rows, errors, prepared, skipped, createLogins, fileName, scopeLabel: scopeLabel(req) };
+  return { rows, errors, prepared, skipped, createLogins, fileName, ignoredPaused, scopeLabel: scopeLabel(req) };
 }
 
 // The fields and option lists, for the screen's own instructions.
 router.get('/bulk-import/fields', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
   const opts = await bulkImport.optionLists(importContext(req, false));
   res.json({
-    fields: bulkImport.IMPORT_FIELDS.map(({ key, label, required, rule }) => ({ key, label, required, rule })),
+    fields: bulkImport.IMPORT_FIELDS.filter((f) => !fieldDefs.isPaused(f.key)).map(({ key, label, required, rule }) => ({ key, label, required, rule })),
     examplePrefix: bulkImport.EXAMPLE_PREFIX,
     maxRows: bulkImport.MAX_ROWS,
     departments: opts.departments,
@@ -3298,6 +3496,7 @@ router.get('/bulk-import/fields', requirePerm(null, 'hrms', 'Employee Management
 
 // STEP 1 — the sample workbook, built from IMPORT_FIELDS and the live masters.
 router.get('/bulk-import/sample.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
+  await fieldDefs.refresh();
   const opts = await bulkImport.optionLists(importContext(req, false));
   const buf = bulkImport.sampleWorkbook(opts);
   res.setHeader('Content-Disposition', 'attachment; filename="employee-import-sample.xlsx"');

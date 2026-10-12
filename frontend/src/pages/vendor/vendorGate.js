@@ -7,11 +7,12 @@ import { vendorToken } from '../../vendorApi';
 //     Portal goes to /vendor/assets;
 //   * a STAFF login (Admin / Accountant …) on /vendor/*: back to its own home.
 //     No impersonation — staff never see the portal through their own token.
+export const VENDOR_HOME = '/vendor/invoices';
 export function useVendorRedirect() {
   const { pathname } = useLocation();
   const vendor = !!vendorToken();
   const inPortal = pathname === '/vendor-login' || pathname === '/vendor' || pathname.startsWith('/vendor/');
-  if (vendor) return inPortal ? null : '/vendor/assets';
+  if (vendor) return inPortal ? null : VENDOR_HOME;
   let staff = false;
   try { staff = !!localStorage.getItem('tl_token'); } catch { staff = false; }
   if (staff && (pathname === '/vendor' || pathname.startsWith('/vendor/'))) return '/';

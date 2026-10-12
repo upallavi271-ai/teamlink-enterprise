@@ -7,6 +7,7 @@ import ClientForm, {
 } from './ClientForm.jsx';
 import AgreementLivePreview from '../agreements/AgreementLivePreview.jsx';
 import '../agreements/agreementLink.css';
+import './addClientModal.css';
 
 // ---------------------------------------------------------------------------
 // EDIT CLIENT (2026-10-05) — the SAME 9 sections as Add client
@@ -104,7 +105,7 @@ export default function ClientEditModal({ client, canCommercial, canReassign = f
   return (
     <Modal
       title={`Edit client — ${client.name}`}
-      size="xwide"
+      size="xwide acw-modal"
       onClose={onClose}
       footer={(
         <div className="cf-bar">

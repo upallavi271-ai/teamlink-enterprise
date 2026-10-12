@@ -1,0 +1,30 @@
+/* Team & person reports — scoped under .tpr */
+.tpr{display:block}
+.tpr .tpr-fams{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tpr .tpr-fam{border:1px solid var(--line);background:var(--paper-raised);padding:7px 14px;border-radius:999px;font:inherit;font-size:13px;cursor:pointer}
+.tpr .tpr-fam.on{background:var(--brand,#2563eb);border-color:var(--brand,#2563eb);color:#fff}
+.tpr .tpr-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tpr .tpr-chip{border:1px solid var(--line);background:var(--paper-raised);padding:4px 11px;border-radius:999px;font:inherit;font-size:12.5px;cursor:pointer}
+.tpr .tpr-chip.on{background:var(--brand-tint,#e6efff);border-color:var(--brand,#2563eb);color:var(--brand-ink,#1e40af);font-weight:600}
+.tpr .tpr-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.tpr .tpr-seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper-raised);flex-wrap:wrap}
+.tpr .tpr-seg button{border:0;background:none;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer;border-right:1px solid var(--line)}
+.tpr .tpr-seg button:last-child{border-right:0}
+.tpr .tpr-seg button.on{background:var(--brand,#2563eb);color:#fff}
+.tpr .tpr-dates{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.tpr .tpr-dates input{font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px}
+.tpr .tpr-filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.tpr .tpr-filter{display:flex;flex-direction:column;font-size:11.5px;color:var(--muted,#64748b);gap:2px;min-width:150px}
+.tpr .tpr-filter select{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper-raised);color:inherit;max-width:260px}
+.tpr .tpr-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.tpr .tpr-said{font-size:12.5px;color:#15803d}
+.tpr .tpr-title{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px}
+.tpr .tpr-title h3{font-size:15px;margin:0}
+.tpr .tpr-table td,.tpr .tpr-table th{padding:6px 9px}
+.tpr .tpr-note{font-size:12px;color:var(--muted,#64748b);margin-top:6px}
+@media (max-width:600px){
+  .tpr .tpr-seg button{padding:6px 9px}
+  .tpr .tpr-actions .btn{flex:1 1 46%}
+  .tpr .tpr-filter{min-width:46%;flex:1 1 46%}
+  .tpr .tpr-filter select{max-width:none}
+}

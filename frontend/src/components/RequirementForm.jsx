@@ -14,6 +14,7 @@ import SpecPicker from './SpecPicker.jsx'; // spec D: Qualification + Specializa
 // B9.1 / B9.4 (ATS-100): duplicate-job warning with "Create anyway", and job templates.
 import DuplicateJobWarning from './jobs/DuplicateJobWarning.jsx';
 import JobTemplates from './jobs/JobTemplates.jsx';
+import './jobs/postingChoices.css'; // Save & Post: the six sites and what each one does (2026-10-10)
 // docfill_: "Upload the requirement" / "Type it myself" (components/ui/FillFromFile.jsx).
 import { useFillFromFile, FillEntryModal, FillBanner } from './ui/FillFromFile.jsx';
 import { jobFieldsToForm, JOB_FIELD_NAMES } from './ui/fillMaps.js';
@@ -101,8 +102,12 @@ export const EMPTY = {
 };
 
 const listOf = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
-// Our own sites, ticked by default on a new job (they post at once).
+// Our own sites, ticked by default on a new job (they post at once). The usual set the Admin chose
+// (and the four boards, by default) replaces this when the site list arrives from the server.
 const OWN_SITES = ['TeamLink Job Portal', 'TeamLink Website', 'Google Jobs'];
+// Internal TeamLink hiring stays on our own two sites; Google Jobs rides along with the Website.
+const INTERNAL_SITES = ['TeamLink Job Portal', 'TeamLink Website'];
+const SITE_NAME = { jobportal: 'Job Portal', website: 'Website' };
 
 // "5-8 yrs" / "2 yrs" back into the two number inputs the form carries. The
 // server stores the rendered string; the form edits the numbers behind it.
@@ -218,6 +223,9 @@ export default function RequirementForm({
   clients = [],
   team = [],
   canAssign = true,
+  // A client's new job request (Draft): this login may also OPEN it, so the form
+  // offers "Save & Post" (save, open, post on the ticked sites) - 2026-10-09.
+  canOpen = false,
   // ?new=1&clientId= (Clients → + New Requirement) pre-selects the client.
   initialClientId = '',
   onClose,
@@ -233,8 +241,14 @@ export default function RequirementForm({
   // client record is the client desk's. The gate message says who does what.
   const canRunAgreement = can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit');
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
+  const openAndPost = editing && canOpen && !!requirement && requirement.status === 'DRAFT' && !requirement.internal;
   const [form, setForm] = useState(() => (editing
-    ? formFromRequirement(requirement)
+    ? (() => {
+      const f = formFromRequirement(requirement);
+      // A request nobody has posted yet starts with our own sites ticked, as a new job does.
+      if (openAndPost && !f.postingSources.length) f.postingSources = [...OWN_SITES];
+      return f;
+    })()
     // EMPTY.department is DEPTS[0] ('IT'), which a Medical TL may not raise
     // for — start them on the first department they actually hold. A TL / STL
     // / BDE raising a requirement starts on its chain in their own role (the
@@ -268,15 +282,35 @@ export default function RequirementForm({
   // SAVE & POST (2026-10-05): the sources, each with whether it can post now
   // or needs setup in Administration → Integrations (utils/jobConnectors.js).
   const [sources, setSources] = useState(null);
+  const [canSetUsual, setCanSetUsual] = useState(false); // Admin: "Use these ticks for every new job"
+  const [usualNote, setUsualNote] = useState('');
+  const tickTouched = useRef(false);
   useEffect(() => {
     let on = true;
     api.get('/requirements/posting-sources')
-      .then((r) => { if (on) setSources(r.data.sources || []); })
+      .then((r) => {
+        if (!on) return;
+        const list = r.data.sources || [];
+        setSources(list);
+        // A new job (or a request nobody has posted yet) starts with the usual sites ticked, boards included.
+        const fresh = !editing || (openAndPost && !requirement.postingSources);
+        if (fresh && !tickTouched.current && list.length) {
+          setForm((f) => ({ ...f, postingSources: list.filter((s) => s.isDefault).map((s) => s.source) }));
+        }
+      })
       .catch(() => { if (on) setSources([]); });
+    api.get('/requirements/posting/defaults').then((r) => { if (on) setCanSetUsual(!!r.data.canEdit); }).catch(() => {});
     return () => { on = false; };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const internal = form.type === 'Internal Requirement';
+  // What is really stored: Google Jobs rides along with the Website; internal jobs stay on our own two sites.
+  const sitesToSave = () => {
+    let s = form.postingSources.filter((n) => n !== 'Google Jobs');
+    if (internal) s = s.filter((n) => INTERNAL_SITES.includes(n));
+    if (s.includes('TeamLink Website')) s = [...s, 'Google Jobs'];
+    return s;
+  };
   // Section F is locked only on an EDIT the user may not re-assign. Creating
   // a requirement is where the chain is first set, and `create` carries it.
   const lockAssign = editing && !canAssign;
@@ -332,7 +366,7 @@ export default function RequirementForm({
       bdeId: internal ? '' : form.bdeId,
       description: form.jobDescription,
       // Nothing ticked is stored as 'None' (empty would read as "our own sites").
-      postingSources: form.postingSources.length ? form.postingSources.join(', ') : 'None',
+      postingSources: sitesToSave().length ? sitesToSave().join(', ') : 'None',
     };
   }
 
@@ -351,8 +385,8 @@ export default function RequirementForm({
       // each site's own result as it comes in.
       let posting = null;
       const live = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].includes(res.data?.status);
-      const n = form.postingSources.length;
-      if (kind === 'post' && n && live) posting = `Posting to ${n} site${n === 1 ? '' : 's'} now. Each site's result shows on the job page.`;
+      const n = sitesToSave().length;
+      if (kind === 'post' && n && live) posting = postingMessage();
       else if (kind === 'post' && n && res.data?.status === 'AGREEMENT_CHECK') posting = 'Will post when the agreement is Active.';
       else if (kind === 'post' && !n) posting = 'No posting site was ticked, so it is not posted anywhere.';
       // docfill_: keep the uploaded requirement on the job as its source document.
@@ -368,10 +402,10 @@ export default function RequirementForm({
     }
   }
 
-  async function saveEdit(extra = {}) { // B9.1: extra = { duplicateOverride, duplicateReason } on "Save anyway"
+  async function saveEdit(extra = {}, thenOpen = false) { // B9.1: extra = { duplicateOverride, duplicateReason } on "Save anyway"; thenOpen = Save & Post of a request
     if (saving || busy.current) return;
     setError('');
-    const found = formProblems(form, { kind: requirement?.status === 'DRAFT' ? 'draft' : 'edit', internal, editing: true });
+    const found = formProblems(form, { kind: thenOpen ? 'post' : (requirement?.status === 'DRAFT' ? 'draft' : 'edit'), internal, editing: true });
     setProblems(found);
     if (found.length) return;
     busy.current = true;
@@ -397,6 +431,19 @@ export default function RequirementForm({
     }
     try {
       const res = await api.put(`/requirements/${requirement.id}`, { ...body, ...extra });
+      if (thenOpen) {
+        // The job is saved; now open it - that is what posts it on every ticked site.
+        try {
+          const opened = await api.post(`/requirements/${requirement.id}/activate`, {});
+          const n = sitesToSave().length;
+          const live = ['OPEN', 'RECRUITER_ASSIGNED'].includes(opened.data?.status);
+          const posting = !live ? '' : (n ? postingMessage() : 'No posting site was ticked, so it is not posted anywhere.');
+          onSaved?.(opened.data, { created: false, opened: true, posting, changedFields: res.data?.changedFields || [] });
+        } catch (err) {
+          setError(`Your changes are saved, but the job is not open yet. ${err.response?.data?.error || 'Please try again.'}`);
+        }
+        return;
+      }
       onSaved?.(res.data, { created: false, changedFields: res.data?.changedFields || [] });
     } catch (err) {
       if (err.response?.status === 409 && err.response.data?.code === 'DUPLICATE_JOB') { setDup({ ...err.response.data, kind: 'edit' }); return; } // B9.1
@@ -407,11 +454,33 @@ export default function RequirementForm({
     }
   }
 
-  const togglePostingSource = (name) => set({
-    postingSources: form.postingSources.includes(name)
-      ? form.postingSources.filter((s) => s !== name)
-      : [...form.postingSources, name],
-  });
+  const togglePostingSource = (name) => {
+    tickTouched.current = true;
+    set({
+      postingSources: form.postingSources.includes(name)
+        ? form.postingSources.filter((s) => s !== name)
+        : [...form.postingSources, name],
+    });
+  };
+  // The six sites shown (Google Jobs is not a seventh tick: it follows the Website).
+  const siteList = (sources || OWN_SITES.slice(0, 2).map((name, i) => ({ id: i ? 'website' : 'jobportal', name, source: name, mode: 'auto', line: 'Goes out by itself.' }))).filter((s) => s.id !== 'google');
+  const tickedList = sitesToSave();
+  const handTicked = siteList.filter((s) => s.mode === 'hand' && tickedList.includes(s.source));
+  function postingMessage() {
+    const n = siteList.filter((s) => tickedList.includes(s.source)).length;
+    const hand = handTicked.length;
+    return hand
+      ? `${n - hand} of ${n} sites go out by themselves. ${hand} for you to post by hand: ${handTicked.map((s) => s.name).join(', ')}.`
+      : `Posting to ${n} site${n === 1 ? '' : 's'} now. Each site's result shows on the job page.`;
+  }
+  async function saveUsual() {
+    setUsualNote('');
+    try {
+      const ids = siteList.filter((s) => tickedList.includes(s.source)).map((s) => s.id);
+      const r = await api.put('/requirements/posting/defaults', { sites: ids });
+      setUsualNote(r.data.ok || 'Saved.');
+    } catch (e) { setUsualNote(e.response?.data?.error || 'Could not save that. Please try again.'); }
+  }
 
   if (preview) {
     return (
@@ -478,7 +547,7 @@ export default function RequirementForm({
           <div className="kv"><span className="k">Team lead</span><span>{form.tl || '—'}</span></div>
         )}
         <div className="section-label">Posting Sources</div>
-        <div className="kv"><span className="k">Selected</span><span>{form.postingSources.join(', ') || 'None'}</span></div>
+        <div className="kv"><span className="k">Selected</span><span>{tickedList.map((n) => n.replace(/^TeamLink /, '')).join(', ') || 'None'}</span></div>
       </Modal>
     );
   }
@@ -524,9 +593,14 @@ export default function RequirementForm({
               <>
                 <button className="btn" onClick={onClose}>Cancel</button>
                 <button className="btn" onClick={() => setPreview(true)}>Preview</button>
-                <button className="btn btn-primary" disabled={saving} onClick={saveEdit} title={requirement?.status === 'DRAFT' ? 'Saves the draft. Nothing is posted.' : 'Saves the job and updates it on every ticked site'}>
+                <button className={`btn${openAndPost ? '' : ' btn-primary'}`} disabled={saving} onClick={() => saveEdit()} title={requirement?.status === 'DRAFT' ? 'Saves the draft. Nothing is posted.' : 'Saves the job and updates it on every ticked site'}>
                   {saving ? 'Saving…' : (requirement?.status === 'DRAFT' ? 'Save Changes' : 'Save & Post')}
                 </button>
+                {openAndPost && (
+                  <button className="btn btn-primary" disabled={saving} onClick={() => saveEdit({}, true)} title="Saves the job, opens it and posts it on every ticked site. It posts only once the client's agreement is Active.">
+                    {saving ? 'Saving…' : 'Save & Post'}
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -848,7 +922,7 @@ export default function RequirementForm({
                 <span>BDE</span>
                 <Combo disabled={lockAssign} value={form.bdeId} onChange={(e) => set({ bdeId: e.target.value })}>
                   <option value="">— Not assigned —</option>
-                  {bdes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  {bdes.map((b) => <option key={b.id} value={b.id}>{b.bdeLabel || b.name}</option>)}
                 </Combo>
               </label>
             )}
@@ -893,38 +967,50 @@ export default function RequirementForm({
 
           <SectionHead>G. Where to post</SectionHead>
           <div className="field">
-            <span>Tick where this job should appear. We post it for you.</span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-              {(sources || OWN_SITES.map((name) => ({ id: name, name, source: name, ready: true }))).map((src) => {
-                const off = src.id === 'google' && internal;
+            <span>Tick every site where this job should appear. Each line says what happens.</span>
+            <div className="pc-sites">
+              {siteList.map((src) => {
+                const off = internal && !INTERNAL_SITES.includes(src.source);
+                const on = !off && tickedList.includes(src.source);
                 return (
-                  <label key={src.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontWeight: 400, fontSize: 12.5, opacity: src.ready && !off ? 1 : 0.65 }}>
-                    <input
-                      type="checkbox"
-                      style={{ width: 'auto' }}
-                      disabled={off}
-                      checked={!off && form.postingSources.includes(src.source)}
-                      onChange={() => togglePostingSource(src.source)}
-                    />
-                    <b style={{ fontWeight: 600 }}>{src.name}</b>
-                    {off && <span className="cell-muted">Not for TeamLink internal jobs</span>}
-                    {!off && src.ready && <span className="cell-muted">{src.readyText || 'Posts automatically'}</span>}
-                    {!off && !src.ready && (
-                      <span className="cell-muted">
-                        {src.setupLink
-                          ? <Link to={src.setupLink} target="_blank" rel="noreferrer">Needs account setup →</Link>
-                          : 'Needs account setup'}
-                        {src.hint ? <span style={{ display: 'block', whiteSpace: 'pre-line' }}>{src.hint}</span> : ''}
-                      </span>
-                    )}
+                  <label key={src.id} className={`pc-site${on ? ' is-on' : ''}${off ? ' is-off' : ''}`}>
+                    <input type="checkbox" disabled={off} checked={on} onChange={() => togglePostingSource(src.source)} />
+                    <b className="pc-name">{SITE_NAME[src.id] || src.name}</b>
+                    <span className={`pc-mode is-${off ? 'off' : src.mode}`}>
+                      {off ? 'Not for TeamLink jobs' : src.mode === 'hand' ? 'You post it by hand' : src.mode === 'feed' ? 'Goes into our feed' : 'Goes out automatically'}
+                    </span>
+                    <span className="pc-line">
+                      {off ? 'TeamLink\u2019s own hiring stays on our Job Portal and Website.' : src.line}
+                      {!off && src.notice ? ` ${src.notice}` : ''}
+                    </span>
                   </label>
                 );
               })}
             </div>
+            {handTicked.length > 0 && (
+              <details className="pc-why">
+                <summary>Why can&rsquo;t TeamLink post {handTicked.map((s) => s.name).join(', ')} by itself?</summary>
+                {handTicked.map((s) => (
+                  <div key={s.id} className="pc-why-b">
+                    <b>{s.name}.</b> {s.why}
+                    {s.ask && <div>To switch it on, ask <b>{s.ask.who}</b>: {s.ask.what}</div>}
+                    {s.cardLink
+                      ? <div><Link to={s.cardLink} target="_blank" rel="noreferrer">Open the {s.name} Connect card →</Link> (Administration, Integrations)</div>
+                      : <div>Ask your Admin to open the {s.name} Connect card in Administration, Integrations.</div>}
+                  </div>
+                ))}
+              </details>
+            )}
+            {canSetUsual && (
+              <div className="pc-usual">
+                <button type="button" className="btn btn-sm" onClick={saveUsual}>Use these ticks for every new job</button>
+                {usualNote && <span className="cell-muted"> {usualNote}</span>}
+              </div>
+            )}
           </div>
           <div className="cell-muted" style={{ fontSize: 11.5 }}>
-            After Save &amp; Post, the job page shows each site: Posted, Posting…, Failed (with Retry) or Needs account setup.
-            Save Draft posts nothing.
+            After Save &amp; Post you see a short list: the sites that went out by themselves, and a &ldquo;Waiting for you to post&rdquo; task for each site you post by hand
+            (Copy job text, Open the site, I posted it). Save Draft posts nothing.
           </div>
 
         </Modal>

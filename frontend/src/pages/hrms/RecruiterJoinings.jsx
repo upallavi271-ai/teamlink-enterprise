@@ -13,16 +13,18 @@ import { Modal } from '../../components/proto.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import {
-  JoiningsTable, RuleBox, SummaryCards, errText, nowMonth, addMonths,
+  JoiningsTable, RuleBox, DeptRules, SummaryCards, errText, nowMonth, addMonths,
 } from '../../components/recruiterJoinings/RjParts.jsx';
 import '../../components/recruiterJoinings/rj.css';
 
 const FIELDS = [
+  { key: 'status', get: (r) => r.statusGroup || 'Active' },
   { key: 'department', get: (r) => r.department || '' },
   { key: 'tl', get: (r) => r.tlName || '' },
   { key: 'recruiter', get: (r) => r.key, label: (v, r) => `${r.name}${r.seat ? ` · ${r.seat}` : ''}` },
 ];
-const EMPTY = { department: '', tl: '', recruiter: '' };
+const EMPTY = { department: '', tl: '', recruiter: '', status: '' };
+const STATUS_ORDER = ['Active', 'Exited', 'Relieved'];
 
 // Super Admin: the joinings target for everyone / a department / one person.
 function TargetDialog({ board, onClose, onSaved }) {
@@ -109,29 +111,21 @@ function TargetDialog({ board, onClose, onSaved }) {
   );
 }
 
+// COUNTS ONLY: who these joinings are (candidate, client, job) is in ATS.
 function SkippedList({ month }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    api.get('/recruiter-joinings/skipped', { params: { month } }).then((r) => setData(r.data)).catch((e) => setError(errText(e, 'Could not load the list.')));
+    api.get('/recruiter-joinings/skipped', { params: { month } }).then((r) => setData(r.data)).catch((e) => setError(errText(e, 'Could not load the numbers.')));
   }, [month]);
-  const rows = useMemo(() => (data ? [
-    ...data.noRecruiter.map((a) => ({ id: a.id, candidate: a.candidate, client: a.client, job: a.job, date: a.joiningDate, reason: a.reason })),
-    ...data.undated.map((a) => ({ id: a.id, candidate: a.candidate, client: a.client, job: a.job, date: a.joiningDate || '—', reason: a.reason })),
-  ] : []), [data]);
-  const page = usePaged(rows);
   if (error) return <div className="rj-error">{error}</div>;
   if (!data) return <div className="rj-empty">Loading…</div>;
   return (
     <div>
-      <p className="rj-hint">These people have the step Joined, but cannot be counted for any recruiter or month. Fix the joining date or the recruiter on the candidate in ATS and they will be counted automatically.</p>
-      <div className="tbl-wrap">
-        <table className="rj-mini">
-          <thead><tr><th>Candidate</th><th>Client</th><th>Job</th><th>Joining date</th><th>Why skipped</th></tr></thead>
-          <tbody>{page.slice.map((a) => <tr key={a.id}><td>{a.candidate}</td><td>{a.client}</td><td>{a.job}</td><td>{a.date || '—'}</td><td><span className="rj-tag orange">{a.reason}</span></td></tr>)}</tbody>
-        </table>
-      </div>
-      {page.total > 0 && <Pager page={page} noun="people" />}
+      <p className="rj-hint">
+        <b>{data.noRecruiterCount}</b> joining(s) have no recruiter on record and <b>{data.undatedCount}</b> have no usable joining date, so they are counted for nobody.
+        Open ATS (Candidates &amp; Pipeline) to fix the recruiter or the joining date; they are counted automatically afterwards.
+      </p>
     </div>
   );
 }
@@ -157,6 +151,7 @@ export default function RecruiterJoinings() {
   const rows = board ? board.rows : [];
   const facets = useLocalFacets(rows, FIELDS, f);
   const shown = useMemo(() => rows.filter((r) => (!f.department || r.department === f.department)
+    && (!f.status || (r.statusGroup || 'Active') === f.status)
     && (!f.tl || r.tlName === f.tl) && (!f.recruiter || r.key === f.recruiter)
     && (!q || `${r.name} ${r.seat || ''} ${r.employeeCode || ''}`.toLowerCase().includes(q.toLowerCase()))), [rows, f, q]);
   const page = usePaged(shown);
@@ -188,6 +183,8 @@ export default function RecruiterJoinings() {
         </label>
         {v.level !== 'self' && (
           <>
+            <FacetSelect label="Employee status" allLabel="Active, Exited and Relieved" value={f.status}
+              options={[...facets.status].sort((a, b) => STATUS_ORDER.indexOf(a.value) - STATUS_ORDER.indexOf(b.value))} onChange={(x) => setFilter('status', x)} />
             <FacetSelect label="Department" allLabel="All departments" value={f.department} options={facets.department} onChange={(x) => setFilter('department', x)} />
             <FacetSelect label="Team lead" allLabel="All team leads" value={f.tl} options={facets.tl} onChange={(x) => setFilter('tl', x)} />
             <FacetSelect label="Recruiter" allLabel="All recruiters" value={f.recruiter} options={facets.recruiter} onChange={(x) => setFilter('recruiter', x)} />
@@ -202,14 +199,15 @@ export default function RecruiterJoinings() {
       {!board ? <div className="rj-empty">Loading…</div> : (
         <>
           <SummaryCards s={board.summary} decisions={v.decisions && board.ended} />
+          <DeptRules rules={board.rules} example={board.example} />
           <RuleBox rule={board.rule} />
           {board.current && <p className="rj-hint">{board.label} is still going — these are the joinings so far. Decisions open after the month ends.</p>}
           <JoiningsTable board={board} rows={page.slice} onChanged={load} />
           {page.total > 0 && <Pager page={page} noun="recruiters" />}
-          {(board.skipped.length > 0 || board.undatedCount > 0) && (
+          {((board.skippedCount || 0) + (board.undatedCount || 0) > 0) && (
             <div style={{ marginTop: 14 }}>
               <button className="btn btn-sm" onClick={() => setSkipped((x) => !x)}>
-                {skipped ? 'Hide' : 'Show'} skipped joinings ({board.skipped.length + board.undatedCount})
+                {skipped ? 'Hide' : 'Show'} joinings counted for nobody ({(board.skippedCount || 0) + (board.undatedCount || 0)})
               </button>
               <span className="rj-sub" style={{ marginLeft: 8 }}>Joined, but no joining date or no recruiter on record — not counted anywhere.</span>
               {skipped && <SkippedList month={month} />}

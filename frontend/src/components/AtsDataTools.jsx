@@ -115,7 +115,8 @@ export default function AtsDataTools({
   async function runExport() {
     setBusy(true); setMsg(null);
     try {
-      const state = (typeof body === 'function' ? body() : body) || (params ? { params } : {});
+      // `body` may be async (the paged lists ask the server for the ids of the whole filtered list).
+      const state = (typeof body === 'function' ? await body() : body) || (params ? { params } : {});
       const out = await runAtsExport(module, { ...state, scope }, format);
       setDialog(null);
       setMsg({ ok: true, text: out.text, background: out.background });

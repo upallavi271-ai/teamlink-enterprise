@@ -26,6 +26,7 @@ const {
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { stageLabel } = require('../utils/atsVocab');
+const { dataStamp } = require('../utils/dataStamp');
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 const {
   FOLLOWUP_STATUSES, CONTACT_MODES, decorate, chainSnapshot, resolveNames,
@@ -37,7 +38,16 @@ const {
 const router = express.Router();
 router.use(requireAuth);
 router.use(requireProduct('ats'));
-router.use(requirePerm('ats', 'candidates', 'Applications', 'view'));
+// Reading follow-ups: whoever may view applications, OR whoever holds the Contact right (HR follows up the people it hires).
+const contactAccess = require('../utils/contactAccess');
+const { can: canDo } = require('../utils/permissions');
+router.use(async (req, res, next) => {
+  try {
+    if (await canDo(req.user, 'ats', 'candidates', 'Applications', 'view')) return next();
+    if ((await contactAccess.ruleFor(req.user, 'candidates')).allowed) return next();
+    return res.status(403).json({ error: 'Not allowed' });
+  } catch (err) { return next(err); }
+});
 
 const APPLICATION_INCLUDE = {
   candidate: { select: { id: true, name: true, email: true, phone: true } },
@@ -111,8 +121,39 @@ const CLOSED_STAGES = ['JOINED', 'HIRED', 'REJECTED'];
 // on a tile can never disagree with the rows behind it.
 async function buildList(req) {
   await escalateOverdue();
+  // The rows are the expensive part (every active application + its newest
+  // follow-up, 1-8 s). They are kept per login and filter set, and reused only
+  // while the data stamp is unchanged (utils/dataStamp.js: any write to an
+  // application, follow-up, job, person or seat changes it, and so does a new
+  // day) and for at most LIST_MAX_AGE_MS. The ?mine= / ?status= narrowing and
+  // the order are applied to a copy below, so one cached read serves them all.
+  const stamp = await Promise.all([dataStamp(), prisma.candidate.count()]).then(([d, c]) => `${d.all}#${c}`).catch(() => null);
+  const key = JSON.stringify([req.user.id, Object.entries(req.query)
+    .filter(([k]) => !LIST_UNCACHED_KEYS.includes(k)).sort(([a], [b]) => a.localeCompare(b))]);
+  const hit = LIST_CACHE.get(key);
+  let out;
+  if (stamp && hit && hit.stamp === stamp && Date.now() - hit.at < LIST_MAX_AGE_MS) out = hit.rows;
+  else {
+    out = await buildRows(req);
+    LIST_CACHE.set(key, { at: Date.now(), stamp, rows: out });
+    while (LIST_CACHE.size > 40) LIST_CACHE.delete(LIST_CACHE.keys().next().value);
+  }
+  const s = scopeOf(req.user);
+  if (req.query.mine === '1') out = out.filter((f) => f.ownerUserId === s.userId);
+  if (req.query.status) {
+    const wanted = String(req.query.status).split(',').map((x) => x.trim()).filter(Boolean);
+    out = out.filter((f) => wanted.includes(f.status));
+  }
+  const ORDER = { Overdue: 0, 'Due Today': 1, Upcoming: 2, Completed: 3 };
+  return [...out].sort((a, b) => (ORDER[a.status] - ORDER[b.status])
+    || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
+}
+const LIST_CACHE = new Map();
+const LIST_MAX_AGE_MS = 60 * 1000;
+// Query keys that only narrow / page / order the finished rows.
+const LIST_UNCACHED_KEYS = ['mine', 'status', 'page', 'pageSize', 'older', 'rows'];
 
-
+async function buildRows(req) {
   const where = { ...applicationWhere(req.user) };
   if (req.query.applicationId) where.id = req.query.applicationId;
   if (req.query.candidateId) where.candidateId = req.query.candidateId;
@@ -178,9 +219,8 @@ async function buildList(req) {
   });
 
   const today = todayStr();
-  const s = scopeOf(req.user);
   const names = await resolveNames(active.map((a) => a.requirement));
-  let out = active.map((a) => {
+  return active.map((a) => {
     const row = current.get(a.id) || null;
     const snap = chainSnapshot(a, a.requirement, names);
     const r = a.requirement || {};
@@ -224,21 +264,48 @@ async function buildList(req) {
       recorded: !!row,
     };
   });
-
-  if (req.query.mine === '1') out = out.filter((f) => f.ownerUserId === s.userId);
-  if (req.query.status) {
-    const wanted = String(req.query.status).split(',').map((x) => x.trim()).filter(Boolean);
-    out = out.filter((f) => wanted.includes(f.status));
-  }
-  const ORDER = { Overdue: 0, 'Due Today': 1, Upcoming: 2, Completed: 3 };
-  out.sort((a, b) => (ORDER[a.status] - ORDER[b.status])
-    || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
-  return out;
 }
 
+// THE DEFAULT WINDOW of a long list: everything late or due today, and every
+// follow-up due within 30 days either side of today (or with no date at all).
+// What is left out — done long ago, or due far ahead — is "older" and comes
+// with ?older=1. Totals and tiles are always counted over the WHOLE list.
+const WINDOW_DAYS = 30;
+function followUpWindow() {
+  const day = (n) => { const d = new Date(`${todayStr()}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const from = day(-WINDOW_DAYS);
+  const to = day(WINDOW_DAYS);
+  return (f) => f.status === 'Overdue' || f.status === 'Due Today' || !f.dueDate || (String(f.dueDate) >= from && String(f.dueDate) <= to);
+}
+
+// GET /followups — every active application's follow-up. Without ?page it is
+// the whole array (the Excel export reads it). With ?page=N (&pageSize= 50,
+// max 200) it is { rows, total, page, pageSize, pages, counts, older }: the
+// default window above, or everything with ?older=1; counts are over the
+// whole list, so a tile never changes because a window hid rows.
 router.get('/', async (req, res, next) => {
   try {
-    return res.json(await buildList(req));
+    const all = await buildList(req);
+    if (req.query.page === undefined && req.query.pageSize === undefined) return res.json(all);
+    const inWindow = followUpWindow();
+    const inside = all.filter(inWindow);
+    const rowsAll = req.query.older === '1' ? all : inside;
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 50));
+    const pages = Math.max(1, Math.ceil(rowsAll.length / pageSize));
+    const page = Math.min(pages, Math.max(1, Number(req.query.page) || 1));
+    const count = (st) => all.filter((f) => f.status === st).length;
+    return res.json({
+      rows: rowsAll.slice((page - 1) * pageSize, page * pageSize),
+      total: rowsAll.length,
+      page,
+      pageSize,
+      pages,
+      counts: {
+        all: all.length, overdue: count('Overdue'), dueToday: count('Due Today'), upcoming: count('Upcoming'), completed: count('Completed'),
+      },
+      older: all.length - inside.length,
+      windowDays: WINDOW_DAYS,
+    });
   } catch (err) {
     return next(err);
   }
@@ -301,7 +368,14 @@ router.get('/dashboard', async (req, res, next) => {
       // ?rows=all — every one of MY rows (the Follow-ups page filters and
       // pages them itself); otherwise the first 50, as before. `total` says
       // how many there are either way.
-      mine: { ...tally(mine), total: mine.length, rows: req.query.rows === 'all' ? mine : mine.slice(0, 50) },
+      // rows=all is windowed (followUpWindow); olderCount = how many ?older=1 adds.
+      mine: (() => {
+        const inside = req.query.rows === 'all' && req.query.older !== '1' ? mine.filter(followUpWindow()) : mine;
+        return {
+          ...tally(mine), total: mine.length, olderCount: req.query.rows === 'all' ? mine.length - mine.filter(followUpWindow()).length : 0,
+          rows: req.query.rows === 'all' ? inside : mine.slice(0, 50),
+        };
+      })(),
       // §26-§27 — the three things to do now, most overdue first. The whole
       // point is that a user should not have to go looking.
       doThisNow: [...mine]
@@ -693,13 +767,14 @@ router.delete('/purposes/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 const FV = require('../utils/followupVisibility');
 
-const QUICK_CHANNELS = { Call: 'Call', Mail: 'Email', Email: 'Email', WhatsApp: 'WhatsApp' };
+const QUICK_CHANNELS = { Call: 'Call', Mail: 'Email', Email: 'Email', WhatsApp: 'WhatsApp', SMS: 'SMS' };
 const QUICK_OUTCOMES = {
   Call: ['Answered', 'Interested', 'Not interested', 'Not picked', 'Busy', 'Switched off', 'Wrong number', 'Call back later'],
   Email: ['Sent', 'Replied', 'Interested', 'Not interested', 'No response'],
   WhatsApp: ['Sent', 'Replied', 'Interested', 'Not interested', 'No response'],
+  SMS: ['Sent', 'Replied', 'Interested', 'Not interested', 'No response'],
 };
-const QUICK_DEFAULT = { Call: 'Answered', Email: 'Sent', WhatsApp: 'Sent' };
+const QUICK_DEFAULT = { Call: 'Answered', Email: 'Sent', WhatsApp: 'Sent', SMS: 'Sent' };
 // The follow-up record's own vocabulary (utils/followups.js CALL_RESULTS /
 // FOLLOWUP_OUTCOMES), so the Follow-ups screens and reports read one word list.
 const OUTCOME_ON_FOLLOWUP = {
@@ -728,7 +803,7 @@ router.get('/quick-log/options', (req, res) => {
   res.json({ outcomes: QUICK_OUTCOMES, defaults: QUICK_DEFAULT, editHours: QUICK_EDIT_HOURS });
 });
 
-router.post('/quick-log', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res, next) => {
+router.post('/quick-log', contactAccess.requireContact('candidates'), async (req, res, next) => {
   try {
     if (!internalLogin(req.user)) return res.status(403).json({ error: 'Not available to this login' });
     const b = req.body || {};
@@ -756,7 +831,7 @@ router.post('/quick-log', requirePerm('ats', 'candidates', 'Candidate Master', '
     if (!recipient) return res.status(400).json({ error: `No ${channel === 'Email' ? 'email address' : 'phone number'} on this candidate.` });
     // eslint-disable-next-line global-require
     const { senderIdentity } = require('../utils/candidateComms');
-    const via = { Call: 'Call made from the sender\'s own phone / dialler (tel: link)', Email: 'Opened in the sender\'s own mail app (mailto: link) — the app cannot see whether it was sent', WhatsApp: 'Opened in the sender\'s own WhatsApp (wa.me link) — the app cannot see whether it was sent' }[channel];
+    const via = { Call: 'Call made from the sender\'s own phone / dialler (tel: link)', Email: 'Opened in the sender\'s own mail app (mailto: link) — the app cannot see whether it was sent', WhatsApp: 'Opened in the sender\'s own WhatsApp (wa.me link) — the app cannot see whether it was sent', SMS: 'Written in the app and sent from the sender\'s own phone — the app cannot see whether it was sent' }[channel];
     const row = await prisma.candidateMessage.create({
       data: {
         candidateId: candidate.id,
@@ -788,7 +863,7 @@ router.post('/quick-log', requirePerm('ats', 'candidates', 'Candidate Master', '
 });
 
 // Change the outcome of a quick log — the sender only, within 24 hours.
-router.patch('/quick-log/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res, next) => {
+router.patch('/quick-log/:id', contactAccess.requireContact('candidates'), async (req, res, next) => {
   try {
     const row = await prisma.candidateMessage.findUnique({ where: { id: req.params.id } });
     if (!row || row.template !== 'QUICK_LOG') return res.status(404).json({ error: 'Quick log not found' });

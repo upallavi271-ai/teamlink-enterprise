@@ -18,7 +18,7 @@ const {
 } = require('../utils/workers');
 const {
   teamWorkloadRows, isAdminViewer, formerWorkloadRows, teamAccess,
-  teamMemberDetail, memberMetricList, assignmentRows, pendingActionRows,
+  teamMemberDetail, memberMetricList, assignmentRows, pendingActionRows, forBdeTeam, dropNonBdeOwners,
 } = require('../utils/teamWorkload');
 // Former people (user, 2026-10-05): leavers from HRMS and their whole work
 // history, under the departments they worked in. utils/formerPeople.js.
@@ -30,7 +30,11 @@ router.use(requireAuth);
 // view permission on this module, is refused at the door rather than handed
 // an empty list.
 router.use(requireProduct('ats'));
-router.use(requirePerm('ats', 'interviews', 'Calendar View', 'view'));
+// The ONE route in /api/ats a client login may call is its own interview
+// feedback (routes/interviewsJoining.js guards it with 'Client Feedback' — the
+// "Give feedback" tick, 2026-10-09). Every other path still needs Calendar View.
+const calendarGuard = requirePerm('ats', 'interviews', 'Calendar View', 'view');
+router.use((req, res, next) => (req.method === 'POST' && /^\/interviews\/[^/]+\/client-feedback$/.test(req.path) ? next() : calendarGuard(req, res, next)));
 
 // RECRUITER & BDE (the user's spec 2026-09-29) — People & Workload,
 // Assignments, Pending Actions, the 360s and the list behind every number.
@@ -53,27 +57,47 @@ async function teamGate(req, res) {
   }
   return true;
 }
+// The BDE team (the client managers and their lead) never receives a recruiter or team lead in a Team
+// payload (user, 2026-10-10): see utils/teamWorkload.js forBdeTeam.
+router.use('/team', (req, res, next) => {
+  const flags = require('../utils/clientRedact').privacyFlagsFor(req.user); // eslint-disable-line global-require
+  if (flags && flags.bde) {
+    const json = res.json.bind(res);
+    res.json = (body) => json(forBdeTeam(body));
+  }
+  next();
+});
 router.get('/team', async (req, res, next) => {
   try {
     if (!(await teamGate(req, res))) return undefined;
     const fresh = req.query.fresh === '1';
     if (req.query.view === 'assignments') return res.json({ rows: await assignmentRows(req.user, { fresh }) });
-    if (req.query.view === 'pending') return res.json(await pendingActionRows(req.user, { fresh }));
+    if (req.query.view === 'pending') {
+      const out = await pendingActionRows(req.user, { fresh });
+      const flags = require('../utils/clientRedact').privacyFlagsFor(req.user); // eslint-disable-line global-require
+      if (flags && flags.bde) { out.rows = out.rows.map((x) => ({ ...x })); await dropNonBdeOwners(out.rows); }
+      return res.json(out);
+    }
     // GET /team?view=former — former Recruiters / TLs / STLs / BDEs in the
     // caller's area (Admin all; Manager / STL / TL their departments / team;
     // a Recruiter / BDE nobody).
-    if (req.query.view === 'former') return res.json(await formerPeopleRows(req.user, { fresh }));
+    if (req.query.view === 'former') {
+      const out = await formerPeopleRows(req.user, { fresh });
+      // The BDE TL leads the client managers only: no former recruiter in her list.
+      if (require('../utils/scope').isBdeTl(req.user)) out.rows = (out.rows || []).filter((r) => r.roleGroup === 'BDE'); // eslint-disable-line global-require
+      return res.json(out);
+    }
     // Active logins only, as always; ?includeLeft=1 (and the screen's v2
     // shape, for its Status filter) also returns people who have left.
     const includeLeft = req.query.includeLeft === '1' || req.query.shape === 'v2';
-    const { rows, helperReady } = await teamWorkloadRows(req.user, { includeLeft, fresh });
+    const { rows, helperReady, bdeTl } = await teamWorkloadRows(req.user, { includeLeft, fresh });
     // ?former=1 — former seat holders with their HISTORICAL counts. Super
     // Admin / Admin only; anyone else asking gets the current rows alone.
     if ((req.query.former === '1' || req.query.former === 'true') && isAdminViewer(req.user)) {
       const currentIds = new Set(rows.map((r) => r.id));
       rows.push(...await formerWorkloadRows(req.user, currentIds));
     }
-    if (req.query.shape === 'v2') return res.json({ rows, helperReady });
+    if (req.query.shape === 'v2') return res.json({ rows, helperReady, bdeTl });
     return res.json(rows);
   } catch (err) {
     return next(err);
@@ -165,7 +189,21 @@ function interviewTypeOf(app) {
   return 'Internal Panel';
 }
 
-function shapeRecruitment(app) {
+// P2 (user, 2026-10-09): the BDE team never receives the internal panel's score or
+// feedback, nor the AI interview. They keep the outcome (result), the status and
+// the CLIENT's feedback.
+const isBdeView = (user) => { const f = require('../utils/clientRedact').privacyFlagsFor(user); return !!(f && f.bde); }; // eslint-disable-line global-require
+
+function shapeRecruitment(app, bdeView = false) {
+  const row = shapeRecruitmentFull(app);
+  if (bdeView) {
+    delete row.score; delete row.feedback; delete row.internalFeedback; delete row.panel;
+    row.history = (row.history || []).map((h) => (h && h.status === 'FEEDBACK_SUBMITTED' ? { ...h, reason: null } : h));
+  }
+  return row;
+}
+
+function shapeRecruitmentFull(app) {
   return {
     id: app.id,
     interviewCode: interviewCode(app),
@@ -248,6 +286,7 @@ router.get('/calendar', async (req, res) => {
     const att = await attributedApplications(req.user, req.query, { scope });
     scope = { AND: [scope, { id: { in: [...att.ids] } }] };
   }
+  const fullAi = req.query.fullAi === '1' || req.query.fullAi === 'true';
   // AND, never a spread: a seat-scoped lead's scope is itself an `OR`, and
   // spreading the AI list's own OR over it dropped the scope entirely.
   const [recruitmentApps, aiApps, shortlistedApps] = await Promise.all([
@@ -257,7 +296,12 @@ router.get('/calendar', async (req, res) => {
       orderBy: { interviewAt: 'asc' },
     }),
     prisma.application.findMany({
-      where: { AND: [scope, { OR: [{ aiInterviewStatus: { not: null } }, { aiInterviewScore: { not: null } }] }] },
+      // utils/calendarAi.js: unless ?fullAi=1 (the AI tab's Excel export), leave
+      // out the unscored "Required" rows — the bulk of the 23k — which the AI tab
+      // now asks for page by page (GET /calendar/ai) and the badge counts in aiCounts.
+      where: { AND: [scope, fullAi
+        ? { OR: [{ aiInterviewStatus: { not: null } }, { aiInterviewScore: { not: null } }] }
+        : { AND: [{ OR: [{ aiInterviewStatus: { not: null } }, { aiInterviewScore: { not: null } }] }, { OR: [{ aiInterviewStatus: { not: 'Required' } }, { aiInterviewScore: { not: null } }, { aiInterviewDeadline: { not: null } }] }] }] },
       // Only what shapeAi() reads — every application carries an AI status
       // ("Required" by default), so this list is the whole scope (23k rows for
       // a global login) and whole candidate / requirement rows made it slow.
@@ -281,12 +325,21 @@ router.get('/calendar', async (req, res) => {
     }),
   ]);
 
-  const recruitment = recruitmentApps.map(shapeRecruitment);
+  const bdeView = isBdeView(req.user);
+  const recruitment = recruitmentApps.map((a) => shapeRecruitment(a, bdeView));
   // B4: the panel of each interview (current round), migrated on read for old rows.
   // eslint-disable-next-line global-require
-  const panels = await require('../utils/interviewPanel').panelsFor(recruitmentApps);
-  recruitment.forEach((r) => { r.panel = panels.get(r.id) || []; });
-  const ai = aiApps.map(shapeAi).map(withExpiry);
+  const panels = bdeView ? new Map() : await require('../utils/interviewPanel').panelsFor(recruitmentApps);
+  recruitment.forEach((r) => { r.panel = bdeView ? [] : (panels.get(r.id) || []); });
+  // The BDE filter reads "Name · BDE MED" (the position), like the Add Client form.
+  if (recruitment.some((r) => r.requirement.bde)) {
+    const bdeDir = await require('../utils/bdeSeats').bdeDirectory(); // eslint-disable-line global-require
+    recruitment.forEach((r) => { if (r.requirement.bde) r.requirement.bde.label = bdeDir.pickerLabelFor(r.requirement.bde.name); });
+  }
+  const CAI = require('../utils/calendarAi'); // eslint-disable-line global-require
+  const ai = bdeView ? [] : aiApps.map(shapeAi).map(withExpiry).filter((r) => fullAi || CAI.worthSending(r));
+  // The real totals behind the AI tab's badge (the unscored "Required" rows are not sent).
+  const aiCounts = bdeView ? { total: 0, byStatus: {} } : await CAI.totals(scope);
   // Review #3 §11 — "AI Interview · Score 82% · Completed 27 Sep": WHEN the AI
   // interview was completed, from the pipeline history (the move into AI
   // Interview Completed). No new column: the stage event is the record.
@@ -323,6 +376,7 @@ router.get('/calendar', async (req, res) => {
   res.json({
     recruitment,
     ai,
+    aiCounts,
     shortlisted,
     statuses: INTERVIEW_STATUS_CODES,
     types: INTERVIEW_TYPES,
@@ -344,11 +398,42 @@ router.get('/calendar', async (req, res) => {
   });
 });
 
+// The AI tab, one page at a time (utils/calendarAi.js has the contract).
+router.get('/calendar/ai', async (req, res) => {
+  let scope = calendarScope(req.user);
+  if (hasPersonQuery(req.query)) {
+    const att = await attributedApplications(req.user, req.query, { scope });
+    scope = { AND: [scope, { id: { in: [...att.ids] } }] };
+  }
+  const CAI = require('../utils/calendarAi'); // eslint-disable-line global-require
+  // The BDE team never receives the AI interview (P2, 2026-10-09).
+  if (isBdeView(req.user)) {
+    return res.json({ rows: [], total: 0, page: 1, pageSize: CAI.parseAsk(req.query).pageSize, pages: 1, counts: Object.fromEntries(CAI.VIEWS.map((v) => [v, 0])), facets: { status: [] } });
+  }
+  return res.json(await CAI.page(scope, req.query, (a) => withExpiry(shapeAi(a))));
+});
+
 // Interviews are moved by the people who run them. Clients watch only. Who
 // that is comes from the permission engine (caps.atsAct), not a role list.
 
-async function loadInterview(req, res) {
-  if (!req.user.caps.atsAct) {
+// P5 (user, 2026-10-09): each interview action asks the Role Catalog cell it
+// belongs to, not the general pipeline switch:
+//   schedule  (reschedule, cancel, advance, type, panel, meeting link)
+//             Schedule Interview / edit
+//   feedback  (record the internal feedback)  Interview Feedback / create
+//   either    (did not attend: asked from the feedback form)  either one
+async function loadInterview(req, res, need = 'schedule') {
+  const asks = {
+    schedule: [['Schedule Interview', 'edit']],
+    feedback: [['Interview Feedback', 'create']],
+    either: [['Schedule Interview', 'edit'], ['Interview Feedback', 'create']],
+  }[need];
+  let allowed = false;
+  for (const [feature, action] of asks) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await can(req.user, 'ats', 'interviews', feature, action)) { allowed = true; break; }
+  }
+  if (!allowed) {
     res.status(403).json({ error: "This action isn't included in your role's permissions" });
     return null;
   }
@@ -376,9 +461,10 @@ async function recordEvent(applicationId, status, extra = {}) {
 
 async function respondWith(res, id, extra = {}) {
   const app = await prisma.application.findUnique({ where: { id }, include: CALENDAR_INCLUDE });
-  const row = shapeRecruitment(app);
+  const bdeView = isBdeView(res.req && res.req.user);
+  const row = shapeRecruitment(app, bdeView);
   // eslint-disable-next-line global-require
-  row.panel = (await require('../utils/interviewPanel').panelsFor([app])).get(app.id) || [];
+  row.panel = bdeView ? [] : ((await require('../utils/interviewPanel').panelsFor([app])).get(app.id) || []);
   res.json({ ...row, ...extra });
 }
 
@@ -428,7 +514,7 @@ router.post('/interviews/:id/panel/:pid/feedback', async (req, res) => {
     app = await prisma.application.findUnique({ where: { id: member.applicationId }, include: { candidate: true, requirement: { include: { client: true } } } });
     if (!app || !app.interviewStatus) return res.status(400).json({ error: 'No interview on this application' });
   } else {
-    app = await loadInterview(req, res);
+    app = await loadInterview(req, res, 'feedback');
     if (!app) return undefined;
   }
   if (['CANCELLED', 'NO_SHOW'].includes(app.interviewStatus)) {
@@ -550,7 +636,7 @@ router.post('/interviews/:id/cancel', async (req, res) => {
     entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'Cancelled',
   });
   // Everyone who was told about the booking is told it is off (§11).
-  await require('../utils/interviewNotices').announceInterview(app.id, 'cancelled', { actor: req.user, reason }); // eslint-disable-line global-require
+  await require('../utils/interviewNotices').announceInterview(app.id, 'cancelled', { actor: req.user, reason, candidateEmail: req.body.viaPopup !== true }); // eslint-disable-line global-require
   await respondWith(res, app.id);
 });
 
@@ -559,7 +645,7 @@ router.post('/interviews/:id/cancel', async (req, res) => {
 // required, and a new time may be offered in the same step: the slot is then
 // rescheduled (history keeps both) and everyone is told.
 router.post('/interviews/:id/no-show', async (req, res) => {
-  const app = await loadInterview(req, res);
+  const app = await loadInterview(req, res, 'either');
   if (!app) return;
   const reason = String(req.body.reason || '').trim();
   if (!reason) return res.status(400).json({ error: 'Say why the candidate did not attend.' });
@@ -586,7 +672,7 @@ router.post('/interviews/:id/no-show', async (req, res) => {
       data: { interviewStatus: 'RESCHEDULED', interviewAt: when, interviewRescheduleCount: app.interviewRescheduleCount + 1, interviewCancelReason: null },
     });
     await recordEvent(app.id, 'RESCHEDULED', { reason: `New time after did not attend — ${reason}`, by: req.user.name, fromSlot, toSlot: when.toISOString() });
-    await IN.announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason: 'The candidate did not attend — a new time is booked' });
+    await IN.announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason: 'The candidate did not attend — a new time is booked', candidateEmail: req.body.viaPopup !== true });
   } else {
     await IN.announceInterview(app.id, 'no_show', { actor: req.user, reason, candidateEmail: true });
   }
@@ -620,7 +706,7 @@ router.post('/interviews/:id/reschedule', async (req, res) => {
     entityId: app.id, fromValue: fromSlot, toValue: when.toISOString(),
   });
   // Everyone is told the new time; the reminders re-arm for the new slot.
-  await require('../utils/interviewNotices').announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason }); // eslint-disable-line global-require
+  await require('../utils/interviewNotices').announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason, candidateEmail: req.body.viaPopup !== true }); // eslint-disable-line global-require
   await respondWith(res, app.id);
 });
 
@@ -635,7 +721,7 @@ router.post('/interviews/:id/reschedule', async (req, res) => {
 // (POST /ats/interviews/:id/decision). Deliberately separate from
 // aiInterviewScore, and separate from the client’s own feedback record.
 router.post('/interviews/:id/feedback', async (req, res) => {
-  const app = await loadInterview(req, res);
+  const app = await loadInterview(req, res, 'feedback');
   if (!app) return;
   // The short form (rating · strengths · concerns · decision — change list
   // §11) is folded into the same record; see utils/shortFeedback.js.
@@ -718,7 +804,7 @@ router.post('/interviews/:id/feedback', async (req, res) => {
 // resent, or handed to a recruiter for a manual screen.
 
 async function loadAi(req, res) {
-  if (!req.user.caps.atsAct) {
+  if (!(await can(req.user, 'ats', 'interviews', 'AI Interview', 'edit'))) {
     res.status(403).json({ error: "This action isn't included in your role's permissions" });
     return null;
   }
@@ -856,7 +942,7 @@ router.get('/search', async (req, res) => {
     AND: [clientWhere(req.user), {
       OR: [
         { name: { contains: q } }, { legalName: { contains: q } },
-        { gst: { contains: q.toUpperCase() } }, { clientCode: { contains: q } },
+        { gst: { contains: q.toUpperCase() } }, { clientCode: { contains: q } }, { agreementId: { contains: q } },
         ...(/^cl[-\s#:]/i.test(q) ? idArms : []),
       ],
     }],

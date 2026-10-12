@@ -78,27 +78,46 @@ function shapeRequirement(r) {
   };
 }
 
-function shapeCandidate(c) {
-  return {
+// WHAT THE ASKING LOGIN MAY RECEIVE ABOUT A CANDIDATE (security review 2026-10-09).
+// The same switch the REST routes use (utils/clientRedact.js privacyFlagsFor): the
+// Role Catalog 'Candidate Contact & Salary' switch (req.user.caps.candidateContact)
+// and the BDE team's own cut. Without it the AI never returns e-mail, phone or
+// expected salary; a BDE / BDE TL also never gets the internal resume score nor the
+// employer / education / location details; the resume score also needs the
+// 'Resume & Scores' view. Fail closed: a missing user answers the most restricted view.
+async function candidateViewFor(user) {
+  // eslint-disable-next-line global-require
+  const flags = user ? require('./clientRedact').privacyFlagsFor(user) : { bde: true, contact: true };
+  const scores = !!user && !(flags && flags.bde) && await can(user, 'ats', 'candidates', 'Resume & Scores', 'view');
+  return { contact: !!(flags && flags.contact), bde: !!(flags && flags.bde), scores };
+}
+
+function shapeCandidate(c, view = { contact: true, bde: true, scores: false }) {
+  const out = {
     id: c.id,
     name: c.name,
-    email: c.email || null,
-    phone: c.phone || null,
     currentDesignation: c.currentDesignation || null,
-    currentCompany: c.currentCompany || null,
     experienceYears: c.experienceYears,
     relevantExperienceYears: c.relevantExperienceYears,
-    location: c.location || null,
     preferredLocation: c.preferredLocation || null,
     mandatorySkills: c.skills || null,
     goodToHaveSkills: c.goodToHaveSkills || null,
-    education: c.education || null,
-    specialization: c.specialization || null,
-    expectedSalary: c.expectedSalary || null,
     source: c.source || null,
     noticePeriod: c.noticePeriod || null,
-    resumeScore: c.resumeScore,
   };
+  if (!view.contact) {
+    out.email = c.email || null;
+    out.phone = c.phone || null;
+    out.expectedSalary = c.expectedSalary || null;
+  }
+  if (!view.bde) {
+    out.currentCompany = c.currentCompany || null;
+    out.location = c.location || null;
+    out.education = c.education || null;
+    out.specialization = c.specialization || null;
+  }
+  if (view.scores) out.resumeScore = c.resumeScore;
+  return out;
 }
 
 function shapeApplication(a) {
@@ -250,17 +269,15 @@ const TOOLS = [
     },
     async run(user, input) {
       if (!await can(user, 'ats', 'candidates', 'Candidate List', 'view')) return DENIED('view candidates');
+      const view = await candidateViewFor(user);
       const where = { ...candidateWhere(user) };
       const and = [];
       if (input.query) {
-        and.push({
-          OR: [
-            { name: { contains: input.query } },
-            { skills: { contains: input.query } },
-            { email: { contains: input.query } },
-            { location: { contains: input.query } },
-          ],
-        });
+        // A field the login may not READ must not be searchable either (it would leak by yes / no).
+        const or = [{ name: { contains: input.query } }, { skills: { contains: input.query } }];
+        if (!view.contact) or.push({ email: { contains: input.query } });
+        if (!view.bde) or.push({ location: { contains: input.query } });
+        and.push({ OR: or });
       }
       if (input.requirementId || input.stage) {
         and.push({
@@ -285,7 +302,7 @@ const TOOLS = [
       const out = rows
         .map((c) => {
           const apps = (c.applications || []).filter((a) => (shared ? shared.has(a.id) : true));
-          return { ...shapeCandidate(c), applications: apps.map(shapeApplication) };
+          return { ...shapeCandidate(c, view), applications: apps.map(shapeApplication) };
         })
         // A client whose only route to this candidate was an unshared
         // application must not see the candidate at all.
@@ -308,6 +325,8 @@ const TOOLS = [
     },
     async run(user, input) {
       if (!await can(user, 'ats', 'candidates', 'Resume & Scores', 'view')) return DENIED('view candidate scores');
+      const view = await candidateViewFor(user);
+      if (view.bde) return DENIED('view candidate scores'); // internal scores never reach the BDE team
       const [c, r] = await Promise.all([
         prisma.candidate.findUnique({ where: { id: String(input.candidateId) } }),
         prisma.requirement.findUnique({ where: { id: String(input.requirementId) }, include: { client: true } }),
@@ -323,7 +342,7 @@ const TOOLS = [
       if (!reachable) return { denied: true, message: 'Refused: that candidate is outside your access scope.' };
       const match = computeMatch(c, r);
       return {
-        candidate: shapeCandidate(c),
+        candidate: shapeCandidate(c, view),
         requirement: shapeRequirement(r),
         match: {
           overall: match.overall,
@@ -364,6 +383,8 @@ const TOOLS = [
     },
     async run(user, input) {
       if (!await can(user, 'ats', 'requirements', 'Matching Candidates', 'view')) return DENIED('view matching candidates');
+      const view = await candidateViewFor(user);
+      if (view.bde) return DENIED('view matching candidates'); // match scores are internal: never the BDE team's
       const r = await prisma.requirement.findUnique({ where: { id: String(input.requirementId) }, include: { client: true } });
       if (!r) return { notFound: true, message: 'No such requirement.' };
       if (!matches(r, requirementWhere(user))) {
@@ -374,7 +395,7 @@ const TOOLS = [
       return {
         requirement: shapeRequirement(r),
         matches: ranked.map((c) => ({
-          ...shapeCandidate(c),
+          ...shapeCandidate(c, view),
           score: c.match.overall,
           reasons: c.match.reasons,
           gaps: c.match.gaps,
@@ -481,5 +502,5 @@ async function runTool(user, name, input) {
 }
 
 module.exports = {
-  TOOLS, ALL_TOOLS, toolDefinitions, runTool, LIMIT,
+  TOOLS, ALL_TOOLS, toolDefinitions, runTool, LIMIT, shapeCandidate, candidateViewFor,
 };

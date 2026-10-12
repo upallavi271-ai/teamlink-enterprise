@@ -25,6 +25,7 @@
 const prisma = require('../db');
 const { requirementStatusLabel } = require('./atsVocab');
 const { hasPersonQuery, attributedApplications } = require('./workers');
+const { labelBdeOptions } = require('./bdeSeats');
 
 const without = (q, keys) => {
   const out = { ...q };
@@ -86,7 +87,9 @@ async function requirementFacets(user, q) {
   const uname = new Map(users.map((u) => [u.id, u.name]));
   const cname = new Map(clients.map((c) => [c.id, c.name]));
   const type = new Map([['client', internal.get(false) || 0], ['internal', internal.get(true) || 0]]);
-  const live = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].reduce((n, s) => n + (status.get(s) || 0), 0);
+  // BDE options read "Name · BDE MED" (the position), like the Add Client form.
+  const bdeList = await labelBdeOptions(finish(bde, (v) => uname.get(v) || 'Unknown', q.bdeId));
+  const live =['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].reduce((n, s) => n + (status.get(s) || 0), 0);
   const statusList = finish(status, (v) => requirementStatusLabel(v) || v, q.status !== 'LIVE' ? q.status : '');
   if (live) statusList.unshift({ value: 'LIVE', label: 'Open (live)', count: live });
   return {
@@ -96,7 +99,7 @@ async function requirementFacets(user, q) {
       clientId: finish(client, (v) => cname.get(v) || 'Unknown client', q.clientId),
       tlId: finish(tl, (v) => uname.get(v) || 'Unknown', q.tlId),
       recruiterId: finish(rec, (v) => uname.get(v) || 'Unknown', q.recruiterId),
-      bdeId: finish(bde, (v) => uname.get(v) || 'Unknown', q.bdeId),
+      bdeId: bdeList,
       status: statusList,
       priority: finish(prio, null, q.priority),
       location: finish(loc, null, q.location),
@@ -117,7 +120,8 @@ const CAND_FACETS = [
   { key: 'tl', get: (r) => (r.tlName ? `name:${r.tlName}` : null), label: (r) => r.tlName, person: true },
   { key: 'bde', get: (r) => (r.bdeName ? `name:${r.bdeName}` : null), label: (r) => r.bdeName, person: true },
   { key: 'stage', get: (r) => (r.stageKey ? `st:${r.stageKey}` : null), label: (r) => r.currentStageLabel || r.stageKey },
-  { key: 'source', get: (r) => r.source },
+  // Source: the clean list (utils/candidateSource.js), counted per application; several can be picked (?source=a,b).
+  { key: 'source', get: (r) => r.sourceKey },
   { key: 'location', get: (r) => r.location },
   { key: 'notice', get: (r) => r.noticePeriod || null },
   // ATS layout v3: Status (Active / Hold / Rejected / Joined), cascading.
@@ -131,6 +135,8 @@ const CAND_FACETS = [
   { key: 'owner', get: (r) => (['Active', 'Hold'].includes(r.pipelineStatus) ? (r.ownerUserId || 'none') : null), label: (r) => (r.ownerUserId ? (r.owner && r.owner !== '—' ? r.owner : 'Name not on file') : 'Nobody named yet') },
   { key: 'rejectedBefore', get: (r) => (r.rejectedCount > 0 ? 'yes' : 'no'), label: (r) => (r.rejectedCount > 0 ? 'Yes, rejected before' : 'Never rejected') },
   { key: 'contact', get: contactBuckets, label: null, labelOf: (v) => CONTACT_LABELS[v] || v },
+  // Salary fit (utils/salaryFit.js): Within budget / Slightly above / Above budget / Salary missing / Client budget not set (a row can sit in two).
+  { key: 'salaryFit', get: (r) => (r.salaryFit ? r.salaryFit.keys : null), label: null, labelOf: (v) => require('./salaryFit').FILTER_LABELS[v] || v }, // eslint-disable-line global-require
   // Rejections (spec 2026-10-03 §A1): on rejected rows only — whose decision, and the reason.
   { key: 'rejSide', get: (r) => r.rejSide || null, label: null, labelOf: (v) => REJ_SIDE_LABELS[v] || v },
   { key: 'rejReason', get: (r) => r.rejReason || null },
@@ -188,8 +194,28 @@ async function candidateFacets(user, q) {
         if (f.label && !labels.has(v)) labels.set(v, f.label(r) || String(v));
       });
     });
+    // Source takes several values (?source=a,b): each chosen one stays listed, so it can be seen and unticked.
+    if (f.key === 'source') {
+      facets.source = finish(counts, null, '');
+      String(q.source || '').split(',').map((x) => x.trim()).filter(Boolean).forEach((w) => {
+        const k = require('./candidateSource').canonicalSource(w); // eslint-disable-line global-require
+        if (!facets.source.some((o) => o.value === k)) facets.source.push({ value: k, label: k, count: 0 });
+      });
+      continue; // eslint-disable-line no-continue
+    }
     facets[f.key] = finish(counts, (v) => labels.get(v) || (f.labelOf ? f.labelOf(v) : String(v)), q[f.key]);
   }
+  // The People list counts PEOPLE, not applications.
+  if (q.view === 'master' && typeof cand.masterSourceFacet === 'function') {
+    const m = await cand.masterSourceFacet(user, q);
+    facets.source = finish(m.counts, null, '');
+    String(q.source || '').split(',').map((x) => x.trim()).filter(Boolean).forEach((w) => {
+      const k = require('./candidateSource').canonicalSource(w); // eslint-disable-line global-require
+      if (!facets.source.some((o) => o.value === k)) facets.source.push({ value: k, label: k, count: 0 });
+    });
+    return { facets, total: m.total };
+  }
+  await labelBdeOptions(facets.bde); // "Name · BDE MED" (value stays name:<name>)
   const ctxAll = { search, personIds: await personIds(q) };
   const total = rows.filter((r) => match(r, q, ctxAll)).length;
   return { facets, total };

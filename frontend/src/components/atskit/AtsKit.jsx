@@ -89,7 +89,7 @@ export function KpiTile({
       <span className={`ak-kpi-ic ak-t-${t}`}><Icon name={icon} size={20} /></span>
       <span className="ak-kpi-body">
         <span className="ak-kpi-label">{label}</span>
-        <span className="ak-kpi-value">{loading ? '…' : fmtNum(value)}</span>
+        <span className="ak-kpi-value">{loading ? <span className="ak-skel" role="status" aria-label="Loading" /> : fmtNum(value)}</span>
         {hasDelta ? (
           <span className={`ak-kpi-delta ${good === null ? 'flat' : good ? 'up' : 'down'}`}>
             {d > 0 ? '↑' : d < 0 ? '↓' : '•'} {Math.abs(Math.round(d))}%
@@ -149,12 +149,13 @@ export function StageStrip({ steps = [], compact = false }) {
             <span className={`ak-stage-ic ak-t-${t}`}><Icon name={s.icon || 'user'} size={18} /></span>
             <span className="ak-stage-txt">
               <span className="ak-stage-label">{s.label}</span>
-              <span className="ak-stage-value">{fmtNum(s.value)}</span>
+              <span className="ak-stage-value">{s.loading ? <span className="ak-skel" role="status" aria-label="Loading" /> : fmtNum(s.value)}</span>
+              {s.sub && <span className="ak-stage-sub">{s.sub}</span>}
             </span>
           </>
         );
         return (
-          <li key={s.key || s.label} className={`ak-stage ak-bg-${t}${s.active ? ' ak-active' : ''}`}>
+          <li key={s.key || s.label} className={`ak-stage ak-bg-${t}${s.active ? ' ak-active' : ''}`} title={s.title || undefined}>
             {s.onClick
               ? <button type="button" onClick={s.onClick} aria-pressed={!!s.active}>{inner}</button>
               : <div>{inner}</div>}

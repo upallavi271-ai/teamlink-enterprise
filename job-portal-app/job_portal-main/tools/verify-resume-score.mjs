@@ -5,7 +5,7 @@
  *      five tips each with points and a Fix now button
  *   2  Profile shows the score card; "Fix now" opens that exact field
  *   3  the profile improves -> Re-score -> "Score improved from X to Y"
- *   4  score under 60 -> the application form shows a gentle hint line; it still applies
+ *   4  score under 60 -> never in the way: Apply Now applies at once (0118)
  *   5  a resume upload -> "Your resume scored N/100", optional (Later)
  *   6  an unreadable file -> "We could not read your resume. Try a PDF or
  *      DOCX", never a 0
@@ -141,16 +141,25 @@ await check('2. Profile shows the score; "Fix now" opens that exact field', asyn
 });
 
 await check('3. the profile improves -> Re-score -> "Score improved from X to Y"', async () => {
+  /* On the score page FIRST, with a score loaded just now. Opening the
+     page more than 30 s after the last load re-reads the score, and the
+     server re-scores a changed profile on that read - the page then says
+     "Up from X to Y" (its wording for a change it found by itself) and
+     Re-score has nothing left to improve. That was a race in this check,
+     not in the product: the change has to reach Re-score first. */
+  await go(A.p, '#/candidate/resume-score');
+  await A.p.waitForSelector('.tlrs-ring');
+  await A.p.evaluate(() => TLResumeScore.load(true));
   const r = await A.p.evaluate((id) => TL.api.put(`/candidates/${id}`, {
     location: 'Hyderabad', summary: 'Accounts assistant with 2 years of GST filing and Tally ERP. Handled 120 invoices a day and cut billing errors by 15%.',
     skills: ['Tally ERP', 'GST', 'Excel', 'Accounts Payable', 'Bank Reconciliation', 'TDS', 'Invoicing', 'MS Excel pivot tables'],
     certifications: ['Tally Prime', 'GST Practitioner'], education: 'B.Com, Osmania University, 2022', preferredRole: 'Accounts Assistant',
   }).then(() => 'ok', (e) => e.message), A.id);
   must(r === 'ok', r);
-  await go(A.p, '#/candidate/resume-score');
-  await A.p.waitForSelector('.tlrs-ring');
   await A.p.evaluate(() => tlrsRescore());
-  await A.p.waitForSelector('.tlrs-msg.good', { timeout: 15000 });
+  /* Until Re-score has answered - a line already on the page is not its answer. */
+  await A.p.waitForFunction(() => !/Scoring/.test((document.querySelector('button[onclick="tlrsRescore()"]') || {}).textContent || 'Scoring')
+    && document.querySelector('.tlrs-msg.good'), null, { timeout: 15000 });
   const msg = await A.p.evaluate(() => document.querySelector('.tlrs-msg.good').textContent);
   const m = /Score improved from (\d+) to (\d+)/.exec(msg);
   must(m && Number(m[2]) > Number(m[1]), msg);
@@ -160,31 +169,24 @@ await check('3. the profile improves -> Re-score -> "Score improved from X to Y"
 const deskCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 const B = await newCandidate(deskCtx, 'b');
 
-await check('4. a score under 60: the application form shows a gentle hint, and applying still works', async () => {
-  /* The hint is for a profile that is complete but thin. A profile still
-     missing what one-click apply needs gets "Fill N things to apply"
-     instead (one nudge, not two) - so B gets those things, thinly. */
+await check('4. a score under 60 never stands in the way: Apply Now applies at once (0118)', async () => {
+  /* Before 0118 a thin profile saw a one-line hint inside the application
+     form. Apply Now is one click now and shows no form; the score and its
+     tips stay on the Resume page (check 5). */
   await B.p.evaluate(async ({ id }) => {
     await TL.api.put('/candidates/' + id, { skills: ['Excel'], exp: '1 yr', expYears: 1 });
     await TL.uploadResume(new File(['Score B Candidate, Hyderabad. Looking for an accounts assistant job. Excel.'], 'resume.txt', { type: 'text/plain' }));
     await TL.refresh();
   }, { id: B.id });
-  await B.p.evaluate(() => TLResumeScore.load(true));
-  await B.p.waitForTimeout(1500);
-  const left = await B.p.evaluate(() => TLPortalUpgrades.missing());
-  must(!left.length, 'still missing for one-click: ' + left.join(', '));
   const s = await B.p.evaluate(() => TLResumeScore.load(true));
-  must(s && s.status === 'scored' && s.total < 60, 'score ' + (s && s.total));
+  await B.p.waitForTimeout(1500);
+  const s2 = await B.p.evaluate(() => TLResumeScore.load(true));
+  must(s2 && s2.status === 'scored' && s2.total < 60, 'score ' + (s2 && s2.total) + ' / ' + (s && s.status));
   await go(B.p, `#/job/${job.id}`);
-  /* Since 0106 the hint is one line inside the application form
-     (teamlink-walkin-jobs.js) rather than a pop-up before it. */
   await B.p.evaluate((id) => { applyToJob(id); }, job.id);
-  await B.p.waitForSelector('#tlafForm .tlaf-hint', { timeout: 8000 });
-  const text = await B.p.evaluate(() => document.querySelector('#tlafForm .tlaf-hint').innerText);
-  must(/resume score is \d+\/100/.test(text) && /Improve it/.test(text), text);
-  await shot(B.p, 'score-apply-hint');
-  const done = await completeApplyForm(B.p);
-  must(done.state === 'done', 'form: ' + JSON.stringify(done));
+  const done = await completeApplyForm(B.p, { timeout: 15000 });
+  await shot(B.p, 'score-apply-one-click');
+  must(done.state === 'done' && !(await B.p.$('#tlafForm')), 'apply: ' + JSON.stringify(done));
   await closeApplyForm(B.p);
   await B.p.waitForTimeout(1000);
   const n = await B.p.evaluate((id) => TL.api.get('/applications').then((o) => o.applications.filter((a) => a.jobId === id).length), job.id);

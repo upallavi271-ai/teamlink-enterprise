@@ -18,6 +18,8 @@ import Modal from '../components/Modal.jsx';
 // ATS routes only (/agreements, /ats/agreements); /accounts/agreements keeps its look.
 import { KpiRow, KpiTile } from '../components/atskit/AtsKit.jsx';
 import { CrqHead } from '../components/clientsreq-v4/ListBits.jsx';
+import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the ticked clients (agreement link / reminder)
+import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message clients
 
 // The monthly agreement report (moved here from the Requirements screen's old
 // "Agreement Report" sub-tab, §5): counts from each client's own milestones;
@@ -41,6 +43,9 @@ const MONTH = (value) => {
 // at the gate behind it. The per-client actions live on the client's own
 // Agreement tab (ClientDetail), which this links straight into.
 // ---------------------------------------------------------------------------
+
+// A client has signed once the signing date is set, or the step is Signed / Active / Expired.
+const isSignedByClient = (c) => !!c.agreementSignedAt || ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(c.agreementStatus);
 
 export default function Agreements() {
   const navigate = useNavigate();
@@ -71,6 +76,10 @@ export default function Agreements() {
   const [search, setSearch] = useState('');
   // The agreement link dialog (SA / Admin): the client row it is for.
   const [linkFor, setLinkFor] = useState(null);
+  // Tick agreements -> "Message these N" (the desk only, and only if the server lets this login message clients).
+  const mayMessageClients = useMayMessage('clients', true);
+  const [ticked, setTicked] = useState([]);
+  const [msgMany, setMsgMany] = useState(false);
 
   useEffect(() => {
     if (blocked) return;
@@ -128,11 +137,21 @@ export default function Agreements() {
   }, [clients]);
 
   const rows = useMemo(() => clients.filter((c) => {
-    if (statusFilter && agreementStepOf(c.agreementStatus) !== statusFilter) return false;
-    if (search && !`${c.name} ${c.agreementId || ''} ${c.clientCode || ''}`.toLowerCase().includes(search.toLowerCase())) return false;
+    if (statusFilter === 'SIGNED_ALL') { if (!isSignedByClient(c)) return false; }
+    else if (statusFilter && agreementStepOf(c.agreementStatus) !== statusFilter) return false;
+    if (search) {
+      // Works for "AGR0003", "agr 3", "0003" — spaces and dashes are ignored.
+      const flat = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const q = flat(search);
+      const hay = `${flat(c.name)} ${flat(c.agreementId)} ${flat(c.clientCode)} ${flat(c.displayCode)}`;
+      const num = /^\d{1,4}$/.test(q) ? String(Number(q)).padStart(4, '0') : '';
+      if (!(q && hay.includes(q)) && !(num && (hay.includes(`agr${num}`) || hay.includes(`cli${num}`)))) return false;
+    }
     return true;
   }), [clients, statusFilter, search]);
   const paged = usePaged(rows);
+  const mayMessage = desk && mayMessageClients;
+  const tickedNow = ticked.filter((id) => rows.some((c) => c.id === id)); // ticks that are still in the list
 
   if (blocked) {
     return (
@@ -146,6 +165,7 @@ export default function Agreements() {
   // steps hidden), not a strip of eight boxes; 8 columns; plain words.
   const stepCounts = {};
   clients.forEach((c) => { const k = agreementStepOf(c.agreementStatus); stepCounts[k] = (stepCounts[k] || 0) + 1; });
+  const signedCount = clients.filter(isSignedByClient).length;
   const stepOptions = [...AGREEMENT_STEPS.map(([k]) => k), 'REJECTED'].filter((k) => stepCounts[k]);
   const canSettings = can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit');
 
@@ -191,7 +211,12 @@ export default function Agreements() {
           <KpiTile icon="handshake" tone="blue" label="Total Agreements" value={loaded ? clients.length : null} loading={!loaded} sub="In your area" onClick={statusFilter ? () => setStatusFilter('') : undefined} />
           {stepTile('DRAFT', 'file', 'slate', 'Draft', 'Not sent yet')}
           {stepTile('SENT', 'send', 'violet', 'Sent', 'With the client')}
-          {stepTile('SIGNED', 'clock', 'amber', 'Signed', 'To be made Active')}
+          {/* Signed = every agreement the client has signed. A fully signed one turns Active at once, so it counts under Active too. */}
+          <KpiTile
+            icon="clock" tone="amber" label="Signed" value={loaded ? signedCount : null} loading={!loaded} sub="Signed by the client"
+            active={statusFilter === 'SIGNED_ALL'}
+            onClick={signedCount ? () => setStatusFilter(statusFilter === 'SIGNED_ALL' ? '' : 'SIGNED_ALL') : undefined}
+          />
           {stepTile('ACTIVE', 'check', 'green', 'Active', 'Jobs can go live')}
           {stepTile('EXPIRED', 'x', 'red', 'Expired', 'Needs a renewal')}
         </KpiRow>
@@ -215,24 +240,51 @@ export default function Agreements() {
         <Combo value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">Any step</option>
           {stepOptions.map((s) => <option key={s} value={s}>{`${agreementStepLabel(s)} (${stepCounts[s]})`}</option>)}
+          {signedCount > 0 && <option value="SIGNED_ALL">{`Signed by the client (${signedCount})`}</option>}
         </Combo>
         {(search || statusFilter) && <button type="button" className="btn btn-sm" onClick={() => { setSearch(''); setStatusFilter(''); }}>Clear all</button>}
         <span className="cell-muted" style={{ fontSize: 12 }}>{rows.length ? `${rows.length} agreement${rows.length === 1 ? '' : 's'}` : ''}</span>
       </div>
 
+      {mayMessage && tickedNow.length > 0 && (
+        <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>{`${tickedNow.length} ${tickedNow.length === 1 ? 'client' : 'clients'} ticked`}</span>
+          <button type="button" className="btn btn-sm btn-primary" title="Send the agreement link or a reminder to the contact person of each ticked client" onClick={() => setMsgMany(true)}>{`Message these ${tickedNow.length}`}</button>
+          <button type="button" className="btn btn-sm" onClick={() => setTicked([])}>Clear ticks</button>
+        </div>
+      )}
       <div className="tbl-wrap">
         <table>
           <thead>
             <tr>
-              <th>Client</th><th>Agreement no.</th><th>Step</th><th>Fee</th><th>Ends</th>
+              {mayMessage && (
+                <th style={{ width: 28 }}>
+                  <input
+                    type="checkbox" style={{ width: 'auto' }} aria-label="Tick every agreement on this page" title="Tick every agreement on this page"
+                    checked={paged.slice.length > 0 && paged.slice.every((c) => ticked.includes(c.id))}
+                    onChange={(e) => setTicked((t) => (e.target.checked ? [...new Set([...t, ...paged.slice.map((c) => c.id)])] : t.filter((id) => !paged.slice.some((c) => c.id === id))))}
+                  />
+                </th>
+              )}
+              <th>Client</th>{desk && <th>Client manager (BDE)</th>}<th>Agreement no.</th><th>Step</th><th>Fee</th><th>Ends</th>
               {desk && <><th>Open jobs</th><th>Jobs waiting</th></>}<th />
             </tr>
           </thead>
           <tbody>
             {paged.slice.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => openRow(c)}>
+                {mayMessage && (
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox" style={{ width: 'auto' }} aria-label={`Tick ${c.name}`}
+                      checked={ticked.includes(c.id)}
+                      onChange={(e) => setTicked((t) => (e.target.checked ? [...t, c.id] : t.filter((id) => id !== c.id)))}
+                    />
+                  </td>
+                )}
                 <td><b>{c.name}</b></td>
-                <td className="cell-muted">{c.agreementId || '—'}</td>
+                {desk && <td className="cell-muted">{c.bdeLabel || c.bdeOwner || c.bdeName || '—'}</td>}
+                <td style={{ whiteSpace: 'nowrap' }}>{c.agreementId ? <b>{c.agreementId}</b> : <span className="cell-muted" title="A number is added when the agreement draft is made.">Not numbered yet</span>}</td>
                 <td>
                   <AgreementStepChip status={c.agreementStatus} />
                   {execution.get(c.id)?.awaitingCountersign && <span className="clrel-sub">Waiting for TeamLink to sign</span>}
@@ -265,15 +317,24 @@ export default function Agreements() {
               </tr>
             ))}
             {!loaded && (
-              <tr><td colSpan={desk ? 8 : 6} className="small-muted" style={{ padding: 16 }}>Loading agreements…</td></tr>
+              <tr><td colSpan={(desk ? 9 : 6) + (mayMessage ? 1 : 0)} className="small-muted" style={{ padding: 16 }}>Loading agreements…</td></tr>
             )}
             {loaded && rows.length === 0 && (
-              <tr><td colSpan={desk ? 8 : 6} className="small-muted" style={{ padding: 16 }}>{clients.length ? 'No agreements match. Clear the search or the step.' : 'No agreements yet. Add a client to make one.'}</td></tr>
+              <tr><td colSpan={(desk ? 9 : 6) + (mayMessage ? 1 : 0)} className="small-muted" style={{ padding: 16 }}>{clients.length ? 'No agreements match. Clear the search or the step.' : 'No agreements yet. Add a client to make one.'}</td></tr>
             )}
           </tbody>
         </table>
       </div>
       <Pager page={paged} noun="agreements" />
+      {msgMany && (
+        <SendManyDialog
+          audience="clients"
+          ids={tickedNow}
+          purposeLabel="Client agreement link"
+          note="The agreement link goes to each client's contact person, as long as a live link has been made for them. Make the link first (Link button on the row). You see who is left out, and why, before anything is sent."
+          onClose={() => setMsgMany(false)}
+        />
+      )}
       {linkFor && (
         <Modal title={`Agreement link · ${linkFor.name}`} onClose={() => setLinkFor(null)}>
           <AgreementLinkCard

@@ -1,0 +1,76 @@
+/* Omnichannel: Conversation view, channel strip and Inbox. Everything is scoped under .cv- so nothing else is restyled. */
+.cv-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.cv-strip-item { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line, #dde3ee); border-radius: 18px; padding: 4px 10px; font-size: 12px; background: #fff; text-decoration: none; color: inherit; }
+.cv-strip-item.ok { border-color: #a5d8bd; background: #f0faf5; }
+.cv-strip-item.no { border-color: #f1d199; background: #fff8ea; }
+.cv-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; flex: 0 0 8px; }
+.cv-strip-item.ok .cv-dot { background: #16a34a; }
+.cv-strip-item.no .cv-dot { background: #d97706; }
+.cv-strip-help { font-size: 12px; color: #7a4a00; margin: -4px 0 8px; }
+.cv-strip-help a { font-weight: 600; }
+
+.cv { display: flex; flex-direction: column; min-height: 0; }
+.cv-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.cv-head h3 { margin: 0; font-size: 16px; }
+.cv-sub { font-size: 12.5px; color: #667; }
+.cv-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.cv-pref { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; color: #556; margin: 4px 0 8px; }
+.cv-line { max-height: 420px; overflow-y: auto; border: 1px solid var(--line, #dde3ee); border-radius: 10px; background: #f8faff; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.cv-empty { color: #667; font-size: 13px; padding: 14px; text-align: center; }
+.cv-msg { max-width: 86%; border-radius: 12px; padding: 7px 10px; font-size: 13.5px; line-height: 1.45; border: 1px solid var(--line, #dde3ee); background: #fff; align-self: flex-start; word-break: break-word; }
+.cv-msg.out { align-self: flex-end; background: #eef4ff; border-color: #c7d9fb; }
+.cv-msg.call { align-self: center; background: #fff7e6; border-color: #f1d199; max-width: 94%; }
+.cv-msg.in.stop { background: #fdecea; border-color: #f3b7b0; }
+.cv-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 11.5px; color: #667; margin-bottom: 3px; }
+.cv-badge { border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; background: #e8edf5; color: #334; }
+.cv-badge.Email { background: #e3ecff; color: #1a3f8f; }
+.cv-badge.WhatsApp { background: #dff5e7; color: #14633f; }
+.cv-badge.SMS { background: #fdf0d5; color: #7a4a00; }
+.cv-badge.Call { background: #f0e6fb; color: #5b2a86; }
+.cv-body { white-space: pre-wrap; }
+.cv-subject { font-weight: 600; margin-bottom: 2px; }
+.cv-state { font-size: 11.5px; color: #667; margin-top: 3px; }
+.cv-state.delivered, .cv-state.read, .cv-state.sent { color: #14633f; }
+.cv-state.read b { color: #1d5fd1; }
+.cv-state.failed, .cv-state.notsent { color: #8a1c14; }
+.cv-state.replied { color: #1d5fd1; }
+.cv-note { font-size: 11.5px; color: #7a4a00; margin-top: 3px; }
+
+.cv-reply { border: 1px solid var(--line, #dde3ee); border-radius: 10px; background: #fff; padding: 10px; margin-top: 10px; }
+.cv-chans { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.cv-chan { border: 2px solid var(--line, #dde3ee); background: #fff; border-radius: 10px; padding: 6px 12px; font-size: 13.5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; min-width: 76px; }
+.cv-chan small { font-size: 10.5px; color: #778; }
+.cv-chan.on { border-color: var(--blue, #1d5fd1); background: #eef4ff; }
+.cv-chan.best { border-style: dashed; }
+.cv-wait { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; margin: 6px 0; }
+.cv-wait input[type=number] { width: 64px; }
+.cv-pick { border: 1px solid var(--line, #dde3ee); border-radius: 10px; background: #fff; padding: 8px; margin: 6px 0; }
+.cv-pick-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow: auto; margin-top: 6px; }
+.cv-attempts { font-size: 12.5px; margin: 6px 0; padding-left: 18px; }
+
+/* Inbox */
+.cv-inbox { display: grid; grid-template-columns: minmax(280px, 400px) 1fr; gap: 14px; align-items: start; }
+.cv-inbox.has-open .cv-list-col { display: block; }
+@media (max-width: 860px) { .cv-inbox { grid-template-columns: 1fr; } .cv-inbox.has-open .cv-list-col { display: none; } }
+.cv-back { display: none; }
+@media (max-width: 860px) { .cv-back { display: inline-block; margin-bottom: 8px; } }
+.cv-filters { margin-bottom: 8px; }
+.cv-fgroup { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 4px 0; font-size: 12px; color: #667; }
+.cv-fgroup > span.l { min-width: 62px; }
+.cv-chip { border: 1px solid var(--line, #dde3ee); background: #fff; border-radius: 16px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; }
+.cv-chip.on { background: var(--blue, #1d5fd1); color: #fff; border-color: var(--blue, #1d5fd1); }
+.cv-chip em { font-style: normal; opacity: .75; margin-left: 3px; }
+.cv-rows { border: 1px solid var(--line, #dde3ee); border-radius: 10px; background: #fff; max-height: 66vh; overflow: auto; }
+.cv-row { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--line-soft, #e8edf5); padding: 9px 10px; cursor: pointer; }
+.cv-row:hover { background: #f5f8ff; }
+.cv-row.on { background: #eef4ff; }
+.cv-row .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 6px; flex: 0 0 9px; background: transparent; }
+.cv-row.unread .dot { background: var(--blue, #1d5fd1); }
+.cv-row.unread .nm { font-weight: 700; }
+.cv-row .main { flex: 1; min-width: 0; }
+.cv-row .nm { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; font-size: 13.5px; }
+.cv-row .nm small { color: #778; font-weight: 400; font-size: 11.5px; white-space: nowrap; }
+.cv-row .sn { font-size: 12.5px; color: #556; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cv-row .tg { font-size: 11px; color: #778; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.cv-count-badge { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 6px; border-radius: 9px; background: #d93025; color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 18px; }
+.cv-subtabs { display: flex; gap: 6px; margin: 0 0 12px; }

@@ -92,6 +92,9 @@ model User {
   // Client portal login type (spec B1, 2026-10-03): REVIEWER | VIEWER | BILLING.
   // CLIENT logins only; null = a client login created before types existed.
   portalType           String?
+  // Tick-box rights of a client login (2026-10-09): comma list of VIEW,REQUEST,DECIDE,INTERVIEW,FEEDBACK,AGREEMENT,INVOICES.
+  // null = fall back to the portalType preset (or the older full-access login).
+  portalPerms          String?
   // Last time an Admin confirmed this client login is still needed (quarterly review).
   portalReviewedAt     DateTime?
 
@@ -612,6 +615,7 @@ model Application {
   // ATS dashboard performance (migration 20260926140000_ats_dashboard_indexes).
   @@index([requirementId])
   @@index([stage])
+  @@index([requirementId, stage]) // perf_indexes 20261009210000
   @@index([createdAt])
   @@index([interviewAt])
   @@index([overrideAt])
@@ -769,6 +773,9 @@ model AuditLog {
   approvedAt     DateTime?
   actorName      String? // snapshotted so a later rename cannot rewrite history
   createdAt      DateTime  @default(now())
+
+  @@index([entity, entityId, createdAt]) // perf_indexes 20261009210000
+  @@index([createdAt])
 }
 
 // =============================================================================
@@ -1041,6 +1048,7 @@ model Employee {
   punches                   AttendancePunch[]
   attendanceRegularizations AttendanceRegularization[]
   leaveRequests             LeaveRequest[]
+  latePermissions           LatePermission[]
   payslips                  Payslip[]
   records                   EmployeeRecord[]
   performanceReviews        PerformanceReview[]
@@ -1215,6 +1223,39 @@ model AttendanceRegularization {
   decidedAt         DateTime?
 }
 
+// LATE COMING (user, 2026-10-09 "late permission", 2026-10-10 "late coming apply + higher-role approval").
+// ONE request table for both ways of asking: kind 'Advance' = "I will come in late" (before the day, expectedTime
+// = the time they will arrive by) and kind 'Explain' = "Tell why I was late" (after the day, arrivedAt = the real
+// first check-in, expectedTime = the same time). Approved by the same ladder as a leave / regularization; an
+// APPROVED one excuses the lateness up to expectedTime (+ the grace gap) - see utils/latePermission.js and
+// utils/attendanceDays.js. One non-cancelled row per person per day is a partial unique index in the migration.
+model LatePermission {
+  id             String    @id @default(cuid())
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+  date           String // YYYY-MM-DD
+  expectedTime   String // HH:MM, 24-hour: the time they will arrive by (Explain: the actual first check-in)
+  reason         String
+  note           String?
+  status         String    @default("Pending") // Pending | Approved | Rejected | Cancelled
+  requestedAt    DateTime  @default(now())
+  appliedBy      String? // name of whoever applied (the employee, or HR / Admin on their behalf)
+  decidedById    String?
+  decidedBy      String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  cancelledAt    DateTime?
+  // 20261010120000_late_coming
+  kind           String    @default("Advance") // Advance | Explain
+  reasonCode     String? // one of utils/latePermission.js REASONS
+  arrivedAt      String? // Explain: the first check-in (HH:MM) seen when the request was made
+  attachmentFile String? // utils/attachments.js stored name
+  attachmentName String?
+
+  @@index([employeeId, date])
+  @@index([status])
+}
+
 model LeaveRequest {
   id             String    @id @default(cuid())
   employeeId     String
@@ -1232,6 +1273,8 @@ model LeaveRequest {
   decidedBy      String?
   createdAt      DateTime  @default(now())
   decidedAt      DateTime?
+
+  @@index([employeeId, status]) // perf_indexes 20261009210000
 }
 
 // Per-employee, per-leave-type entitlement ledger. `total` is the entitlement for
@@ -1343,6 +1386,11 @@ model ResignationDetail {
   handoverDetails          String?
   knowledgeTransferDetails String?
   exitComments             String?
+  // 2026-10-09: the time of day it was given (HH:MM, 24-hour), where the row
+  // came from and the import batch (utils/resignationImport.js).
+  resignationTime          String?
+  source                   String?
+  importBatch              String?
   submittedAt              DateTime @default(now())
   submittedByUserId        String?
   submittedByName          String?
@@ -1711,6 +1759,37 @@ model Invoice {
   creditedAmount Float @default(0)
   debitedAmount  Float @default(0)
   creditNotes    CreditNote[]
+  // 20261009120000_bank_recon_sync — approved adjustments (short payment, TDS
+  // difference, bank charge, write-off). Total of the APPROVED InvoiceAdjustment
+  // rows; subtracted in invoiceOutstanding(). 0 on every existing invoice.
+  adjustedAmount Float @default(0)
+  adjustments    InvoiceAdjustment[]
+}
+
+// An adjustment against ONE invoice that closes a small gap which is not a
+// payment: the client short-paid, TDS differed from the invoice, the bank took
+// a charge. Maker-checker: Pending -> Approved | Rejected; only Approved rows
+// count (Invoice.adjustedAmount). Reversing an Approved one keeps the row
+// (status Reversed) and takes its amount back off the invoice.
+model InvoiceAdjustment {
+  id            String    @id @default(cuid())
+  invoiceId     String
+  invoice       Invoice   @relation(fields: [invoiceId], references: [id])
+  kind          String // short_payment | tds_difference | bank_charge | write_off
+  amount        Float
+  reason        String
+  bankTxnId     String? // the statement line that showed the short receipt, if any
+  status        String    @default("Pending") // Pending | Approved | Rejected | Reversed
+  requestedById String?
+  requestedBy   String?
+  requestedAt   DateTime  @default(now())
+  decidedById   String?
+  decidedBy     String?
+  decidedAt     DateTime?
+  decisionNote  String?
+
+  @@index([invoiceId])
+  @@index([status])
 }
 
 // A receipt against an invoice. An invoice can be settled by several of these,
@@ -1730,6 +1809,11 @@ model InvoicePayment {
   // A hand-recorded receipt a bank line was later linked to as proof — undoing
   // the link clears bankTxnId but never deletes or reverses the receipt.
   bankLinked Boolean  @default(false)
+  // 20261009120000_bank_recon_sync — where "date" came from: bank (the linked
+  // statement line's own date) | entered (typed by a person) | sheet (an import
+  // sheet's paid-on column) | backfill (corrected from a statement line).
+  // Never the day the row was created.
+  dateSource String?
 }
 
 // B2 — a credit note (kind "credit": replacement / refund / wrong amount / left within the guarantee) or a debit note (kind "debit": an extra charge) against ONE client invoice. Same GST type / rates and TDS base as the invoice. Number CN-YYYY-#### / DN-YYYY-#### given on issue. Draft -> Issued (maker-checker) -> Cancelled.
@@ -1815,8 +1899,29 @@ model BankTransaction {
   createdBillId String?
   billLinks     String?
 
+  // Bank sync / reconciliation (20261009120000_bank_recon_sync). `date` stays
+  // the actual transaction date printed on the statement and is NEVER replaced
+  // by the import date (createdAt IS the imported-at stamp).
+  //   valueDate    the statement's value date, when it prints one
+  //   externalId   the bank's own transaction id / serial / instrument id —
+  //                the strongest duplicate key (unique per bank account)
+  //   sourceLine   row number in the uploaded file; sourceRow = the original
+  //                row as read (JSON) so the statement can always be audited
+  //   reviewReason why an automatic pass left this line for a person
+  //                ("Needs Review"); null when nothing is waiting
+  //   reversalOfId the earlier line this one reverses (bounced cheque, return)
+  valueDate    String?
+  externalId   String?
+  sourceLine   Int?
+  sourceRow    String?
+  reviewReason String?
+  reversalOfId String?
+
+  @@unique([bankAccountId, externalId])
   @@index([bankAccountId, date])
   @@index([bankAccountId])
+  @@index([importBatch])
+  @@index([reference])
 }
 
 // Hand loans (Bank & Reconciliation). Money borrowed from a person; the bank
@@ -1874,8 +1979,12 @@ model BankRule {
   category  String
   vendor    String?
   gstRate   Float?
-  kind      String   @default("expense") // expense | hand | transfer
+  kind      String   @default("expense") // expense | hand | transfer | client
   createdAt DateTime @default(now())
+  // 20261009120000_bank_recon_sync — who confirmed this narration mapping.
+  createdById   String?
+  createdByName String?
+  source        String? // confirmed (saved by a person) | learnt (from an accepted match)
 }
 
 // The balance log: what the bank actually showed on a date, typed in by hand.
@@ -1906,6 +2015,22 @@ model BankImport {
   fromDate      String?
   toDate        String?
   createdAt     DateTime @default(now())
+  // 20261009120000_bank_recon_sync — what the importer found, kept for audit:
+  //   sourceHash      SHA-256 of the uploaded file (same file twice = told so)
+  //   openingBalance / closingBalance  as the statement states them, if it does
+  //   balanceCheck    JSON { ok, expected, stated, diff, note, breaks[] }
+  //   failedRows      JSON [{ line, reason, row }] — rows that were NOT imported
+  //   summary         JSON { imported, matched, unmatched, duplicate, failed, needsReview }
+  //   status          Done | Partial (some rows failed) | Failed
+  sourceHash     String?
+  openingBalance Float?
+  closingBalance Float?
+  balanceCheck   String?
+  failedRows     String?
+  summary        String?
+  status         String  @default("Done")
+
+  @@index([sourceHash])
 }
 
 // ---------------------------------------------------------------------------
@@ -1944,10 +2069,15 @@ model JournalEntry {
   createdBy      String?
   createdByName  String?
   createdAt      DateTime      @default(now())
+  // Employee-wise salary (2026-10-09): Payroll | Payment | Payroll adjustment | null (older entries read it from payload).
+  voucherType    String?
+  payrollRunId   String?
   lines          JournalLine[]
 
   @@index([month])
   @@index([referenceType, referenceId])
+  @@index([payrollRunId])
+  @@index([voucherType])
 }
 
 model JournalLine {
@@ -1965,9 +2095,86 @@ model JournalLine {
   referenceId    String?
   memo           String?
   createdAt      DateTime      @default(now())
+  // Employee-wise salary (2026-10-09): who a salary line is for (null on every other line).
+  employeeId     String?
+  employeeName   String?
+  department     String?
+  payrollRunId   String?
 
   @@index([journalEntryId])
   @@index([accountCode])
+  @@index([employeeId])
+  @@index([payrollRunId])
+}
+
+// EMPLOYEE-WISE SALARY (2026-10-09): one row per Payroll (or Payroll adjustment)
+// voucher x employee - the table opened inside the Journal. Amounts are rupees
+// (booked in whole paise). gross = earnedGross (what is debited to Salary Expense,
+// after loss of pay); gross = pf + esi + tds + professionalTax + otherDeductions
+// + registerDifference + netPay, exactly, for every row. An ADJUSTMENT row holds
+// signed differences. The voucher itself is never edited; only the payment
+// status columns move when salary is paid.
+model PayrollVoucherEmployee {
+  id                    String   @id @default(cuid())
+  journalEntryId        String
+  payrollRunId          String?
+  month                 String // YYYY-MM (the payroll month)
+  kind                  String   @default("PAYROLL") // PAYROLL | ADJUSTMENT
+  employeeId            String
+  employeeCode          String?
+  employeeName          String
+  department            String?
+  entryId               String? // EmployeePayrollRun.id
+  payslipId             String?
+  fullGross             Float    @default(0)
+  lossOfPay             Float    @default(0)
+  earnedGross           Float    @default(0)
+  pf                    Float    @default(0)
+  esi                   Float    @default(0)
+  tds                   Float    @default(0)
+  professionalTax       Float    @default(0)
+  otherDeductions       Float    @default(0)
+  registerDifference    Float    @default(0)
+  netPay                Float    @default(0)
+  employerPf            Float    @default(0)
+  employerEsi           Float    @default(0)
+  payStatus             String   @default("UNPAID") // UNPAID | PARTIAL | PAID
+  paidAmount            Float    @default(0)
+  paidOn                String?
+  payMode               String?
+  payRef                String?
+  paymentJournalEntryId String?
+  note                  String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  @@unique([journalEntryId, employeeId])
+  @@index([employeeId, month])
+  @@index([payrollRunId])
+  @@index([month, payStatus])
+}
+
+// One employee's part of one salary PAYMENT voucher (Dr Salary payable - name /
+// Cr Bank or Cash): amount, paid on, mode and UTR / reference.
+model PayrollVoucherPayment {
+  id             String   @id @default(cuid())
+  journalEntryId String // the Payment voucher
+  accrualEntryId String? // the Payroll voucher it settles
+  payrollRunId   String?
+  month          String // YYYY-MM (the payroll month paid)
+  employeeId     String
+  employeeName   String
+  amount         Float    @default(0)
+  paidOn         String
+  mode           String   @default("Bank transfer") // Bank transfer | Cash | Cheque
+  reference      String?
+  bankAccountId  String?
+  createdByName  String?
+  createdAt      DateTime @default(now())
+
+  @@unique([journalEntryId, employeeId])
+  @@index([employeeId, month])
+  @@index([payrollRunId])
 }
 
 model OfficeExpense {
@@ -2070,12 +2277,24 @@ model OfficeExpense {
   // out of pocket and the office has since paid back — reached from APPROVED
   // or PAID by an approver; these two columns record who and when.
   expenseCode     String?   @unique
+  // 20261009120000_bank_recon_sync — the ACTUAL payment date (YYYY-MM-DD): the
+  // linked bank line's own date, or the date a person recorded. paidAt above is
+  // a system timestamp (when the status button was pressed / the sync ran) and
+  // is never shown as the payment date.
+  paymentDate     String?
   updatedById     String?
   reimbursedById  String?
   reimbursedAt    DateTime?
+  // 20261009190000_vendor_master_v3 — the vendor master row this bill belongs
+  // to (plain text, no foreign key: an old bill survives anything done to the
+  // master). vendor / vendorGstin above stay as the name / GSTIN SNAPSHOT.
+  vendorId        String?
+  vendorAddress   String?
+  vendorPan       String?
 
   @@index([approvalStatus])
   @@index([expenseDate])
+  @@index([vendorId])
 }
 
 // The Office & Expenses category list. Preloaded with the eight defaults and
@@ -2425,7 +2644,11 @@ model HrConfig {
   // Clock time (HH:MM, 24h) after which a check-in punch counts as late. This is
   // what the punch log and the monthly report actually compare against;
   // graceTimeMinutes above stays for the older minutes-after-shift-start reading.
-  graceTime                    String  @default("09:30")
+  // 2026-10-09 (user): late coming = after 09:15 (the live row was changed by
+  // scripts/set-late-threshold.js; SQLite cannot change a column default without
+  // a table rebuild, so migrations still create it as 09:30 — code that creates
+  // the row passes graceTime explicitly, utils/attendancePolicy.js LATE_AFTER).
+  graceTime                    String  @default("09:15")
   halfDayHours                 Float   @default(4)
   fullDayHours                 Float   @default(8)
   // Calendar days of notice an employee serves after resigning.
@@ -2474,7 +2697,11 @@ model HrConfig {
   // HRMS-24 §4 — how a past working day with NO check-in reads: "Absent" or
   // "Missing Check-In". Weekly offs are day numbers (0 = Sunday … 6 = Saturday).
   missingCheckInRule           String  @default("Missing Check-In")
-  weeklyOffDays                String  @default("0,6")
+  // 2026-10-09 (user): Saturday is a working day - week off is SUNDAY ONLY ('0').
+  // The SQLite column default created by the old migration is still '0,6' (it can
+  // only be changed by rebuilding the table), so every place that creates this row
+  // passes weeklyOffDays '0' (utils/attendancePolicy.js WEEKLY_OFF).
+  weeklyOffDays                String  @default("0")
   // HRMS-24 §5 — web/mobile check-in geofence (Super Admin) and the face-match
   // threshold (euclidean distance between face descriptors; lower is stricter).
   geofenceEnabled              Boolean @default(false)
@@ -2558,6 +2785,70 @@ model OfficeVendor {
   billSubmissions VendorBillSubmission[]
   // Vendor portal v2: false = switched off; its vendor logins cannot sign in.
   isActive      Boolean  @default(true)
+  // 20261009190000_vendor_master_v3 — ONE master for Admin + Office & Accounts.
+  // *Key columns are the normalised values the duplicate checks compare
+  // (GSTIN / PAN upper-case alphanumerics, lower-case email, digits-only phone);
+  // NULL when blank, so the unique indexes allow any number of blank rows.
+  vendorCode         String?   @unique // VEN-0001
+  companyName        String?
+  pan                String?
+  category           String?
+  gstinKey           String?   @unique
+  panKey             String?   @unique
+  emailKey           String?   @unique
+  phoneKey           String?
+  source             String? // Office | Admin | Migration
+  createdById        String?
+  updatedById        String?
+  deactivatedAt      DateTime?
+  deactivatedById    String?
+  deactivationReason String?
+  sharedDocuments    VendorSharedDocument[]
+
+  @@index([phoneKey])
+}
+
+// Documents Admin/Accounts share with ONE vendor (not tied to an asset). The
+// file sits in the private upload folder; the vendor opens it only through a
+// short-lived signed link after an ownership check, and every open is logged.
+model VendorSharedDocument {
+  id           String       @id @default(cuid())
+  vendorId     String
+  vendor       OfficeVendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  title        String
+  docType      String       @default("Other")
+  name         String
+  mime         String
+  size         Int
+  file         String
+  note         String?
+  sharedById   String?
+  sharedByName String?
+  createdAt    DateTime     @default(now())
+  revokedAt    DateTime?
+  revokedById  String?
+
+  @@index([vendorId])
+}
+
+// Single-use, expiring invite / password-reset link for a vendor login. Only
+// the sha256 of the token is stored; the link itself is shown once to the
+// admin. usedAt is set atomically on first use.
+model VendorLoginToken {
+  id            String     @id @default(cuid())
+  vendorUserId  String
+  vendorUser    VendorUser @relation(fields: [vendorUserId], references: [id], onDelete: Cascade)
+  purpose       String // invite | reset
+  tokenHash     String     @unique
+  expiresAt     DateTime
+  usedAt        DateTime?
+  revokedAt     DateTime?
+  createdById   String?
+  createdByName String?
+  usedIp        String?
+  createdAt     DateTime   @default(now())
+
+  @@index([vendorUserId])
 }
 
 // Office & Expenses → Government portals. One row per portal (gst | traces |
@@ -2602,6 +2893,8 @@ model Notification {
   channel   String? // Email | WhatsApp | SMS | In-App
   recipient String? // who the event was addressed to
   status    String? // Sent (Demo) | Delivered | Failed | Read
+
+  @@index([userId, createdAt]) // perf_indexes 20261009210000
 }
 
 // Role Catalog "Edit Access" — one row per (role, module). `moduleEnabled` is
@@ -2722,6 +3015,7 @@ model VendorUser {
   access              VendorAssetAccess[]
   sessions            VendorSession[]
   bills               VendorBillSubmission[]
+  loginTokens         VendorLoginToken[]
 
   @@index([vendorId])
 }
@@ -2856,6 +3150,10 @@ model VendorBillSubmission {
   withdrawnAt        DateTime?
   billNumberKey      String? // lower(trim(billNumber)) — the duplicate check
   originalValues     String? // JSON: the vendor's own amount / gst / tds / billNumber / billDate before any Accounts edit
+  // 20261009190000_vendor_master_v3 — the vendor's name / GSTIN / address AS THEY WERE when the bill was sent.
+  vendorNameSnap     String?
+  vendorGstinSnap    String?
+  vendorAddressSnap  String?
 
   @@index([vendorId])
   @@index([assetId])
@@ -2958,6 +3256,8 @@ model SyncLog {
   reason    String?
   recordRef String?
   createdAt DateTime @default(now())
+
+  @@index([status, createdAt]) // perf_indexes 20261009210000
 }
 
 // ---------------------------------------------------------------------------
@@ -3075,6 +3375,7 @@ model ApplicationStageEvent {
   @@index([applicationId])
   @@index([createdAt])
   @@index([actorPositionCode])
+  @@index([toStage, createdAt]) // perf_indexes 20261009210000
 }
 
 // ---------------------------------------------------------------------------
@@ -3337,6 +3638,10 @@ model Task {
   reviewedByName String?
   reviewedAt     DateTime?
   reviewNote     String?
+  // 2026-10-09: High | Medium | Low, and the day the last overdue reminder was
+  // sent (a task gets at most one reminder a day).
+  priority          String    @default("Medium")
+  overdueRemindedOn String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -3345,6 +3650,8 @@ model Task {
   @@index([assigneeId])
   @@index([assignedById])
   @@index([department])
+  @@index([priority])
+  @@index([endDate])
 }
 
 // The comment button on the task row. Anyone who can reach the task can read
@@ -3378,6 +3685,7 @@ model PortalRequest {
   name            String?
   email           String?
   portalType      String?
+  portalPerms     String? // the ticks asked for (comma list, see User.portalPerms)
   reason          String?
   requestedById   String?
   requestedByName String?
@@ -3784,6 +4092,65 @@ model RecruiterJoiningDecision {
   @@index([payMonth, decision])
 }
 
+// HRMS spec 2026-10-09 point 4 — department-wise incentive rules (Super Admin
+// edits them; the table starts empty) and the awards worked out from them.
+model IncentiveRule {
+  id            String   @id @default(cuid())
+  name          String
+  department    String? // null = every department
+  role          String? // designation / role it applies to; null = everyone in the department
+  metric        String   @default("JOININGS") // JOININGS | TARGET | MANUAL
+  minAchieved   Float    @default(0)
+  target        Float?
+  basis         String   @default("FIXED") // FIXED | PER_UNIT | PER_UNIT_OVER_TARGET
+  amount        Float    @default(0)
+  maxAmount     Float?
+  // The joinings target carries forward: a month's missing joinings are added to the next month's target.
+  carryForward  Boolean  @default(false)
+  fromMonth     String   @default("")
+  toMonth       String?
+  active        Boolean  @default(true)
+  note          String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([department])
+  @@index([active])
+}
+
+model IncentiveAward {
+  id             String    @id @default(cuid())
+  dedupeKey      String    @unique
+  employeeId     String
+  month          String // YYYY-MM the work was done in
+  ruleId         String?
+  ruleName       String?
+  department     String?
+  metric         String    @default("MANUAL")
+  achieved       Float     @default(0)
+  target         Float?
+  baseTarget     Float? // the rule's base target that month
+  carriedIn      Float? // the part carried in from earlier months
+  amount         Float     @default(0)
+  status         String    @default("Pending") // Waiting for amount | Pending | Approved | Rejected | Paid
+  source         String    @default("RULE") // RULE | MANUAL
+  payMonth       String? // the payroll month an Approved award is paid in
+  payrollEntryId String?
+  note           String?
+  createdById    String?
+  createdByName  String?
+  decidedById    String?
+  decidedByName  String?
+  decidedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([employeeId, month])
+  @@index([status, payMonth])
+}
+
 // B8 semantic matching: cached AI embedding vectors (Float32 bytes) per candidate / job.
 model SemanticVector {
   id        String   @id @default(cuid())
@@ -4115,4 +4482,254 @@ model SourceDocument {
   createdAt      DateTime @default(now())
 
   @@index([target, entityId])
+}
+
+// Message templates (Email / SMS / WhatsApp) with versions (2026-10-09).
+model MessageTemplate {
+  id             String   @id @default(cuid())
+  purpose        String   // key: INTERVIEW_SCHEDULED, OFFER, FOLLOWUP_INTERVIEW_REMINDER, CUSTOM_<slug> ...
+  purposeLabel   String
+  audience       String   @default("candidate") // candidate | client | employee
+  channel        String   // Email | SMS | WhatsApp
+  language       String   @default("English") // English | Telugu | Hindi
+  name           String
+  subject        String?
+  body           String
+  active         Boolean  @default(true)
+  isDefault      Boolean  @default(true) // the one the sender code resolves for purpose+channel+language
+  builtIn        Boolean  @default(false) // seeded from the code defaults (v1)
+  version        Int      @default(1)
+  waTemplateName String?  // WhatsApp: the template NAME as created in the Meta console
+  waLanguageCode String?
+  waStatus       String   @default("None") // None | Pending | Approved | Rejected  (set by the admin, never faked)
+  waVars         String?  // JSON array of token keys for {{1}} {{2}} ...
+  dltTemplateId  String?  // SMS (India DLT)
+  senderId       String?  // SMS sender / header id
+  createdById    String?
+  createdByName  String?
+  updatedById    String?
+  updatedByName  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  versions       MessageTemplateVersion[]
+
+  @@index([purpose, channel, language])
+}
+
+model MessageTemplateVersion {
+  id             String          @id @default(cuid())
+  templateId     String
+  template       MessageTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version        Int
+  subject        String?
+  body           String
+  active         Boolean         @default(true)
+  waTemplateName String?
+  waStatus       String?
+  waVars         String?
+  dltTemplateId  String?
+  senderId       String?
+  changeNote     String?
+  changedById    String?
+  changedByName  String?
+  createdAt      DateTime        @default(now())
+
+  @@index([templateId])
+}
+
+// --- Omnichannel (20261010160000_omnichannel_inbox) -----------------------------------------
+// One conversation per person across Call / Mail / WhatsApp / SMS, and the Inbox state on top of it.
+model Conversation {
+  id               String    @id @default(cuid())
+  personType       String // CANDIDATE | CLIENT | EMPLOYEE
+  personId         String
+  personName       String?
+  department       String?
+  ownerUserId      String? // who deals with it (Assign to)
+  ownerName        String?
+  lastMessageAt    DateTime?
+  lastChannel      String?
+  lastDirection    String? // IN | OUT
+  lastSnippet      String?
+  lastInboundAt    DateTime?
+  unread           Int       @default(0)
+  doneAt           DateTime? // Mark done
+  doneByName       String?
+  preferredChannel String? // Email | WhatsApp | SMS | Call — tried first by "Send on the best channel"
+  awaitUntil       DateTime? // "If no reply by then …" reminder
+  awaitChannel     String?
+  awaitNext        String?
+  awaitNotifiedAt  DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+  messages         ConversationMessage[]
+
+  @@unique([personType, personId])
+  @@index([lastMessageAt])
+  @@index([ownerUserId])
+}
+
+// Messages of CLIENT and EMPLOYEE people (a candidate's stay in CandidateMessage).
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  personType     String
+  personId       String
+  channel        String // Email | WhatsApp | SMS | Call
+  direction      String       @default("OUT") // OUT | IN
+  subject        String?
+  body           String?
+  address        String?
+  status         String? // SENT | DELIVERED | READ | FAILED | RECEIVED | LOGGED | NOT_SENT_BLOCKED | OPENED_ON_DEVICE
+  statusDetail   String?
+  providerRef    String?
+  mailMessageId  String? // the e-mail's Message-ID header (reply matching)
+  inReplyTo      String?
+  templateLabel  String?
+  senderUserId   String?
+  senderName     String?
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([providerRef])
+  @@index([mailMessageId])
+}
+
+// --- Automatic stage messages (20261010180000_scheduled_messages) -----------------------------
+// One row per (step change x rule). Rules / go-live / kill switch live in AppSetting "auto-messages".
+// utils/autoMessages.js reads and writes it with plain SQL (works before or after prisma generate).
+model ScheduledMessage {
+  id              String    @id @default(cuid())
+  candidateId     String
+  applicationId   String?
+  requirementId   String?
+  stageEventId    String?
+  stageFrom       String?
+  stageTo         String
+  dedupeKey       String    @unique
+  status          String    @default("SCHEDULED") // SCHEDULED | WAITING_APPROVAL | SENDING | SENT | FAILED | CANCELLED | SKIPPED
+  statusReason    String?
+  sendAt          DateTime?
+  whenMode        String? // now | delay | working | approval
+  channelPlan     String? // JSON { channels: [...], strategy: all | first }
+  wording         String    @default("TEMPLATE") // TEMPLATE | AI
+  instruction     String?
+  purpose         String?
+  language        String?
+  urgent          Boolean   @default(false)
+  subject         String?
+  body            String?
+  aiWritten       Boolean   @default(false)
+  aiNote          String?
+  edited          Boolean   @default(false)
+  resultJson      String?
+  sentAt          DateTime?
+  attempts        Int       @default(0)
+  candidateName   String?
+  jobTitle        String?
+  department      String?
+  createdByUserId String?
+  createdByName   String?
+  decidedByUserId String?
+  decidedByName   String?
+  decidedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@index([status, sendAt])
+  @@index([candidateId])
+  @@index([applicationId])
+  @@index([createdAt])
+}
+
+// --- Candidate duplicates (20261010200000_candidate_duplicates) -----------------------------------
+// Fingerprints of every candidate, the duplicate flags (one per pair), merge history (undo) and old-id aliases.
+// utils/candidateDupes.js reads and writes these with plain SQL (works before or after prisma generate).
+model CandidateDupKey {
+  id          String   @id @default(cuid())
+  candidateId String
+  kind        String // PHONE | EMAIL | NAME_DOB | RESUME_HASH | RESUME_BAND | NAME_COMPANY | NAME_CITY | NAME_COLLEGE
+  value       String
+  createdAt   DateTime @default(now())
+
+  @@unique([candidateId, kind, value])
+  @@index([kind, value])
+}
+
+model CandidateDupSig {
+  candidateId String   @id
+  resumeSig   String?
+  resumeSha   String?
+  resumeChars Int?
+  updatedAt   DateTime @default(now())
+}
+
+model CandidateDupFlag {
+  id               String    @id @default(cuid())
+  pairKey          String    @unique // the two ids, sorted, joined with |
+  candidateId      String // the NEWER profile: this is the one held at the first step
+  matchCandidateId String // the profile it resembles
+  level            String // CERTAIN | LIKELY | POSSIBLE
+  reasons          String? // JSON list: phone, email, name_dob, resume_same, resume_like, name_city, ...
+  detail           String? // JSON: name agreement, resume similarity, ...
+  door             String? // where it came in: Add candidate, Excel import, Job portal, ...
+  status           String    @default("OPEN") // OPEN | MERGE_REQUESTED | NOT_DUPLICATE | MERGED | SAME_PERSON_OTHER_JOB | REJECTED | AUTO_CLOSED
+  enteredById      String?
+  enteredByName    String?
+  requestedById    String?
+  requestedByName  String?
+  requestedAt      DateTime?
+  requestMasterId  String?
+  requestChoices   String? // JSON: which value to keep per field
+  requestNote      String?
+  resolvedById     String?
+  resolvedByName   String?
+  resolvedAt       DateTime?
+  resolution       String?
+  reason           String?
+  mergeLogId       String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+
+  @@index([candidateId, status])
+  @@index([matchCandidateId, status])
+  @@index([status, level])
+  @@index([createdAt])
+}
+
+model CandidateMergeLog {
+  id              String    @id @default(cuid())
+  masterId        String
+  donorIds        String // JSON list
+  summary         String?
+  kind            String? // MERGE | SAME_PERSON_OTHER_JOB
+  status          String    @default("DONE") // DONE | UNDONE
+  flagId          String?
+  fieldChoices    String?
+  masterBefore    String? // JSON: the master's values before any blank was filled / choice applied
+  snapshot        String? // JSON: the donors (and any folded application) exactly as they were
+  moved           String? // JSON: ids of every row that moved, per table
+  performedById   String?
+  performedByName String?
+  requestedById   String?
+  requestedByName String?
+  createdAt       DateTime  @default(now())
+  undoUntil       DateTime?
+  undoneAt        DateTime?
+  undoneById      String?
+  undoneByName    String?
+
+  @@index([masterId])
+  @@index([createdAt])
+}
+
+model CandidateAlias {
+  oldId       String   @id
+  candidateId String
+  mergeLogId  String?
+  createdAt   DateTime @default(now())
+
+  @@index([candidateId])
 }

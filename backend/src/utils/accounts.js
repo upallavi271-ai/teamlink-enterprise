@@ -14,7 +14,8 @@ function invoiceTotal(invoice) {
 
 // What is still to be collected after any receipts already recorded.
 function invoiceOutstanding(invoice) {
-  return ROUND(invoiceTotal(invoice) - Number(invoice.receivedAmount || 0) - Number(invoice.creditedAmount || 0) + Number(invoice.debitedAmount || 0)); // B2: credit / debit notes (0 on an invoice without one)
+  // B2: credit / debit notes (0 on an invoice without one). Recon spec: APPROVED adjustments (short payment, TDS difference, bank charge, write-off) also come off; 0 on every existing invoice.
+  return ROUND(invoiceTotal(invoice) - Number(invoice.receivedAmount || 0) - Number(invoice.creditedAmount || 0) - Number(invoice.adjustedAmount || 0) + Number(invoice.debitedAmount || 0));
 }
 
 const SETTLED_TOLERANCE = 0.5; // rupees — below this an invoice counts as closed
@@ -101,7 +102,7 @@ function suggestInvoiceFor(txn, invoices) {
 
 // The reconciliation state machine. 'Imported' and 'Suggested Match' are
 // presentation states derived from the stored row, not stored themselves.
-const RECON_STATES = ['Unmatched', 'Matched', 'Reconciled', 'Ignored'];
+const RECON_STATES = ['Unmatched', 'Matched', 'Reconciled', 'Ignored', 'Reversed'];
 
 function txnState(txn) {
   if (txn.reconStatus && RECON_STATES.includes(txn.reconStatus)) return txn.reconStatus;

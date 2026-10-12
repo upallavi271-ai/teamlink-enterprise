@@ -14,6 +14,7 @@ import {
   pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
 } from './invoices/invTax';
 import './invoices/invTax.css';
+import './invoices/proof.css';
 // B2 — credit / debit notes on this invoice, and its placement margin.
 import NoteModal, { openNotePdf } from './invoices/NoteModal.jsx';
 import { CancelNote, RefundPaid } from './invoices/CreditNotesPanel.jsx';
@@ -78,6 +79,10 @@ export default function InvoiceDetail() {
   const [send, setSend] = useState(null);
   const [showAccount, setShowAccount] = useState(false);
   const canNote = can(user, 'accounts', 'accounts', 'Invoices', 'create');
+  const canBank = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
+  const [openLine, setOpenLine] = useState(null); // payment id whose bank line is open under Proof
+  const [lineData, setLineData] = useState({});
+  const [lineErr, setLineErr] = useState({});
   const [noteFor, setNoteFor] = useState(null); // null | { kind } | { draft }
   const [cancelNote, setCancelNote] = useState(null);
   const [refundNote, setRefundNote] = useState(null);
@@ -110,6 +115,26 @@ export default function InvoiceDetail() {
     fd.append('file', file);
     await api.post(`/invoices/${id}/tds-certificate/file`, fd);
   });
+  // The uploaded payment proof (Invoice.proofFile) - fetched with the login's token.
+  const viewProofFile = async () => {
+    try {
+      const res = await api.get(`/accounts/control/proof/invoice/${id}/file`, { params: { inline: 1 }, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      setError('The proof file could not be opened.');
+    }
+  };
+  // "View Transaction": the real bank line behind one payment, opened right under the Proof.
+  const toggleLine = (p, line) => {
+    if (openLine === p.id) { setOpenLine(null); return; }
+    setOpenLine(p.id);
+    if (lineData[p.id]) return;
+    api.get(`/invoices/${id}/bank-line/${line.txnId}`)
+      .then((r) => setLineData((m) => ({ ...m, [p.id]: r.data })))
+      .catch((e) => setLineErr((m) => ({ ...m, [p.id]: e.response?.data?.error || 'This bank line could not be opened.' })));
+  };
   const viewTdsCert = async () => {
     try {
       const res = await api.get(`/invoices/${id}/tds-certificate/file`, { params: { inline: 1 }, responseType: 'blob' });
@@ -457,7 +482,7 @@ export default function InvoiceDetail() {
             </div>
             <div className="qa-row">
               <button className="btn btn-primary btn-sm" type="submit">Record payment</button>
-              <button className="btn btn-sm" type="button" onClick={() => run(() => api.patch(`/invoices/${id}/pay`))}>Settle in full</button>
+              <button className="btn btn-sm" type="button" onClick={() => run(() => api.patch(`/invoices/${id}/pay`, { date: form.date }))}>Settle in full</button>
               {received === 0 && (
                 <button className="btn btn-sm" type="button" onClick={() => run(() => api.patch(`/invoices/${id}/cancel`))}>Cancel invoice</button>
               )}
@@ -466,50 +491,77 @@ export default function InvoiceDetail() {
         )}
       </div>
 
-      {/* The bank statement lines that prove the money arrived — linked on
-          Bank & Reconciliation, automatically when the narration names this
-          invoice or client clearly, otherwise once someone confirms it. */}
+      {/* PROOF OF PAYMENT: the uploaded proof, and - right under it - the bank line
+          each payment came off (Accounts reconciliation spec 8). The line shown is
+          the REAL statement line the payment points at; a payment with no linked line
+          says "Bank Line Not Matched". */}
       <div className="card section" id="proof">
-        <h3>Bank statement proof</h3>
+        <h3>Proof of payment</h3>
         <div className="small-muted" style={{ marginBottom: 10 }}>
           {proofLines.length
-            ? `${proofLines.length} statement line(s) · ${money2(proofLines.reduce((s, l) => s + Number(l.applied || 0), 0))} applied to this invoice · `
+            ? `${proofLines.length} bank statement line(s) · ${money2(proofLines.reduce((s2, l) => s2 + Number(l.applied || 0), 0))} applied to this invoice · `
             : 'No bank statement line is linked to this invoice yet · '}
           <span className={`status ${settleTone}`}>{settleWord}</span>
         </div>
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Statement date</th><th>Reference</th><th className="num">Line amount</th>
-                <th className="num">Applied to this invoice</th><th>Bank</th><th>Narration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {proofLines.map((l) => (
-                <tr key={l.txnId}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtD(l.date)}</td>
-                  <td className="inv-mono">{l.reference || '—'}</td>
-                  <td className="num">{money2(l.amount)}</td>
-                  <td className="num" style={{ fontWeight: 600 }}>
-                    {money2(l.applied)}
-                    {l.linkedOnly && <div className="small-muted">linked to a receipt recorded by hand</div>}
-                  </td>
-                  <td className="small-muted">{l.bank || '—'}</td>
-                  <td className="small-muted" style={{ maxWidth: 420 }}>{String(l.description || '').slice(0, 160)}</td>
-                </tr>
-              ))}
-              {!proofLines.length && (
-                <tr>
-                  <td colSpan="6" className="small-muted">
-                    When a bank statement is imported, a credit that names this invoice number or this client (with an amount that fits)
-                    is linked here automatically; anything less certain waits under “Possible matches” on Bank &amp; Reconciliation.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="pf-proof">
+          <b>Proof</b>
+          {invoice.proofHasFile
+            ? <> <button type="button" className="link-btn" onClick={viewProofFile}>View uploaded proof{invoice.proofName ? ` (${invoice.proofName})` : ''}</button></>
+            : <span className="small-muted"> No proof document uploaded yet</span>}
+          {invoice.proofRef && <span className="small-muted"> · reference {invoice.proofRef}</span>}
         </div>
+        {payments.length === 0 && invoice.receivedAmount > 0 && (
+          <div className="pf-line">
+            <b>Bank Line:</b> <span className="status priority-high">Bank Line Not Matched</span>
+            <div className="small-muted">{money2(invoice.receivedAmount)} is recorded on the invoice{invoice.paidDate ? ` (paid ${fmtD(invoice.paidDate)})` : ' with no payment date'} but no payment row or bank line sits behind it.</div>
+          </div>
+        )}
+        {payments.map((p) => {
+          const line = p.bankTxnId ? proofLines.find((l) => l.txnId === p.bankTxnId) : null;
+          const opened = openLine === p.id;
+          return (
+            <div className="pf-line" key={p.id}>
+              <div className="pf-head">
+                <b>Bank Line:</b>
+                {line
+                  ? <button type="button" className="link-btn" aria-expanded={opened} onClick={() => toggleLine(p, line)}>{opened ? 'Hide Transaction' : 'View Transaction'}</button>
+                  : <span className="status priority-high">Bank Line Not Matched</span>}
+              </div>
+              <div className="pf-facts">
+                <span><i>Payment Date</i> {fmtD(p.date)}</span>
+                <span><i>Payment Amount</i> {money2(p.amount)}</span>
+                <span><i>Transaction Reference / UTR</i> {(line && line.reference) || p.reference || '—'}</span>
+                {!line && <span className="small-muted">{p.method || 'Recorded by hand'}{p.recordedBy ? ` · ${p.recordedBy}` : ''}</span>}
+              </div>
+              {opened && (
+                <div className="pf-drawer" role="region" aria-label="Bank transaction">
+                  {!lineData[p.id] && !lineErr[p.id] && <div className="small-muted">Loading the bank line…</div>}
+                  {lineErr[p.id] && <div className="notice red"><span>{lineErr[p.id]}</span></div>}
+                  {lineData[p.id] && (() => {
+                    const d = lineData[p.id];
+                    return (
+                      <div className="pf-grid">
+                        <div><i>Bank transaction date</i><b>{fmtD(d.transactionDate)}</b></div>
+                        <div><i>Value date</i><b>{d.valueDate ? fmtD(d.valueDate) : '—'}</b></div>
+                        <div className="pf-wide"><i>Narration</i><b>{d.narration}</b></div>
+                        <div><i>{d.type === 'Credit' ? 'Credit (money in)' : 'Debit (money out)'}</i><b>{money2(d.credit != null ? d.credit : d.debit)}</b></div>
+                        <div><i>Reference / UTR</i><b>{d.reference || '—'}</b></div>
+                        <div><i>Bank</i><b>{d.bank || '—'}</b></div>
+                        <div><i>Matched client / vendor</i><b>{d.clientOrVendor || '—'}</b></div>
+                        <div><i>Reconciliation status</i><b>{d.state}</b></div>
+                        <div><i>Applied to this invoice</i><b>{money2(d.appliedHere)}</b></div>
+                        <div><i>Difference (received minus allocated)</i><b>{d.difference == null ? '—' : money2(d.difference)}</b></div>
+                        {d.otherInvoices && d.otherInvoices.count > 0 && <div className="pf-wide small-muted">The same bank line also paid {d.otherInvoices.count} other invoice(s) ({money2(d.otherInvoices.amount)}).</div>}
+                        {d.import && <div className="pf-wide small-muted">From statement file {d.import.file}, imported {fmtD(d.import.importedOn)}.</div>}
+                        {canBank && <div className="pf-wide"><Link className="link-btn" to="/bank">Open in Bank &amp; Reconciliation →</Link></div>}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div className="card section">

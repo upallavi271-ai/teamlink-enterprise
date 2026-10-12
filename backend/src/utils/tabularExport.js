@@ -11,6 +11,7 @@
 // second format quietly skipping it.
 // ---------------------------------------------------------------------------
 
+const zlib = require('zlib');
 const XLSX = require('xlsx');
 
 // --- CSV (RFC 4180) --------------------------------------------------------
@@ -30,11 +31,10 @@ function toCsv(headers, rows) {
 // --- XLSX ------------------------------------------------------------------
 
 // Strip characters XML 1.0 forbids (Excel refuses them), by code point.
+// (One regex pass: the same characters go as the old split/filter/join, which cost seconds on a big export.)
+const XML_BAD = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g;
 function cleanText(value) {
-  return String(value).split('').filter((ch) => {
-    const c = ch.charCodeAt(0);
-    return c === 9 || c === 10 || c === 13 || c >= 32;
-  }).join('');
+  return String(value).replace(XML_BAD, '');
 }
 
 // Numbers stay numbers so Excel can sum them; long digit strings (phones,
@@ -51,7 +51,7 @@ function cellValue(value) {
 
 // A workbook of one or more sheets: [{ name, headers, rows }]. Sheet names
 // are cleaned of the characters Excel forbids, cut to 31, and made unique.
-function toXlsxBook(sheets) {
+function namedSheets(sheets) {
   const used = new Set();
   const named = (sheets && sheets.length ? sheets : [{ name: 'Sheet1', headers: [], rows: [] }]).map((sh, i) => {
     const base = String(sh.name || `Sheet${i + 1}`).replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || `Sheet${i + 1}`;
@@ -60,6 +60,22 @@ function toXlsxBook(sheets) {
     used.add(name.toLowerCase());
     return { ...sh, name };
   });
+  return named;
+}
+
+// The sheet's cols / autofilter, exactly as before (SheetJS turns them into <cols> / <autoFilter>).
+function sheetExtras(ws, sh, headers, nrows) {
+  ws['!cols'] = headers.map((h, i) => {
+    const longest = (sh.rows || []).reduce((m, r) => Math.max(m, String(r[i] === undefined || r[i] === null ? '' : r[i]).length), String(h).length);
+    return { wch: Math.min(46, Math.max(10, longest + 2)) };
+  });
+  if (headers.length) ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: nrows - 1, c: headers.length - 1 } }) };
+}
+
+// The original builder: SheetJS builds every cell. Correct, but ~25 microseconds a cell, so a 20,000-row
+// dashboard workbook took 10-28 s. Kept as the fallback and as the reference the fast one is tested against.
+function toXlsxBookSlow(sheets) {
+  const named = namedSheets(sheets);
   // Written with SheetJS: the hand-rolled XML above produced parts Excel
   // rejected (it opened as "[Repaired]" with an empty sheet).
   const wb = XLSX.utils.book_new();
@@ -67,14 +83,147 @@ function toXlsxBook(sheets) {
     const headers = sh.headers || [];
     const aoa = [headers.map((h) => cleanText(h)), ...(sh.rows || []).map((r) => headers.map((_, ci) => cellValue(r[ci])))];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = headers.map((h, i) => {
-      const longest = (sh.rows || []).reduce((m, r) => Math.max(m, String(r[i] === undefined || r[i] === null ? '' : r[i]).length), String(h).length);
-      return { wch: Math.min(46, Math.max(10, longest + 2)) };
-    });
-    if (headers.length) ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: headers.length - 1 } }) };
+    sheetExtras(ws, sh, headers, aoa.length);
     XLSX.utils.book_append_sheet(wb, ws, sh.name);
   });
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true });
+}
+
+// --- the fast builder --------------------------------------------------------
+// Same workbook, same parts: SheetJS still writes everything EXCEPT the cell rows (styles, workbook,
+// <cols>, <autoFilter>, content types ... come from a one-row stand-in sheet); the rows between
+// <sheetData> and </sheetData> are written here with the very same text SheetJS writes (tested
+// byte-for-byte against toXlsxBookSlow), and the parts are zipped with zlib.
+const ENC = { '&': '&amp;', '"': '&quot;', "'": '&apos;', '<': '&lt;', '>': '&gt;' };
+const XML_ESC = /[&<>'"]/g;
+const XML_CTRL = /[\u0000-\u0008\u000b-\u001f￾-￿]/g;
+const PRESERVE = /(^\s|\s$|\n)/;
+const escXml = (v) => String(v).replace(XML_ESC, (y) => ENC[y]).replace(XML_CTRL, (c) => `_x${`000${c.charCodeAt(0).toString(16)}`.slice(-4)}_`);
+const COLS = [];
+function colName(c) {
+  if (!COLS[c]) COLS[c] = XLSX.utils.encode_col(c);
+  return COLS[c];
+}
+function strCell(ref, val) {
+  const e = escXml(val);
+  const nl = e.indexOf('\n') !== -1;
+  return `<c r="${ref}" t="str"${nl ? ' xml:space="preserve"' : ''}><v${PRESERVE.test(e) ? ' xml:space="preserve"' : ''}>${e}</v></c>`;
+}
+function sheetDataXml(headerRow, ncols, rows) {
+  const out = [];
+  const writeRow = (rn, cells) => {
+    if (!cells.length) return;
+    const inner = cells.join('');
+    out.push(`<row r="${rn}"${inner.indexOf('\n') !== -1 ? ' xml:space="preserve"' : ''}>${inner}</row>`);
+  };
+  writeRow(1, headerRow.map((h, c) => strCell(`${colName(c)}1`, h)));
+  for (let i = 0; i < rows.length; i += 1) {
+    const rn = i + 2;
+    const r = rows[i];
+    const cells = [];
+    for (let c = 0; c < ncols; c += 1) {
+      const v = cellValue(r[c]);
+      if (v === null) continue;
+      cells.push(typeof v === 'number' ? `<c r="${colName(c)}${rn}"><v>${String(v)}</v></c>` : strCell(`${colName(c)}${rn}`, v));
+    }
+    writeRow(rn, cells);
+  }
+  return out.join('');
+}
+
+let crcTable = null;
+function crc32(buf) {
+  if (typeof zlib.crc32 === 'function') return zlib.crc32(buf);
+  if (!crcTable) {
+    crcTable = new Int32Array(256);
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c;
+    }
+  }
+  let c = -1;
+  for (let i = 0; i < buf.length; i += 1) c = crcTable[(c ^ buf[i]) & 255] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
+// A plain .zip (deflate) of [{ name, data: Buffer }].
+function zipBuffers(entries) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  entries.forEach((e) => {
+    const name = Buffer.from(e.name, 'utf8');
+    const raw = e.data;
+    const packed = zlib.deflateRawSync(raw, { level: 4 });
+    const crc = crc32(raw);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0, 6); lh.writeUInt16LE(8, 8);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(packed.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(name.length, 26);
+    locals.push(lh, name, packed);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(packed.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(name.length, 28);
+    ch.writeUInt32LE(offset, 42);
+    centrals.push(ch, name);
+    offset += lh.length + name.length + packed.length;
+  });
+  const cd = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+
+function toXlsxBookFast(sheets) {
+  const named = namedSheets(sheets);
+  const wb = XLSX.utils.book_new();
+  const fill = []; // per sheet: the real rows, or null where the stand-in IS the sheet
+  named.forEach((sh) => {
+    const headers = sh.headers || [];
+    const rows = sh.rows || [];
+    if (!headers.length) { // no cells at all: nothing to speed up
+      const ws = XLSX.utils.aoa_to_sheet([[], ...rows.map(() => [])]);
+      XLSX.utils.book_append_sheet(wb, ws, sh.name);
+      fill.push(null);
+      return;
+    }
+    const head = headers.map((h) => cleanText(h));
+    const ws = XLSX.utils.aoa_to_sheet([head]);
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: headers.length - 1 } });
+    sheetExtras(ws, sh, headers, rows.length + 1);
+    XLSX.utils.book_append_sheet(wb, ws, sh.name);
+    fill.push({ head, ncols: headers.length, rows });
+  });
+  const stub = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: false });
+  const cfb = XLSX.CFB.read(stub, { type: 'buffer' });
+  const parts = [];
+  cfb.FullPaths.forEach((full, i) => {
+    const f = cfb.FileIndex[i];
+    if (!f || f.type !== 2 || !f.content || f.name.charCodeAt(0) === 1) return;
+    parts.push({ name: full.replace(/^Root Entry\//, ''), data: Buffer.from(f.content) });
+  });
+  fill.forEach((fl, idx) => {
+    if (!fl) return;
+    const p = parts.find((x) => x.name === `xl/worksheets/sheet${idx + 1}.xml`);
+    if (!p) throw new Error('sheet part missing');
+    const xml = p.data.toString('utf8');
+    const a = xml.indexOf('<sheetData>');
+    const b = xml.lastIndexOf('</sheetData>');
+    if (a < 0 || b < 0) throw new Error('sheetData missing');
+    p.data = Buffer.from(`${xml.slice(0, a)}<sheetData>${sheetDataXml(fl.head, fl.ncols, fl.rows)}${xml.slice(b)}`, 'utf8');
+  });
+  return zipBuffers(parts);
+}
+
+// A workbook of one or more sheets: [{ name, headers, rows }].
+function toXlsxBook(sheets) {
+  if (process.env.XLSX_SLOW === '1') return toXlsxBookSlow(sheets);
+  try {
+    return toXlsxBookFast(sheets);
+  } catch (err) {
+    console.warn('[export] fast xlsx writer failed, using the standard one:', err && err.message);
+    return toXlsxBookSlow(sheets);
+  }
 }
 
 function toXlsx(headers, rows, sheetName = 'Employees') {
@@ -197,4 +346,4 @@ function toPdf(headers, rows, { title = 'Employees', subtitle = '' } = {}) {
   return Buffer.from(pdf, 'latin1');
 }
 
-module.exports = { csvCell, toCsv, toXlsx, toXlsxBook, toPdf };
+module.exports = { csvCell, toCsv, toXlsx, toXlsxBook, toXlsxBookSlow, toPdf };

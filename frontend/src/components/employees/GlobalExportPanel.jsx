@@ -212,7 +212,7 @@ export default function GlobalExportPanel({ filters, shownCount, onClose, onDone
                         checked={f.allowed && picked.has(f.key)}
                         onChange={() => toggle(f.key)}
                       />
-                      <span>{f.allowed ? '' : '🔒 '}{f.label}</span>
+                      <span>{f.allowed ? '' : '🔒 '}{f.label}{f.paused ? <i className="small-muted" title="Paused in Manage Fields — not on the forms, so not ticked by default"> (paused)</i> : null}</span>
                     </label>
                   ))}
                 </div>

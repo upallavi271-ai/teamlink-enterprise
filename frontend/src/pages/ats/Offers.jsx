@@ -17,14 +17,15 @@ import CandidateDrawer from '../../components/CandidateDrawer.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
-import Pager, { usePaged } from '../../components/Pager.jsx';
+import Pager from '../../components/Pager.jsx';
 import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
+import { ctcAsk, CtcAsk, CtcAskButtons } from '../../components/CtcConfirm.jsx';
 import '../../components/interviews/Interviews.css';
 import './offersB3.css';
 import {
-  fmtDate, money, useWorkspace, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinList,
+  fmtDate, money, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
 } from './intjoinShared.jsx';
 
 const PREPARED = 'Offer being prepared';
@@ -45,33 +46,46 @@ const first = (n) => String(n || '').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/)[
 
 export default function Offers() {
   const { user } = useAuth();
-  const { data, error, notice, act, load } = useWorkspace('/ats/offers');
   const [dialog, setDialog] = useState(null);
   const [openCand, setOpenCand] = useState(null); // the candidate window, opened right here
   const canEdit = can(user, 'ats', 'interviews', 'Offers', 'edit');
   const canApprove = can(user, 'ats', 'interviews', 'Offers', 'approve');
   const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user && user.role);
   const [view, setView] = useState(() => (canApprove && !canEdit ? 'approval' : 'prepare'));
-  const list = useIntJoinList(data.rows, { dateOf: (r) => r.offerDate });
-  const counts = useMemo(() => {
-    const c = { all: list.rows.length };
-    list.rows.forEach((r) => { const id = stepOf(r).id; c[id] = (c[id] || 0) + 1; });
-    return c;
-  }, [list.rows]);
+  // The server searches, counts and pages the list (utils/intJoinList.js): the tab
+  // counts below are for the WHOLE list under the filters, not for this page.
+  const ws = useIntJoinPaged('/ats/offers', { view });
+  const {
+    data, error, notice, act, load, list, counts,
+  } = ws;
   // First load: open the first step that has someone in it.
   const [picked, setPicked] = useState(false);
   useEffect(() => {
-    if (picked || data.loading || !(data.rows || []).length) return;
+    if (picked || data.loading || !counts.all) return;
     setPicked(true);
     if (!counts[view]) {
       const firstFull = VIEWS.find(([k]) => k !== 'all' && counts[k]);
       if (firstFull) setView(firstFull[0]);
     }
-  }, [data.loading, data.rows, counts]); // eslint-disable-line react-hooks/exhaustive-deps
-  const rows = useMemo(() => list.rows.filter((r) => view === 'all' || stepOf(r).id === view), [list.rows, view]);
-  const page = usePaged(rows);
+  }, [data.loading, counts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = data.rows || [];
+  const page = ws.pager;
   const close = () => setDialog(null);
   const run = (fn, msg) => act(fn, msg).then((ok) => { if (ok) close(); return ok; });
+  // Prepare offer: the form needs the server's answer itself (an odd CTC asks "is this right?").
+  const prepare = async (row, body) => {
+    ws.setError('');
+    try {
+      await api.post(`/ats/offers/${row.id}/prepare`, body);
+      ws.setNotice(`Saved. Offer for ${first(row.candidate.name)} waits for approval.`);
+      load(); close();
+      return null;
+    } catch (err) {
+      const ask = ctcAsk(err);
+      if (ask) return { ask };
+      return { error: err.response?.data?.error || 'Could not save the offer. Please try again.' };
+    }
+  };
   // B3: offer expiry days + the candidate-emails switch, shown on the admin line.
   const offerSettings = data.offerSettings || null;
   const emailsOn = data.candidateEmailsOn === true;
@@ -87,7 +101,7 @@ export default function Offers() {
               module="offers"
               kinds={['offers']}
               onImported={load}
-              body={() => ({ ids: rows.length === (data.rows || []).length ? null : rows.map((r) => r.id) })}
+              body={ws.exportBody}
             />
           </>
         )}
@@ -107,13 +121,13 @@ export default function Offers() {
       />
       {list.toolbar}
 
-      <div className="tbl-wrap">
+      <div className="tbl-wrap" style={data.loading && rows.length ? { opacity: 0.55, transition: "opacity .15s" } : undefined} aria-busy={data.loading ? "true" : undefined}>
         <table>
           <thead>
             <tr><th>Candidate</th><th>Job</th><th>Yearly CTC</th><th>Joining date</th><th>Step</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {page.slice.map((r) => {
+            {rows.map((r) => {
               const step = stepOf(r);
               const internal = r.hiringType === 'TeamLink Internal Hire';
               return (
@@ -170,7 +184,7 @@ export default function Offers() {
             {rows.length === 0 && (
               <tr><td colSpan="6" style={{ padding: 0 }}>
                 <IntJoinEmpty
-                  loading={data.loading}
+                  loading={data.loading} failed={data.failed} onRetry={load}
                   filters={list.active ? { q: 'x' } : EMPTY_INTJOIN_FILTERS}
                   onClear={list.clear}
                   noun="offers"
@@ -181,7 +195,14 @@ export default function Offers() {
           </tbody>
         </table>
       </div>
-      <Pager page={page} noun="offers" />
+      <Pager page={page} noun="offers" sizes={PAGE_SIZES_IJ} />
+      <ShowOlder
+        older={ws.older}
+        setOlder={ws.setOlder}
+        count={ws.olderCount}
+        noun="offers"
+        openText="Showing offers that are still going on. People who already joined are hidden."
+      />
       {isAdmin && (
         <div className="ivx-admin">
           <span>Every offer letter is made from one template.</span>
@@ -203,7 +224,7 @@ export default function Offers() {
           change={!!dialog.change}
           row={dialog.row}
           onClose={close}
-          onSubmit={(body) => run(() => api.post(`/ats/offers/${dialog.row.id}/prepare`, body), `Saved. Offer for ${first(dialog.row.candidate.name)} waits for approval.`)}
+          onSubmit={(body) => prepare(dialog.row, body)}
         />
       )}
       {dialog?.kind === 'letter' && (
@@ -264,19 +285,31 @@ function PrepareForm({ row, onClose, onSubmit, change = false }) {
   const [joiningDate, setJoiningDate] = useState(row.joiningDate || '');
   const [notes, setNotes] = useState(row.offerNotes && row.offerStatus === PREPARED ? row.offerNotes : '');
   const [busy, setBusy] = useState(false);
-  const save = async () => { setBusy(true); try { await onSubmit({ offeredCtc: ctc, offerDate, joiningDate, offerNotes: notes }); } finally { setBusy(false); } };
+  const [ask, setAsk] = useState(null); // the server asked "is this CTC right?"
+  const [err, setErr] = useState('');
+  const save = async (confirmCtc = false) => {
+    setBusy(true); setErr('');
+    try {
+      const r = await onSubmit({ offeredCtc: ctc, offerDate, joiningDate, offerNotes: notes, ...(confirmCtc ? { confirmCtc: true } : {}) });
+      if (r && r.ask) setAsk(r.ask); else { setAsk(null); if (r && r.error) setErr(r.error); }
+    } finally { setBusy(false); }
+  };
   return (
     <Modal
       title={`${change ? 'Change offer' : 'Prepare offer'} — ${row.candidate.name}`}
       onClose={onClose}
-      footer={<button type="button" className="btn btn-primary" disabled={busy || !(Number(ctc) > 0)} onClick={save}>{busy ? 'Saving…' : 'Send for approval'}</button>}
+      footer={ask
+        ? <CtcAskButtons busy={busy} onNo={() => setAsk(null)} onYes={() => save(true)} />
+        : <button type="button" className="btn btn-primary" disabled={busy || !(Number(ctc) > 0)} onClick={() => save(false)}>{busy ? 'Saving…' : 'Send for approval'}</button>}
     >
       <div className="ivx-fb">
         <div className="ivx-hint" style={{ marginTop: 0, marginBottom: 12 }}>{`${row.requirement.title} · ${internal ? 'TeamLink (internal)' : row.requirement.client?.name || ''}`}</div>
         <div className="ivx-sec">
           <b>Yearly CTC (₹) *</b>
-          <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => setCtc(e.target.value)} style={{ width: '100%' }} />
+          <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => { setCtc(e.target.value); setAsk(null); }} style={{ width: '100%' }} />
           {Number(ctc) > 0 && <div className="ivx-hint">{money(ctc)} a year</div>}
+          {ask && <CtcAsk ask={ask} />}
+          {err && <div className="error-text" style={{ marginTop: 8 }}>{err}</div>}
         </div>
         <div className="ivx-two ivx-sec">
           <label><b>Offer date</b><input type="date" value={offerDate} onChange={(e) => setOfferDate(e.target.value)} /></label>

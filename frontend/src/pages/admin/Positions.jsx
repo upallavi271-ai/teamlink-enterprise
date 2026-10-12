@@ -189,7 +189,7 @@ export default function Positions() {
                 <td className="cell-muted">{p.department || '—'}</td>
                 <td>
                   {p.holder
-                    ? p.holder.name
+                    ? <>{p.holder.name}{p.onNotice && <div className="small-muted">{p.freesOn ? `leaves ${fmt(p.freesOn)} - free after that` : 'on notice - no last day set'}</div>}</>
                     : <span className="status pending">Vacant</span>}
                 </td>
                 <td className="cell-muted">{p.holder ? fmt(p.holder.since) : '—'}</td>
@@ -380,7 +380,7 @@ export default function Positions() {
                         <td className="cell-muted">{fmt(t.fromDate)}</td>
                         <td className="cell-muted">{t.toDate ? fmt(t.toDate) : '—'}</td>
                         <td className="cell-muted">{t.days}</td>
-                        <td className="cell-muted">{t.note || '—'}</td>
+                        <td className="cell-muted">{t.endedBecause === 'Exited' && <span className="status pending" style={{ marginRight: 6 }}>Left company</span>}{t.note || '—'}</td>
                       </tr>
                     )))}
                   {!detail.tenures.length && (

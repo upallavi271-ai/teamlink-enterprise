@@ -1,0 +1,14 @@
+/* The half-day leave chip (user, 2026-10-09): where the leave for the other half stands. */
+.hl-chip{display:inline-block;font-size:11.5px;font-weight:600;border-radius:10px;padding:1px 8px;margin:1px 4px 1px 0;white-space:nowrap}
+.hl-chip.tone-green{background:var(--teal-tint);color:var(--teal)}
+.hl-chip.tone-orange{background:var(--amber-tint);color:var(--amber)}
+.hl-chip.tone-red{background:var(--red-tint);color:var(--red)}
+.hl-by{font-size:11px;color:var(--ink-soft);margin-left:2px}
+.hl-sub{font-size:10.5px;color:var(--ink-soft);margin-top:3px;line-height:1.4}
+.hl-sub b{color:var(--ink)}
+/* dashboard tile chips that carry a colour (half-day leave state, notes, leave -> tile arrows) */
+.hd-part.tone-green{border-color:var(--teal);color:var(--teal)}
+.hd-part.tone-orange{border-color:var(--amber);color:var(--amber)}
+.hd-part.tone-red{border-color:var(--red);color:var(--red)}
+.hd-part.on{background:var(--navy-tint)}
+.hd-lv-sentence{margin:0 0 8px}

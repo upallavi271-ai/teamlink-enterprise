@@ -38,6 +38,7 @@ const STORE_ID = 'hrms-notify';
 const WAITING = 'Waiting for the daily email';
 const EVENTS = {
   leaveDecision: { label: 'Leave approved / rejected', instant: true },
+  latePermission: { label: 'Late coming asked / approved / rejected', instant: true },
   lateLogin: { label: 'Late login' },
   earlyLogout: { label: 'Early logout' },
   missingCheckIn: { label: 'Missing check-in' },
@@ -175,6 +176,34 @@ async function leaveDecided({ leave, employee, by }) {
   return notify('leaveDecision', who, { title, message });
 }
 
+// LATE PERMISSION: the approver whose turn it is hears about a new request (bell), the employee hears the decision.
+async function latePermissionRaised({ perm, employee, by }) {
+  const steps = await prisma.approvalStep.findMany({ where: { workflow: 'latePermission', recordId: perm.id, status: 'Pending' } });
+  const ids = [...new Set(steps.map((s) => s.approverUserId).filter(Boolean))].filter((id) => !by || id !== by.id);
+  const explain = perm.kind === 'Explain';
+  const title = `Late coming asked — ${employee.name}, ${dmy(perm.date)}`;
+  const message = explain
+    ? `${employee.name} came late on ${dmy(perm.date)} (at ${perm.arrivedAt || perm.expectedTime}) and says why. Reason: ${perm.reason}. Open Attendance → Late coming to approve or reject.
+Open: /attendance?tab=late`
+    : `${employee.name} asks to come in late on ${dmy(perm.date)} (by ${perm.expectedTime}). Reason: ${perm.reason}. Open Attendance → Late coming to decide.
+Open: /attendance?tab=late`;
+  for (const id of ids) {
+    const u = await prisma.user.findUnique({ where: { id }, select: { id: true, name: true, email: true } });
+    if (u) await notify('latePermission', { userId: u.id, name: u.name, email: u.email }, { title, message });
+  }
+}
+async function latePermissionDecided({ perm, employee, by }) {
+  const who = await whoOfEmployee(employee || await prisma.employee.findUnique({ where: { id: perm.employeeId } }));
+  const approved = perm.status === 'Approved';
+  const title = `Late coming ${approved ? 'approved' : 'rejected'} — ${dmy(perm.date)}`;
+  const message = approved
+    ? `Your late coming on ${dmy(perm.date)} (${perm.kind === 'Explain' ? 'came' : 'arrive by'} ${perm.expectedTime}) was approved by ${by ? by.name || by.email : 'your approver'}. It is not counted as a late arrival.
+Open: /attendance?tab=late`
+    : `Your late coming on ${dmy(perm.date)} was rejected by ${by ? by.name || by.email : 'your approver'}. Reason: ${perm.decisionNote || '—'}. It still counts as late.
+Open: /attendance?tab=late`;
+  return notify('latePermission', who, { title, message });
+}
+
 async function taskAssigned(task, by) {
   if (!task || !task.assigneeId || (by && task.assigneeId === by.id)) return null;
   const u = await prisma.user.findUnique({ where: { id: task.assigneeId }, select: { id: true, name: true, email: true } });
@@ -211,20 +240,11 @@ async function reminders({ now = new Date(), testMode = false, scope = null, set
     const r = await notify('taskDue', { userId: u.id, name: u.name, email: u.email }, { title: `Task due ${t.endDate === today ? 'today' : 'soon'}: ${t.name}`, message: `Your task "${t.name}" is due ${when}. Status: ${t.status}.` }, { now, settings: s, mailer });
     if (r.inApp || r.email) out.taskDue += 1;
   }
-  // Late tasks: GROUPED, one entry per person per day.
-  const late = new Map();
-  open.filter((x) => x.endDate < today).forEach((t) => { if (!late.has(t.assigneeId)) late.set(t.assigneeId, []); late.get(t.assigneeId).push(t); });
-  for (const [uid, list] of late) {
-    const u = users.get(uid);
-    if (!userOk(u)) continue;
-    const lines = list.slice(0, 10).map((t) => `• ${t.name} (was due ${dmy(t.endDate)})`).join('\n');
-    // eslint-disable-next-line no-await-in-loop
-    const r = await notify('taskLate', { userId: u.id, name: u.name, email: u.email }, {
-      title: `${list.length} task${list.length === 1 ? ' is' : 's are'} late — ${dmy(today)}`,
-      message: `These tasks are past their end date and not finished:\n${lines}${list.length > 10 ? `\n…and ${list.length - 10} more` : ''}`,
-    }, { now, settings: s, mailer });
-    if (r.inApp || r.email) out.taskLate += 1;
-  }
+  // OVERDUE tasks (2026-10-09): one reminder PER TASK, once a day at most, in
+  // the bell and in the person's daily email (utils/taskOverdue.js). It used to
+  // be one grouped line per person; the user asked for the task itself.
+  const od = await require('./taskOverdue').remind({ open, users, today, notify, settings: s, mailer, now, userOk, testMode });
+  out.taskLate += od.reminded;
   // Targets of a FINISHED month that were not reached: grouped per person,
   // and only in the first 7 days of the next month.
   if (Number(today.slice(8, 10)) <= 7) {
@@ -317,5 +337,5 @@ function registerRoutes(router, { requirePerm }) {
 
 module.exports = {
   STORE_ID, EVENTS, EVENT_KEYS, WAITING, ATTENDANCE_EVENT,
-  getSettings, saveSettings, notify, leaveDecided, taskAssigned, reminders, sendDigests, run, registerRoutes, whoOfEmployee,
+  getSettings, saveSettings, notify, leaveDecided, latePermissionRaised, latePermissionDecided, taskAssigned, reminders, sendDigests, run, registerRoutes, whoOfEmployee,
 };

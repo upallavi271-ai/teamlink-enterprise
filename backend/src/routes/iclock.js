@@ -27,8 +27,9 @@ const router = express.Router();
 router.use(express.text({ type: () => true, limit: '10mb' }));
 
 function clientIp(req) {
-  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || req.socket.remoteAddress || null;
+  // The device's address for the log: safe helper (utils/clientIp.js). A device on the LAN is the socket peer itself.
+  const ip = require('../utils/clientIp').ipOf(req); // eslint-disable-line global-require
+  return ip && ip !== 'unknown' ? ip : (req.socket.remoteAddress || null);
 }
 
 function reply(res, text) {

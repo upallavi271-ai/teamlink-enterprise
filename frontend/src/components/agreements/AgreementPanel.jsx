@@ -23,7 +23,7 @@ import './agreements.css';
 // Plain words for the per-channel send result (the value itself is unchanged).
 const OUTCOME_TEXT = { 'Not configured': 'not set up' };
 function when(d) {
-  return d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  return d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '—';
 }
 function chipClass(outcome) {
   if (outcome === 'Sent') return 'agr-chip ok';
@@ -215,6 +215,11 @@ export default function AgreementPanel({
               {busy === 'pdf' ? 'Preparing…' : 'Download signed PDF'}
             </button>
           )}
+          {!s.pdfAvailable && data.document && (
+            <button type="button" className="btn btn-sm" title="A draft PDF with a grey DRAFT mark. It is not the signed copy." disabled={busy === 'pdf'} onClick={() => run('pdf', () => downloadAgreementPdf(clientId, `${s.agreementId || 'agreement'}-${title}-DRAFT`))}>
+              {busy === 'pdf' ? 'Preparing…' : 'Download draft PDF'}
+            </button>
+          )}
           {edit && s.pdfAvailable && (
             <button type="button" className="btn btn-sm" disabled={busy === 'rebuild'} title="Makes a fresh signed PDF from the saved signatures and stamps. The older copy stays below." onClick={() => run('rebuild', () => api.post(`/agreement/${clientId}/pdf/rebuild`, {}), 'Done. A fresh signed PDF is kept; the older copy stays in the list below.').then(() => api.get(`/agreement/${clientId}/versions`).then((r) => setVersions(r.data || [])).catch(() => {}))}>
               {busy === 'rebuild' ? 'Making…' : 'Make the PDF again'}
@@ -279,12 +284,12 @@ export default function AgreementPanel({
           <div className="agr-card">
             <h3>Agreement dates</h3>
             <div className="agr-fields">
-              <label className="field"><span>Start</span><input type="date" value={dates.agreementStart} onChange={(e) => setDates({ ...dates, agreementStart: e.target.value })} /></label>
+              <label className="field"><span>Agreement date (printed at the top: "made on")</span><input type="date" value={dates.agreementStart} onChange={(e) => setDates({ ...dates, agreementStart: e.target.value })} /></label>
               <label className="field"><span>End date (empty = renews yearly)</span><input type="date" value={dates.agreementEnd} onChange={(e) => setDates({ ...dates, agreementEnd: e.target.value })} /></label>
             </div>
             <div className="agr-actions">
               <button type="button" className="btn" onClick={() => setDates(null)}>Cancel</button>
-              <button type="button" className="btn btn-primary" disabled={busy === 'dates'} onClick={() => run('dates', () => api.patch(`/agreement/${clientId}`, dates), 'Dates saved.').then(() => setDates(null))}>Save</button>
+              <button type="button" className="btn btn-primary" disabled={busy === 'dates'} onClick={() => run('dates', () => api.patch(`/agreement/${clientId}`, dates), (r) => (r.data?.textDate === 'kept' ? 'Dates saved. The agreement already sent or signed keeps the date printed in it. To print a new date, make a new version.' : 'Dates saved.')).then(() => setDates(null))}>Save</button>
             </div>
           </div>
         )}
@@ -296,6 +301,7 @@ export default function AgreementPanel({
           <div className="agr-doc agr-doc-word">
             <AgreementDocView
               text={data.document}
+              agreementNo={s.agreementId}
               {...signersFrom({ ...s, signedAt: s.signedAt, teamlinkName: data.teamlinkName, teamlinkTitle: data.teamlinkTitle }, (kind) => <AuthImage clientId={clientId} kind={kind} alt={kind} />)}
             />
           </div>

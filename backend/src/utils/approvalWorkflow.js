@@ -1126,6 +1126,17 @@ const WORKFLOWS = {
     overrideAction: 'configure',
     defaults: CHAIN_DEFAULTS,
   },
+  // A late permission (user 2026-10-09): the employee asks to come in late on a date; same ladder as a correction.
+  latePermission: {
+    id: 'latePermission',
+    label: 'Late Permission',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Attendance & Time',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
+  },
   // §16 — a resignation climbs the same ladder, ending at the Super Admin.
   resignation: {
     id: 'resignation',

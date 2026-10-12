@@ -490,6 +490,9 @@ function ResignationDetailModal({ id, isHR, myEmployeeId, onClose, onChanged }) 
             <div><span>Status</span><b><span className={`status ${statusCls(r.status)}`}>{r.status}</span></b></div>
             <div><span>Requested Last Working Date</span><b>{f?.requestedLastWorkingDate ? lorDate(f.requestedLastWorkingDate) : '—'}</b></div>
             <div><span>Approved Last Working Date</span><b>{f?.approvedLastWorkingDate ? lorDate(f.approvedLastWorkingDate) : (SERVING.includes(r.status) && r.lastWorkingDate ? lorDate(r.lastWorkingDate) : '—')}</b></div>
+            <div><span>Resigned on (date and time)</span><b>{r.resignedOn || '—'}</b></div>
+            <div><span>Reason</span><b>{r.reason || '—'}</b></div>
+            <div><span>Notice days</span><b>{r.noticePeriodDays ?? '—'}</b></div>
             <div><span>Submitted</span><b>{r.submittedAt ? fmtDateTime(r.submittedAt) : '—'}</b></div>
             <div><span>Submitted By</span><b>{r.submittedBy || r.employeeInfo?.name || '—'}</b></div>
             <div><span>Reporting Manager</span><b>{r.employeeInfo?.reportingManager || '—'}</b></div>
@@ -654,7 +657,7 @@ export default function Resignation() {
         {canConfigure && <button className="btn btn-sm" onClick={() => setSettings(true)}>Form Settings</button>}
         {/* Export (everyone in scope / one employee) + import of resignation
             history with the compulsory sample. The Super Admin is notified. */}
-        <DataIoBar ioKey="resignation" params={{ status: pf.status || undefined }} onImported={load} />
+        <DataIoBar ioKey="resignation" importLabel="Import resignations" params={{ status: pf.status || undefined }} onImported={load} />
       </QaRow>
       {error && <div className="error-text">{error}</div>}
       {recording && (
@@ -743,14 +746,16 @@ export default function Resignation() {
                   {r.source === 'Imported' ? (
                     <>
                       <span className="rsg-hist">Imported history</span>
-                      {' '}{r.type || 'Relieved'}{r.reason ? ` · ${r.reason}` : ''}
+                      {' '}{r.type || 'Relieved'}
+                      {' · '}Resigned {r.resignedOn || <i>date not recorded</i>}
+                      {' · '}Reason: {r.reason || <i>not recorded</i>}
                       {' · '}Relieved {r.relievingDate || <i>date not recorded</i>}
                       {r.employee?.employeeCode ? ` · ${r.employee.employeeCode}` : ''}
                     </>
                   ) : (
                     <>
                       {r.reason || 'Resignation'}{r.type ? ` (${r.type})` : ''} · Submitted {fmtDateTime(r.submittedAt)}
-                      {r.resignationDate ? ` · Resigned ${r.resignationDate}` : ''}
+                      {r.resignedOn ? ` · Resigned ${r.resignedOn}` : ''}
                       {' · '}{r.status === 'Relieved' ? 'Relieved' : 'Last working day'} {r.lastWorkingDate || '—'}
                     </>
                   )}

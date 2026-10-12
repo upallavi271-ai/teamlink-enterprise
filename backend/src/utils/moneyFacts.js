@@ -11,9 +11,11 @@
 //      (old imports kept the money on the invoice itself) counts its
 //      receivedAmount, once, on:
 //        paidDate (set when it was marked paid — present on almost all of
-//        them) → else the day the invoice row was created (IST) → else its
-//        invoice date. (Invoice has no updatedAt, and imports wrote no audit
-//        trail for the status change, so neither can be used.)
+//        them). With NO paidDate the receipt is UNDATED (date: null,
+//        dated: false): the day the row was imported (createdAt) or the invoice
+//        date is NEVER used as the payment date (Accounts spec 7, 2026-10-09).
+//        An undated receipt still counts in all-time totals; a period total
+//        cannot place it, so screens say so rather than invent a day.
 //   3. Cancelled invoices receive nothing.
 //
 // THE CALLER SELECTS, on the invoice:
@@ -54,11 +56,11 @@ function receiptsOf(inv) {
   if (!inv || String(inv.status || '').toLowerCase() === 'cancelled') return [];
   const pays = inv.payments || [];
   if (pays.length) {
-    return pays.map((p) => ({ id: p.id, invoiceId: inv.id, date: day(p.date), amount: ROUND(p.amount), from: 'payment' }));
+    return pays.map((p) => ({ id: p.id, invoiceId: inv.id, date: day(p.date), dated: !!day(p.date), amount: ROUND(p.amount), from: 'payment' }));
   }
   if (!isWithoutPaymentRows(inv)) return [];
   return [{
-    id: `inv:${inv.id}`, invoiceId: inv.id, date: day(inv.paidDate) || day(inv.createdAt) || day(inv.invoiceDate), amount: ROUND(inv.receivedAmount), from: 'invoice',
+    id: `inv:${inv.id}`, invoiceId: inv.id, date: day(inv.paidDate), dated: !!day(inv.paidDate), amount: ROUND(inv.receivedAmount), from: 'invoice',
   }];
 }
 

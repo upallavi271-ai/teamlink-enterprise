@@ -399,16 +399,22 @@ router.delete('/credit-notes/:id', ...notesOnly, requirePerm('accounts', 'accoun
 });
 
 // The invoice's new status after its notes moved (same rule as PATCH /:id).
-function statusData(inv, next) {
+// Accounts spec 7: a credit / debit note is not a payment, so settling an
+// invoice through one never invents a payment date - it keeps the paid date it
+// had, else the date of its last real receipt, else stays undated.
+function statusData(inv, next, lastReceipt = null) {
   const after = { ...inv, ...next };
   const status = deriveInvoiceStatus(after);
-  const today = todayIst();
   return {
     ...next,
     status,
-    paidDate: status === 'Paid' ? (inv.paidDate || today) : (inv.status === 'Paid' ? null : inv.paidDate),
+    paidDate: status === 'Paid' ? (inv.paidDate || lastReceipt || null) : (inv.status === 'Paid' ? null : inv.paidDate),
   };
 }
+const lastReceiptOf = async (tx, invoiceId) => {
+  const row = await tx.invoicePayment.findFirst({ where: { invoiceId }, orderBy: { date: 'desc' }, select: { date: true } });
+  return row ? row.date : null;
+};
 
 // A Pipeline History line on the placement when its credit note is issued.
 async function placementEvent(user, note, words) {
@@ -481,7 +487,7 @@ router.post('/credit-notes/:id/issue', ...notesOnly, async (req, res) => {
       const next = note.kind === 'debit'
         ? { debitedAmount: R(Number(inv.debitedAmount || 0) + p.applied) }
         : { creditedAmount: R(Number(inv.creditedAmount || 0) + p.applied) };
-      invAfter = await tx.invoice.update({ where: { id: inv.id }, data: statusData(inv, next), include: { client: true } });
+      invAfter = await tx.invoice.update({ where: { id: inv.id }, data: statusData(inv, next, await lastReceiptOf(tx, inv.id)), include: { client: true } });
     });
   } catch (e) {
     if (e.http) return res.status(e.http).json({ error: e.message });
@@ -534,7 +540,7 @@ router.post('/credit-notes/:id/cancel', ...notesOnly, async (req, res) => {
           status: 'Cancelled', cancelledAt: new Date(), cancelledByName: req.user.name || req.user.email || null, cancelReason: reason,
         },
       });
-      invAfter = await tx.invoice.update({ where: { id: inv.id }, data: statusData(inv, next) });
+      invAfter = await tx.invoice.update({ where: { id: inv.id }, data: statusData(inv, next, await lastReceiptOf(tx, inv.id)) });
     });
   } catch (e) {
     if (e.http) return res.status(e.http).json({ error: e.message });

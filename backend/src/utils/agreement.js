@@ -66,6 +66,17 @@ function addressOf(client) {
   return parts.length ? parts.join(', ') : blank(70);
 }
 
+function madeOnTerms(c, vendor) {
+  const start = String(c.agreementStart || '').trim();
+  const validStart = /^\d{4}-\d{2}-\d{2}$/.test(start);
+  if (c.agreementDocument && vendor.isVendorDocument(c.agreementDocument)) {
+    const printed = String(vendor.madeOnOf(c.agreementDocument) || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (printed) return { startDate: `${printed[3]}-${printed[2]}-${printed[1]}`, startDateIsAuto: false };
+    return { startDate: validStart ? start : null, startDateIsAuto: false }; // an old text with no date: never invent one
+  }
+  return { startDate: vendor.effectiveYmd(c), startDateIsAuto: !validStart };
+}
+
 // THE KEY TERMS, read from the same client fields the document merges — so the
 // Add-client preview, the signing page and the saved draft can never disagree.
 function keyTermsOf(client = {}, consultant = null) {
@@ -73,7 +84,6 @@ function keyTermsOf(client = {}, consultant = null) {
   const us = consultant || { name: CONSULTANT, address: null };
   const terms = String(c.paymentTerms || '').trim() || DEFAULT_PAYMENT_TERMS;
   const days = (terms.match(/within (\d+) days/i) || [])[1];
-  const addr = addressOf(c);
   // eslint-disable-next-line global-require
   const vendor = require('./vendorAgreement');
   const gDays = vendor.guaranteeDaysOf(c);
@@ -89,14 +99,17 @@ function keyTermsOf(client = {}, consultant = null) {
     endDate: c.agreementEnd || null,
     specialTerms: String(c.specialTerms || '').trim() || null,
     clientName: String(c.legalName || c.name || '').trim() || null,
-    address: addr.startsWith('___') ? (String(c.billingAddress || '').trim() || null) : addr,
+    address: vendor.addressLine(c),
     department: String(c.ownerDepartment || '').trim() || null,
     feePercent: c.agreementFeePercent != null ? c.agreementFeePercent : 8.33,
     gstPercent: c.gstPercent != null ? c.gstPercent : 18,
     guarantee: String(c.guaranteePeriod || '30 Days').trim(),
     paymentDays: days != null ? Number(days) : null,
     paymentTerms: terms,
-    startDate: c.agreementStart || null,
+    // The "made on" date. A SAVED agreement shows the date printed in its text (the
+    // signing page must show what the client signs); a form still being filled in
+    // (no document yet) shows the agreement date, else today in India.
+    ...madeOnTerms(c, vendor),
     consultantName: us.name,
     signatoryName: us.signatoryName || null,
     signatoryTitle: us.signatoryTitle || null,
@@ -108,11 +121,12 @@ function keyTermsOf(client = {}, consultant = null) {
 // agreementTemplate names the older 16-clause text below — kept only as a
 // fallback option. ONE function every caller uses: Add-client preview, the
 // saved draft, Make a new draft, the signing page and the PDF.
-function buildAgreementDocument(client = {}, consultant = null) {
+//   opts.preview  the live preview (an empty address shows "[Client address]")
+function buildAgreementDocument(client = {}, consultant = null, opts = {}) {
   // eslint-disable-next-line global-require
   const vendor = require('./vendorAgreement');
   if (vendor.templateIdOf(client && client.agreementTemplate) === 'STAFFING') return buildStaffingAgreement(client, consultant);
-  return vendor.buildVendorServicesAgreement(client, consultant);
+  return vendor.buildVendorServicesAgreement(client, consultant, opts);
 }
 
 // The older 16-clause "Permanent Staffing / Recruitment Services Agreement".
@@ -125,7 +139,9 @@ function buildStaffingAgreement(client = {}, consultant = null) {
   const gst = c.gstPercent != null ? c.gstPercent : 18;
   const guarantee = String(c.guaranteePeriod || '30 Days').trim();
 
-  const start = c.agreementStart ? new Date(`${c.agreementStart}T00:00:00Z`) : null;
+  // The "entered into on" date: the agreement date, else today in India (never blank).
+  // eslint-disable-next-line global-require
+  const start = new Date(`${require('./vendorAgreement').effectiveYmd(c)}T00:00:00Z`);
   const day = start ? String(start.getUTCDate()).padStart(2, '0') : blank(4);
   const month = start ? start.toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' }) : blank(14);
   const year = start ? String(start.getUTCFullYear()).slice(2) : blank(3);
@@ -343,12 +359,40 @@ function buildStaffingAgreement(client = {}, consultant = null) {
   ].join('\n');
 }
 
+// The next Agreement No. (AGR0001 …). Automatic and race-safe: utils/autoNumber.js
+// keeps one counter, takes a number in one SQL statement and never reuses one.
 async function nextAgreementId() {
-  const count = await prisma.client.count({ where: { agreementId: { not: null } } });
-  let n = count + 1;
-  // eslint-disable-next-line no-await-in-loop
-  while (await prisma.client.findUnique({ where: { agreementId: `AGR${String(n).padStart(4, '0')}` } })) n += 1;
-  return `AGR${String(n).padStart(4, '0')}`;
+  return require('./autoNumber').nextAgreementNumber(); // eslint-disable-line global-require
+}
+
+// Put an Agreement No. on a client's data when a draft is made and none exists.
+// Every place that writes agreementDocument calls this, so no agreement is
+// ever left without a number.
+async function withAgreementId(client, data) {
+  if (data && data.agreementDocument && !(client && client.agreementId) && !data.agreementId) {
+    return { ...data, agreementId: await nextAgreementId() };
+  }
+  return data;
+}
+
+// SAFETY NET WHEN A DRAFT GOES OUT. A draft made before 2026-10-10 can still print
+// "**-**-****" after "This agreement is made on". When such a draft is sent it is
+// dated first: its own agreement date, else today (India time) — it is made now.
+// Returns { data, ymd } to merge into the update, or null when the text already
+// has a real date (or is not the Vendor Services text).
+function madeOnPatch(client) {
+  // eslint-disable-next-line global-require
+  const vendor = require('./vendorAgreement');
+  const doc = client && client.agreementDocument;
+  if (!doc || !vendor.isVendorDocument(doc)) return null;
+  const printed = vendor.madeOnOf(doc);
+  if (printed && /^\d{2}-\d{2}-\d{4}$/.test(printed)) return null;
+  const ymd = vendor.effectiveYmd(client);
+  const text = vendor.restampMadeOn(doc, ymd);
+  if (!text) return null;
+  const data = { agreementDocument: text };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(client.agreementStart || '').trim())) data.agreementStart = ymd;
+  return { data, ymd };
 }
 
 function newEsignToken() {
@@ -356,5 +400,5 @@ function newEsignToken() {
 }
 
 module.exports = {
-  buildAgreementDocument, buildStaffingAgreement, nextAgreementId, newEsignToken, consultantParty, CONSULTANT, DEFAULT_PAYMENT_TERMS, keyTermsOf,
+  buildAgreementDocument, buildStaffingAgreement, nextAgreementId, withAgreementId, newEsignToken, consultantParty, CONSULTANT, DEFAULT_PAYMENT_TERMS, keyTermsOf, madeOnPatch,
 };

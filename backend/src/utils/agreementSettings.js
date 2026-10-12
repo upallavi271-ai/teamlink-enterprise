@@ -32,6 +32,10 @@ const DEFAULTS = {
   signatoryName: '[Signatory name — to be confirmed]',
   signatoryTitle: '[Signatory title — to be confirmed]',
   esignProvider: 'Later',
+  // Printed on the last page of every agreement PDF (2026-10-10): the place of
+  // execution, and - ONLY when filled - the stamp paper / e-stamp certificate no.
+  executionPlace: 'Hyderabad',
+  stampPaperNo: '',
   renewalDays: [30, 7],
   renewalEmail: false,
   linkDays: 14,
@@ -80,6 +84,8 @@ function clean(v) {
     out.templateName = vendor.templateIdOf(out.templateName) === 'STAFFING' ? vendor.STAFFING_TEMPLATE : vendor.VENDOR_TEMPLATE;
   }
   if (!out.esignProvider) out.esignProvider = 'Later';
+  out.executionPlace = String(out.executionPlace == null ? '' : out.executionPlace).trim().slice(0, 60) || DEFAULTS.executionPlace;
+  out.stampPaperNo = String(out.stampPaperNo == null ? '' : out.stampPaperNo).trim().slice(0, 60);
   return out;
 }
 
@@ -136,7 +142,7 @@ async function saveAgreementSettings(patch, user) {
     if (!Number.isInteger(n) || n < 1 || n > 90) return { error: 'The agreement link must work for 1 to 90 days (for example 14).' };
     next.linkDays = n;
   }
-  ['templateName', 'templateNote', 'signatoryName', 'signatoryTitle', 'esignProvider'].forEach((k) => {
+  ['templateName', 'templateNote', 'signatoryName', 'signatoryTitle', 'esignProvider', 'executionPlace', 'stampPaperNo'].forEach((k) => {
     if (p[k] !== undefined) next[k] = p[k];
   });
   const settings = clean(next);

@@ -15,10 +15,12 @@ import rateLimit from 'express-rate-limit';
 
 import { config, originAllowed } from './config.js';
 import { errorHandler, ApiError, CODES, wrap } from './errors.js';
-import { attachSession, csrfProtection, issueCsrfToken } from './auth.js';
+import { attachSession, csrfProtection, issueCsrfToken, startIdleSessionSweep } from './auth.js';
 
 import bootstrapRoutes from './routes/bootstrap.js';
 import authRoutes from './routes/auth.js';
+import hrmsSsoRoutes from './routes/hrms-sso.js';
+import { hrmsSessionGate } from './sso/hrms.js';
 import jobRoutes from './routes/jobs.js';
 import companyRoutes from './routes/companies.js';
 import resumeRoutes from './routes/resume.js';
@@ -33,6 +35,7 @@ import aiCallingRoutes from './routes/ai-calling.js';
 import spreadsheetRoutes from './routes/spreadsheet.js';
 import placesRoutes from './routes/places.js';
 import intakeRoutes from './routes/intake.js';
+import sourceMailboxRoutes from './routes/source-mailboxes.js';
 import { notificationRoutes } from './routes/notifications.js';
 import staffRoutes from './routes/staff.js';
 import externalJobRoutes from './routes/external-jobs.js';
@@ -45,9 +48,15 @@ import portalUpgradeRoutes, { mountPublicJobPage } from './routes/portal-upgrade
 import profileViewerRoutes from './routes/profile-viewers.js';
 import resumeScoreRoutes from './routes/resume-score.js';
 import voiceSearchRoutes from './routes/voice-search.js';
+/* The AI WhatsApp Agent: status, the page's chat, and Meta's webhook. */
+import whatsappAgentRoutes from './routes/whatsapp-agent.js';
+/* The AI Hiring Demo's real pipeline (resume parse -> match -> screening -> ranking -> interview). */
+import aiPipelineRoutes from './routes/ai-pipeline.js';
 import screeningRoutes from './routes/screening.js';
 import interviewPrepRoutes from './routes/interview-prep.js';
 import { startDeadlineSweep } from './notify/interview-deadline.js';
+import { startInterviewNoticeSweep } from './notify/interview-suspension.js';
+import { startApplicationNoticeSweep } from './notify/application-notices.js';
 import { startIntakeSync } from './intake/scheduler.js';
 import { startScreeningSweep } from './ai/screening.js';
 import { startRetrySweep } from './notify/retry.js';
@@ -55,6 +64,7 @@ import { startJoiningSweep } from './notify/joining.js';
 import { startProfileNudgeSweep } from './notify/profile-nudge.js';
 import { startBulkMessageSweep } from './notify/bulk.js';
 import { startExternalSyncSweep } from './external/service.js';
+import { startExternalLinkSweep } from './external/availability.js';
 import { startApplyReminderSweep } from './external/reminder.js';
 import { startSavedSearchAlerts } from './notify/saved-search-alerts.js';
 import { startWalkinJobs } from './notify/walkin-jobs.js';
@@ -70,13 +80,23 @@ import { startAvailabilitySweep } from './notify/availability-checks.js';
 import { startOutboundHoldSweep } from './notify/apply-hold.js';
 /* 0109: multi-step registration, documents, privacy; welcome + reminder. */
 import registrationRoutes from './routes/registration.js';
+import registrationDraftRoutes from './routes/registration-draft.js';
+import profileOnboardingRoutes from './routes/profile-onboarding.js';
+import teamRoutes from './routes/teams.js';
 import { startRegistrationSweep } from './notify/registration-messages.js';
 /* 0107: the walk-in ATS (stages, check-in, notes, ratings, resumes, No Show, reminders). */
 import walkinAtsRoutes, { walkinAtsKick } from './routes/walkin-ats.js';
 import { startWalkinAtsSweep } from './notify/walkin-ats.js';
 /* 0110: "New job like one you saved". */
 import savedJobAlertRoutes from './routes/saved-job-alerts.js';
+import atsRecordRoutes from './routes/ats-record.js';
+import recruiterActivityRoutes from './routes/recruiter-activity.js';
+import portalStatsRoutes from './routes/portal-stats.js';
 import { startSavedJobAlerts } from './notify/saved-job-alerts.js';
+import jobPublishingRoutes, { publishingJobHooks, publishingPublicRoutes } from './routes/job-publishing.js';
+import integrationChannelRoutes from './routes/integration-channels.js';
+import { loadChannelOverlay } from './notify/channel-config.js';
+import { startPublishingSweep } from './publishing/service.js';
 
 /*
  * The background work belongs to the APPLICATION, not to one entry point.
@@ -110,6 +130,9 @@ function startBackgroundWork(logger) {
   backgroundStarted = true;
   try {
     backgroundStops.push(startDeadlineSweep());
+    backgroundStops.push(startInterviewNoticeSweep());
+    /* 0139: HR's walk-in notices (application saved, applicant eligible) - once each, retried */
+    backgroundStops.push(startApplicationNoticeSweep());
     backgroundStops.push(startIntakeSync());
     backgroundStops.push(startScreeningSweep());
     backgroundStops.push(startRetrySweep());
@@ -117,6 +140,9 @@ function startBackgroundWork(logger) {
     backgroundStops.push(startProfileNudgeSweep());
     backgroundStops.push(startBulkMessageSweep());
     backgroundStops.push(startExternalSyncSweep());
+    /* 0115: open external postings re-checked against their source, in
+       small batches; only a confirmed removal closes one. */
+    backgroundStops.push(startExternalLinkSweep());
     /* One reminder per unanswered external application, ever. The claim
        that makes that true is in the database (0077), not here. */
     backgroundStops.push(startApplyReminderSweep());
@@ -152,6 +178,12 @@ function startBackgroundWork(logger) {
     /* Saved-job alerts (0110): jobs the publish hook missed, and the
        evening digest of the ones over the daily cap. Idempotent. */
     backgroundStops.push(startSavedJobAlerts());
+    /* Save & Post (0112): queued, retried and newly-connected publications,
+       feed confirmations, and jobs closed or edited since they went out. */
+    backgroundStops.push(startPublishingSweep());
+    /* 0125: recruiters idle for 30 minutes (browser closed) are signed out
+       at their last activity - the Audit Log's "Auto logged out". */
+    backgroundStops.push(startIdleSessionSweep());
   } catch (err) {
     console.error('[background] could not start:', err.message);
   }
@@ -213,6 +245,13 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   }));
 
+  /* Save & Post (0112): the public jobs feeds the TeamLink website and job
+     sites read, and the platforms' signed confirmations. Ahead of CORS and
+     CSRF on purpose - another site embeds the feed, and a platform's
+     server posts the callback - and outside /api, so no session, cookie
+     or rate limit applies. They read only what is public. */
+  app.use(publishingPublicRoutes());
+
   app.use(cors({
     // originAllowed() lives in config.js because the CSRF guard has to reach
     // the same verdict - see the note there.
@@ -226,7 +265,7 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
     // twenty-four. Its absence here made those routes unreachable from
     // a browser while answering perfectly to curl.
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'x-csrf-token'],
+    allowedHeaders: ['content-type', 'x-csrf-token', 'x-draft-token'],
   }));
 
   /*
@@ -289,7 +328,11 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
     next();
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  /* The WhatsApp webhook is signed over the exact bytes Meta sent, so its raw body is kept (and only its). */
+  app.use(express.json({
+    limit: '1mb',
+    verify: (req, _res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/whatsapp-agent/webhook')) req.rawBody = buf; },
+  }));
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(cookieParser());
 
@@ -321,6 +364,9 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
   });
 
   app.use(attachSession());
+  /* HRMS single sign-on: a session opened from HRMS shares HRMS's
+     inactivity timeout and logout (api/src/sso/hrms.js). */
+  app.use(hrmsSessionGate());
   app.use(csrfProtection());
 
   app.get('/api/health', wrap(async (_req, res) => {
@@ -345,6 +391,14 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
 
   app.use('/api', walkinAtsKick());
   app.use('/api', bootstrapRoutes());
+  /* 0111: tracker, ATS record, audit log, analytics (mounted early: its
+     paths are specific and must not be read as /candidates/:id etc.). */
+  app.use('/api', atsRecordRoutes());
+  /* 0125: Audit Log - recruiter activity and time in portal; the public
+     registered-candidates count (numbers only). */
+  app.use('/api', recruiterActivityRoutes());
+  app.use('/api', portalStatsRoutes());
+  app.use('/api', hrmsSsoRoutes());
   app.use('/api', authRoutes());
   app.use('/api', companyRoutes());
   app.use('/api', resumeRoutes());
@@ -354,8 +408,15 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
   /* 0106: the application form hands each submission on to POST
      /applications, so it is mounted ahead of the routes that guard and
      make an application. */
+  /* Save & Post (0112): an edit, publish or deadline change reconciles the
+     job's destinations; ahead of every route that answers those paths. */
+  app.use('/api', publishingJobHooks());
   app.use('/api', applyFormRoutes());
   app.use('/api', portalUpgradeRoutes());
+  app.use('/api', jobPublishingRoutes());
+  app.use('/api', integrationChannelRoutes());
+  /* what the administrator connected (SMTP, SMS, WhatsApp) takes over from the environment */
+  setImmediate(() => { loadChannelOverlay().catch(() => {}); });
   app.use('/api', jobRoutes());
   // Before candidateRoutes: /candidates/export must not be read as
   // /candidates/:id, which answers "that candidate could not be found".
@@ -374,9 +435,13 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
   app.use('/api', profileViewerRoutes());
   app.use('/api', resumeScoreRoutes());
   app.use('/api', voiceSearchRoutes());
+  app.use('/api', whatsappAgentRoutes());
+  app.use('/api', aiPipelineRoutes());
   app.use('/api', sharedCandidateRoutes());
   app.use('/api', availabilityRoutes());
   app.use('/api', registrationRoutes());
+  app.use('/api', registrationDraftRoutes());
+  app.use('/api', teamRoutes());
   app.use('/api', walkinAtsRoutes());
   app.use('/api', candidateRoutes());
   app.use('/api', applicationRoutes());
@@ -384,8 +449,10 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
   app.use('/api', interviewPrepRoutes());
   app.use('/api', miscRoutes());
   app.use('/api', uploadRoutes());
+  app.use('/api', profileOnboardingRoutes());
   app.use('/api', aiInterviewRoutes());
   app.use('/api', aiCallingRoutes());
+  app.use('/api', sourceMailboxRoutes());
   app.use('/api', intakeRoutes());
   app.use('/api', notificationRoutes());
   app.use('/api', staffRoutes());
@@ -471,6 +538,11 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
       res.setHeader('content-encoding', 'gzip');
       res.setHeader('vary', 'accept-encoding');
       res.setHeader('cache-control', 'no-cache');
+      /* the company website's jobs block may be loaded from another site (see express.static below) */
+      if (/^\/teamlink-jobs-embed\.js$/i.test(rel)) {
+        res.setHeader('cross-origin-resource-policy', 'cross-origin');
+        res.setHeader('access-control-allow-origin', '*');
+      }
       /* Weak, because the body is the gzipped form of the file rather
          than the file: a strong tag would claim byte equality with
          whatever an uncompressed request returns. */
@@ -507,6 +579,13 @@ export function createApp({ serveStatic = null, logger = console } = {}) {
          * and removes a whole class of "I already fixed that".
          */
         if (/\.(html|js|css)$/i.test(path)) res.setHeader('cache-control', 'no-cache');
+        /* The jobs block the company website (tmlink.in) pastes in: the one file another site
+           must be allowed to load. It reads only the public jobs feed, which is cross-origin
+           already. Every other file keeps the same-origin policy. */
+        if (/[\\/]teamlink-jobs-embed\.js$/i.test(path)) {
+          res.setHeader('cross-origin-resource-policy', 'cross-origin');
+          res.setHeader('access-control-allow-origin', '*');
+        }
       },
     }));
 

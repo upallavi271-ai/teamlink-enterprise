@@ -5,6 +5,7 @@ import { productRole } from '../../permissions';
 import Modal from '../Modal.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import { ContactButtons } from './ProfileSlots.jsx';
+import { recordedAs, IMPORTED_SOURCE } from '../../utils/candidateSource.js';
 import './ProfileTop.css';
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,14 @@ export default function ProfileTop({
           {c.email && <span className="cpt-email">{c.email}</span>}
           {c.location && <span>{c.location}</span>}
           {c.experienceYears != null && <span>{`${c.experienceYears} yrs exp`}</span>}
+          {/* Where from: the clean word; hover shows the word that was recorded. TeamLink logins only (the server sends sourceKey to nobody else). */}
+          {c.sourceKey && (
+            <span className={`cpt-src${c.sourceKey === IMPORTED_SOURCE ? ' is-unknown' : ''}`} title={recordedAs(c)}>
+              <span className="small-muted">Where from:</span>
+              {' '}
+              <b>{c.sourceKey}</b>
+            </span>
+          )}
         </div>
         <div className="cpt-step">
           <span className="small-muted">Current step:</span>

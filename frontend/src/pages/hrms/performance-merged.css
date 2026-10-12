@@ -1,0 +1,6 @@
+/* Performance & Development -> Monthly Targets tab: targets + recruiter joinings on one screen */
+.pd-merged{display:flex;flex-direction:column;gap:26px}
+.pd-section{scroll-margin-top:70px}
+.pd-h2{font-family:'Newsreader',serif;font-size:20px;font-weight:600;margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+/* the targets screen carries its own big heading; the section heading replaces it here */
+.pd-section#pd-targets > div > .page-head{display:none}

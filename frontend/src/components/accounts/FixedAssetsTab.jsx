@@ -15,6 +15,7 @@ import PeriodPicker, { ALL_TIME, isAllTime, presetRange } from './PeriodPicker.j
 import Pager, { usePaged } from '../Pager.jsx';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import './ledgerBooks.css';
+import './accountsScroll.css';
 
 const HRMS_LINK = '/employee-services?tab=assets';
 const STATE_CLS = { 'Not posted': 'orange', 'Changed in HRMS': 'orange', Posted: 'green', 'Covered by warranty': 'grey', Blocked: 'red' };
@@ -84,7 +85,7 @@ function PendingView({ canPost }) {
       {msg && <div className="lb-ok">{msg}</div>}
       {!data ? <EmptyMini>Loading…</EmptyMini> : rows.length === 0 ? <EmptyMini>Everything from HRMS is in the journal.</EmptyMini> : (
         <>
-          <div className="tbl-wrap">
+          <div className="tbl-wrap acc-scroll">
             <table className="lb-tbl">
               <thead><tr>{canPost && <th />}<th>What</th><th>Asset ID</th><th>Asset</th><th>Category</th><th>Assigned to</th><th>Date</th><th className="lb-num">Amount</th><th>Paid via</th><th>Journal</th><th /></tr></thead>
               <tbody>
@@ -168,7 +169,7 @@ function DepreciationView({ canPost }) {
       {pv && pv.defaultsUsed > 0 && <div className="lb-note" style={{ padding: '4px 18px 0' }}>{pv.defaultsUsed} asset(s) have no method / useful life in HRMS — the default is used: straight line, 3 years for IT items, 10 for furniture, 8 for vehicles, 5 for the rest, salvage 0.</div>}
       {pv && (pv.rows.length === 0 ? <EmptyMini>Nothing to depreciate for this period.</EmptyMini> : (
         <>
-          <div className="tbl-wrap">
+          <div className="tbl-wrap acc-scroll">
             <table className="lb-tbl">
               <thead><tr><th>Asset ID</th><th>Asset</th><th>Category</th><th>Method</th><th className="lb-num">Cost</th><th className="lb-num">Book value before</th><th className="lb-num">Days</th><th className="lb-num">Depreciation</th><th className="lb-num">Book value after</th></tr></thead>
               <tbody>
@@ -248,7 +249,7 @@ function RegisterView() {
       {error && <div className="lb-err">{error}</div>}
       {!data ? <EmptyMini>Loading…</EmptyMini> : rows.length === 0 ? <EmptyMini>No assets match these filters.</EmptyMini> : (
         <>
-          <div className="tbl-wrap">
+          <div className="tbl-wrap acc-scroll">
             <table className="lb-tbl">
               <thead><tr><th>Asset ID</th><th>Asset</th><th>Category</th><th>Assigned to</th><th>Status</th><th>Bought</th><th className="lb-num">Purchase cost</th><th className="lb-num">Depreciation</th><th className="lb-num">Book value</th><th>Books</th></tr></thead>
               <tbody>
@@ -290,7 +291,7 @@ function SummaryView() {
       </div>
       {error && <div className="lb-err">{error}</div>}
       {!data ? <EmptyMini>Loading…</EmptyMini> : data.rows.length === 0 ? <EmptyMini>No assets match these filters.</EmptyMini> : (
-        <div className="tbl-wrap">
+        <div className="tbl-wrap acc-scroll">
           <table className="lb-tbl">
             <thead><tr><th>Category</th><th className="lb-num">Assets</th><th className="lb-num">Opening</th><th className="lb-num">Additions</th><th className="lb-num">Depreciation</th><th className="lb-num">Disposals</th><th className="lb-num">Closing book value</th><th className="lb-num">Total repair cost</th><th>Not in the books</th></tr></thead>
             <tbody>
@@ -340,7 +341,7 @@ function RepairCostView({ canEdit }) {
       {msg && <div className="lb-ok">{msg}</div>}
       {!data ? <EmptyMini>Loading…</EmptyMini> : data.rows.length === 0 ? <EmptyMini>No repairs match these filters.</EmptyMini> : (
         <>
-          <div className="tbl-wrap">
+          <div className="tbl-wrap acc-scroll">
             <table className="lb-tbl">
               <thead><tr><th>Asset ID</th><th>Name</th><th>Category</th><th>Assigned to</th><th className="lb-num">Repairs</th><th className="lb-num">Total repair cost</th><th className="lb-num">Purchase cost</th><th className="lb-num">Repair %</th><th>Last repair</th><th /></tr></thead>
               <tbody>

@@ -246,6 +246,16 @@ function expandModuleIds(list) {
 }
 // Per-feature hint / enforcement flag, for the Role Catalog.
 function featureInfoOf(moduleId) {
+  // ATS: the Contact switch (Follow-ups) is its own right, separate from view / edit / approve.
+  if (moduleId === 'candidates') {
+    return {
+      'Contact (Mail / WhatsApp / SMS / Call)': {
+        hint: 'Follow-ups: may Call, Mail, WhatsApp and SMS the people in the role\'s own area (View = on). Separate from edit and approve, so a view-and-approve role can still follow up. The BDE team and anyone without "Candidate Contact & Salary" contact candidates THROUGH TeamLink: they never see the number.',
+        api: true,
+        inherits: 'Follow-ups',
+      },
+    };
+  }
   const m = SPLIT_MODULES.find((x) => x.id === moduleId);
   if (!m) return null;
   const out = {};
@@ -276,7 +286,8 @@ const ROLE_ACCESS_MODULES = [
   // saved as a DRAFT requirement that a lead activates (Requirement Detail /
   // approve). Bulk Import with Requirement Request but no Create Requirement
   // = import as requests (permissions.js ioAccessFor importMode 'request').
-  { id: 'requirements', label: 'Jobs / Requirements', features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline', 'Job Portal Workspace', 'Job Portal Applications', 'Client Job Portal', 'Bulk Import', 'Requirement Request'] },
+  { id: 'requirements', label: 'Jobs / Requirements', features: ['Requirement List', 'Create Requirement', 'Requirement Detail', 'Job Posting', 'Matching Candidates', 'Requirement Pipeline', 'Job Portal Workspace', 'Job Portal Applications', 'Client Job Portal', 'Bulk Import', 'Requirement Request',
+    'Pause Requirement', 'Resume Requirement', 'Close Request'] },
   // 'Bulk Import' (requirements + clients, 2026-09-29 role specs): the Import
   // and Template buttons. Separate from Create / Add Client because a TL may
   // raise ONE requirement but not import a sheet, and a BDE may add their own
@@ -286,10 +297,13 @@ const ROLE_ACCESS_MODULES = [
   // approves); 'Archive Client' — edit; 'Delete Client' — delete (permanent,
   // empty clients only; the route enforces emptiness). 'Client Notes' —
   // create = add a note to the client's Activity.
-  { id: 'clients', label: 'Clients', features: ['Client List', 'Add Client', 'Client Detail', 'Agreement Lifecycle', 'Commercial Terms', 'Client Requirements', 'Bulk Import', 'Client Notes', 'Pause / Reactivate Client', 'Archive Client', 'Delete Client', 'Client Portal Logins'] },
+  { id: 'clients', label: 'Clients', features: ['Client List', 'Add Client', 'Client Detail', 'Agreement Lifecycle', 'Commercial Terms', 'Client Requirements', 'Bulk Import', 'Client Notes', 'Pause / Reactivate Client', 'Archive Client', 'Delete Client', 'Client Portal Logins',
+    // BDE business workspace (user spec 2026-10-10): each line is a Role Catalog tick.
+    'Resume Client', 'Deactivate Client', 'Client Delete Request', 'Client Ownership Request', 'Client Merge Request',
+    'Client Contacts', 'Client Follow-ups', 'Client Documents', 'Client Approval Submission', 'Client Invoice Status', 'Client Invoice Amount'] },
   // 'Bulk Import' on candidates (2026-10-03): the candidate / application
   // sheet import, separate from adding one candidate by hand.
-  { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores', 'Bulk Import', 'Candidate Portal Invite'] },
+  { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores', 'Bulk Import', 'Candidate Portal Invite', 'Candidate Contact & Salary', 'Contact (Mail / WhatsApp / SMS / Call)'] },
   { id: 'recruiterbde', label: 'Recruiter & BDE', features: ['Recruiter Workload', 'BDE Workload', 'Team View', 'Pending Actions'] },
   // Interviews & Joining: Interview Calendar - Interview Feedback - Offers -
   // Joining - Internal Hiring. Client Feedback is its own feature because a
@@ -312,7 +326,7 @@ const ROLE_ACCESS_MODULES = [
   { id: 'ai', label: 'AI Assistant & Agent', features: ['Ask the Assistant', 'Voice Input', 'Suggested Prompts', 'Answers from HRMS Data', 'Answers from ATS Data', 'Answers from Accounts Data', 'Agent Actions'] },
   // 'My Results' — a recruiter's own numbers (submitted, interviews, selected,
   // joined); 'Client Reports' — a client's own company numbers on the portal.
-  { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports', 'HRMS Reports', 'My Results', 'Client Reports'] },
+  { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports', 'HRMS Reports', 'My Results', 'Client Reports', 'My Clients Report', 'My Requirements Report', 'My Follow-ups Report', 'Export Assigned Data'] },
   { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs', 'Vendor Logins', 'Vendor Audit', 'Vendor Bills Review'] },
 ];
 
@@ -374,13 +388,13 @@ const CATALOG_ROLES = [
 const ROLE_SCOPE_DESC = {
   SUPER_ADMIN: 'Whole company — every department, full access',
   ADMIN: 'Whole company — every department, full access',
-  MANAGER: 'ATS: their department(s) — create / assign / activate / hold / close jobs, move Manager steps; HRMS: whole company, view and export only (approves on the approval chain, assigns LMS courses)',
-  ASSISTANT_MANAGER: 'ATS: their assigned team(s) (their department when no team is set) — create jobs, assign, hold; Clients view only; HRMS: view and export only (approval chain, LMS assignment)',
-  STL: 'Own section (department): its teams, TLs and recruiters, plus the unassigned openings; Clients names only',
-  TL: 'Own team: team requirements and the team’s candidates (TL Review); Clients name only',
+  MANAGER: 'ATS: every department, VIEW + APPROVE only (activate / hold / close jobs, approve steps, assign people) — no create, edit or import; HRMS: whole company, view and export only (approves on the approval chain, assigns LMS courses)',
+  ASSISTANT_MANAGER: 'ATS: their assigned team(s) (their department when no team is set), VIEW + APPROVE only (hold jobs, approve steps) — no create, edit or import; Clients view only; HRMS: view and export only (approval chain, LMS assignment)',
+  STL: 'Own section (department): its teams, TLs and recruiters, plus the unassigned openings; VIEW + APPROVE only in ATS (steps, interview decisions, offers, joinings); Clients: every client of the department, basics only',
+  TL: 'Own team: team requirements and the team’s candidates (TL Review); Clients: every client of the department, name only',
   HR: 'Every employee in HRMS; in ATS only Internal Hiring (TeamLink’s own openings) — no client jobs, no Clients, no Recruiter & BDE',
   RECRUITER: 'Own jobs, own candidates, own interviews and own results; a client’s NAME on their requirements only; own HRMS record',
-  BDE: 'Own clients, their jobs and the candidates submitted to them (no recruiter notes / internal scores); requests jobs, does not create them; own HRMS record',
+  BDE: 'Own clients (and the desk’s clients that have no BDE yet): their jobs, interviews and the candidates shared with the client or later — no candidate email, phone, salary, recruiter notes, internal panel feedback or AI score; own client-wise reports; requests jobs, does not create them; own HRMS record',
   CLIENT: 'Own company only — its requirements, the candidates shared with it, interviews, joinings and agreement',
   ACCOUNTANT: 'Accounts (invoices, payments, expenses, payroll accounts); no ATS',
   EMPLOYEE: 'Own HRMS record only; no ATS work until given an ATS role',
@@ -409,7 +423,59 @@ function sanitizeFeatures(moduleId, incoming) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// PERMISSION GROUPS (user spec 2026-10-10, BDE business workspace). The Role Catalog's Configure
+// screen shows these as plain tick lines ABOVE the feature grid; every line is ONE (feature, action)
+// of the grid, so ticking a line and ticking the grid box are the same thing - nothing is stored twice.
+// A line may say 'request': the person asks, a Manager / Admin decides.
+// ---------------------------------------------------------------------------
+const PERMISSION_GROUPS = {
+  clients: [
+    { group: 'Clients', lines: [
+      { label: 'View', feature: 'Client Detail', action: 'view' },
+      { label: 'Create', feature: 'Add Client', action: 'create' },
+      { label: 'Edit', feature: 'Client Detail', action: 'edit' },
+      { label: 'Pause', feature: 'Pause / Reactivate Client', action: 'edit' },
+      { label: 'Resume', feature: 'Resume Client', action: 'edit' },
+      { label: 'Deactivate (asks for approval)', feature: 'Deactivate Client', action: 'create' },
+      { label: 'Delete request (asks for approval)', feature: 'Client Delete Request', action: 'create' },
+      { label: 'Export', feature: 'Client List', action: 'export' },
+    ] },
+    { group: 'Business activities', lines: [
+      { label: 'Add contacts', feature: 'Client Contacts', action: 'create' },
+      { label: 'Meeting notes', feature: 'Client Notes', action: 'create' },
+      { label: 'Follow-ups', feature: 'Client Follow-ups', action: 'create' },
+      { label: 'Upload documents', feature: 'Client Documents', action: 'create' },
+      { label: 'Client approval submission', feature: 'Client Approval Submission', action: 'create' },
+      { label: 'Change of owner request', feature: 'Client Ownership Request', action: 'create' },
+      { label: 'Duplicate merge request', feature: 'Client Merge Request', action: 'create' },
+      { label: 'See invoice status (own clients)', feature: 'Client Invoice Status', action: 'view' },
+      { label: 'See invoice amount (own clients)', feature: 'Client Invoice Amount', action: 'view' },
+    ] },
+  ],
+  requirements: [
+    { group: 'Requirements', lines: [
+      { label: 'View', feature: 'Requirement Detail', action: 'view' },
+      { label: 'Create (a request a lead opens)', feature: 'Requirement Request', action: 'create' },
+      { label: 'Edit', feature: 'Requirement Detail', action: 'edit' },
+      { label: 'Pause', feature: 'Pause Requirement', action: 'edit' },
+      { label: 'Resume', feature: 'Resume Requirement', action: 'edit' },
+      { label: 'Close request (asks for approval)', feature: 'Close Request', action: 'create' },
+      { label: 'Assign recruiter', feature: 'Requirement Detail', action: 'assign' },
+    ] },
+  ],
+  reports: [
+    { group: 'Reports', lines: [
+      { label: 'My clients report', feature: 'My Clients Report', action: 'view' },
+      { label: 'My requirements report', feature: 'My Requirements Report', action: 'view' },
+      { label: 'My follow-ups report', feature: 'My Follow-ups Report', action: 'view' },
+      { label: 'Export assigned data', feature: 'Export Assigned Data', action: 'export' },
+    ] },
+  ],
+};
+
 module.exports = {
+  PERMISSION_GROUPS,
   ROLE_FEATURE_ACTIONS,
   ROLE_ACCESS_MODULES,
   CATALOG_ROLES,

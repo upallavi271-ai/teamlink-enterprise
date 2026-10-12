@@ -6,7 +6,8 @@
 // Company", the 30-day termination, the one-year candidate ownership and
 // section 7 "Service Tax" exactly as written. ONLY THE BLANKS ARE FIELDS:
 //
-//   **-**-****            the effective date (dd-mm-yyyy)  ← agreementStart
+//   **-**-****            the "made on" date (dd-mm-yyyy)  ← agreementStart,
+//                         else TODAY (never printed blank — 2026-10-10)
 //   between ”****“        the client name                  ← legalName / name
 //   Address ****          the company (else billing) address
 //   section 8 table row   "8.33%+GST And One Month Replacement"
@@ -20,8 +21,10 @@
 //                         designation / sign / date are filled by the e-sign
 //                         when the PDF and the pages are drawn.
 //
-// An empty blank prints exactly as the document has it (**-**-****, ****), so
-// the template with no client data IS the user's document.
+// No blank prints as asterisks any more (user, 2026-10-10): the date is always a
+// real date (agreementStart, else today in India), the client name is
+// "[Client name]" until it is typed, the address "[Client address]" in the live
+// preview and a blank line in a saved document.
 //
 // The text keeps a light structure every renderer understands (the preview,
 // the signing page, the PDF): line 1 is the title; "N. Heading:" lines are
@@ -83,6 +86,38 @@ function ddmmyyyy(ymd) {
   const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
+// THE "MADE ON" DATE (user, 2026-10-10): it is NEVER a blank. It is the day the
+// agreement is made (today, India time) unless the client carries its own
+// agreement date (agreementStart: set when the draft is created, so a later
+// regenerate keeps the SAME date; an Admin may correct it).
+const YMD_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+function todayYmd(now = new Date()) {
+  return new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10); // Asia/Kolkata, no DST
+}
+function effectiveYmd(c) {
+  const s = String((c && c.agreementStart) || '').trim();
+  return YMD_RE.test(s) ? s : todayYmd();
+}
+// The date a REGENERATED draft ("Make a new draft") prints: TODAY, India time —
+// the new draft is made today (user, 2026-10-10). { keepDate: true } keeps the
+// agreement date on the client instead (an Admin who must keep a backdated day);
+// otherwise "Edit dates" sets any day after the draft is made.
+function regenerateYmd(c, { keepDate = false, now = new Date() } = {}) {
+  const s = String((c && c.agreementStart) || '').trim();
+  return keepDate && YMD_RE.test(s) ? s : todayYmd(now);
+}
+// The text of a stored agreement with its "made on" date replaced (the same
+// sentence the builder writes). Returns null when the sentence is not found.
+const MADE_ON_RE = /(This agreement is made on )(\S+)( between )/;
+function madeOnOf(text) {
+  const m = String(text || '').match(MADE_ON_RE);
+  return m ? m[2] : null;
+}
+function restampMadeOn(text, ymd) {
+  const d = ddmmyyyy(ymd);
+  if (!d || !MADE_ON_RE.test(String(text || ''))) return null;
+  return String(text).replace(MADE_ON_RE, `$1${d}$3`);
+}
 const inr = (n) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const gstOff = (c) => /^no$/i.test(clean(c && c.gstApplicable));
 
@@ -97,19 +132,28 @@ function feeCell(c) {
   return `${fee}%${gstOff(c) ? '' : '+GST'} And ${rep}`;
 }
 
+// The client's address as written in the agreement. A country on its own
+// ("India", the form's default) is NOT an address: it falls back to the billing
+// address, and then to nothing (the builder prints a placeholder / blank line).
 function addressLine(c) {
-  const parts = [c.houseNumber, c.street, c.landmark, c.area, c.location, c.state, c.pincode, c.country]
+  const parts = [c.houseNumber, c.street, c.landmark, c.area, c.location, c.state, c.pincode]
     .map(clean).filter(Boolean);
-  if (parts.length) return parts.join(', ');
+  if (parts.length) return [...parts, clean(c.country)].filter(Boolean).join(', ');
   return clean(c.billingAddress) || null;
 }
 
-function buildVendorServicesAgreement(client = {}, consultant = null) {
+// What prints where a value does not exist (never "****"): the live preview
+// shows a clear [placeholder]; a saved document shows a blank line to write on.
+const NAME_PLACEHOLDER = '[Client name]';
+const ADDRESS_PLACEHOLDER = '[Client address]';
+const ADDRESS_BLANK = '_'.repeat(30);
+
+function buildVendorServicesAgreement(client = {}, consultant = null, opts = {}) {
   const c = client || {};
   const us = consultant || {};
-  const date = ddmmyyyy(c.agreementStart) || '**-**-****';
-  const name = clean(c.legalName || c.name) || '****';
-  const address = addressLine(c) || '****';
+  const date = ddmmyyyy(effectiveYmd(c));
+  const name = clean(c.legalName || c.name) || NAME_PLACEHOLDER;
+  const address = addressLine(c) || (opts && opts.preview ? ADDRESS_PLACEHOLDER : ADDRESS_BLANK);
   const invoiceDays = invoiceDaysOf(c);
   const payDays = paymentDaysOf(c);
   const gDays = guaranteeDaysOf(c);
@@ -146,7 +190,7 @@ function buildVendorServicesAgreement(client = {}, consultant = null) {
     `c. The Placement Company will give the Client a ${guaranteeShort(gDays)} Guarantee for all employees placed with the Client. The Placement Company will provide FREE REPLACEMENT for candidates who leave the services of the Client AT THEIR OWN WILL.`,
     ...(special.length ? ['Special terms:', ...special] : []),
     'This Agreement has been executed by authorized signatories of the respective parties.',
-    `${SIGN_LEFT}\t${clean(c.legalName || c.name) || CLIENT_SIGN_BLANK}`,
+    `${SIGN_LEFT}\t${clean(c.legalName || c.name) || NAME_PLACEHOLDER}`,
     `Name: ${clean(us.signatoryName)}\tName:`.replace(/ \t/, '\t'),
     `Designation: ${clean(us.signatoryTitle)}\tDesignation:`.replace(/ \t/, '\t'),
     'Sign:\tSign:',
@@ -159,5 +203,6 @@ const isVendorDocument = (text) => String(text || '').startsWith('Vendor Service
 module.exports = {
   VENDOR_TEMPLATE, STAFFING_TEMPLATE, TEMPLATES, templateIdOf, buildVendorServicesAgreement, isVendorDocument,
   paymentDaysOf, invoiceDaysOf, guaranteeDaysOf, guaranteeWords, guaranteeShort, feeCell, ddmmyyyy, addressLine,
+  todayYmd, effectiveYmd, regenerateYmd, madeOnOf, restampMadeOn, MADE_ON_RE, NAME_PLACEHOLDER, ADDRESS_PLACEHOLDER, ADDRESS_BLANK,
   TEAMLINK_NAME, TEAMLINK_ADDRESS, SIGN_LEFT, CLIENT_SIGN_BLANK,
 };

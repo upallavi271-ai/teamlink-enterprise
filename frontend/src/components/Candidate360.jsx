@@ -17,6 +17,7 @@ import {
   RejectFields, rejectReady, rejectPayload, EMPTY_REJECT, sendWithSameClientCheck,
 } from './rejections/rejectionUi.jsx';
 import StepPopup from './candidate/StepPopups.jsx';
+import { ctcAsk, CtcAsk, CtcAskButtons } from './CtcConfirm.jsx';
 import './CandidateDrawer.css';
 
 // ---------------------------------------------------------------------------
@@ -266,7 +267,7 @@ export function PipelineSteps({
   return (
     <div className="c360-steps" role="list" aria-label={internalApp ? 'Internal hiring progress' : 'Client hiring progress'}>
       {app && (
-        <span className="c360-step-kind small-muted" style={{ fontSize: 11, marginRight: 6 }}>
+        <span className="c360-step-kind small-muted">
           {`${internalApp ? 'Internal hiring' : 'Client hiring'}${isPreAtsApplication(app) ? ' · new from job portal' : ''}`}
         </span>
       )}
@@ -298,19 +299,24 @@ export function PipelineSteps({
 
 export function OwnershipGrid({ o, compact }) {
   if (!o) return null;
+  // [label, name, small line under the name]. The seat (position) is shown
+  // under the recruiter, where the server gives it.
   const rows = [
     ['Department', o.department],
     ['Section', o.section],
     ['Team lead', o.tl],
-    ['Recruiter', o.recruiter ? `${o.recruiter}${o.positionCode ? ` · ${o.positionCode}` : ''}` : (o.positionCode || null)],
+    ['Recruiter', o.recruiter || o.positionCode || null, o.recruiter && o.positionCode ? `Position ${o.positionCode}` : null],
     ['Client manager (BDE)', o.bde],
   ];
   return (
     <div className={`c360-own${compact ? ' is-compact' : ''}`}>
-      {rows.map(([k, v]) => (
+      {rows.map(([k, v, sub]) => (
         <div key={k} className="c360-own-item">
           <span>{k}</span>
-          <b>{v || '—'}</b>
+          <b>
+            {v || '—'}
+            {sub && <small>{sub}</small>}
+          </b>
         </div>
       ))}
     </div>
@@ -832,13 +838,15 @@ function PrepareOfferDialog({
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  async function save() {
+  const [ask, setAsk] = useState(null); // the server asked "is this CTC right?"
+  async function save(confirmCtc = false) {
     setBusy(true); setError('');
     try {
-      const r = await api.post(`/ats/offers/${app.id}/prepare`, { offeredCtc: Number(ctc), joiningDate: joiningDate || undefined, offerNotes: notes });
+      const r = await api.post(`/ats/offers/${app.id}/prepare`, { offeredCtc: Number(ctc), joiningDate: joiningDate || undefined, offerNotes: notes, ...(confirmCtc ? { confirmCtc: true } : {}) });
       await onDone((r.data && r.data.message) || `Saved. The offer for ${name} is waiting for the team lead.`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not save the offer. Please try again.');
+      const a = ctcAsk(err);
+      if (a) setAsk(a); else setError(err.response?.data?.error || 'Could not save the offer. Please try again.');
       setBusy(false);
     }
   }
@@ -846,17 +854,18 @@ function PrepareOfferDialog({
     <Modal
       title={`Prepare offer — ${name}`}
       onClose={onClose}
-      footer={(
+      footer={ask ? <CtcAskButtons busy={busy} onNo={() => setAsk(null)} onYes={() => save(true)} /> : (
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !(Number(ctc) > 0)} onClick={save}>{busy ? 'Saving…' : 'Send for approval'}</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !(Number(ctc) > 0)} onClick={() => save(false)}>{busy ? 'Saving…' : 'Send for approval'}</button>
         </>
       )}
     >
       <label className="field">
         <span>Yearly CTC (₹) *</span>
-        <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => setCtc(e.target.value)} />
+        <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => { setCtc(e.target.value); setAsk(null); }} />
       </label>
+      {ask && <CtcAsk ask={ask} />}
       <label className="field">
         <span>Joining date</span>
         <input type="date" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
@@ -879,14 +888,22 @@ export function CurrentApplication({
   const fu = app.followUp;
   return (
     <>
-      <div className="cdw-kv"><span>Job</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
-      <div className="cdw-kv"><span>Client</span><b>{clientName || '—'}</b></div>
-      <div className="cdw-kv"><span>Applied</span><b>{dt(app.createdAt)}</b></div>
-      <div className="cdw-kv"><span>At this step since</span><b>{dt(app.stageSince)}</b></div>
-      <div className="cdw-kv"><span>Whose move</span><b>{(fu && !fu.completedAt && fu.ownerName) || app.owner || '—'}</b></div>
-      {ownership && <OwnershipGrid o={ownership} compact />}
-      {app.interviewStatus && (
-        <div className="cdw-kv"><span>Interview</span><b>{`${app.interviewStatusLabel || interviewStatusLabel(app.interviewStatus)}${app.interviewAt ? ` · ${dt(app.interviewAt)}` : ''}`}</b></div>
+      {/* One aligned label / value list; then who is on this. */}
+      <div className="c360-facts">
+        <div className="cdw-kv"><span>Job</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
+        <div className="cdw-kv"><span>Client</span><b>{clientName || '—'}</b></div>
+        <div className="cdw-kv"><span>Applied</span><b>{dt(app.createdAt)}</b></div>
+        <div className="cdw-kv"><span>At this step since</span><b>{dt(app.stageSince)}</b></div>
+        <div className="cdw-kv"><span>Whose move</span><b>{(fu && !fu.completedAt && fu.ownerName) || app.owner || '—'}</b></div>
+        {app.interviewStatus && (
+          <div className="cdw-kv"><span>Interview</span><b>{`${app.interviewStatusLabel || interviewStatusLabel(app.interviewStatus)}${app.interviewAt ? ` · ${dt(app.interviewAt)}` : ''}`}</b></div>
+        )}
+      </div>
+      {ownership && (
+        <>
+          <div className="c360-sub">Who is on this</div>
+          <OwnershipGrid o={ownership} compact />
+        </>
       )}
     </>
   );

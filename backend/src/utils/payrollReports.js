@@ -184,7 +184,12 @@ async function reconciliation(month) {
     const a = codeOf(c.key);
     addTo(expected, a.code, a.name, c.side === 'debit' ? amt : 0, c.side === 'credit' ? amt : 0);
   });
-  const paidNet = entries.filter((e) => e.status === 'PAID').reduce((n, e) => n + paise(e.netPay), 0);
+  let paidNet = entries.filter((e) => e.status === 'PAID').reduce((n, e) => n + paise(e.netPay), 0);
+  // Employee-wise payments (some people, or a part of a salary) are summed from the payment rows.
+  if (st.runId && prisma.payrollVoucherPayment) {
+    const pays = await prisma.payrollVoucherPayment.findMany({ where: { payrollRunId: st.runId } }).catch(() => []);
+    if (pays.length) paidNet = pays.reduce((n, p) => n + paise(p.amount), 0);
+  }
   const payJe = journals.find((j) => j.referenceType === 'PAYROLL_MONTH_PAYMENT');
   if (paidNet) {
     const sp = codeOf('salaryPayable');

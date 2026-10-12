@@ -645,6 +645,7 @@ const HANDLERS = {
       }
 
       const created = await prisma.employee.create({ data: { ...fields, userId } });
+      require('../utils/stationeryKit').onActive(created.id); // default stationery kit, once (utils/stationeryKit.js)
       const entry = { id: created.id, name: created.name, employeeCode: code, userId };
       ix.employeeByCode.set(ix.norm(code), entry);
       ix.employee.set(ix.norm(created.name), entry);
@@ -1020,6 +1021,15 @@ const HANDLERS = {
       ix.clientCode.set(codeKey, key);
     }
 
+    // The BDE must work for the client's department (seat code; the BDE TL covers all).
+    if (fields.bdeOwner) {
+      // eslint-disable-next-line global-require
+      const { bdeDirectory, bdeDepartmentProblem } = require('../utils/bdeSeats');
+      if (!ix._bdeDir) ix._bdeDir = await bdeDirectory();
+      const dept = fields.ownerDepartment || (exists ? (await prisma.client.findUnique({ where: { id }, select: { ownerDepartment: true } }) || {}).ownerDepartment : null);
+      const bad = bdeDepartmentProblem(ix._bdeDir, fields.bdeOwner, dept, 'BDE Owner');
+      if (bad) throw new Error(bad);
+    }
     if (dry) {
       if (!id) ix.client.set(key, `dry:${key}`);
       return exists ? 'updated' : 'created';
@@ -1031,6 +1041,13 @@ const HANDLERS = {
     if (exists) {
       await prisma.client.update({ where: { id }, data: fields });
       return 'updated';
+    }
+    // Client ID and Agreement No. are made for the client (automatic, never reused).
+    // eslint-disable-next-line global-require
+    const autoNumber = require('../utils/autoNumber');
+    if (!fields.clientCode) fields.clientCode = await autoNumber.nextClientNumber();
+    if (!fields.agreementId && ['ACTIVE', 'SENT', 'SIGNED', 'EXPIRED'].includes(String(fields.agreementStatus || '').toUpperCase())) {
+      fields.agreementId = await autoNumber.nextAgreementNumber();
     }
     const created = await prisma.client.create({ data: fields });
     ix.client.set(key, created.id);
@@ -1133,6 +1150,8 @@ const HANDLERS = {
       await prisma.requirement.update({ where: { id }, data: fields });
       return 'updated';
     }
+    // A department with ONE team lead gives that TL to a new job (default TL).
+    await require('../utils/defaultTeamLead').applyDefault(fields); // eslint-disable-line global-require
     const row = await prisma.requirement.create({ data: fields });
     ix.requirement.set(key, row.id);
     return 'created';
@@ -1146,9 +1165,29 @@ const HANDLERS = {
     if (!data.email && !data.phone && !data.externalRef) {
       throw new Error('give an Email, a Phone or an External Ref — one of the three is needed to tell candidates apart');
     }
-    const fields = pick(data); // a blank never overwrites
+    // The Source column goes through the clean source list (utils/candidateSource.js); the word that was
+    // typed is kept in firstSource when that is empty, so nothing is lost.
+    const fields = require('../utils/candidateSource').tidyFields(pick(data)); // eslint-disable-line global-require
     const key = ix.norm(data.email || data.phone || `ref:${data.externalRef}`);
     const id = ix.candidate.get(key) || contactMatch(ix, data);
+    // SALARY (user note 2026-10-10): a NEW candidate needs current + expected salary; the row is refused with the reason
+    // (the import result lists it, so it can be fixed and re-uploaded). A row that updates someone already on file is not blocked,
+    // and a salary it does carry must be readable. Old bulk loads from the command line may set TL_IMPORT_SALARY_OPTIONAL=1.
+    {
+      const SAL = require('../utils/salaryFit'); // eslint-disable-line global-require
+      const isNew = !id || isDry(id);
+      const optional = /^(1|true|yes)$/i.test(process.env.TL_IMPORT_SALARY_OPTIONAL || '');
+      if (isNew && !optional) {
+        const v = SAL.validateSalaries(data);
+        if (!v.ok) throw new Error(v.message);
+        fields.currentSalary = v.values.currentSalary;
+        fields.expectedSalary = v.values.expectedSalary;
+      } else if (!isNew) {
+        const e = SAL.checkEdit(data, null);
+        if (!e.ok) throw new Error(e.message);
+        Object.assign(fields, e.values);
+      }
+    }
     if (dry) {
       if (!id) { ix.candidate.set(key, `dry:${key}`); indexCandidateContact(ix, data, `dry:${key}`); }
       return id && !isDry(id) ? 'updated' : 'created';
@@ -1192,7 +1231,8 @@ const HANDLERS = {
       note(`Rejected By / Rejection Category / Rejection Reason ignored — the stage is ${data.stage}, not REJECTED or HOLD`);
     }
 
-    const fields = pick(data);
+    // (the Source goes through the clean list; the Job Portal screening's own markers are left alone)
+    const fields = require('../utils/candidateSource').tidyFields(pick(data), { application: true }); // eslint-disable-line global-require
     // THE REJECTION REASON IS NOT A COLUMN ON Application, and should not
     // become one. ApplicationStageEvent already keeps the full rejected /
     // hold record — candidate, requirement, client, previous stage, who

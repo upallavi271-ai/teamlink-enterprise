@@ -22,6 +22,22 @@ const prisma = require('../db');
 const { logAudit } = require('./audit');
 const { normalizeAgreementStatus } = require('./atsVocab');
 
+// The tick-box column (migration 20261009200000_client_portal_ticks). Until the
+// generated client knows it, nothing here reads or writes it and the three
+// preset types behave exactly as before.
+const HAS_PERMS = (() => {
+  try {
+    const { Prisma } = require('@prisma/client'); // eslint-disable-line global-require
+    return Prisma.dmmf.datamodel.models.find((m) => m.name === 'User').fields.some((f) => f.name === 'portalPerms');
+  } catch { return false; }
+})();
+const HAS_REQUEST_PERMS = (() => {
+  try {
+    const { Prisma } = require('@prisma/client'); // eslint-disable-line global-require
+    return Prisma.dmmf.datamodel.models.find((m) => m.name === 'PortalRequest').fields.some((f) => f.name === 'portalPerms');
+  } catch { return false; }
+})();
+
 const DAY = 86400000;
 const REVIEW_EVERY_DAYS = 90; // the quarterly review
 const ARCHIVE_AFTER_DAYS = 365; // 12 months without a sign-in
@@ -81,6 +97,7 @@ async function clientLogins(clientId) {
     select: {
       id: true, name: true, email: true, status: true, portalType: true, portalReviewedAt: true, lastLoginAt: true,
       createdAt: true, setPasswordTokenHash: true, setPasswordExpiresAt: true, passwordChangedAt: true,
+      ...(HAS_PERMS ? { portalPerms: true } : {}),
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -152,6 +169,7 @@ function startSweep() {
 }
 
 module.exports = {
+  HAS_PERMS, HAS_REQUEST_PERMS,
   REVIEW_EVERY_DAYS, ARCHIVE_AFTER_DAYS, OFF_STATUSES, isOff,
   agreementGate, loginState, reviewDue, clientLogins, seatsUsed,
   retireCandidateLogin, archiveIdleCandidateLogins, startSweep,

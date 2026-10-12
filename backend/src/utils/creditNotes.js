@@ -222,7 +222,7 @@ async function decorateNet(invoices) {
   const notes = ready() ? await notesByInvoice(list.map((i) => i.id), { issuedOnly: true }) : new Map();
   list.forEach((i) => {
     const wn = TAX.withNotes(i, notes.get(i.id) || []);
-    const recv = R(Number(i.amount || 0) + Number(i.gst || 0) - Number(i.tds || 0));
+    const recv = R(Number(i.amount || 0) + Number(i.gst || 0) - Number(i.tds || 0) - Number(i.adjustedAmount || 0));
     i.netBilling = wn.hasNotes ? wn.billing : R(Number(i.amount || 0));
     i.netGst = wn.hasNotes ? wn.gst : R(Number(i.gst || 0));
     i.netTds = wn.hasNotes ? wn.tds : R(Number(i.tds || 0));
@@ -236,7 +236,7 @@ const billedOf = (i) => (i && i.netBilling != null ? Number(i.netBilling) : Numb
 const gstBilledOf = (i) => (i && i.netGst != null ? Number(i.netGst) : Number((i && i.gst) || 0));
 const tdsBilledOf = (i) => (i && i.netTds != null ? Number(i.netTds) : Number((i && i.tds) || 0));
 const receivableOf = (i) => (i && i.netReceivable != null ? Number(i.netReceivable) : R(billedOf(i) + gstBilledOf(i) - tdsBilledOf(i)));
-const pendingOf = (i) => (i && i.netPending != null ? Number(i.netPending) : R(receivableOf(i) - Number((i && i.receivedAmount) || 0)));
+const pendingOf = (i) => (i && i.netPending != null ? Number(i.netPending) : R(receivableOf(i) - Number((i && i.receivedAmount) || 0) - Number((i && i.adjustedAmount) || 0)));
 
 module.exports = {
   decorateNet,

@@ -31,7 +31,8 @@
 
 const { toMinutes, isLate, sortedPunches, dayCheckIn, dayCheckOut, monthLabel } = require('./attendanceMath');
 const { DEFAULTS: POLICY_DEFAULTS, withExtras } = require('./attendancePolicy');
-const { parse: parseLeaveText } = require('./leaveText');
+const { halfOf: leaveHalfOf } = require('./leaveText');
+const LP = require('./latePermission'); // late coming requests: Approved / Pending / Rejected / Not explained
 
 const hhmm = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
@@ -104,8 +105,11 @@ function monthRange(month) {
   return { from: `${month}-01`, to: `${month}-${pad(last)}` };
 }
 
+// WEEK OFF = SUNDAY ONLY (user, 2026-10-09: Saturday is a working day). The
+// configured HrConfig.weeklyOffDays decides (day numbers, 0 = Sunday); when it
+// is missing the answer is '0' - never '0,6'.
 function weeklyOffs(cfg) {
-  return new Set(String((cfg && cfg.weeklyOffDays) ?? '0,6').split(',').map((x) => Number(x.trim()))
+  return new Set(String((cfg && cfg.weeklyOffDays) ?? '0').split(',').map((x) => Number(x.trim()))
     .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6));
 }
 
@@ -266,7 +270,8 @@ function newDayStatus({
     }
     if (pendingLeave && date !== today) {
       const n = pendingLeave.half ? 0.5 : 1;
-      return out(STATUS.LEAVE_REVIEW, { counted: true, pending: n, absent: 1 - n, note: 'Leave is waiting for approval', pendingLeaveId: pendingLeave.id || null });
+      // A half-day request that is still waiting counts as a Half day (pendingHalf) - the leave state chip says "Pending approval".
+      return out(STATUS.LEAVE_REVIEW, { counted: true, pending: n, absent: 1 - n, note: 'Leave is waiting for approval', pendingLeaveId: pendingLeave.id || null, ...(pendingLeave.half ? { pendingHalf: true } : {}) });
     }
     // Hand-marked by HR without times (Present / Late / Absent / Half Day /
     // WFH) is honoured as marked.
@@ -296,11 +301,15 @@ function newDayStatus({
   if (!checkIn || !checkOut || doublePunch) {
     if (approved && !approved.half) return out('On Leave', { counted: true, ...leaveShare(approved, 1), ...leaveTag(approved), note: 'A punch was recorded on a leave day' });
     const half = approved && approved.half ? { ...leaveShare(approved, 0.5), ...leaveTag(approved) } : {};
-    if (!checkIn) return out('Missing Check-In', { note: 'Checked out without a check-in', counted: true, ...half });
+    // A half-day leave that is still waiting (user 2026-10-09, Navitha 15 Sep): the person is ONE Half day
+    // (half worked + half leave waiting, exactly like case 3), with the missing punch noted - never a whole
+    // Present. No leave applied at all = just the missing punch (Present / Missing Check-In as before).
+    const pendHalf = !approved && pendingLeave && pendingLeave.half ? { pendingHalf: true, pendingLeaveId: pendingLeave.id || null } : null;
+    if (!checkIn) return out('Missing Check-In', { note: 'Checked out without a check-in', counted: true, ...half, ...(pendHalf ? { ...pendHalf, pending: 0.5 } : {}) });
     // Today, before the end of the working day: still in the office.
-    if (date === today && !(now && toMinutes(now) != null && toMinutes(now) >= p.end)) return out('Checked In', { late, counted: false, ...half });
+    if (date === today && !(now && toMinutes(now) != null && toMinutes(now) >= p.end)) return out('Checked In', { late, counted: false, ...half, ...(pendHalf || {}) });
     const dbl = doublePunch ? { doublePunch: true, reason: `Missing check-out — check-in ${clockOfTime(checkIn)} and check-out ${clockOfTime(checkOut)} only minutes apart (wrong key?)` } : {};
-    return out('Missing Check-Out', { late, note: 'Checked in, never checked out', counted: true, present: approved && approved.half ? 0.5 : 1, ...half, ...dbl });
+    return out('Missing Check-Out', { late, note: 'Checked in, never checked out', counted: true, present: (approved && approved.half) || pendHalf ? 0.5 : 1, ...half, ...(pendHalf ? { ...pendHalf, pending: 0.5 } : {}), ...dbl });
   }
   const w = workOf(checkIn, checkOut, cfg);
   // A marked Half Day / Absent is HR's decision and stands.
@@ -533,7 +542,7 @@ function leaveKindOf(row) {
   return 'approved';
 }
 // Late is counted only on days they came to work.
-const isLateDay = (row) => !!(row && row.late && ['present', 'earlyLogout', 'halfDay', 'missingCheckOut', 'inOffice'].includes(row.kpi));
+const isLateDay = (row) => !!(row && (row.late || row.lateExcused) && ['present', 'earlyLogout', 'halfDay', 'missingCheckOut', 'inOffice'].includes(row.kpi));
 
 // The plain reason a list shows — "Half day — worked 1st half (9:00–1:30), left 3:10 PM".
 function reasonOf(row, cfg = {}, { leave = null, pendingLeave = null } = {}) {
@@ -558,15 +567,71 @@ function reasonOf(row, cfg = {}, { leave = null, pendingLeave = null } = {}) {
     case STATUS.LEAVE_REVIEW: return `Leave (pending) — ${lv(pendingLeave)} waiting for approval`;
     case STATUS.INFORMED: return 'Informed — asked for an attendance correction (waiting for approval)';
     case 'Missing Check-In': if (row.noRecord) return 'Absent — no check-in, no leave or request (old rule called it "No record")';
-      return co ? `Missing check-in — only a check-out at ${co}` : 'Missing check-in';
-    case 'Missing Check-Out': return ci ? `Missing check-out — only a check-in at ${ci}` : 'Missing check-out';
-    case 'Checked In': return `Still in office — came ${ci}`;
+      return (co ? `Missing check-in — only a check-out at ${co}` : 'Missing check-in') + (row.leaveHalf ? '; half-day leave (approved) covers the other half' : '');
+    case 'Missing Check-Out': return (ci ? `Missing check-out — only a check-in at ${ci}` : 'Missing check-out') + (row.leaveHalf ? '; half-day leave (approved) covers the other half' : row.pendingHalf ? '; half-day leave is waiting for approval' : '');
+    case 'Checked In': return `Still in office — came ${ci}` + (row.leaveHalf ? '; half-day leave (approved) covers the other half' : '');
     case 'Not Checked In': return 'Not in yet today';
     case STATUS.NO_DATA: return 'No device data for this date yet — not counted as Absent';
     case 'Holiday': return `Holiday — ${row.note || ''}`.trim();
     case 'Weekly Off': return 'Week off';
     default: return row.note || row.status || '';
   }
+}
+
+// HOW A DAY WAS MARKED (HRMS spec 2026-10-09, point 2) — in the words the
+// "How marked" column and filter use, from what the data really holds:
+//   Biometric device · Face check-in · Web check-in · Mobile app ·
+//   Entered by HR · Marked by HR (a mark with no punch) · Imported (old HRMS)
+// It follows the FIRST check-in (the one that decides the day), else the first
+// punch, else the marked row. '' = nothing was recorded for the day.
+// CHECK-IN METHOD (user, 2026-10-09: "How marked" is the "Check-in method"). The six plain
+// labels every attendance list uses, whatever the source:
+//   Biometric (device) - the fingerprint / face device (AttendancePunch.method 'Biometric')
+//   Web check-in       - the browser, GPS / location (source 'Web')
+//   Mobile check-in    - the phone (source 'Mobile')
+//   Face check-in      - the Face Recognition method (verified live capture)
+//   Manual (HR)        - entered or marked by HR (source 'Manual entry', or a mark with no punch)
+//   Imported           - the old HRMS / Excel import
+const HOW = {
+  BIOMETRIC: 'Biometric (device)', FACE: 'Face check-in', WEB: 'Web check-in', MOBILE: 'Mobile check-in',
+  MANUAL: 'Manual (HR)', IMPORTED: 'Imported',
+};
+HOW.ENTERED = HOW.MANUAL; HOW.MARKED = HOW.MANUAL; // older names
+const HOW_ORDER = [HOW.BIOMETRIC, HOW.WEB, HOW.MOBILE, HOW.FACE, HOW.MANUAL, HOW.IMPORTED];
+// One punch -> one label.
+function methodOfPunch(p) {
+  if (!p) return '';
+  const m = String(p.method || '');
+  const src = String(p.source || '');
+  // A punch the old HRMS exported from the fingerprint device keeps method 'Biometric' (the import
+  // marks it so); everything else that came in by import is just 'Imported'.
+  if (p.imputed || /import/i.test(m)) return HOW.IMPORTED;
+  if (/manual/i.test(src)) return HOW.MANUAL;
+  if (/biometric|finger/i.test(m) || p.deviceVerify != null) return HOW.BIOMETRIC;
+  if (src === 'PulseHRM import') return HOW.IMPORTED;
+  if (/face/i.test(m)) return HOW.FACE;
+  if (/mobile/i.test(src)) return HOW.MOBILE;
+  if (/web/i.test(src)) return HOW.WEB;
+  if (/mobile|gps/i.test(m)) return /mobile/i.test(m) ? HOW.MOBILE : HOW.WEB;
+  if (/web/i.test(m)) return HOW.WEB;
+  return m || HOW.MANUAL;
+}
+// The method of the day's first check-in (what the lists filter by), else the first punch,
+// else the marked row ('' = nothing recorded).
+function howMarkedOf(ps, record, imputed) {
+  const first = dayCheckIn(ps) || ps[0] || null;
+  if (!first) return record ? HOW.MANUAL : '';
+  return imputed ? HOW.IMPORTED : methodOfPunch(first);
+}
+// The method of the day's last check-out ('' = no check-out punch).
+function howOutOf(ps) {
+  const out = dayCheckOut(ps);
+  return out ? methodOfPunch(out) : '';
+}
+// "Biometric (device)" or, when the check-out came another way, "In: Mobile check-in · Out: Biometric (device)".
+function howTextOf(inLabel, outLabel) {
+  if (inLabel && outLabel && inLabel !== outLabel) return `In: ${inLabel} · Out: ${outLabel}`;
+  return inLabel || outLabel || '';
 }
 
 // Everything dayStatus() needs for a set of employees over a range, in four
@@ -618,6 +683,13 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
     // Absent (the device / import has not sent that day yet).
     ...[prisma.attendancePunch, prisma.attendance, prisma.attendanceHistory].map((m) => m.groupBy({ by: ['date'], where: { date: { gte: from, lte: to } } })),
   ]);
+  // Half-day requests that were REJECTED: only a note on the day (never a half day).
+  const rejectedHalf = (await prisma.leaveRequest.findMany({
+    where: { employeeId: { in: ids }, status: 'Rejected', fromDate: { lte: to }, toDate: { gte: from } },
+    select: { employeeId: true, fromDate: true, toDate: true, reason: true, days: true },
+  })).filter((l) => leaveHalfOf(l)).map((l) => ({ employeeId: l.employeeId, fromDate: String(l.fromDate).slice(0, 10), toDate: String(l.toDate).slice(0, 10) }));
+  const lateReq = await LP.loadFor(prisma, ids, from, to); // late-coming requests of the range (never throws)
+  const lateGap = policyTimes(cfg).lateGap;
   const withData = new Set(dataDays.flat().map((g) => g.date));
   const key = (id, d) => `${id}|${d}`;
   const recordOf = new Map(records.map((r) => [key(r.employeeId, r.date), r]));
@@ -633,7 +705,8 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
   const unpaidTypes = new Set(leaveTypes.filter((t) => t.unit === 'unpaid').map((t) => t.name));
   const leaveRows = leaves.map((l) => ({
     ...l, from: String(l.fromDate).slice(0, 10), to: String(l.toDate).slice(0, 10),
-    half: parseLeaveText(l.reason).halfDay, unpaid: unpaidTypes.has(l.type),
+    // Half day = the form's marker OR a single date applied for 0.5 day (leaveText.halfOf).
+    half: leaveHalfOf(l), unpaid: unpaidTypes.has(l.type),
   }));
   const covering = (id, d, pending) => leaveRows.find((l) => l.employeeId === id && l.from <= d && l.to >= d && (l.status === 'Pending') === pending) || null;
   const leaveOf = (id, d) => covering(id, d, false);
@@ -671,6 +744,14 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
         regularization: regRowOf.has(k) && regRowOf.get(k).status === 'Pending' ? regRowOf.get(k) : null,
         noData: !withData.has(d),
       });
+      // A half-day request that was REJECTED is not a half day - the day reads as it would without it, with a note.
+      if (rejectedHalf.some((l) => l.employeeId === employee.id && l.fromDate <= d && l.toDate >= d)) row.leaveRejected = true;
+      // LATE COMING: a late day carries the state of its request (Approved / Pending / Rejected / Not explained); an approved
+      // one is excused under the new rule (utils/latePermission.js).
+      LP.annotate(row, lateReq.get(k) || null, lateGap);
+      row.how = howMarkedOf(ps, recordOf.get(k) || null, !!(ps[0] && ps[0].imputed));
+      row.howOut = howOutOf(ps);
+      row.howText = howTextOf(row.how, row.howOut);
       if (leave && row.status === 'On Leave' && !row.note) row.note = `${leave.type} leave`;
       if (leave) row.leaveType = leave.type;
       // Location status of the day's first check-in (web/mobile), for §10.
@@ -723,6 +804,8 @@ function summarise(dayRows) {
     earlyLogout: 0, earlyLogouts: 0, halfDayHalfLeave: 0, halfDayUnderReview: 0, leaveUnderReview: 0, halfLeaveAbsent: 0, sandwichDays: 0,
     presentDays: 0, leaveDays: 0, absentDays: 0, pendingDays: 0, paidDays: 0, unpaidLeaveDays: 0,
     informed: 0, noData: 0,
+    // late-coming requests: how many late days are approved (excused: not in lateArrivals), waiting, rejected, not explained
+    lateApproved: 0, latePending: 0, lateRejected: 0, lateNotExplained: 0,
     // The KPI cards (kpiOf) — the same counts the Attendance report shows.
     kpi: Object.fromEntries(KPI_KEYS.map((k) => [k, 0])), halfFirst: 0, halfSecond: 0,
   };
@@ -735,7 +818,11 @@ function summarise(dayRows) {
     if (d.noRecord) c.noRecord += 1;
     if (d.status === 'Holiday') c.holidays += 1;
     if (d.status === 'Weekly Off') c.weeklyOffs += 1;
-    if (d.late) c.lateArrivals += 1;
+    if (d.late) c.lateArrivals += 1; // an approved late coming is not a late arrival (lateExcused, late=false)
+    if (d.lateExcused || d.late) {
+      if (d.lateState === 'approved') c.lateApproved += 1; else if (d.lateState === 'pending') c.latePending += 1;
+      else if (d.lateState === 'rejected') c.lateRejected += 1; else c.lateNotExplained += 1;
+    }
     const kpi = d.kpi === undefined ? kpiOf(d) : d.kpi;
     if (kpi) c.kpi[kpi] += 1;
     if (isLateDay({ ...d, kpi })) c.kpi.late += 1;
@@ -883,12 +970,25 @@ const BUCKET_LABEL = {
   offDay: 'Week-off / Holiday', noRecord: 'No device data', notYet: 'Not checked in yet', upcoming: 'Upcoming',
 };
 function bucketOf(d) {
+  // Approved HALF-DAY leave and the person came in: a punch with the other
+  // punch missing, or still in the office. They are one Half Day person (half
+  // worked + half on leave) every day, never a whole Present and never a
+  // whole On Leave (user 2026-10-07: "one employee took half-day leave:
+  // correct the KPIs every day"). A full day's work or a day with no punch is
+  // unchanged. This only decides the KPI box; the day's paid / leave / absent
+  // numbers (and so payroll) are not touched.
+  // A half-day leave that is still waiting (pendingHalf) is the same: the person applied, so the Half day shows.
+  if (d && (d.leaveHalf || d.pendingHalf) && !d.noRecord && ['Checked In', 'Missing Check-Out', 'Missing Check-In'].includes(d.status)) return 'halfDay';
   switch (d && d.status) {
     case 'Present': case 'Late': case 'Checked In': case 'Missing Check-Out': case STATUS.EARLY: return 'present';
     case STATUS.HALF_HALF_LEAVE: case STATUS.HALF_REVIEW: return 'halfDay';
     // Applied for leave / asked for a correction = they told someone: not Absent.
-    case STATUS.LEAVE_REVIEW: case STATUS.INFORMED: return 'onLeave';
-    case STATUS.HALF_LEAVE_ABSENT: return 'onLeave';
+    case STATUS.LEAVE_REVIEW: return d.pendingHalf ? 'halfDay' : 'onLeave'; // a waiting HALF-day request is a Half day
+    case STATUS.INFORMED: return 'onLeave';
+    // Half-day leave and the other half not worked (no punch at all, or under the half-day
+    // minimum): half on leave, half absent = ONE Half day person - never a whole On leave
+    // and never a whole absence (user 2026-10-09). Pay / leave numbers are unchanged.
+    case STATUS.HALF_LEAVE_ABSENT: return 'halfDay';
     case STATUS.NO_DATA: return 'noRecord';
     case 'Missing Check-In': return d.noRecord ? 'noRecord' : 'present';
     case 'Half Day': return 'halfDay';
@@ -901,6 +1001,60 @@ function bucketOf(d) {
   }
 }
 
+// THE ONE TILE SET (user, 2026-10-09). Every attendance screen (HRMS dashboard,
+// the Attendance report / day report, Team Attendance, the AI's answers) shows
+//   Present + Absent + Half day + On leave + Week off / Holiday = Headcount
+// (plus, only when somebody is in them: No device data / Not checked in yet /
+// Upcoming - a date nothing has come for yet). A person is in exactly ONE tile:
+// bucketOf(). PRESENT = everyone who worked: Late, Early logout, Missing
+// check-in and Missing check-out are people WITH a punch, so they are Present.
+// They are shown only as small notes inside the Present tile (notesOf), never
+// as tiles and never in the equation. Payroll / leave still tell Missing
+// check-in / out apart through summarise() - that is unchanged.
+const NOTE_KEYS = ['late', 'earlyLogout', 'missingCheckIn', 'missingCheckOut', 'noPunches', 'punchOnLeave', 'leaveRejected'];
+const NOTE_LABEL = {
+  late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out',
+  noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected',
+};
+// The tiles that carry notes: Present, and (a person with a leave who still punched) Half day and On leave;
+// Absent carries only "Half-day leave rejected" (a turned-down half-day request is not a half day).
+const NOTE_TILES = ['present', 'halfDay', 'onLeave', 'absent'];
+// The notes of ONE day row. A missing check-in / check-out stays visible even when the person has
+// a leave that day (the leave moves them to Half day / On leave, the punch gap is still HR's to fix).
+//   Present   - from the day's status (Late, Early Logout, Missing Check-In / Check-Out)
+//   Half day  - Late, Missing check-in / check-out (from the punches), and
+//               'No punches' for a half-day leave with nothing worked at all
+//   On leave  - Missing check-in / check-out from a stray punch, and 'Punch on a leave day'
+function notesOf(d, bucket) {
+  const out = [];
+  if (!d) return out;
+  const b = bucket === undefined ? bucketOf(d) : bucket;
+  if (b === 'absent') { if (d.leaveRejected) out.push('leaveRejected'); return out; }
+  if (b === 'present') {
+    if (d.late || d.lateExcused || d.status === 'Late') out.push('late');
+    if (d.status === STATUS.EARLY || (d.earlyLogout && d.status !== 'Half Day')) out.push('earlyLogout');
+    if (d.status === 'Missing Check-In' && !d.noRecord) out.push('missingCheckIn');
+    if (d.status === 'Missing Check-Out') out.push('missingCheckOut');
+    if (d.leaveRejected) out.push('leaveRejected');
+    // Worked on a day with an approved full-day leave: the leave was not taken - HR should see it.
+    if (/on a leave day/.test(d.note || '') && d.status !== 'On Leave') out.push('punchOnLeave');
+    return out;
+  }
+  if (b !== 'halfDay' && b !== 'onLeave') return out;
+  const past = d.date && d.date < localDate();
+  const hasIn = !!d.checkIn; const hasOut = !!d.checkOut;
+  if (b === 'onLeave' && d.status !== 'On Leave') return out; // pending / informed: no punches expected
+  if (b === 'halfDay' && (d.status === STATUS.HALF_LEAVE_ABSENT || d.status === STATUS.LEAVE_REVIEW) && !hasIn && !hasOut && !d.punches) { out.push('noPunches'); return out; }
+  if (!hasIn && !hasOut) return out;
+  if ((d.late || d.lateExcused) && hasIn) out.push('late');
+  if (d.earlyLogout && hasOut && b === 'onLeave') out.push('earlyLogout'); // a half day leaves early by definition
+  // The day's own status says a punch is missing (also when the two punches are minutes apart), else the punches say it.
+  if ((d.status === 'Missing Check-In' && !d.noRecord) || (!hasIn && hasOut)) out.push('missingCheckIn');
+  if (d.status === 'Missing Check-Out' || (hasIn && !hasOut && past && d.status !== 'Checked In')) out.push('missingCheckOut');
+  if (b === 'onLeave') out.push('punchOnLeave');
+  return out;
+}
+
 // People counts for ONE day from that day's rows (one row per person).
 // headcount = sum of the buckets. The rest are subsets, for information.
 function tally(dayRows) {
@@ -908,12 +1062,25 @@ function tally(dayRows) {
   c.headcount = 0;
   c.late = 0; c.missingCheckIn = 0; c.missingCheckOut = 0; c.checkedIn = 0; c.checkedOut = 0; c.punched = 0; c.biometric = 0;
   c.earlyLogout = 0; c.underReview = 0;
+  // Late arrivals by the state of their late-coming request (utils/latePermission.js). late = everyone who came after the
+  // Late-after time; approved ones are excused (not a policy late) but still listed here so the numbers add up.
+  c.lateStates = { late: 0, approved: 0, pending: 0, rejected: 0, none: 0 };
+  c.lateExcused = 0;
+  // The notes inside the Present tile (people who are Present AND late / left early / missed a punch).
+  // Notes per tile (Present / Half day / On leave); none of them is a tile and none is in the equation.
+  c.tileNotes = Object.fromEntries(NOTE_TILES.map((t) => [t, Object.fromEntries(NOTE_KEYS.map((k) => [k, 0]))]));
+  c.notes = c.tileNotes.present;
   dayRows.forEach((d) => {
     const b = bucketOf(d);
     if (!b) return;
     c.headcount += 1;
     c[b] += 1;
-    if (d.late || d.status === 'Late') c.late += 1;
+    if (NOTE_TILES.includes(b)) notesOf(d, b).forEach((k) => { c.tileNotes[b][k] += 1; });
+    // LATE = the Late note inside the PRESENT tile (the same number as tileNotes.present.late / the dashboard / the Monthly Summary).
+    // A late person who is a Half day / On leave carries Late as a note on that tile (tileNotes), not here.
+    if (b === 'present' && (d.late || d.lateExcused || d.status === 'Late')) c.late += 1;
+    if (b === 'present' && d.lateExcused) c.lateExcused += 1;
+    if (b === 'present' && d.lateState && (d.late || d.lateExcused)) { c.lateStates.late += 1; c.lateStates[d.lateState] += 1; }
     if (d.status === 'Missing Check-Out') c.missingCheckOut += 1;
     if (d.earlyLogout) c.earlyLogout += 1;
     if (d.status === STATUS.HALF_REVIEW || d.status === STATUS.LEAVE_REVIEW) c.underReview += 1;
@@ -926,11 +1093,63 @@ function tally(dayRows) {
   return c;
 }
 
+// ONE PERSON over a period, in the ONE tile definition (bucketOf + notesOf) - what the Monthly Summary row and the Biometric
+// list's per-person totals both show, so they can never differ. `rows` = that person's day rows for the period.
+//   days = every day the person is on the rolls (one bucket each) = present + halfDay + absent + onLeave + offDay + noRecord + notYet + upcoming
+//   workingDays = days - offDay - upcoming
+// Present INCLUDES late / early logout / missing check-in / missing check-out (they are notes inside it, never extra tiles).
+// punchDays / punchRows / checkInDays are plain facts (days with a punch, punches received, days with a check-in), labelled as such.
+function tallyPerson(rows) {
+  const c = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
+  c.days = 0;
+  c.late = 0; c.lateExcused = 0; c.earlyLogout = 0; c.missingCheckIn = 0; c.missingCheckOut = 0;
+  c.lateStates = { late: 0, approved: 0, pending: 0, rejected: 0, none: 0 };
+  c.punchDays = 0; c.punchRows = 0; c.checkInDays = 0;
+  (rows || []).forEach((d) => {
+    const b = bucketOf(d);
+    if (!b) return;
+    c.days += 1;
+    c[b] += 1;
+    if (d.punches) { c.punchDays += 1; c.punchRows += Number(d.punches) || 0; }
+    if (d.checkIn) c.checkInDays += 1;
+    if (b !== 'present') return;
+    const n = notesOf(d, b);
+    if (n.includes('late')) c.late += 1;
+    if (d.lateExcused) c.lateExcused += 1;
+    if (n.includes('late') && d.lateState) { c.lateStates.late += 1; c.lateStates[d.lateState] += 1; }
+    if (n.includes('earlyLogout')) c.earlyLogout += 1;
+    if (n.includes('missingCheckIn')) c.missingCheckIn += 1;
+    if (n.includes('missingCheckOut')) c.missingCheckOut += 1;
+  });
+  c.workingDays = c.days - c.offDay - c.upcoming;
+  return c;
+}
+// Several people added up (person-days). Same keys as tallyPerson.
+function addTallies(list) {
+  const t = tallyPerson([]);
+  (list || []).forEach((c) => {
+    Object.keys(t).forEach((k) => {
+      if (k === 'lateStates') Object.keys(t.lateStates).forEach((s) => { t.lateStates[s] += c.lateStates[s] || 0; });
+      else t[k] += c[k] || 0;
+    });
+  });
+  return t;
+}
+// "Present 20 + Absent 3 + Half day 1 + On leave 1 + Week off / Holiday 4 = 29 days" - the equation under every count.
+function equationText(c) {
+  const bits = [`Present ${c.present}`, `Absent ${c.absent}`, `Half day ${c.halfDay}`, `On leave ${c.onLeave}`, `Week off / Holiday ${c.offDay}`];
+  if (c.noRecord) bits.push(`No device data ${c.noRecord}`);
+  if (c.notYet) bits.push(`Not checked in yet ${c.notYet}`);
+  if (c.upcoming) bits.push(`Upcoming ${c.upcoming}`);
+  return `${bits.join(' + ')} = ${c.days} days`;
+}
+
 module.exports = {
+  tallyPerson, addTallies, equationText,
   applyPunchToDay,
   LEFT_EMPLOYMENT, rollOf, joinedOn, onRolls, BUCKETS, BUCKET_LABEL, bucketOf, tally,
   COUNTED, MISSING_RULES, STATUS, COLOUR, colourOf, workOf, policyTimes, applySandwich,
   localDate, localTime, isDate, eachDay, monthRange, weeklyOffs, hoursBetween,
-  dayStatus, loadDays, summarise, monthLabel,
-  classifyDay, kpiOf, leaveKindOf, isLateDay, reasonOf, KPI_KEYS, KPI_LABEL, clock,
+  dayStatus, loadDays, summarise, monthLabel, NOTE_KEYS, NOTE_LABEL, NOTE_TILES, notesOf,
+  classifyDay, kpiOf, leaveKindOf, isLateDay, LP, reasonOf, KPI_KEYS, KPI_LABEL, clock, HOW, HOW_ORDER, howMarkedOf, howOutOf, howTextOf, methodOfPunch,
 };

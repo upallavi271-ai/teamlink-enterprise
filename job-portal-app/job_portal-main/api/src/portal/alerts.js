@@ -6,10 +6,11 @@
  *   B  deadline_2d      the last date is two days away     (daily, 09:00 IST)
  *   C  deadline_today   the last date is today              (daily, 09:00 IST)
  *
- * WHO. Every candidate whose match with the job - the screening match,
- * explainMatch() in core.js - is ABOVE NOTIFY_MATCH_THRESHOLD (60 unless
- * configured): 60 exactly gets nothing, 60.01 does. Anybody who already
- * applied is skipped. For B and C the match is worked out again on the
+ * WHO. Every candidate whose AI Match with the job - explainMatch() in
+ * core.js: JD skills matched / JD skills required, nothing else - is ABOVE
+ * NOTIFY_MATCH_THRESHOLD (60 unless configured): 60 exactly gets nothing,
+ * 60.01 does. A job that lists no skills has no AI Match and alerts
+ * nobody. Anybody who already applied is skipped. For B and C the match is worked out again on the
  * day, because a profile edited since the job was posted is the profile
  * that counts.
  *
@@ -32,10 +33,11 @@
 import { withUser } from '../db.js';
 import { config } from '../config.js';
 import { providers } from '../notify/providers.js';
-import { emailLayout } from '../notify/layout.js';
+import { jobOpportunityMessages } from '../notify/job-opportunity.js';
+import { toJob } from '../shapes.js';
 import { claimNewJobNotice, releaseNewJobNotice } from '../notify/new-job-notice.js';
 import {
-  explainMatch, loadAiSettings, aboveThreshold, notifyThreshold, daysLeft, istDay,
+  explainMatch, aboveThreshold, notifyThreshold, daysLeft, istDay,
 } from './core.js';
 
 const ENGINE = { userId: '', role: 'admin', profileId: null };
@@ -69,7 +71,13 @@ const fmtDate = (at) => {
   } catch { return istDay(at); }
 };
 
-export function alertContent(event, { job, company, score, candidateName }) {
+/*
+ * The message is the shared job-opportunity format (notify/job-opportunity.js,
+ * owner 2026-10-06): built only from the job record, the same body for the
+ * inbox and the email. The heading and the opening line say why it was sent
+ * (urgent hiring / the last date), as these alerts always did.
+ */
+export function alertContent(event, { job, company, score }) {
   const deadline = job.expires_at ? fmtDate(job.expires_at) : null;
   const match = `${Math.round(Number(score))}% match`;
   const url = applyUrl(job.id);
@@ -85,37 +93,27 @@ export function alertContent(event, { job, company, score, candidateName }) {
     ? `Urgent hiring: ${job.title} at ${company}`
     : `Last date to apply: ${job.title} – ${deadline}`;
 
-  const summary = [job.location, job.pay_label, job.exp_label, job.mode].filter(Boolean).join(' · ');
-  const body = `${line}\n\nYour profile is a ${match} for this role.`
-    + (summary ? `\n\n${job.title} · ${summary}` : '')
-    + (deadline ? `\n\nLast date to apply: ${deadline}.` : '');
-
-  const html = emailLayout({
-    title: subject,
-    preheader: `${match} · ${line}`,
-    greeting: candidateName ? `Hi ${candidateName},` : 'Hi,',
-    body,
-    facts: [
-      ['Role', job.title], ['Company', company], ['Location', job.location],
-      ['Pay', job.pay_label], ['Experience', job.exp_label], ['Your match', match],
-      ['Last date to apply', deadline],
-    ],
-    cta: { label: 'Apply now', url },
-    note: `You are receiving this because your TeamLink profile is a strong match (${match}) for this role.`,
+  const msg = jobOpportunityMessages(toJob(job), {
+    kind: event, applyUrl: url, company, matchPercent: score, deadline,
+    email: {
+      subject,
+      ctaLabel: 'Apply now',
+      note: `You are receiving this because your TeamLink profile is a strong match (${match}) for this role.`
+        + (deadline && event === 'urgent_hiring' ? ` Last date to apply: ${deadline}.` : ''),
+    },
   });
-  const text = `${candidateName ? `Hi ${candidateName},` : 'Hi,'}\n\n${body}\n\nApply now: ${url}\n\n— TeamLink`;
 
   return {
     inApp: {
       title,
-      message: `${job.title} · ${company} · ${match} — ${line}`,
+      message: msg.inApp,
       metadata: {
         event, jobTitle: job.title, company, matchPercent: Math.round(Number(score)),
         line, deadline: job.expires_at ? new Date(job.expires_at).toISOString() : null,
-        applyUrl: `#/job/${job.id}`, cta: 'Apply now',
+        applyUrl: `#/job/${job.id}`, cta: 'Apply now', format: 'job_opportunity',
       },
     },
-    email: { subject, html, text },
+    email: msg.email,
   };
 }
 
@@ -223,6 +221,7 @@ async function jobRow(c, jobId) {
 }
 
 const isLive = (j, now) => j && j.status === 'open' && !j.paused && !j.archived
+  && (j.source_type || 'TEAMLINK') === 'TEAMLINK'          // 0113: TeamLink jobs only
   && (!j.expires_at || new Date(j.expires_at).getTime() > now);
 
 /**
@@ -242,12 +241,11 @@ export async function alertJob(jobId, event, { now = Date.now(), deps = defaultD
   if (!data.job) return { jobId, event, skipped: 'no such job', considered: 0, eligible: 0, delivered: 0 };
   if (data.skip) return { jobId, event, skipped: data.skip, considered: 0, eligible: 0, delivered: 0 };
 
-  const settings = await loadAiSettings();
   const out = { jobId, event, threshold, considered: 0, eligible: 0, delivered: 0, skippedApplied: 0, results: [] };
   for (const cand of data.candidates) {
     out.considered += 1;
     let score;
-    try { score = explainMatch(data.job, cand, settings).score; } catch { continue; }
+    try { score = explainMatch(data.job, cand).score; } catch { continue; }
     if (!aboveThreshold(score, threshold)) continue;
     if (data.applied.has(cand.id)) { out.skippedApplied += 1; continue; }
     out.eligible += 1;

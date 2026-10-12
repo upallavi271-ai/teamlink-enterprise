@@ -32,7 +32,7 @@ const { WA_FIELDS: F } = require('./adminCatalog');
 const core = require('./messagingCore');
 
 const GRAPH = 'https://graph.facebook.com';
-const VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
+const VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v25.0';
 
 async function whatsappConfig() {
   const cfg = await readConfig('whatsapp');
@@ -42,6 +42,8 @@ async function whatsappConfig() {
     wabaId: String(v[F.wabaId] || '').trim(),
     display: String(v[F.display] || '').trim(),
     token: String(v[F.token] || '').trim(),
+    appSecret: String(v[F.appSecret] || '').trim(),
+    verifyToken: String(v[F.verifyToken] || '').trim(),
     language: String(v[F.language] || '').trim() || 'en',
     templates: {
       link: String(v[F.linkTpl] || '').trim(),
@@ -87,8 +89,9 @@ function failure(res) {
   };
 }
 
-function templatePayload(cfg, kind, vars) {
-  const name = cfg.templates[kind];
+// own = { name, language } of a Message templates entry the admin marked Approved.
+function templatePayload(cfg, kind, vars, own) {
+  const name = (own && own.name) || cfg.templates[kind];
   if (!name) return null;
   const components = [{ type: 'body', parameters: (vars || []).map((x) => ({ type: 'text', text: param(x) })) }];
   if (kind === 'otp') {
@@ -99,17 +102,21 @@ function templatePayload(cfg, kind, vars) {
   }
   return {
     type: 'template',
-    template: { name, language: { code: cfg.language }, components },
+    template: { name, language: { code: (own && own.language) || cfg.language }, components },
   };
 }
 
 // kind: 'link' | 'otp' | 'bulk'.
-async function sendWhatsApp({ to, kind = 'bulk', text, vars }) {
+async function sendWhatsApp({ to, kind = 'bulk', text, vars, template: own }) {
   const cfg = await whatsappConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, transient: false, error: cfg.reason };
   const mobile = core.normalizeMobile(to);
   if (!mobile.ok) return { ok: false, invalid: true, transient: false, error: mobile.reason };
-  const content = templatePayload(cfg, kind, vars)
+  // Someone who replied STOP is not messaged again (OTP / agreement links are not marketing and still go).
+  if (kind === 'bulk' && await require('./messageDelivery').optedOut('WhatsApp', to)) { // eslint-disable-line global-require
+    return { ok: false, invalid: true, transient: false, error: 'They replied STOP on WhatsApp, so nothing more is sent to them there.' };
+  }
+  const content = templatePayload(cfg, kind, vars, own)
     || { type: 'text', text: { body: String(text || (vars || []).join(' ')).slice(0, 4096), preview_url: true } };
   // TEST SANDBOX: reported as sent, never transmitted (utils/sandbox.js).
   if (require('./sandbox').isSandbox()) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-wa-${Date.now().toString(36)}`, mode: content.type, sandbox: true };

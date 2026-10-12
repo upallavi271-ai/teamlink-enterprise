@@ -53,7 +53,7 @@ export function usePaged(rows, initialSize = 25) {
   };
 }
 
-export default function Pager({ page, noun = 'rows', className = '' }) {
+export default function Pager({ page, noun = 'rows', className = '', sizes = PAGE_SIZES }) {
   if (!page) return null;
   const { total, pages, size, setSize, page: current, setPage, from, to } = page;
 
@@ -98,11 +98,11 @@ export default function Pager({ page, noun = 'rows', className = '' }) {
         </div>
       )}
 
-      {total > PAGE_SIZES[0] && (
+      {total > sizes[0] && (
         <label className="pager-size">
           Rows
           <select value={size} onChange={(e) => setSize(Number(e.target.value))}>
-            {PAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+            {sizes.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
       )}

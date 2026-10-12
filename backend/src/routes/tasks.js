@@ -56,6 +56,7 @@ const MSG = {
   department: 'Please select a department.',
   name: 'Please enter a task name.',
   status: 'Please select a status.',
+  priority: 'Priority must be High, Medium or Low.',
   startDate: 'Please select a start date.',
   endBeforeStart: 'End date cannot be before start date.',
 };
@@ -64,8 +65,42 @@ function csv(v) {
   return String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// The office's calendar day (the server's own clock), the same one attendance
+// uses - not the UTC day, which is yesterday for the first hours of an IST morning.
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// PRIORITY (2026-10-09): High / Medium / Low, Medium unless said otherwise.
+const PRIORITIES = ['High', 'Medium', 'Low'];
+const PRIORITY_RANK = { High: 0, Medium: 1, Low: 2 };
+const priorityOf = (v) => PRIORITIES.find((p) => p.toLowerCase() === String(v || '').trim().toLowerCase()) || null;
+
+// OVERDUE is worked out, never typed: the due date has passed and the task is
+// not finished (Not Started / In Progress / On Hold). It therefore clears by
+// itself when the date is moved or the task is completed, and every screen
+// agrees. The daily reminder (utils/taskOverdue.js) uses the same rule.
+function isOverdue(t, now = today()) {
+  return !!(t && t.endDate && t.endDate < now && OPEN_STATUSES.includes(t.status));
+}
+function daysBetween(a, b) {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+}
+// What a row carries on top of the stored task.
+function decorate(t, now = today()) {
+  const overdue = isOverdue(t, now);
+  return {
+    ...t,
+    priority: t.priority || 'Medium',
+    overdue,
+    daysLate: overdue ? daysBetween(t.endDate, now) : 0,
+    displayStatus: overdue ? 'Overdue' : t.status,
+    // Completion in words, from the stamps the lifecycle already keeps.
+    completion: t.status === 'Completed'
+      ? (t.reviewState === 'Approved' ? 'Completed and approved' : t.reviewState === 'Pending Review' ? 'Completed, waiting for review' : 'Completed')
+      : t.status === 'Cancelled' ? 'Cancelled' : t.status === 'In Progress' ? 'In progress' : t.status === 'On Hold' ? 'On hold' : 'Not started',
+  };
 }
 
 // YYYY-MM-DD or nothing. The browser sends an <input type="date"> value; a
@@ -272,6 +307,7 @@ router.get('/options', VIEW, async (req, res, next) => {
       viewDepartments,
       canPickEmployee: !view.selfOnly,
       statuses: TASK_STATUSES,
+      priorities: PRIORITIES,
       reviewStates: REVIEW_STATES,
       assignable: people,
       canAssignOthers,
@@ -333,7 +369,12 @@ router.get('/', VIEW, async (req, res, next) => {
         and.push({ OR: [{ department: dept }, { assigneeId: { in: members } }] });
       }
     }
-    if (req.query.status) and.push({ status: req.query.status });
+    if (req.query.status === 'Overdue' || req.query.overdue === '1') and.push({ status: { in: OPEN_STATUSES }, endDate: { lt: today() } });
+    else if (req.query.status) and.push({ status: req.query.status });
+    if (req.query.priority) { const p = priorityOf(req.query.priority); if (p) and.push({ priority: p }); }
+    // Due date = the task's End Date.
+    if (req.query.dueFrom) and.push({ endDate: { gte: String(req.query.dueFrom) } });
+    if (req.query.dueTo) and.push({ endDate: { lte: String(req.query.dueTo) } });
     if (req.query.reviewState) and.push({ reviewState: String(req.query.reviewState) });
     if (req.query.assigneeId) and.push({ assigneeId: req.query.assigneeId });
     // "Mine" — the assignee's own My Tasks view, which is what a lead uses to
@@ -366,7 +407,8 @@ router.get('/', VIEW, async (req, res, next) => {
       select: { userId: true, employeeCode: true, name: true, department: true, designation: true, employmentStatus: true },
     });
     const assigneeOf = Object.fromEntries(assignees.map((e) => [e.userId, e]));
-    res.json(tasks.map((t) => ({ ...t, commentCount: commentCount[t.id] || 0, assignee: assigneeOf[t.assigneeId] || null })));
+    const now = today();
+    res.json(tasks.map((t) => ({ ...decorate(t, now), commentCount: commentCount[t.id] || 0, assignee: assigneeOf[t.assigneeId] || null })));
   } catch (err) { next(err); }
 });
 
@@ -391,6 +433,12 @@ router.get('/reports', VIEW, async (req, res, next) => {
       state, count: tasks.filter((t) => (t.reviewState || 'Not Submitted') === state).length,
     })).filter((r) => r.count > 0);
 
+    const byPriority = PRIORITIES.map((priority) => ({
+      priority,
+      total: tasks.filter((t) => (t.priority || 'Medium') === priority).length,
+      open: tasks.filter((t) => (t.priority || 'Medium') === priority && OPEN_STATUSES.includes(t.status)).length,
+      overdue: tasks.filter((t) => (t.priority || 'Medium') === priority && isOverdue(t, now)).length,
+    })).filter((r) => r.total > 0);
     const byPerson = [];
     tasks.forEach((t) => {
       let row = byPerson.find((r) => r.userId === t.assigneeId);
@@ -434,6 +482,7 @@ router.get('/reports', VIEW, async (req, res, next) => {
       generatedAt: new Date().toISOString(),
       total: tasks.length,
       byStatus,
+      byPriority,
       byReview,
       byPerson,
       byDepartment,
@@ -475,6 +524,7 @@ async function createTask(me, input = {}) {
     department, name, description, subTaskName, status,
     startDate, endDate, dependent, dependsOnId,
   } = input;
+  const priority = input.priority === undefined || input.priority === null || input.priority === '' ? 'Medium' : priorityOf(input.priority);
 
   // THE SAME FIVE RULES THE MODAL CHECKS, enforced here because the modal is
   // a courtesy and this is the gate. `field` names the box so the browser can
@@ -483,6 +533,7 @@ async function createTask(me, input = {}) {
   if (!department || !String(department).trim()) return bad('department', MSG.department);
   if (!name || !String(name).trim()) return bad('name', MSG.name);
   if (!status || !TASK_STATUSES.includes(status)) return bad('status', MSG.status);
+  if (!priority) return bad('priority', MSG.priority);
 
   let start;
   let end;
@@ -517,6 +568,7 @@ async function createTask(me, input = {}) {
       description: description ? String(description) : null,
       subTaskName: subTaskName ? String(subTaskName).trim() : null,
       status,
+      priority,
       startDate: start,
       endDate: end,
       dependent: !!dependent,
@@ -613,6 +665,11 @@ router.put('/:id', VIEW, async (req, res, next) => {
     if (b.status !== undefined) {
       if (!TASK_STATUSES.includes(b.status)) return bad('status', MSG.status);
       data.status = b.status;
+    }
+    if (b.priority !== undefined) {
+      const p = priorityOf(b.priority);
+      if (!p) return bad('priority', MSG.priority);
+      data.priority = p;
     }
     try {
       if (b.startDate !== undefined) data.startDate = asDate(b.startDate, 'Task start date');
@@ -831,6 +888,11 @@ router.post('/:id/comments', VIEW, async (req, res, next) => {
 
 module.exports = router;
 module.exports.TASK_STATUSES = TASK_STATUSES;
+module.exports.PRIORITIES = PRIORITIES;
+module.exports.PRIORITY_RANK = PRIORITY_RANK;
+module.exports.OPEN_STATUSES = OPEN_STATUSES;
+module.exports.isOverdue = isOverdue;
+module.exports.decorate = decorate;
 module.exports.REVIEW_STATES = REVIEW_STATES;
 module.exports.createTask = createTask;
 module.exports.assignable = assignable;

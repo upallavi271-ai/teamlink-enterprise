@@ -193,6 +193,21 @@ function requireVendor({ allowPasswordChange = false } = {}) {
   };
 }
 
+// The vendor behind a live session id, or null. Used by the signed download
+// route, which has no Authorization header: the session named in the signed
+// token must still be alive (not revoked / expired / idle) and its login and
+// vendor must still be active. Same rules as requireVendor().
+async function vendorForSession(sessionId, vendorUserId) {
+  const s = await prisma.vendorSession.findUnique({ where: { id: String(sessionId || '') } });
+  const now = Date.now();
+  if (!s || s.vendorUserId !== vendorUserId || s.revokedAt) return null;
+  if (new Date(s.expiresAt).getTime() <= now) return null;
+  if (now - new Date(s.lastSeenAt).getTime() > VC.CFG.idleMinutes * 60000) return null;
+  const vu = await prisma.vendorUser.findUnique({ where: { id: s.vendorUserId }, include: { vendor: true } });
+  if (!vu || vu.status !== 'Active' || vu.deletedAt || !vu.vendor || vu.vendor.isActive === false || vu.mustChangePassword) return null;
+  return { userId: vu.id, vendorId: vu.vendorId, vendorName: vu.vendor.name, name: vu.name, email: vu.email, canEdit: !!vu.canEdit, canViewCost: !!vu.canViewCost, sessionId: s.id };
+}
+
 // Statuses that take an asset off the books — an archived asset leaves the
 // portal at once (spec v2 §5).
 const ARCHIVED = ['Retired', 'Sold', 'Written off'];
@@ -216,5 +231,5 @@ async function vendorAssetWhere(vendor) {
 Object.assign(module.exports, {
   AUDIENCE, PORTAL_PREFIX, ARCHIVED,
   verifyVendorToken, looksLikeVendorToken, vendorSessionGuard, createSession, revokeSessions, revokeVendorSessions,
-  requireVendor, vendorAssetWhere, bearerOf,
+  requireVendor, vendorAssetWhere, bearerOf, vendorForSession,
 });

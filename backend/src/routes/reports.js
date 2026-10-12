@@ -6,6 +6,7 @@ const {
 } = require('../utils/accounts');
 const { requirementIsLive, stageLabel } = require('../utils/atsVocab');
 const { applicationWhere, scopeLabel } = require('../utils/scope');
+const CSRC = require('../utils/candidateSource'); // the clean source list (one word per place, never free text)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -58,15 +59,22 @@ const GROUPINGS = {
     label: 'Client',
     of: (a) => (a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—'),
   },
-  source: { label: 'Source', of: (a) => a.source || a.candidate?.source || '—' },
+  source: { label: 'Source', of: (a) => CSRC.sourceOfApplication(a, a.candidate).key },
   location: { label: 'Location', of: (a) => a.requirement?.location || '—' },
   stage: { label: 'Stage', of: (a) => stageLabel(a.stage) },
 };
 
 const IN_PIPELINE_OUT = ['JOINED', 'HIRED', 'REJECTED'];
 
+// P3 (user, 2026-10-09): the BDE team sees client acquisition and client-wise
+// outcomes: never a recruiter-wise / TL-wise / team-wise / other-BDE breakdown.
+const bdeTeam = (u) => { const f = require('../utils/clientRedact').privacyFlagsFor(u); return !!(f && f.bde); }; // eslint-disable-line global-require
+const PEOPLE_GROUPS = ['recruiter', 'tl', 'stl', 'team', 'bde', 'interviewer', 'owner'];
+
 router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
-  const q = req.query || {};
+  const q = { ...(req.query || {}) };
+  const bdeOnly = bdeTeam(req.user);
+  if (bdeOnly) { delete q.recruiterId; delete q.tlId; delete q.stlId; delete q.bdeId; if (PEOPLE_GROUPS.includes(q.groupBy)) delete q.groupBy; }
   const groupBy = GROUPINGS[q.groupBy] ? q.groupBy : 'client';
 
   // SCOPED, then filtered. The scope is not negotiable; the filters only ever
@@ -81,9 +89,10 @@ router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (r
   if (q.tlId) reqWhere.tlId = q.tlId;
   if (q.stlId) reqWhere.stlId = q.stlId;
   if (q.requirementId) where.requirementId = q.requirementId;
-  if (Object.keys(reqWhere).length) where.requirement = { is: reqWhere };
+  // AND, never an assignment: `where.requirement` may be the caller's own scope.
+  if (Object.keys(reqWhere).length) where.AND = [...(where.AND || []), { requirement: { is: reqWhere } }];
   if (q.stage) where.stage = q.stage;
-  if (q.source) where.source = q.source;
+  // (Source is filtered below, on the clean list: the stored words are free text.)
   if (q.from || q.to) {
     where.createdAt = {};
     if (q.from) where.createdAt.gte = new Date(q.from);
@@ -91,15 +100,18 @@ router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (r
     if (q.to) where.createdAt.lte = new Date(`${q.to}T23:59:59.999Z`);
   }
 
-  const applications = await prisma.application.findMany({
+  const sourceWanted = q.source ? CSRC.parseSourceFilter(q.source) : null;
+  let applications = await prisma.application.findMany({
     where,
     include: {
-      candidate: { select: { id: true, source: true } },
+      candidate: { select: { id: true, source: true, firstSource: true } },
       requirement: {
         include: { client: true, recruiter: true, bde: true },
       },
     },
   });
+
+  if (sourceWanted) applications = applications.filter((a) => sourceWanted.has(CSRC.sourceOfApplication(a, a.candidate).key));
 
   // tlId / stlId are plain scalars, so the names are resolved in one query
   // rather than joined — the same reason utils/followups.js does it.
@@ -173,24 +185,24 @@ router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (r
     groupBy,
     groupLabel: GROUPINGS[groupBy].label,
     scope: scopeLabel(req.user),
-    groupings: Object.entries(GROUPINGS).map(([id, g]) => ({ id, label: g.label })),
+    groupings: Object.entries(GROUPINGS).filter(([id]) => !(bdeOnly && PEOPLE_GROUPS.includes(id))).map(([id, g]) => ({ id, label: g.label })),
     filterOptions: {
       departments: seen((a) => a.requirement?.department),
       locations: seen((a) => a.requirement?.location),
-      teams: seen((a) => a.requirement?.team || a.recruiterTeam),
+      teams: bdeOnly ? [] : seen((a) => a.requirement?.team || a.recruiterTeam),
       clients: [...new Map(applications
         .filter((a) => a.requirement?.client)
         .map((a) => [a.requirement.client.id, { id: a.requirement.client.id, name: a.requirement.client.name }]))
         .values()],
-      recruiters: [...new Map(applications
+      recruiters: bdeOnly ? [] : [...new Map(applications
         .filter((a) => a.requirement?.recruiter)
         .map((a) => [a.requirement.recruiterId, { id: a.requirement.recruiterId, name: a.requirement.recruiter.name }]))
         .values()],
-      bdes: [...new Map(applications
+      bdes: bdeOnly ? [] : [...new Map(applications
         .filter((a) => a.requirement?.bde)
         .map((a) => [a.requirement.bdeId, { id: a.requirement.bdeId, name: a.requirement.bde.name }]))
         .values()],
-      sources: seen((a) => a.source || a.candidate?.source),
+      sources: seen((a) => CSRC.sourceOfApplication(a, a.candidate).key),
       stages: [...new Set(applications.map((a) => a.stage))].map((s) => ({ id: s, label: stageLabel(s) })),
     },
     rows,
@@ -224,14 +236,15 @@ const INTERVIEW_GROUPINGS = {
 };
 
 router.get('/interviews', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
-  const q = req.query || {};
+  const q = { ...(req.query || {}) };
+  if (bdeTeam(req.user) && PEOPLE_GROUPS.includes(q.groupBy)) delete q.groupBy;
   const groupBy = INTERVIEW_GROUPINGS[q.groupBy] ? q.groupBy : 'department';
 
   const where = { ...applicationWhere(req.user), interviewStatus: { not: null } };
   const reqWhere = {};
   if (q.department) reqWhere.department = q.department;
   if (q.clientId) reqWhere.clientId = q.clientId;
-  if (Object.keys(reqWhere).length) where.requirement = { is: reqWhere };
+  if (Object.keys(reqWhere).length) where.AND = [...(where.AND || []), { requirement: { is: reqWhere } }];
   if (q.from || q.to) {
     where.interviewAt = {};
     if (q.from) where.interviewAt.gte = new Date(q.from);
@@ -289,7 +302,8 @@ router.get('/interviews', requirePerm(null, 'reports', 'ATS Reports', 'view'), a
 // chasing people is actually working rather than merely happening.
 // ---------------------------------------------------------------------------
 router.get('/followups', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (req, res) => {
-  const q = req.query || {};
+  const q = { ...(req.query || {}) };
+  if (bdeTeam(req.user) && PEOPLE_GROUPS.includes(q.groupBy)) delete q.groupBy;
   const scopedApps = await prisma.application.findMany({
     where: applicationWhere(req.user),
     select: { id: true, requirement: { select: { department: true, client: { select: { name: true } } } } },
@@ -313,7 +327,7 @@ router.get('/followups', requirePerm(null, 'reports', 'ATS Reports', 'view'), as
     department: (f) => byApp.get(f.applicationId)?.requirement?.department || '—',
     client: (f) => byApp.get(f.applicationId)?.requirement?.client?.name || 'TeamLink Internal',
   };
-  const groupBy = GROUP[q.groupBy] ? q.groupBy : 'owner';
+  const groupBy = GROUP[q.groupBy] ? q.groupBy : (bdeTeam(req.user) ? 'client' : 'owner');
   const of = GROUP[groupBy];
 
   const buckets = new Map();
@@ -392,14 +406,14 @@ router.get('/job-portal', requirePerm(null, 'reports', 'Job Portal Reports', 'vi
     prisma.candidate.findMany({ where: range.on ? { createdAt } : undefined, select: { id: true, source: true } }),
     prisma.application.findMany({ select: { candidateId: true } }),
   ]);
-  const sources = ['Job Portal', 'Naukri', 'Indeed', 'LinkedIn', 'TeamLink Website'];
+  const sources = [CSRC.JOB_PORTAL, CSRC.NAUKRI, CSRC.INDEED, CSRC.LINKEDIN, CSRC.WEBSITE];
   const linked = new Set(candidates.filter((c) => c.source === 'Job Portal').map((c) => c.id));
   res.json({
     registrationsSynced: linked.size,
     applicationsSynced: applications.filter((a) => linked.has(a.candidateId)).length,
-    fromNaukri: candidates.filter((c) => c.source === 'Naukri').length,
-    fromLinkedIn: candidates.filter((c) => c.source === 'LinkedIn').length,
-    rows: sources.map((s) => ({ source: s, candidates: candidates.filter((c) => c.source === s).length })),
+    fromNaukri: candidates.filter((c) => CSRC.canonicalSource(c.source) === CSRC.NAUKRI).length,
+    fromLinkedIn: candidates.filter((c) => CSRC.canonicalSource(c.source) === CSRC.LINKEDIN).length,
+    rows: sources.map((s) => ({ source: s, candidates: candidates.filter((c) => CSRC.canonicalSource(c.source) === s).length })),
     range: { from: range.from || null, to: range.to || null },
   });
 });
@@ -416,7 +430,8 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
   // invoice date, a bill by its expense date (else when it was entered), a
   // statement line by its date.
   const invoices = allInvoices.filter((i) => inReportRange(range, i.invoiceDate));
-  const expenses = allExpenses.filter((e) => inReportRange(range, e.expenseDate || e.createdAt));
+  // The Office page's own rule: a hand loan / the owner's money and a REJECTED bill are not costs (routes/office.js officeScope).
+  const expenses = allExpenses.filter((e) => e.entryKind !== 'hand' && e.approvalStatus !== 'REJECTED').filter((e) => inReportRange(range, e.expenseDate || e.createdAt));
   const transactions = allTransactions.filter((t) => inReportRange(range, t.date));
   // B2 — issued credit / debit notes (utils/invoiceTax.js withNotes): the
   // receivable, income and GST below are after them; an invoice without a
@@ -451,12 +466,13 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
   const today = new Date();
   const days = (d) => Math.floor((today - new Date(d)) / 86400000);
   const open = rows.filter((i) => i.derived !== 'Paid' && i.derived !== 'Cancelled');
-  const buckets = [
+  const bucketTests = [
     { bucket: 'Not yet due', test: (i) => !i.dueDate || days(i.dueDate) < 0 },
     { bucket: '0–30 days', test: (i) => i.dueDate && days(i.dueDate) >= 0 && days(i.dueDate) <= 30 },
     { bucket: '31–60 days', test: (i) => i.dueDate && days(i.dueDate) > 30 && days(i.dueDate) <= 60 },
     { bucket: '60+ days', test: (i) => i.dueDate && days(i.dueDate) > 60 },
-  ].map(({ bucket, test }) => {
+  ];
+  const buckets = bucketTests.map(({ bucket, test }) => {
     const list = open.filter(test);
     return { bucket, count: list.length, outstanding: ROUND(list.reduce((s, i) => s + i.outstanding, 0)) };
   });
@@ -507,6 +523,37 @@ router.get('/accounts', requirePerm(null, 'reports', 'Accounts Reports', 'view')
       ignored: transactions.filter((t) => txnState(t) === 'Ignored').length,
     },
     range: { from: range.from || null, to: range.to || null },
+    // EVERY NUMBER OPENS ITS LIST (reconciliation 2026-10-06): the rows the figures above add up,
+    // in the same words the Accounts Dashboard lists use (pages/accounts/dash/Drill.jsx).
+    drill: {
+      invoices: rows.filter((i) => i.derived !== 'Cancelled').map((i) => ({
+        id: i.id,
+        client: i.client?.name || '—',
+        invoiceNumber: i.invoiceNumber,
+        invoiceDate: i.invoiceDate,
+        dueDate: i.dueDate,
+        billing: ROUND(i.netAmount),
+        gst: ROUND(i.netGst),
+        invoiceValue: ROUND(i.netAmount + i.netGst),
+        tds: ROUND(i.tds),
+        receivable: ROUND(i.total),
+        received: ROUND(i.receivedAmount),
+        pending: ROUND(i.outstanding),
+        status: i.derived,
+        bucket: i.derived !== 'Paid' ? (bucketTests.find((b) => b.test(i)) || {}).bucket || null : null,
+      })),
+      bills: expenses.map((e) => {
+        const gross = ROUND(e.monthlyAmount);
+        const gstAmt = ROUND(e.gstAmount);
+        const tdsAmt = ROUND(e.tdsAmount);
+        return {
+          id: e.id, date: e.expenseDate || null, category: e.category || '—', vendor: e.vendor || null, billNumber: e.billNumber || null, code: e.expenseCode || null,
+          base: ROUND(gross - gstAmt), gst: gstAmt, tds: tdsAmt, afterGst: gross, net: ROUND(gross - tdsAmt),
+          pending: e.paidStatus === 'Unpaid' ? ROUND(gross - tdsAmt) : 0, payStatus: e.paidStatus === 'Unpaid' ? 'Waiting for payment' : 'Paid',
+        };
+      }),
+      bank: transactions.map((t) => ({ id: t.id, date: t.date, description: t.description, type: t.type, amount: ROUND(t.amount), state: txnState(t) })),
+    },
   });
 });
 

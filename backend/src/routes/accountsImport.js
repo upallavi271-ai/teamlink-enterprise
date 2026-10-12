@@ -6,6 +6,7 @@ const { logAudit } = require('../utils/audit');
 const { parseMultipart } = require('../utils/attachments');
 const { ROUND, normName, dueDateFor, deriveInvoiceStatus } = require('../utils/accounts');
 const bankRoutes = require('./bank');
+const BIC = require('../utils/bankImportCore');
 const invoiceRoutes = require('./invoices');
 
 // ---------------------------------------------------------------------------
@@ -53,14 +54,17 @@ const KINDS = {
 // bare /amount/ pattern of the base amount can take it.
 const FIELDS = {
   bank: [
-    ['date', 'Date', [/^(txn |tran |transaction |value |posting |post )?date/, /date/]],
+    // The TRANSACTION date wins over the value date; a value date is kept in its own field.
+    ['date', 'Date', [/^(txn|tran|trans|transaction|posting|post|booking)\W*(date|dt)\b/, /^date\b/, /date|\bdt\b/]],
+    ['valueDate', 'Value date', [/(value|val)\W*(date|dt)\b|^value\b/]],
     ['credit', 'Credit / deposit', [/deposit|credit|money in|cr amount|receipt/]],
     ['debit', 'Debit / withdrawal', [/withdraw|debit|money out|dr amount|payment/]],
     ['balance', 'Balance', [/balance|closing/]],
     ['drcr', 'Dr / Cr marker', [/^(dr ?\/? ?cr|cr ?\/? ?dr|type|txn type|d ?\/? ?c)$/]],
     ['amount', 'Amount (signed)', [/^amount|amount/]],
+    ['externalId', 'Bank transaction id', [/^((bank|unique)\W+)?(txn|transaction|tran|trans)\W*(id|no|number)\b/, /^bank\W*(id|number)\b|\bunique\b.*(id|ref)|^serial|^s\.? ?no\.?$|^sr\W*no/]],
     ['reference', 'Reference / UTR / cheque', [/ref|utr|cheque|chq|instrument/]],
-    ['description', 'Narration', [/narration|description|particular|remark|details|transaction/]],
+    ['description', 'Narration', [/narration|description|particular|remark|details/, /transaction(?!.*(date|dt|id|no|number))/]],
   ],
   expenses: [
     ['dueDate', 'Due date', [/due/]],
@@ -269,7 +273,15 @@ function normalise(kind, dataRows, mapping) {
     const vals = cols.map((i) => num(r[i])).filter((n) => n != null);
     return vals.length ? ROUND(vals.reduce((s, n) => s + n, 0)) : null;
   };
-  const dateCols = ['date', 'dueDate', 'invoiceDate', 'paidDate'].flatMap((f) => mapping[f] || []);
+  const dateCols = ['date', 'valueDate', 'dueDate', 'invoiceDate', 'paidDate'].flatMap((f) => mapping[f] || []);
+  const heads = mapping.__heads || [];
+  const rawOf = (r) => {
+    const o = {};
+    r.forEach((c, i) => { o[String(heads[i] || `column ${i + 1}`)] = c == null ? '' : c; });
+    return o;
+  };
+  const failed = []; // bank rows that look like a transaction but cannot be used
+  const stated = {}; // opening / closing balance printed in the file itself
   const dayFirst = dayFirstFor(dataRows, dateCols);
   const date = (r, f) => {
     const cols = mapping[f] || [];
@@ -289,25 +301,45 @@ function normalise(kind, dataRows, mapping) {
     if (kind === 'bank') {
       const description = text(r, 'description');
       const d = date(r, 'date');
-      if (!d) { skipped.push({ line, reason: 'No date — not a transaction line' }); return; }
-      if (/^(opening|closing) balance|^total|^grand total|^statement summary/i.test(description)) {
-        skipped.push({ line, reason: 'Balance / total line' }); return;
-      }
       const cr = money(r, 'credit');
       const dr = money(r, 'debit');
+      const signed = money(r, 'amount');
+      const hasMoney = !!(cr || dr || signed);
+      const anyText = r.map((c) => String(c == null ? '' : c)).join(' ');
+      const balLine = /^(opening|closing) balance/i.exec(description) || /^\s*(opening|closing) balance/i.exec(anyText);
+      if (balLine) {
+        const v = money(r, 'balance') != null ? money(r, 'balance') : (cr || dr || signed || null);
+        if (v != null) stated[/^opening/i.test(balLine[0]) ? 'opening' : 'closing'] = v;
+        skipped.push({ line, reason: 'Balance / total line' });
+        return;
+      }
+      if (/^total|^grand total|^statement summary/i.test(description)) { skipped.push({ line, reason: 'Balance / total line' }); return; }
+      if (!d) {
+        skipped.push({ line, reason: 'No date — not a transaction line' });
+        // A line with money on it but no readable date is a transaction we could not read: report it.
+        if (hasMoney) failed.push({ line, reason: `No usable date (${String(r[(mapping.date || [])[0]] ?? '').trim() || 'blank'})`, row: rawOf(r) });
+        return;
+      }
       let amount = null;
       let type = null;
-      if (cr) { amount = Math.abs(cr); type = 'Credit'; } else if (dr) { amount = Math.abs(dr); type = 'Debit'; } else {
-        const a = money(r, 'amount');
-        if (a) {
-          const marker = text(r, 'drcr').toLowerCase();
-          amount = Math.abs(a);
-          type = /^c|credit|deposit/.test(marker) ? 'Credit' : (/^d|debit|withdraw/.test(marker) ? 'Debit' : (a > 0 ? 'Credit' : 'Debit'));
-        }
+      if (cr && dr) { skipped.push({ line, reason: 'Both a debit and a credit amount' }); failed.push({ line, reason: 'Both a debit and a credit amount on one line', row: rawOf(r) }); return; }
+      if (cr) { amount = Math.abs(cr); type = 'Credit'; } else if (dr) { amount = Math.abs(dr); type = 'Debit'; } else if (signed) {
+        const marker = text(r, 'drcr').toLowerCase();
+        amount = Math.abs(signed);
+        type = /^c|credit|deposit/.test(marker) ? 'Credit' : (/^d|debit|withdraw/.test(marker) ? 'Debit' : (signed > 0 ? 'Credit' : 'Debit'));
       }
-      if (!amount) { skipped.push({ line, reason: 'No amount' }); return; }
+      if (!amount) { skipped.push({ line, reason: 'No amount' }); failed.push({ line, reason: 'No amount', row: rawOf(r) }); return; }
       out.push({
-        line, date: d, description: description || '—', reference: text(r, 'reference') || null, type, amount, balance: money(r, 'balance'),
+        line,
+        date: d,
+        valueDate: date(r, 'valueDate'),
+        description: description || '—',
+        reference: text(r, 'reference') || null,
+        externalId: text(r, 'externalId') || null,
+        type,
+        amount,
+        balance: money(r, 'balance'),
+        raw: rawOf(r),
       });
       return;
     }
@@ -392,7 +424,7 @@ function normalise(kind, dataRows, mapping) {
       notes: text(r, 'notes') || null,
     });
   });
-  return { rows: out, skipped };
+  return { rows: out, skipped, failed, stated };
 }
 
 // --- clients (invoices) ----------------------------------------------------------
@@ -422,7 +454,12 @@ async function parseUpload(req) {
   }
   const { fields, file } = upload;
   if (!file || !file.data || !file.data.length) return { status: 400, error: 'Attach the file to import.' };
+  return analyseFile(file, fields);
+}
 
+// The reading of one uploaded file (shared with scripts/recon-narration-repair.js,
+// which re-reads original statements without any HTTP request).
+function analyseFile(file, fields) {
   const read = readGrid(file);
   if (read.error) return { status: 415, error: read.error };
 
@@ -464,14 +501,17 @@ async function parseUpload(req) {
   }
   const dataRows = sheet.rows.slice(header.index + 1);
   const exampleAt = heads.findIndex((h) => /^example\??$/i.test(String(h).trim()));
-  const { rows, skipped } = normalise(kind, dataRows, { ...mapping, __example: exampleAt >= 0 ? [exampleAt] : [] });
+  const {
+    rows, skipped, failed, stated,
+  } = normalise(kind, dataRows, { ...mapping, __example: exampleAt >= 0 ? [exampleAt] : [], __heads: heads });
   // Lines are numbered as the spreadsheet shows them.
   const offset = header.index + 1;
   rows.forEach((r) => { r.line += offset; });
   skipped.forEach((s) => { s.line += offset; });
+  (failed || []).forEach((f) => { f.line += offset; });
 
   return {
-    file, fields, kind, sheet: sheet.name, sheets: read.sheets.map((s) => s.name), headerRow: header.index + 1, heads, mapping, rows, skipped,
+    file, fields, kind, sheet: sheet.name, sheets: read.sheets.map((s) => s.name), headerRow: header.index + 1, heads, mapping, rows, skipped, failed: failed || [], stated: stated || {},
   };
 }
 
@@ -510,6 +550,26 @@ router.post('/preview', async (req, res) => {
     });
     const accounts = await prisma.bankAccount.findMany({ where: { active: true }, select: { id: true, name: true, bank: true, accNo: true }, orderBy: { createdAt: 'asc' } });
     summary.bankAccounts = accounts;
+    // The same checks the import will make, without writing: unreadable rows,
+    // lines already on file, and whether the statement's balances tie.
+    const v = BIC.validateRows(p.rows);
+    const allAccounts = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+    const accId = p.fields.bankAccountId || (allAccounts[0] && allAccounts[0].id);
+    const onAcc = (await prisma.bankTransaction.findMany()).filter((t) => (t.bankAccountId || (allAccounts[0] && allAccounts[0].id)) === accId);
+    const plan = BIC.planDuplicates(v.ok, onAcc);
+    const failedAll = [...(p.failed || []), ...v.failed];
+    Object.assign(summary, {
+      failed: failedAll.length, duplicates: plan.duplicates.length, newLines: plan.fresh.length,
+      needsReview: plan.fresh.filter((r) => r.reviewReason).length,
+    });
+    summary.failedRows = failedAll.slice(0, 100);
+    summary.balanceCheck = BIC.checkBalances(v.ok, p.stated || {});
+    const prior = await prisma.bankImport.findFirst({ where: { sourceHash: BIC.sha256(p.file.data), bankAccountId: accId }, orderBy: { createdAt: 'desc' } });
+    summary.fileAlreadyImported = prior ? { batch: prior.id, on: prior.date } : null;
+    if (failedAll.length) problems.push(`${failedAll.length} row(s) cannot be imported - they are listed below with the reason.`);
+    if (plan.duplicates.length) problems.push(`${plan.duplicates.length} line(s) are already on file and will be skipped.`);
+    if (prior) problems.push(`This exact file was imported on ${prior.date}.`);
+    if (summary.balanceCheck.checked && summary.balanceCheck.ok === false) problems.push('The statement balances do not tie (see the balance check).');
   } else if (p.kind === 'expenses') {
     Object.assign(summary, {
       value: ROUND(p.rows.reduce((s, r) => s + r.base + r.gst, 0)),
@@ -517,7 +577,7 @@ router.post('/preview', async (req, res) => {
       undated: p.rows.filter((r) => !r.expenseDate).length,
       uncategorised: p.rows.filter((r) => r.category === 'Uncategorised').length,
     });
-    if (summary.undated) problems.push(`${summary.undated} bill(s) have no date — they will be dated today.`);
+    if (summary.undated) problems.push(`${summary.undated} bill(s) have no date - they will NOT be imported (no date is ever made up). Add the date column, or tick "date them today" if you really want that.`);
     if (summary.uncategorised) problems.push(`${summary.uncategorised} bill(s) have no category — filed as "Uncategorised"; change them on the Office screen.`);
   } else {
     const index = await clientIndex();
@@ -538,7 +598,12 @@ router.post('/preview', async (req, res) => {
     if (noClient) problems.push(`${noClient} line(s) name no client and will be skipped.`);
     if (unknown.length) problems.push(`${unknown.length} client name(s) are not on file: ${unknown.slice(0, 6).join(', ')}${unknown.length > 6 ? '…' : ''}.`);
     if (p.rows.some((r) => r.grossOnly)) problems.push('Some lines give only a total — it is taken as the amount before GST, and GST is added at the client\'s rate. Map "Amount before GST" if that is wrong.');
-    if (!p.rows.some((r) => r.invoiceDate)) problems.push('No invoice date column was found — every invoice would be dated today. Map the date column below.');
+    const undatedInv = p.rows.filter((r) => !r.invoiceDate).length;
+    summary.undatedInvoices = undatedInv;
+    if (undatedInv) problems.push(`${undatedInv} invoice line(s) have no invoice date - they will NOT be imported (no date is ever made up). Map the date column below.`);
+    const noPaidOn = p.rows.filter((r) => (r.received > 0 || r.status === 'Paid') && !r.paidDate).length;
+    summary.receiptsWithoutDate = noPaidOn;
+    if (noPaidOn) problems.push(`${noPaidOn} invoice(s) show money received but no "paid on" date - the amount is kept and the payment date is left blank (not guessed). Map the paid-on column if the sheet has one.`);
   }
 
   res.json({
@@ -580,9 +645,14 @@ router.post('/commit', async (req, res) => {
       dedup: p.fields.dedup !== 'false',
       file: fileName,
       autoPost: p.fields.autoPost !== 'false',
+      failedRows: p.failed || [],
+      stated: p.stated || {},
+      sourceHash: BIC.sha256(p.file.data),
     });
     return res.status(201).json({
-      kind: 'bank', imported: out.imported, duplicates: out.duplicates, skippedLines: p.skipped.length, autoPosted: out.autoPosted, openingSetTo: out.openingSetTo, batch: out.batch,
+      kind: 'bank', imported: out.imported, duplicates: out.duplicates, failed: out.failed, failedRows: out.failedRows, summary: out.summary,
+      balanceCheck: out.balanceCheck, fileAlreadyImported: out.fileAlreadyImported, duplicateRows: out.duplicateRows,
+      skippedLines: p.skipped.length, autoPosted: out.autoPosted, openingSetTo: out.openingSetTo, batch: out.batch,
       // Accounts S5 — the auto-match + proof summary.
       loansLinked: out.loansLinked, billsFiled: out.billsFiled, chargesFiled: out.chargesFiled, autoMatched: out.autoMatched, needsReview: out.needsReview,
     });
@@ -597,7 +667,11 @@ router.post('/commit', async (req, res) => {
     let imported = 0;
     let duplicates = 0;
     let value = 0;
+    let noDate = 0;
+    const undatedRows = [];
     for (const r of p.rows) {
+      // Spec 7: an expense with no date is not given the import day.
+      if (!r.expenseDate && !opt('allowTodayDate')) { noDate += 1; undatedRows.push({ line: r.line, reason: 'No bill date', row: { category: r.category, vendor: r.vendor, base: r.base } }); continue; }
       const data = {
         category: r.category.slice(0, 120),
         vendor: r.vendor,
@@ -633,8 +707,10 @@ router.post('/commit', async (req, res) => {
       imported += 1;
       value = ROUND(value + data.monthlyAmount);
     }
-    await logAudit({ userId: req.user.id, action: 'Office expenses imported', entity: 'OfficeExpense', entityId: fileName, toValue: `${imported} imported, ${duplicates} already on file` });
-    return res.status(201).json({ kind: 'expenses', imported, duplicates, skippedLines: p.skipped.length, value });
+    await logAudit({ userId: req.user.id, action: 'Office expenses imported', entity: 'OfficeExpense', entityId: fileName, toValue: `${imported} imported, ${duplicates} already on file, ${noDate} without a date (not imported)` });
+    return res.status(201).json({
+      kind: 'expenses', imported, duplicates, noDate, failedRows: undatedRows.slice(0, 100), skippedLines: p.skipped.length, value,
+    });
   }
 
   // invoices
@@ -647,9 +723,14 @@ router.post('/commit', async (req, res) => {
   let noClient = 0;
   let clientsCreated = 0;
   let paymentsRecorded = 0;
+  let noDate = 0;
+  let receiptsUndated = 0;
+  const undatedRows = [];
   for (const r of p.rows) {
     if (r.invoiceNumber && taken.has(r.invoiceNumber)) { duplicates += 1; continue; }
     if (!r.client) { noClient += 1; continue; }
+    // Spec 7: no invoice date is ever made up.
+    if (!r.invoiceDate && !opt('allowTodayDate')) { noDate += 1; undatedRows.push({ line: r.line, reason: 'No invoice date', row: { invoiceNumber: r.invoiceNumber, client: r.client, amount: r.amount } }); continue; }
     let client = index.get(clientKey(r.client));
     if (!client) {
       if (!createClients) { noClient += 1; continue; }
@@ -688,15 +769,21 @@ router.post('/commit', async (req, res) => {
     if (!received && r.status === 'Paid') received = net;
     const invoice = await prisma.invoice.create({ data: { ...data, status: 'Pending' } });
     if (received > 0) {
-      const paidDate = r.paidDate || invoiceDate;
-      await prisma.invoicePayment.create({
-        data: {
-          invoiceId: invoice.id, date: paidDate, amount: received, method: 'Imported', notes: `Receipt as recorded in ${fileName}`, recordedBy: who,
-        },
-      });
-      paymentsRecorded += 1;
       invoice.receivedAmount = received;
-      invoice.paidDate = received >= net - 0.5 ? paidDate : null;
+      if (r.paidDate) {
+        await prisma.invoicePayment.create({
+          data: {
+            invoiceId: invoice.id, date: r.paidDate, dateSource: 'sheet', amount: received, method: 'Imported', notes: `Receipt as recorded in ${fileName}`, recordedBy: who,
+          },
+        });
+        paymentsRecorded += 1;
+        invoice.paidDate = received >= net - 0.5 ? r.paidDate : null;
+      } else {
+        // The sheet gives the amount but not the day: keep the amount on the
+        // invoice (as older imports did) and leave the payment date blank.
+        receiptsUndated += 1;
+        invoice.paidDate = null;
+      }
     }
     const status = r.status === 'Cancelled' ? 'Cancelled' : deriveInvoiceStatus(invoice);
     await prisma.invoice.update({
@@ -709,8 +796,9 @@ router.post('/commit', async (req, res) => {
     userId: req.user.id, action: 'Invoices imported', entity: 'Invoice', entityId: fileName, toValue: `${imported} imported, ${duplicates} already on file, ${noClient} without a known client`,
   });
   return res.status(201).json({
-    kind: 'invoices', imported, duplicates, noClient, clientsCreated, paymentsRecorded, skippedLines: p.skipped.length,
+    kind: 'invoices', imported, duplicates, noClient, noDate, receiptsUndated, failedRows: undatedRows.slice(0, 100), clientsCreated, paymentsRecorded, skippedLines: p.skipped.length,
   });
 });
 
+router.analyseFile = analyseFile;
 module.exports = router;

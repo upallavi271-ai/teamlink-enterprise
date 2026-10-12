@@ -4,7 +4,8 @@ import { Modal } from './proto.jsx';
 import './interviews/Interviews.css';
 // B4 (2026-10-06): a PANEL of interviewers, and "Create meeting link".
 import PanelPicker from './interviews/PanelPicker.jsx';
-import MeetingLinkButton from './interviews/MeetingLinkButton.jsx';
+// 2026-10-10: the "Booked - now tell them" window: Call / WhatsApp / SMS / Mail to the candidate, and the team.
+import InterviewTell from './interviews/InterviewTell.jsx';
 
 // ---------------------------------------------------------------------------
 // BOOK AN INTERVIEW — "like booking a cab" (change list §11, 2026-10-03).
@@ -19,11 +20,13 @@ import MeetingLinkButton from './interviews/MeetingLinkButton.jsx';
 // straight away (the "Book" button on a shortlisted row, "Next round").
 //
 // LAYOUT v3 (2026-10-03): Who (candidate + job) → ROUND → When → Online /
-// Offline + link or address → Interviewer. After saving, a "Tell them" step:
-// email goes only when the Admin email switch is on (the server says which);
-// WhatsApp is a "Send on WhatsApp" wa.me link with the message ready — it
-// opens WhatsApp on this device and is logged as a follow-up. Never sent by
-// the app. onBooked() fires on save (reload the list); onScheduled(msg) on Done.
+// Offline + link or address → Interviewer. After saving, the "Booked — now tell
+// them" window (components/interviews/InterviewTell.jsx, 2026-10-10): the
+// candidate gets Call · WhatsApp · SMS · Mail (each through the messaging module,
+// or opened in the person's own app when a channel is not connected), "Send on
+// all available channels", and the recruiter / TL / client manager (BDE) /
+// interviewer can be told with one button. onBooked() fires on save (reload the
+// list); onScheduled(msg) on Done.
 // ---------------------------------------------------------------------------
 const initials = (n) => String(n || '?').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 const todayIst = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -49,7 +52,6 @@ export default function ScheduleInterview({
   const [chosen, setChosen] = useState(preset);
   const [round, setRound] = useState(() => (preset ? roundOf(preset) : 1));
   const [done, setDone] = useState(null); // the server's reply after booking
-  const [logged, setLogged] = useState({});
   const pick = (row) => { setChosen(row); setRound(row ? roundOf({ round: row.suggestedRound }) : 1); };
   const [q, setQ] = useState('');
   const [list, setList] = useState(null);
@@ -78,6 +80,7 @@ export default function ScheduleInterview({
     try {
       const r = await api.post(`/ats/interviews/${chosen.id}/book`, {
         round,
+        viaPopup: true, // the "now tell them" window tells the candidate, so no automatic step message is sent too
         date: form.date,
         time: form.time,
         mode: form.mode,
@@ -92,39 +95,17 @@ export default function ScheduleInterview({
     } finally { setBusy(false); }
   }
 
-  // "Send on WhatsApp" pressed: the link opens WhatsApp on this device; the
-  // server only logs it as a follow-up (it sends nothing).
-  async function logWa(to) {
-    try {
-      const r = await api.post(`/ats/interviews/${chosen.id}/whatsapp-log`, { to });
-      setLogged((m) => ({ ...m, [to]: r.data.message || 'Logged as a follow-up.' }));
-    } catch (err) {
-      setLogged((m) => ({ ...m, [to]: err.response?.data?.error || 'Opened. Could not log it — add a follow-up by hand.' }));
-    }
-  }
-
   if (done) {
     const finish = () => onScheduled(done.message || 'Interview booked.');
     return (
-      <Modal title="Booked — now tell them" onClose={finish} footer={<button type="button" className="btn btn-primary" onClick={finish}>Done</button>}>
-        <div className="ivv3-done">
-          <div className="ivv3-ok" role="status">{`Saved. ${chosen.candidate.name} · Round ${done.round || round}`}</div>
-          <div className="ivv3-mailoff">{done.message}</div>
-          {form.mode === 'Online' && !form.meetingLink.trim() && <MeetingLinkButton applicationId={chosen.id} />}
-          {(done.whatsapp || []).map((w) => (
-            <div key={w.to} className="ivv3-wa">
-              <span className="ivv3-wa-who">
-                <b>{w.label}: {w.name}</b>
-                <span>{w.phone ? `WhatsApp +${w.phone}` : 'No phone number saved — WhatsApp will ask you to pick the contact.'}</span>
-              </span>
-              <a className="btn btn-sm btn-primary" href={w.url} target="_blank" rel="noreferrer" onClick={() => logWa(w.to)}>Send on WhatsApp</a>
-              {logged[w.to] && <span className="ivv3-logged">{logged[w.to]}</span>}
-              <pre>{w.text}</pre>
-            </div>
-          ))}
-          <div className="ivx-hint">WhatsApp opens on your phone or computer with the message ready. You press send there — the app never sends it.</div>
-        </div>
-      </Modal>
+      <InterviewTell
+        applicationId={chosen.id}
+        kind="scheduled"
+        saved={`Saved. ${chosen.candidate.name} · Round ${done.round || round}`}
+        note={done.message}
+        canMakeLink
+        onClose={finish}
+      />
     );
   }
 
@@ -216,7 +197,7 @@ export default function ScheduleInterview({
 
         {/* The button is greyed until these are filled — say why. */}
         {!ready && !busy && <div className="ivx-hint">Pick a person, date, time and at least one interviewer first.</div>}
-        <div className="ivx-hint">After saving: the panel, the team and the client manager (BDE) get an app notice (and a bell reminder the day before and 1 hour before), and you can send the message to the candidate and the BDE on WhatsApp. Emails go only when the Admin email switch is on. For an online interview you can paste a link, or press "Create meeting link" after booking.</div>
+        <div className="ivx-hint">After saving you tell the candidate by Call, WhatsApp, SMS or Mail, and the recruiter, TL and client manager (BDE) by one button. The panel and the team also get an app notice, a list of today's interviews at 8:30 am and a bell 1 hour before. For an online interview you can paste a link, or press "Create meeting link" after booking.</div>
         {error && <div className="error-text" style={{ marginTop: 8 }}>{error}</div>}
       </div>
     </Modal>

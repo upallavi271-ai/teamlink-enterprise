@@ -17,7 +17,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
-import Pager, { usePaged } from '../../components/Pager.jsx';
+import Pager from '../../components/Pager.jsx';
 import ListPageHeader from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
@@ -29,7 +29,7 @@ import '../../components/interviews/Interviews.css';
 // B4 (2026-10-06): the panel — each interviewer's own scorecard; the decision stays one.
 import PanelView from '../../components/interviews/PanelView.jsx';
 import {
-  fmtDate, fmtTime, useWorkspace, Banner, INTJOIN_TABS, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinList,
+  fmtDate, fmtTime, Banner, INTJOIN_TABS, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
 } from './intjoinShared.jsx';
 
 const DECIDABLE = ['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'HOLD'];
@@ -43,13 +43,17 @@ const STATUS = { label: 'Step', get: (r) => stepOf(r).text };
 
 export default function InterviewFeedback() {
   const { user } = useAuth();
-  const { data, error, notice, act, load } = useWorkspace('/ats/feedback');
+  // The server searches, counts and pages the list (utils/intJoinList.js).
+  const ws = useIntJoinPaged('/ats/feedback', { status: STATUS });
+  const {
+    data, error, notice, act, load, list,
+  } = ws;
   const [dialog, setDialog] = useState(null);
   const canInternal = can(user, 'ats', 'interviews', 'Interview Feedback', 'create');
   const canClient = can(user, 'ats', 'interviews', 'Client Feedback', 'create');
   const canDecide = can(user, 'ats', 'interviews', 'Interview Feedback', 'approve');
-  const list = useIntJoinList(data.rows, { status: STATUS, dateOf: (r) => r.interviewAt, placeholder: 'Search name or job…' });
-  const page = usePaged(list.rows);
+  const rows = data.rows || [];
+  const page = ws.pager;
   const run = (fn, msg) => act(fn, msg);
 
   return (
@@ -62,7 +66,7 @@ export default function InterviewFeedback() {
             module="feedback"
             kinds={['interview-feedback']}
             onImported={load}
-            body={() => ({ ids: list.rows.length === (data.rows || []).length ? null : list.rows.map((r) => r.id) })}
+            body={ws.exportBody}
           />
         )}
       />
@@ -73,7 +77,7 @@ export default function InterviewFeedback() {
       <Banner error={error} notice={notice} />
       {list.toolbar}
 
-      <div className="tbl-wrap">
+      <div className="tbl-wrap" style={data.loading && rows.length ? { opacity: 0.55, transition: "opacity .15s" } : undefined} aria-busy={data.loading ? "true" : undefined}>
         <table>
           <thead>
             <tr>
@@ -81,7 +85,7 @@ export default function InterviewFeedback() {
             </tr>
           </thead>
           <tbody>
-            {page.slice.map((r) => {
+            {rows.map((r) => {
               const step = stepOf(r);
               const decidable = DECIDABLE.includes(r.stage);
               return (
@@ -122,15 +126,22 @@ export default function InterviewFeedback() {
                 </tr>
               );
             })}
-            {list.rows.length === 0 && (
+            {rows.length === 0 && (
               <tr><td colSpan="7" style={{ padding: 0 }}>
-                <IntJoinEmpty loading={data.loading} filters={list.active ? { q: 'x' } : EMPTY_INTJOIN_FILTERS} onClear={list.clear} noun="interviews" title="No interviews are waiting on feedback." />
+                <IntJoinEmpty loading={data.loading} failed={data.failed} onRetry={load} filters={list.active ? { q: 'x' } : EMPTY_INTJOIN_FILTERS} onClear={list.clear} noun="interviews" title="No interviews are waiting on feedback." />
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
-      <Pager page={page} noun="interviews" />
+      <Pager page={page} noun="interviews" sizes={PAGE_SIZES_IJ} />
+      <ShowOlder
+        older={ws.older}
+        setOlder={ws.setOlder}
+        count={ws.olderCount}
+        noun="interviews"
+        openText="Showing interviews that wait for feedback or a decision, and those from the last 90 days."
+      />
 
       {dialog?.kind === 'panel' && (
         <PanelModal

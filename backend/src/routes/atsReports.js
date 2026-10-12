@@ -54,11 +54,16 @@ const {
 } = require('../utils/atsVocab');
 const { STAGE_GROUPS, stageIndex } = require('../utils/pipelineView');
 const dateRange = require('../utils/dateRange');
+const CSRC = require('../utils/candidateSource'); // the clean source list
 const { didNotJoin } = require('../utils/joining'); // B9.8: one "Did not join" rule
 const { toCsv } = require('../utils/tabularExport');
 // Who a record is attributed to — the ATS-wide rule, shared with every
 // screen's person filter (Candidates, Interviews, Recruiter & BDE …).
 const workers = require('../utils/workers');
+// P3 (perf, 2026-10-09): the company-wide rows every report is built from are read ONCE and shared
+// (utils/reportAggregates.js); each login's scope is applied after that.
+const RA = require('../utils/reportAggregates');
+const NA = require('../utils/nextAction'); // the one due-date rule the Past SLA counters read
 
 const router = express.Router();
 router.use(requireAuth);
@@ -301,13 +306,11 @@ function applicationsWhere(user, f, dateField) {
 }
 
 // --- Sources ---------------------------------------------------------------
+// The clean source list (utils/candidateSource.js): Naukri, Job Portal, Referral … and "Imported sheet (unknown origin)"
+// for the sheet names, notes and blanks the old imports left in the column. The application's own word first, then
+// the person's; "As recorded" stays in the application / candidate itself.
 function sourceOf(a) {
-  const raw = clean(a.source) || clean(a.firstSource) || clean(a.candidate && a.candidate.source)
-    || clean(a.candidate && a.candidate.firstSource);
-  if (!raw) return NO_SOURCE;
-  if (raw.length > 40) return FREE_TEXT;
-  if (isPortalSource(raw)) return 'TeamLink Job Portal';
-  return raw;
+  return CSRC.sourceOfApplication(a, a.candidate).key;
 }
 
 // Which named channel a recorded source belongs to. Only unambiguous
@@ -359,6 +362,29 @@ function joiningOutcome(x, today) {
   return 'pending';
 }
 
+// `overdue` / `daysOverdue` are worked out on the first read (most reports never read them) and with ONE
+// nextActionFor() call: applicationIsOverdue() + applicationDueDate() (utils/atsVocab.js) are exactly
+// that call's dueStatus === 'overdue' and dueAt, and each of them costs a full derivation.
+const ReportAppProto = {
+  _overdueCalc() {
+    if (!this._od) {
+      let overdue = false;
+      let days = null;
+      if (this.inPipeline) {
+        const na = NA.nextActionFor(this.a);
+        overdue = !!na.dueAt && na.dueStatus === 'overdue';
+        if (overdue) days = Math.max(0, Math.floor((this._todayStart - new Date(`${na.dueAt}T00:00:00.000Z`)) / DAY));
+      }
+      this._od = { overdue, days };
+    }
+    return this._od;
+  },
+  get overdue() { return this._overdueCalc().overdue; },
+  get daysOverdue() { return this._overdueCalc().days; },
+};
+// The clock-free half of each application, per copy of the data (see loadContext).
+let DERIVED = { key: null, map: new Map() };
+
 // --- The scoped load --------------------------------------------------------
 const APP_SELECT = {
   id: true, candidateId: true, requirementId: true, stage: true, createdAt: true, updatedAt: true,
@@ -408,46 +434,21 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   const today = now.toISOString().slice(0, 10);
   await resolveReportPeople(f);
   const appWhere = applicationsWhere(user, f, appDate);
-  const [reqRows, appRows, users] = await Promise.all([
-    prisma.requirement.findMany({ where: requirementsWhere(user, f), select: REQ_SELECT }),
-    prisma.application.findMany({ where: appWhere, select: APP_SELECT }),
+  // The company-wide rows are shared (utils/reportAggregates.js); the scope is
+  // the SAME Prisma where as before, asked only for its ids, and applied to them.
+  const [base, reqIds, appIds0, users, clients] = await Promise.all([
+    RA.getBase(),
+    RA.idsWhere(prisma.requirement, requirementsWhere(user, f)),
+    RA.idsWhere(prisma.application, appWhere),
     prisma.user.findMany({ select: { id: true, name: true, team: true } }),
+    prisma.client.findMany({ select: { id: true, name: true } }),
   ]);
-  // The history rides on the same where through the relation, so no
-  // 20,000-id IN list is ever sent.
-  const [events, followUps, feedback, candSources] = await Promise.all([
-    prisma.applicationStageEvent.findMany({
-      where: { application: { is: appWhere } },
-      select: {
-        applicationId: true, fromStage: true, toStage: true, createdAt: true, actorSide: true,
-        actorUserId: true, actorName: true, actorRole: true, actorPositionCode: true,
-        // Rejection reasons report (spec 2026-10-03 §A3).
-        reasonCategory: true, reasonDetail: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    }),
-    prisma.applicationFollowUp.findMany({
-      where: { application: { is: appWhere } }, select: FU_SELECT, orderBy: { createdAt: 'asc' },
-    }),
-    prisma.interviewFeedback.findMany({
-      where: { application: { is: appWhere } },
-      select: { applicationId: true, kind: true, recommendation: true },
-    }),
-    // The candidate's source, only where the application carries none — a
-    // join on every application cost a second on the full company.
-    prisma.candidate.findMany({
-      where: { applications: { some: { AND: [appWhere, { source: null, firstSource: null }] } } },
-      select: { id: true, source: true, firstSource: true },
-    }),
-  ]);
-  const candSource = new Map(candSources.map((c) => [c.id, c]));
-  // Test / demo people (ZZTEST, @example.test) are never counted — the
-  // dashboard's own rule (utils/atsHome.js isTest, on the candidate's name).
-  const { isTest } = require('../utils/atsHome'); // eslint-disable-line global-require
-  const testCands = new Set((await prisma.candidate.findMany({
-    where: { OR: [{ name: { contains: 'zztest' } }, { name: { contains: 'example.test' } }] },
-    select: { id: true, name: true },
-  })).filter((c) => isTest(c.name)).map((c) => c.id));
+  const clientName = new Map(clients.map((c) => [c.id, c.name]));
+  // In the order the database returned the ids (RA.idsWhere): the same order the old per-scope read gave the rows.
+  const reqRows = (reqIds ? reqIds.list.map((id) => base.reqById.get(id)).filter(Boolean) : base.reqRows)
+    .map((r) => ({ ...r, client: clientName.has(r.clientId) ? { name: clientName.get(r.clientId) } : null }));
+  const appRows = appIds0 ? appIds0.list.map((id) => base.appById.get(id)).filter(Boolean) : base.appRows;
+  const { followUps, testCands } = base;
 
   // People. A follow-up imported from a tracker names its recruiter as text
   // (some have left and have no login); a name that matches a login IS that
@@ -478,25 +479,18 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     });
   });
 
-  const byApp = (rows) => {
-    const m = new Map();
-    rows.forEach((r) => {
-      if (!m.has(r.applicationId)) m.set(r.applicationId, []);
-      m.get(r.applicationId).push(r);
-    });
-    return m;
-  };
-  const evBy = byApp(events);
-  const fuBy = byApp(followUps);
-  const fbBy = byApp(feedback);
+  const evBy = base.evBy;
+  const fuBy = base.fuBy;
+  const fbBy = base.fbBy;
   const todayStart = new Date(`${today}T00:00:00.000Z`);
 
-  const apps = [];
-  appRows.forEach((a) => {
-    const r = reqMap.get(a.requirementId);
-    if (!r) return;
-    if (testCands.has(a.candidateId)) return;
-    a.candidate = candSource.get(a.candidateId) || null;
+  // Everything about an application that does NOT depend on the clock is worked
+  // out once per copy of the data (DERIVED, keyed like utils/reportAggregates.js);
+  // each request only adds what depends on today / its own scope.
+  const derivedKey = `${base.key}#${users.map((u) => `${u.id}:${u.name}:${u.team}`).join('|')}`; // person() reads the users
+  if (DERIVED.key !== derivedKey) DERIVED = { key: derivedKey, map: new Map() };
+  const derived = DERIVED.map;
+  const deriveApp = (a, r) => {
     const evs = evBy.get(a.id) || [];
     const fus = fuBy.get(a.id) || [];
 
@@ -539,31 +533,56 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     const fb = fbBy.get(a.id) || [];
     const clientFb = fb.find((x) => x.kind === 'Client') || fb.find((x) => x.kind === 'Internal');
     const closed = CLOSED_STAGES.includes(a.stage);
-    // The dashboard's Past SLA rule, verbatim: the stage's SLA days after
-    // the application last changed (utils/atsVocab.js applicationIsOverdue).
-    const overdue = !closed && applicationIsOverdue(a);
-    const due = overdue ? applicationDueDate(a) : null;
+    // The dashboard's Past SLA rule, verbatim (see ReportAppProto: overdue / daysOverdue).
 
-    const x = {
-      id: a.id, a, req: r, stage: a.stage, pipe: PIPE_OF[a.stage] || PIPE[0], reach,
+    // The candidate's source is read only where the application carries none.
+    const noSource = a.source === null && a.firstSource === null;
+    const blankSource = false; // (the clean list reads the person's own word whenever the application's says nothing: utils/candidateSource.js)
+    // The earliest open follow-up date: "has an open follow-up due before today" is whether it is before today.
+    let openDue = null;
+    fus.forEach((y) => { if (!y.completedAt && y.dueDate && (openDue === null || y.dueDate < openDue)) openDue = y.dueDate; });
+
+    return Object.assign(Object.create(ReportAppProto), {
+      id: a.id, a, stage: a.stage, pipe: PIPE_OF[a.stage] || PIPE[0], reach,
       lastReject: a.stage === 'REJECTED' ? (lastReject || null) : null,
       reached: (k) => (k === 'joined' ? joined : reach >= M[k]),
       screened: a.stage !== 'NEW' || reach > 0,
       joined,
       inPipeline: !closed,
-      since, daysInStage: Math.max(0, Math.floor((now - since) / DAY)),
+      since,
       crossedAt,
-      source: sourceOf(a),
+      source: sourceOf({ ...a, candidate: base.candById.get(a.candidateId) || null }),
+      blankSource,
       recruiter: recruiter || { key: '—', label: 'Unassigned', team: null },
       seat, tl, stl: r.stl, bde,
       evs, // the stage history — Results vs target counts moves in the period (utils/reportsPlus.js)
       recommendation: normalizeRecommendation(clientFb && clientFb.recommendation)
         || normalizeRecommendation(a.interviewResult),
       waitingOnRecruiter: (STAGE_OWNER_ACTION[a.stage] || {}).ownerRole === 'Recruiter' && !closed,
-      overdue,
-      daysOverdue: due ? Math.max(0, Math.floor((todayStart - new Date(`${due}T00:00:00.000Z`)) / DAY)) : null,
-      overdueFollowUp: fus.some((y) => !y.completedAt && y.dueDate && y.dueDate < today),
-    };
+      openDue,
+    });
+  };
+
+  let sourceless = null; // candidates of THIS scope's source-less applications (only needed for a blank source)
+  const apps = [];
+  appRows.forEach((a) => {
+    const r = reqMap.get(a.requirementId);
+    if (!r) return;
+    if (testCands.has(a.candidateId)) return;
+    let S = derived.get(a.id);
+    if (!S) { S = deriveApp(a, r); derived.set(a.id, S); }
+    const x = Object.create(S);
+    x.req = r;
+    x.daysInStage = Math.max(0, Math.floor((now - S.since) / DAY));
+    x._todayStart = todayStart;
+    x.overdueFollowUp = S.openDue !== null && S.openDue < today;
+    if (S.blankSource) {
+      if (!sourceless) {
+        sourceless = new Set();
+        appRows.forEach((b) => { if (b.source === null && b.firstSource === null) sourceless.add(b.candidateId); });
+      }
+      x.source = sourceOf({ ...a, candidate: sourceless.has(a.candidateId) ? base.candById.get(a.candidateId) || null : null });
+    }
     x.joinOutcome = x.reached('selected') ? joiningOutcome(x, today) : null;
     apps.push(x);
   });
@@ -581,7 +600,8 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   if (seatSet) list = list.filter((x) => seatSet.includes(x.seat));
   // Case-insensitive, as the Source report merges "Nish technologies" and
   // "Nish Technologies" into one row.
-  if (f.source) list = list.filter((x) => x.source.toLowerCase() === f.source.toLowerCase());
+  // Source: one or several clean names (?source=Naukri,Shine); an old raw word is mapped to its clean one.
+  if (f.source) { const want = CSRC.parseSourceFilter(f.source); list = list.filter((x) => want.has(x.source)); }
   if (f.joiningStatus) list = list.filter((x) => x.joinOutcome === f.joiningStatus);
   const appIds = new Set(list.map((x) => x.id));
 
@@ -764,7 +784,7 @@ function buildFunnel(ctx) {
     { key: 'count', label: 'Applications', drill: 'app' },
     { key: 'ofAll', label: '% of applications', type: 'pct' },
     { key: 'ofPrev', label: 'Conversion from previous step', type: 'pct' },
-  ], { sub: 'Cumulative — an application that reached a later step is counted in every earlier one. Shortlisted = recruiter approved or further.' });
+  ], { sub: 'Cumulative — an application that reached a later step is counted in every earlier one, so these numbers are bigger than the strip on Candidates & Pipeline, which counts where each application is NOW. Shortlisted = recruiter approved or further.' });
   FUNNEL_STEPS.forEach((st) => {
     const row = funnel.row(st.key);
     row.cells.step = st.label;
@@ -1277,13 +1297,13 @@ function buildClients(ctx) {
     { key: 'joined', label: 'Joined', drill: 'app' },
     { key: 'openReqs', label: 'Open reqs', drill: 'req' },
     { key: 'shared', label: 'Shared', drill: 'app' },
-    { key: 'feedback', label: 'Feedback pending', drill: 'app' },
-    { key: 'aging', label: 'Feedback aging (avg days)', type: 'num' },
+    { key: 'feedback', label: 'Client has not replied', drill: 'app' },
+    { key: 'aging', label: 'Waiting for the client (avg days)', type: 'num' },
     { key: 'waiting8', label: 'Waiting 8+ days', drill: 'app' },
     { key: 'rejected', label: 'Rejected', drill: 'app' },
     { key: 'hold', label: 'Hold', drill: 'app' },
   ], {
-    sub: 'Feedback pending: shared and not yet reviewed, or interviewed and not yet decided; its aging is how long they have waited in that stage. Rejected and Hold count candidates the client had seen (shared or further) — one TeamLink screened out never reached the client.',
+    sub: 'Client has not replied: shared with the client and not yet reviewed, or interviewed and the client has not decided (this is NOT the same as "Interview done, no feedback" on the dashboard, which counts interviews nobody has written feedback for); the waiting time is how long they have waited in that step. Rejected and Hold count candidates the client had seen (shared or further) — one TeamLink screened out never reached the client.',
     paged: true,
   });
   const rowFor = (r) => {
@@ -1321,9 +1341,9 @@ function buildClients(ctx) {
   t.push('requirements', 'Requirements', tot.requirements);
   t.push('shared', 'Candidates Shared', tot.shared);
   t.push('interviews', 'Interviews', tot.interviews);
-  t.push('feedback', 'Pending Client Feedback', tot.feedback);
-  t.value('aging', 'Feedback Aging', tot.aging, 'average days waiting');
-  t.push('waiting8', 'Feedback Waiting 8+ Days', tot.waiting8);
+  t.push('feedback', 'Client has not replied', tot.feedback);
+  t.value('aging', 'Waiting for the client', tot.aging, 'average days waiting');
+  t.push('waiting8', 'Client has not replied, 8+ days', tot.waiting8);
   t.push('selected', 'Selected', tot.selected);
   t.push('joined', 'Joined', tot.joined);
   t.push('rejected', 'Rejected (after sharing)', tot.rejected);
@@ -1350,7 +1370,7 @@ const IV_COLS = [
   { key: 'scheduled', label: 'Scheduled', drill: 'app' },
   { key: 'confirmed', label: 'of which Confirmed / Started', drill: 'app' },
   { key: 'completed', label: 'Completed', drill: 'app' },
-  { key: 'feedback', label: 'Feedback Pending', drill: 'app' },
+  { key: 'feedback', label: 'Marked "waiting for feedback"', drill: 'app' },
   { key: 'rescheduled', label: 'Rescheduled', drill: 'app' },
   { key: 'cancelled', label: 'Cancelled', drill: 'app' },
   { key: 'noShow', label: 'No Show', drill: 'app' },
@@ -1740,7 +1760,7 @@ function buildSla(ctx) {
     { key: 'openJobs', label: 'Open jobs', drill: 'req' },
     { key: 'firstOk', label: 'First profiles sent in time', drill: 'req' },
     { key: 'firstLate', label: 'First profiles late', drill: 'req' },
-    { key: 'feedbackWaiting', label: 'Waiting for client feedback', drill: 'app' },
+    { key: 'feedbackWaiting', label: 'Client has not replied', drill: 'app' },
     { key: 'feedbackLate', label: 'Feedback late now', drill: 'app' },
   ], {
     sub: 'A client\'s own numbers (Clients → client → Client promises) or the Step-timing defaults. First profiles = from the day the job was raised to the first profile sent to the client; Feedback late = profiles with the client past that client\'s days.',
@@ -2116,6 +2136,9 @@ const REPORTS = {
   costperhire: { title: 'Cost per hire', build: CPH.build, prepare: CPH.prepare, appDate: null },
 };
 const DATE_BASIS = {
+  // 2026-10-10: say which Joined this is (the dashboard's "Joined this month" is by JOINING date; here the range is the day the person was added).
+  departments: 'Date range: candidates by the day they were added to the job; jobs by the day they were raised. "Joined" here counts people ADDED in the range who joined (on any date). The dashboard Joined this month counts people whose joining date is this month. With All Time they agree.',
+  joining: 'Date range: candidates by the day they were added to the job. "Joined" here counts people ADDED in the range who joined (on any date), not people who joined in the range - Time to fill counts by the day they joined. With All Time they agree.',
   costperhire: 'Date range: the month(s) of the joining (this month when no range is set). Costs sit in the month of the joining they produced.',
   // Section 17 (utils/reportsPlus.js).
   timetofill: 'Date range: the day the person joined.',
@@ -2178,6 +2201,10 @@ async function build(req, reportId, { fresh = false } = {}) {
 // array in column order: the requirement table is four thousand rows, and
 // repeating a dozen key names on every one of them doubled the payload.
 function serialize(reportId, { spec, f, ctx, out }, user) {
+  // P3: the BDE team's tables carry no recruiter / TL / STL columns.
+  if (user && require('../utils/clientRedact').privacyFlagsFor(user)?.bde) { // eslint-disable-line global-require
+    out.sections.forEach((s) => { s.columns = s.columns.filter((c) => !['recruiter', 'tl', 'stl'].includes(c.key)); });
+  }
   // Everyday words on every label (spec §2: Job, Step, Late, People in process).
   const W = PLUSX.plainWords;
   const val = (v) => (v instanceof Cell ? v.n : v);
@@ -2268,7 +2295,7 @@ router.get('/options', VIEW, guarded(async (req, res) => {
     prisma.application.groupBy({ by: ['source', 'firstSource'], where: appsOf, _count: { _all: true } }),
     prisma.candidate.groupBy({
       by: ['source', 'firstSource'],
-      where: { applications: { some: { AND: [appsOf, { source: null, firstSource: null }] } } },
+      where: { applications: { some: appsOf } }, // the person's own word is the fallback for every application
       _count: { _all: true },
     }),
   ]);
@@ -2310,7 +2337,7 @@ router.get('/options', VIEW, guarded(async (req, res) => {
   });
   const sources = new Map();
   const addSource = (x) => { if (!sources.has(x.toLowerCase())) sources.set(x.toLowerCase(), x); };
-  appSources.forEach((g) => { if (g.source || g.firstSource) addSource(sourceOf(g)); });
+  appSources.forEach((g) => addSource(sourceOf(g)));
   candSources.forEach((g) => addSource(sourceOf({ candidate: g })));
   const listOf = (m) => [...m.entries()].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
 
@@ -2320,10 +2347,10 @@ router.get('/options', VIEW, guarded(async (req, res) => {
     requirements: reqs.map((r) => ({
       id: r.id, label: `${r.reqCode ? `${r.reqCode} · ` : ''}${r.title}${r.internal ? '' : ` — ${(r.client && r.client.name) || ''}`}`,
     })).sort((a, b) => a.label.localeCompare(b.label)),
-    recruiters: listOf(recruiters),
-    tls: listOf(tls),
-    stls: listOf(stls),
-    bdes: listOf(bdes),
+    recruiters: isBdeTeam(req.user) ? [] : listOf(recruiters),
+    tls: isBdeTeam(req.user) ? [] : listOf(tls),
+    stls: isBdeTeam(req.user) ? [] : listOf(stls),
+    bdes: isBdeTeam(req.user) ? [] : await require('../utils/bdeSeats').labelBdeOptions(listOf(bdes)), // eslint-disable-line global-require
     locations: [...new Set(reqs.map((r) => r.location).filter((l) => clean(l)))].sort(),
     sources: [...sources.values()].sort((a, b) => a.localeCompare(b)),
     statuses: [
@@ -2397,9 +2424,16 @@ async function reportFacets(user, q0) {
   [...PLUS.FACET_KEYS, 'positionCode', 'section', 'report'].forEach((k) => { delete base[k]; });
   const f = parseFilters(await PLUSX.expandQuery(base));
   const ctx = await contextFor(user, f, spec.appDate === undefined ? 'createdAt' : spec.appDate, false);
-  return PLUS.facetCounts(ctx, q, await PLUSX.positions());
+  const counted = PLUS.facetCounts(ctx, q, await PLUSX.positions());
+  // BDE options read "Name · BDE MED" (the position); the value is unchanged.
+  if (counted && counted.facets && counted.facets.bde) await require('../utils/bdeSeats').labelBdeOptions(counted.facets.bde); // eslint-disable-line global-require
+  return counted;
 }
 router.reportFacets = reportFacets;
+// utils/reportPack.js (team-wise / individual reports + their exports): the SAME scoped rows every report here is
+// counted from (this login's scope, the period/department as filters), so a pack number equals the report's.
+router.packContext = async (user, query, appDate = 'createdAt') => contextFor(user, parseFilters(query || {}), appDate, false);
+router.PIPE = PIPE;
 
 const REVENUE_DENIED = 'Client revenue is only for Super Admin, Admin and Accounts.';
 async function revenueFor(req, extra = {}) {
@@ -2515,6 +2549,19 @@ router.get('/recruiter-revenue/export', guarded(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
   return res.send(exportXlsx(payload, meta));
 }));
+
+// P3 (user, 2026-10-09): the BDE team's reports are their client acquisition,
+// the requirements they generated and client-wise outcomes: never a recruiter /
+// TL / team / source breakdown, never another BDE's numbers.
+const BDE_REPORTS = ['funnel', 'requirements', 'clients', 'interviews', 'joining'];
+const BDE_PEOPLE_FILTERS = ['recruiter', 'tl', 'stl', 'bde', 'team', 'positionCode', 'section'];
+const isBdeTeam = (user) => { const fl = require('../utils/clientRedact').privacyFlagsFor(user); return !!(fl && fl.bde); }; // eslint-disable-line global-require
+router.param('report', (req, res, next, id) => {
+  if (!isBdeTeam(req.user)) return next();
+  if (!BDE_REPORTS.includes(id)) return res.status(403).json({ error: 'This report is not part of the BDE view. Your reports are client-wise: Clients, Jobs, Interviews, Joining and the Funnel.' });
+  BDE_PEOPLE_FILTERS.forEach((k) => { delete req.query[k]; });
+  return next();
+});
 
 router.get('/:report', VIEW, guarded(async (req, res) => {
   const built = await build(req, req.params.report, { fresh: true });
@@ -2985,5 +3032,27 @@ router.get('/:report/export', EXPORT, guarded(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
   return res.send(exportXlsx(payload, meta));
 }));
+
+// BOOT WARM-UP (perf, 2026-10-10): the first report after a restart paid for reading the whole company once
+// (~3-5 s). Read it in the background shortly after the server is up, once the other warm-ups have run
+// (utils/atsHome.js, utils/candidateWarmup.js). Same read the reports do; nothing is computed differently.
+// Off in the test sandbox unless REPORT_WARMUP=1; REPORT_WARMUP=0 switches it off everywhere.
+(function warmReports() {
+  const flag = String(process.env.REPORT_WARMUP == null ? '' : process.env.REPORT_WARMUP).trim();
+  if (/^(0|false|no|off)$/i.test(flag)) return;
+  if (require('../utils/sandbox').isSandbox() && !/^(1|true|yes|on)$/i.test(flag)) return; // eslint-disable-line global-require
+  const delay = Number(process.env.REPORT_WARMUP_DELAY_MS);
+  const t = setTimeout(() => {
+    (async () => {
+      await RA.getBase();
+      // One whole-company load for a real Super Admin, so the per-application work (RA's DERIVED map) is done too.
+      const sa = (await prisma.user.findMany({ where: { role: 'SUPER_ADMIN', status: 'Active' }, select: { id: true, name: true, email: true }, take: 20 }))
+        .find((u) => !/zztest|example\.test/i.test(`${u.name} ${u.email}`));
+      const user = sa && await require('../utils/identity').resolveIdentity(sa.id); // eslint-disable-line global-require
+      if (user) await loadContext(user, parseFilters({}), { appDate: 'createdAt' });
+    })().catch((err) => console.error('[reports] warm-up failed:', err.message)); // eslint-disable-line no-console
+  }, Number.isFinite(delay) && delay >= 0 ? delay : 45000);
+  if (t.unref) t.unref();
+}());
 
 module.exports = router;

@@ -23,3 +23,16 @@ body.tl-modal-open .ai-fab{display:none !important}
 .ai-fab.ai-fab-pill{width:52px;height:52px;padding:0;border-radius:50%;justify-content:center}
 .ai-fab-pill .ai-fab-mark.ai-fab-emoji{font-size:26px;line-height:1;letter-spacing:0}
 @media (max-width:560px){.ai-fab.ai-fab-pill{width:46px;height:46px;padding:0}.ai-fab-pill .ai-fab-mark.ai-fab-emoji{font-size:22px}}
+
+/* ASK answers: the numbers, a small table, and where they came from; the DO confirm card. */
+.ai-numbers{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ai-number{display:flex;flex-direction:column;min-width:74px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper-raised)}
+.ai-number b{font-size:15px;font-variant-numeric:tabular-nums;color:var(--navy)}
+.ai-number span{font-size:10.5px;color:var(--ink-soft);line-height:1.25}
+.ai-rows{margin-top:8px;width:100%;border-collapse:collapse;font-size:11.5px}
+.ai-rows td{padding:3px 6px;border-top:1px solid var(--line);vertical-align:top;word-break:break-word}
+.ai-source{margin-top:7px;font-size:10.5px;line-height:1.4}
+.ai-action-title{font-size:14px;font-weight:700;color:var(--navy);margin:2px 0 4px}
+.ai-action-high{border-width:2px}
+.ai-action-impact{color:var(--amber);font-weight:600}
+@media (max-width:560px){.ai-number{min-width:64px}.ai-action-details{grid-template-columns:1fr}.ai-action-details dt{margin-top:4px}}

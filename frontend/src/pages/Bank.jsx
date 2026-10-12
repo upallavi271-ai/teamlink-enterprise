@@ -10,6 +10,9 @@ import AccountsImport from '../components/AccountsImport.jsx';
 import MatchPanel from './bank/MatchPanel.jsx';
 import HandLoans from './bank/HandLoans.jsx';
 import BankStatements from './bank/BankStatements.jsx';
+import Unallocated from './bank/Unallocated.jsx';
+import TxnDetail from './bank/TxnDetail.jsx';
+import './bank/unallocated.css';
 import ScrollSync from '../components/accounts/ScrollSync.jsx';
 import { fmtD as fmtLong, todayIso as todayLocal } from './invoices/invFormat';
 import './bank/bank-s6.css';
@@ -21,21 +24,19 @@ const signedMoney = (n) => (n == null ? '—' : `${n < 0 ? '−' : ''}${money2(M
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthLabel = (k) => (/^\d{4}-\d{2}$/.test(k || '') ? `${MONTHS[Number(k.slice(5, 7)) - 1]}-${k.slice(0, 4)}` : k);
-const fmtD = (d) => {
-  if (!d) return '—';
-  const s = String(d).slice(0, 10);
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
-};
+// One date format across Accounts ("18 Aug 2026") - the same as Invoices and Office.
+const fmtD = (d) => fmtLong(d);
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 // The reconciliation state machine, as the accountant sees it.
-const STATES = ['All', 'Unmatched', 'Matched', 'Reconciled', 'Ignored'];
+const STATES = ['All', 'Needs Review', 'Unmatched', 'Matched', 'Reconciled', 'Reversed', 'Ignored'];
 
 const STATE_CLASS = {
   Reconciled: 'priority-low',
   Matched: 'priority-medium',
   Unmatched: 'priority-high',
+  'Needs Review': 'priority-medium',
+  Reversed: 'priority-high',
   Ignored: '',
 };
 
@@ -53,7 +54,7 @@ const LINE_FIELDS = [
   { key: 'q', type: 'search', placeholder: 'Search narration, reference, client, invoice…', get: lineText },
   { key: 'type', label: 'Type', allLabel: 'All types', options: LINE_TYPES, get: (t) => t.type, primary: true },
   { key: 'date', type: 'daterange', label: 'Date range', get: (t) => t.date, primary: true },
-  { key: 'state', label: 'Status', allLabel: 'All statuses', options: ['Unmatched', 'Matched', 'Reconciled', 'Ignored'], get: (t) => t.state },
+  { key: 'state', label: 'Status', allLabel: 'All statuses', options: ['Needs Review', 'Unmatched', 'Matched', 'Reconciled', 'Reversed', 'Ignored'], get: (t) => t.displayState || t.state },
 ];
 const LINE_SORTS = [
   { key: 'new', label: 'Newest first', cmp: (a, b) => String(b.date || '').localeCompare(String(a.date || '')) },
@@ -561,17 +562,18 @@ async function downloadWorkbook() {
 // ===========================================================================
 
 function AccountView({
-  account, accountId, transactions, setView, setDialog, act, call, busy,
+  account, accountId, transactions, setView, setDialog, act, call, busy, load,
   tab, setTab, pill, setPill, setPage, position, canManage,
 }) {
   let list = transactions;
-  if (tab === 'un') list = list.filter((t) => t.state !== 'Reconciled' && !t.category && !t.categoryKind && !t.excluded);
-  else if (tab === 'ok') list = list.filter((t) => t.state === 'Reconciled' || t.category || t.categoryKind);
+  if (tab === 'un') list = list.filter((t) => t.state !== 'Reconciled' && t.state !== 'Reversed' && !t.category && !t.categoryKind && !t.excluded);
+  else if (tab === 'ok') list = list.filter((t) => t.state === 'Reconciled' || t.state === 'Reversed' || t.category || t.categoryKind);
   if (tab === 'un') {
     if (pill === 'rec') list = list.filter((t) => t.read && t.read.kind !== 'none');
     else if (pill === 'pos') list = list.filter(isPossible);
     else if (pill === 'ex') list = transactions.filter((t) => t.excluded);
     else if (pill === 'rev') list = list.filter((t) => t.plan);
+    else if (pill === 'nr') list = list.filter((t) => t.needsReview);
   }
   const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS });
   const pg = usePaged(lf.rows, 50);
@@ -583,6 +585,10 @@ function AccountView({
   const possibleCount = transactions.filter((t) => !t.excluded && t.state !== 'Reconciled' && !t.category && !t.categoryKind && isPossible(t)).length;
   // S5: lines the app has a suggestion for — one-click Accept.
   const reviewCount = transactions.filter((t) => t.plan).length;
+  // Lines the automatic pass could not settle safely (ambiguous, conflicting, nearly matching) - each carries its reason.
+  const needsReviewCount = transactions.filter((t) => t.needsReview).length;
+  // Money in that is not (fully) against an invoice yet.
+  const unallocCount = transactions.filter((t) => t.type === 'Credit' && Number(t.unallocated) > 0.004 && !['Ignored', 'Reversed'].includes(t.state) && !t.category && !t.categoryKind && !t.excluded).length;
   const total = lf.rows.length;
   const shown = pg.slice;
 
@@ -600,6 +606,7 @@ function AccountView({
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
           {canManage && <button className="btn btn-sm" onClick={() => call('post', '/bank/quick-categorise', { bankAccountId: accountId }, (d) => `${d.filed} recognised debit(s) filed.`)}>⚡ Quick categorize</button>}
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'entry' })}>＋ Add transaction</button>}
+          {canManage && <button className="btn btn-sm" title="Look at every waiting line again - after you add a bill, a vendor or a saved narration" onClick={() => call('post', '/bank/reconsider', { bankAccountId: accountId }, (d) => `Checked ${d.checked} waiting line(s): ${d.matched} matched, ${d.needsReview} need a look.`)}>🔄 Check again</button>}
           <button className="btn btn-sm" onClick={() => setView('recon')}>🧾 Reconciliation</button>
           <button className="btn btn-sm" onClick={() => setView('loans')}>🤝 Hand loans</button>
           {canManage && <button className="btn btn-sm" onClick={() => setDialog({ kind: 'account', account })}>⚙</button>}
@@ -622,11 +629,18 @@ function AccountView({
         <button className={`tab-btn ${tab === 'all' ? 'active' : ''}`} onClick={() => { setTab('all'); setPage(0); }}>
           {s.lines + s.excluded} Every line
         </button>
+        <button className={`tab-btn ${tab === 'ua' ? 'active' : ''}`} onClick={() => { setTab('ua'); setPage(0); }}>
+          {unallocCount} Unallocated payments
+        </button>
       </div>
 
+      {tab === 'ua' ? (
+        <Unallocated accountId={accountId} canManage={canManage} onChanged={load} onOpen={(id) => setDialog({ kind: 'txn', id, transactions, canManage })} />
+      ) : (
+        <>
       {tab === 'un' && (
         <div className="filter-row" style={{ alignItems: 'center' }}>
-          {[['all', 'All', s.unmatched], ['rev', 'Needs your review', reviewCount], ['rec', 'Recognised', s.recognised], ['pos', 'Possible matches', possibleCount], ['ex', 'Excluded', s.excluded]].map(([k, l, n]) => (
+          {[['all', 'All', s.unmatched], ['nr', 'Needs review', needsReviewCount], ['rev', 'Has a suggestion', reviewCount], ['rec', 'Recognised', s.recognised], ['pos', 'Possible matches', possibleCount], ['ex', 'Excluded', s.excluded]].map(([k, l, n]) => (
             <button key={k} className={`btn btn-sm ${pill === k ? 'btn-primary' : ''}`} onClick={() => { setPill(k); setPage(0); }}>
               {l} ({n})
             </button>
@@ -642,16 +656,18 @@ function AccountView({
           <thead>
             <tr>
               <th>Date</th><th>Statement details</th><th className="num">Deposits</th><th className="num">Withdrawals</th>
-              <th>What the app thinks</th><th>Action</th>
+              <th>Status / linked to</th><th>What the app thinks</th><th>Action</th>
             </tr>
           </thead>
           <tbody>
             {shown.map((t) => (
               <tr key={t.id} style={t.excluded ? { opacity: 0.55 } : undefined}>
-                <td>{fmtD(t.date)}</td>
+                <td>{fmtD(t.date)}{t.valueDate && t.valueDate !== t.date && <div className="small-muted">value {fmtD(t.valueDate)}</div>}</td>
                 <td style={{ minWidth: 320 }}>
                   <span className="small-muted">Description: </span>{String(t.description || '—').slice(0, 150)}
-                  {t.reference && <span className="small-muted"> (Ref# {t.reference})</span>}
+                  {t.reference && <span className="small-muted"> (Ref/UTR {t.reference})</span>}
+                  {t.needsReview && <div className="ua-why">{t.reviewReason}</div>}
+                  {' '}<button type="button" className="link-btn" onClick={() => setDialog({ kind: 'txn', id: t.id, transactions, canManage })}>Details</button>
                 </td>
                 <td className="num" style={{ color: 'var(--teal)' }}>
                   {t.type !== 'Credit' ? '—' : (canManage
@@ -662,6 +678,12 @@ function AccountView({
                   {t.type !== 'Debit' ? '—' : (canManage
                     ? <button type="button" className="link-btn" onClick={() => setDialog({ kind: 'catz', txn: t, tab: t.read?.kind === 'expense' ? 'cat' : 'match' })}>{money2(t.amount)}</button>
                     : money2(t.amount))}
+                </td>
+                <td>
+                  <span className={`status ${STATE_CLASS[t.displayState || t.state] || ''}`}>{t.displayState || t.state}</span>
+                  {(t.clientName || t.vendor) && <div className="small-muted">{t.clientName || t.vendor}</div>}
+                  {t.linkedTo && <div className="small-muted">{t.linkedTo.kind === 'invoice' ? `${t.linkedTo.count} invoice(s)` : t.linkedTo.label}</div>}
+                  {t.difference != null && Math.abs(t.difference) > 0.004 && <div className="small-muted" title="Amount minus what it is linked to">difference {money2(t.difference)}</div>}
                 </td>
                 <td>
                   <Thinks txn={t} />
@@ -694,7 +716,7 @@ function AccountView({
             ))}
             {!shown.length && (
               <tr>
-                <td colSpan="6" className={lf.activeCount ? undefined : 'empty'}>
+                <td colSpan="7" className={lf.activeCount ? undefined : 'empty'}>
                   {lf.activeCount ? <ListEmpty lf={lf} noun="lines" />
                     : (s.lines ? 'Nothing in this list.' : 'No lines yet. Press Import statement and choose your bank’s CSV or Excel file.')}
                 </td>
@@ -708,6 +730,9 @@ function AccountView({
         Press a <b>deposit</b> or a <b>withdrawal</b> figure to open it — every match the app can see, and a form to file it by hand.
         {' '}<b>Exclude</b> leaves a line on file but out of the count, for a transfer you never want to categorise.
       </div>
+
+        </>
+      )}
 
       <DuplicatesCard position={position} accountId={accountId} call={call} canManage={canManage} />
       <HowMatchCard position={position} />
@@ -786,7 +811,7 @@ function Recon({
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
 
   // The State tab, then Search / Type / Date range on top of it.
-  const stateRows = state === 'All' ? lf.rows : lf.rows.filter((t) => t.state === state);
+  const stateRows = state === 'All' ? lf.rows : lf.rows.filter((t) => (t.displayState || t.state) === state);
   const keep = new Set(stateRows.map((t) => t.id));
   const narrowed = lf.activeCount > 0;
 
@@ -1560,6 +1585,7 @@ function Dialogs({
   if (dialog.kind === 'entry') return <EntryDialog accountId={accountId} onClose={close} call={call} />;
   if (dialog.kind === 'mark') return <MarkDialog accountId={accountId} onClose={close} call={call} />;
   if (dialog.kind === 'rules') return <RulesDialog rules={rules} onClose={close} call={call} />;
+  if (dialog.kind === 'txn') return <TxnDetail txnId={dialog.id} transactions={dialog.transactions || []} canManage={dialog.canManage} onClose={close} onChanged={load} />;
   if (dialog.kind === 'catz') {
     return (
       <MatchPanel

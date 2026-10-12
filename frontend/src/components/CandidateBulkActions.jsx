@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import Modal from './Modal.jsx';
 import Combo from './Combo.jsx';
+import { JobPickerCombo } from './JobPicker.jsx';
 import { workflowStages } from '../permissions';
 import {
   stageLabel, INTERVIEW_MODES, HOLD_REASON_CATEGORIES, REJECTED_BY_OPTIONS,
@@ -9,6 +10,8 @@ import {
 } from '../atsVocab';
 // Rejections (spec 2026-10-03 §A1): the one reject form, shared with Candidate 360.
 import { RejectFields, rejectReady, rejectPayload } from './rejections/rejectionUi.jsx';
+// Bulk interview scheduling: "Message all N candidates" (2026-10-10).
+import SendManyDialog from './messaging/SendMessage.jsx';
 
 // ---------------------------------------------------------------------------
 // BULK ACTIONS on the selected candidates (spec §25):
@@ -45,24 +48,28 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
     rejectKind: 'not_suitable', clientSaid: '',
     reviewOn: inDaysYmd(7), requirementId: '',
   });
-  const [jobs, setJobs] = useState([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  const [tellMany, setTellMany] = useState(null); // { ids, already, checking }
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  // After a bulk interview booking: who was NOT yet told (an automatic step message may have gone already)?
+  async function openTell(okRows) {
+    setTellMany({ checking: true, ids: [], already: 0 });
+    try {
+      const r = await api.post('/ats/interviews/tell/status', { applicationIds: okRows.map((x) => x.applicationId).filter(Boolean) });
+      const rows = r.data.rows || [];
+      setTellMany({ ids: rows.filter((x) => !x.told).map((x) => x.candidateId), already: rows.filter((x) => x.told).length, total: rows.length });
+    } catch { setTellMany({ ids: okRows.map((x) => x.candidateId).filter(Boolean), already: 0, total: okRows.length }); }
+  }
 
   useEffect(() => {
     if (kind !== 'assign') return;
     api.get('/requirements/assignable-people')
       .then((r) => setPeople((r.data || []).filter((p) => ['RECRUITER', 'TL', 'STL'].includes(p.atsRole))))
       .catch(() => setPeople([]));
-  }, [kind]);
-  useEffect(() => {
-    if (kind !== 'addToJob') return;
-    api.get('/requirements')
-      .then((r) => setJobs((r.data || []).filter((x) => x.status !== 'CLOSED')))
-      .catch(() => setJobs([]));
   }, [kind]);
 
   // Offer / Offer accepted / Joined / Hired come from the Offers and Joining
@@ -163,6 +170,29 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
         {notes.length > 0 && (
           <div className="small-muted" style={{ margin: '8px 0' }}>{notes[0].note}</div>
         )}
+        {kind === 'interview' && okRows.length > 0 && (
+          <div style={{ margin: '10px 0' }}>
+            <button type="button" className="btn btn-primary" disabled={!!(tellMany && tellMany.checking)} onClick={() => openTell(okRows)}>
+              {`Message all ${okRows.length} candidate${okRows.length === 1 ? '' : 's'}`}
+            </button>
+            <div className="small-muted" style={{ marginTop: 4 }}>
+              Tell them their interview by Mail, WhatsApp and SMS. Anyone who already got the automatic message is left out.
+            </div>
+            {tellMany && !tellMany.checking && tellMany.ids.length === 0 && (
+              <div className="notice green" style={{ marginTop: 6 }}>All {tellMany.total} were already told automatically. Nothing more to send.</div>
+            )}
+          </div>
+        )}
+        {tellMany && !tellMany.checking && tellMany.ids.length > 0 && (
+          <SendManyDialog
+            mode="Omnichannel"
+            audience="candidates"
+            ids={tellMany.ids}
+            purposeLabel="Interview booked"
+            note={tellMany.already ? `${tellMany.already} already got the automatic message and are left out.` : undefined}
+            onClose={() => setTellMany({ ...tellMany, ids: [] })}
+          />
+        )}
         {bad.length > 0 && (
           <div className="cbulk-results">
             {bad.map((x, i) => (
@@ -191,7 +221,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
             disabled={!ready || busy}
             onClick={run}
           >
-            {busy ? `Working… ${progress}/${items.length}` : `${TITLES[kind]} (${items.length})`}
+            {busy ? `Working... ${progress}/${items.length}` : `${TITLES[kind]} (${items.length})`}
           </button>
         </>
       )}
@@ -292,10 +322,11 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       {kind === 'addToJob' && (
         <label className="field">
           <span>Job *</span>
-          <Combo value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })}>
-            <option value="">Choose a job…</option>
-            {jobs.map((r) => <option key={r.id} value={r.id}>{`${r.title} — ${r.internal ? 'TeamLink (internal)' : (r.client && r.client.name) || ''}`}</option>)}
-          </Combo>
+          <JobPickerCombo
+            value={form.requirementId}
+            onChange={(e) => set({ requirementId: e.target.value })}
+            labelOf={(r) => `${r.title} — ${r.internal ? 'TeamLink (internal)' : (r.client && r.client.name) || ''}`}
+          />
         </label>
       )}
 

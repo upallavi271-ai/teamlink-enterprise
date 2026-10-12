@@ -79,16 +79,36 @@ const V = require('./atsVocab');
 const IST_OFFSET_MS = 330 * 60000;
 const DAY_MS = 86400000;
 const STAMP_TTL_MS = 5000;
+// PERF (Batch 1): both run ~100k times when the Candidates list is built, and a
+// day has only ONE answer: the formatted date of each day number is kept.
+const DAY_NAMES = new Map();
+const dayName = (dayNo) => {
+  let s = DAY_NAMES.get(dayNo);
+  if (s === undefined) {
+    s = new Date(dayNo * DAY_MS).toISOString().slice(0, 10);
+    if (DAY_NAMES.size > 20000) DAY_NAMES.clear();
+    DAY_NAMES.set(dayNo, s);
+  }
+  return s;
+};
 const istDay = (v) => {
   if (!v) return null;
-  const t = new Date(v).getTime();
-  return Number.isNaN(t) ? null : new Date(t + IST_OFFSET_MS).toISOString().slice(0, 10);
+  const t = typeof v === 'number' ? v : new Date(v).getTime();
+  return Number.isNaN(t) ? null : dayName(Math.floor((t + IST_OFFSET_MS) / DAY_MS));
 };
 const todayIst = () => istDay(Date.now());
+const ADD_DAYS = new Map();
 const addDays = (day, n) => {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+  const key = `${day}|${n}`;
+  let s = ADD_DAYS.get(key);
+  if (s === undefined) {
+    const d = new Date(`${day}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    s = d.toISOString().slice(0, 10);
+    if (ADD_DAYS.size > 20000) ADD_DAYS.clear();
+    ADD_DAYS.set(key, s);
+  }
+  return s;
 };
 
 const CLOSED_STAGES = ['REJECTED', 'JOINED', 'HIRED'];
@@ -482,6 +502,11 @@ function clientOwnerId(r, snap) {
   const owner = r && r.client && r.client.bdeOwner;
   return owner ? snap.nameToId.get(normName(owner)) || null : null;
 }
+// The login of a client's Owner BDE (Client.bdeOwner holds the name) — null when the name is not a unique active login.
+function clientOwnerUserId(client) {
+  const owner = client && client.bdeOwner;
+  return owner ? SNAP.nameToId.get(normName(owner)) || null : null;
+}
 function namedOwner(role, r, snap) {
   if (!r) return { id: null, name: null, source: null };
   const rec = { id: r.recruiterId || String(r.recruiterIds || '').split(',').filter(Boolean)[0] || null, name: (r.recruiter && r.recruiter.name) || null };
@@ -633,6 +658,20 @@ function isNewUnreviewed(app, na, viewer, snap = SNAP) {
   return !(last > entered + grace);
 }
 
+// ---------------------------------------------------------------------------
+// "FEEDBACK PENDING" HAD FIVE NUMBERS (2026-10-09 review). Each now has ONE plain
+// name and one definition; where they truly differ the label says so:
+//   INTERVIEW DONE, NO FEEDBACK  isClientFeedbackPending() below: a client job whose interview has
+//        happened and nobody recorded the feedback. Dashboard tile / list (recent work only: old
+//        imported rows with no activity are "stale" and left out), Candidates & Pipeline tile
+//        (every such application, old imports included), Calendar tile (also counts internal jobs
+//        and booked slots whose time has passed).
+//   CLIENT HAS NOT REPLIED       the profile was sent to the client (Shared with client / Client
+//        review) and the client has not answered: dashboard "Client has not replied", Recruiter &
+//        BDE "Client has not replied", Clients report.
+//   MARKED "WAITING FOR FEEDBACK" Interviews report column: only interviews whose status was set to
+//        Pending feedback (imported rows have no status, so it is small).
+// ---------------------------------------------------------------------------
 const FEEDBACK_DONE_STATUSES = ['FEEDBACK_SUBMITTED'];
 function isClientFeedbackPending(app, snap = SNAP) {
   if (!app || isInternal(app)) return false;
@@ -676,6 +715,7 @@ module.exports = {
   STALE_AFTER_DAYS,
   staleAfterDays,
   isInternal,
+  clientOwnerUserId,
   todayIst,
   istDay,
   CLIENT_CHAIN,

@@ -1,8 +1,11 @@
 // ---------------------------------------------------------------------------
 // THE ATTENDANCE REPORT (user, 2026-10-05) — HRMS → Attendance → Dashboard.
 //
-// Cards: Present · Absent · Half day (1st / 2nd half) · Early logout · Late ·
-// Missing check-in · Missing check-out · On leave. Each card opens its list
+// TILES (user, 2026-10-09): Present · Absent · Half day (1st / 2nd half) · On leave ·
+// Week off / Holiday - they always add up to the Headcount. PRESENT is everyone who
+// came to work, so Late · Early logout · Missing check-in · Missing check-out are only
+// small clickable notes inside the Present tile (never tiles of their own).
+// Each tile opens its list
 // (name, employee ID, department, date, in, out, the plain reason). Every
 // number is the length of its list: both come from the same server rows
 // (GET /attendance/kpi-report, utils/attendanceDays.js classifyDay — the one
@@ -16,7 +19,7 @@ import { FacetSelect } from '../../components/ui/ListPageHeader.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import ScrollTable from '../../components/ScrollTable.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
-import { fmtDay, clock12, localToday, addDays } from './DayReport.jsx';
+import { fmtDay, clock12, localToday, addDays, HalfLeaveChip, HalfLeaveSub } from './DayReport.jsx';
 import './kpi-report.css';
 
 const MO = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -42,26 +45,29 @@ function rangeLabel(mode, from, to) {
   return fmtDay(from);
 }
 
-// The cards, in the user's order. tone = the four colours of the simple-UX
+// The tiles, in the user's order. tone = the four colours of the simple-UX
 // rule (green done · blue going on · orange waiting · red problem).
 const CARDS = [
-  { key: 'present', label: 'Present', tone: 'green', hint: 'Came and stayed till the end', hintOf: (r) => `Stayed till ${r.end}` },
+  { key: 'present', label: 'Present', tone: 'green', hint: 'Came to work' },
   { key: 'absent', label: 'Absent', tone: 'red', hint: 'No check-in, did not inform' },
-  { key: 'halfDay', label: 'Half day', tone: 'red', hint: 'Worked one half', parts: [['first', '1st half'], ['second', '2nd half'], ['marked', 'Marked by HR']] },
-  { key: 'earlyLogout', label: 'Early logout', tone: 'orange', hint: 'Left a little early', hintOf: (r) => `Left ${r.early} – ${r.end}` },
-  { key: 'late', label: 'Late', tone: 'orange', hint: 'Came late', hintOf: (r) => `Came after ${r.late}` },
-  { key: 'missingCheckIn', label: 'Missing check-in', tone: 'red', hint: 'Check-out only — HR to fix' },
-  { key: 'missingCheckOut', label: 'Missing check-out', tone: 'red', hint: 'Check-in only — HR to fix' },
+  { key: 'halfDay', label: 'Half day', tone: 'red', hint: 'Worked one half', parts: [['first', 'Worked 1st half'], ['second', 'Worked 2nd half'], ['marked', 'Marked by HR']] },
   { key: 'onLeave', label: 'On leave', tone: 'green', hint: 'Leave or told the manager', parts: [['approved', 'Approved'], ['pending', 'Pending'], ['informed', 'Informed']] },
-  { key: 'inOffice', label: 'Still in office', tone: 'blue', hint: 'Today, checked in', onlyIfAny: true },
+  { key: 'offDay', label: 'Week off / Holiday', tone: 'grey', hint: 'Sunday and company holidays' },
   { key: 'notYet', label: 'Not in yet', tone: 'blue', hint: 'Today, no punch yet', onlyIfAny: true },
   { key: 'noData', label: 'No device data', tone: 'grey', hint: 'Device has not sent these days', onlyIfAny: true },
-  // Not a KPI, but counted, so the cards add up to the headcount (user, 2026-10-05).
-  { key: 'offDay', label: 'Week off / Holiday', tone: 'grey', hint: 'Not a working day for them' },
 ];
+// The small notes INSIDE the Present tile (not tiles, not in the equation).
+const NOTES = [
+  { key: 'late', label: 'Late', hintOf: (r) => `Came after ${r.late}` },
+  { key: 'earlyLogout', label: 'Early logout', hintOf: (r) => `Left ${r.early} – ${r.end}` },
+  { key: 'missingCheckIn', label: 'Missing check-in', hintOf: () => 'Check-out only — HR to fix' },
+  { key: 'missingCheckOut', label: 'Missing check-out', hintOf: () => 'Check-in only — HR to fix' },
+];
+const LEAVE_NAME = { Approved: 'Approved', Pending: 'Pending approval', Rejected: 'Rejected', None: 'No leave applied' };
 const NAME = Object.fromEntries(CARDS.map((c) => [c.key, c.label]));
-// The cards that add up to the HEADCOUNT (Late is inside them).
-const SUMMED = CARDS.filter((c) => c.key !== 'late').map((c) => c.key);
+const NOTE_NAME = { ...Object.fromEntries(NOTES.map((c) => [c.key, c.label])), noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' };
+// The tiles that add up to the HEADCOUNT.
+const SUMMED = CARDS.map((c) => c.key);
 const hintOf = (k, r) => (r && k.hintOf ? k.hintOf(r) : k.hint);
 const t12 = (t) => (t ? clock12(String(t).slice(0, 5)) : '—');
 
@@ -70,7 +76,8 @@ export default function KpiReport({ onRangeChange } = {}) {
   const [anchor, setAnchor] = useState(localToday());
   const [dept, setDept] = useState('');
   const [emp, setEmp] = useState('');
-  const [pick, setPick] = useState({ kpi: '', part: '' });
+  const [pick, setPick] = useState({ kpi: '', part: '', note: '', leave: '' });
+  const [how, setHow] = useState('');
   const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -82,11 +89,11 @@ export default function KpiReport({ onRangeChange } = {}) {
   useEffect(() => {
     const mine = ++seq.current;
     setError('');
-    const params = { from, to, ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}) };
+    const params = { from, to, ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}), ...(how ? { how } : {}) };
     api.get('/attendance/kpi-report', { params })
       .then((res) => { if (mine === seq.current) setData(res.data); })
       .catch((e) => { if (mine === seq.current) setError(e.response?.data?.error || 'Could not load the attendance report. Please try again.'); });
-  }, [from, to, dept, emp]);
+  }, [from, to, dept, emp, how]);
 
   // The page around the report (daily marking, regularizations) follows its period.
   useEffect(() => { if (onRangeChange) onRangeChange(from, to); }, [from, to]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -94,13 +101,15 @@ export default function KpiReport({ onRangeChange } = {}) {
   // Picking a department that does not have the chosen person clears the person.
   useEffect(() => {
     if (emp && data && !(data.facets?.employeeId || []).some((o) => o.value === emp)) setEmp('');
-  }, [data, emp]);
+    if (how && data && !(data.facets?.how || []).some((o) => o.value === how)) setHow('');
+  }, [data, emp, how]);
 
   const rowsAll = (data && data.rows) || [];
   const match = (x) => {
     if (!pick.kpi) return true;
-    if (pick.kpi === 'late') return x.lateDay;
-    if (x.kpi !== pick.kpi) return false;
+    if (x.tile !== pick.kpi) return false;
+    if (pick.note) return (x.notes || []).includes(pick.note);
+    if (pick.kpi === 'halfDay' && pick.leave) return x.halfLeave === pick.leave;
     if (pick.kpi === 'halfDay' && pick.part) return pick.part === 'first' ? x.session === 'First half' : pick.part === 'second' ? x.session === 'Second half' : !x.session;
     if (pick.kpi === 'onLeave' && pick.part) return x.leaveKind === pick.part;
     return true;
@@ -109,13 +118,15 @@ export default function KpiReport({ onRangeChange } = {}) {
   const list = rowsAll.filter((x) => match(x) && (!s || `${x.name} ${x.employeeCode} ${x.department}`.toLowerCase().includes(s)));
   const page = usePaged(list, 50);
 
-  const choose = (kpi, part = '') => setPick((cur) => (cur.kpi === kpi && cur.part === part ? { kpi: '', part: '' } : { kpi, part }));
+  const choose = (kpi, part = '', note = '', leave = '') => setPick((cur) => (cur.kpi === kpi && cur.part === part && cur.note === note && cur.leave === leave ? noPick : { kpi, part, note, leave }));
+  const noPick = { kpi: '', part: '', note: '', leave: '' };
 
   async function exportExcel() {
     setBusy(true); setSaved('');
     try {
-      const params = { from, to, ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}), ...(pick.kpi ? { kpi: pick.kpi, part: pick.part } : {}), format: 'xlsx' };
-      const name = `attendance-${pick.kpi ? `${NAME[pick.kpi].toLowerCase().replace(/\s+/g, '-')}-` : ''}${from === to ? from : `${from}_to_${to}`}.xlsx`;
+      const params = { from, to, ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}), ...(how ? { how } : {}), ...(pick.kpi ? { tile: pick.kpi, ...(pick.note ? { note: pick.note } : {}), ...(pick.leave ? { leave: pick.leave } : {}), part: pick.part } : {}), format: 'xlsx' };
+      const tagName = pick.kpi ? (pick.note ? NOTE_NAME[pick.note] : NAME[pick.kpi]) : '';
+      const name = `attendance-${tagName ? `${tagName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-` : ''}${from === to ? from : `${from}_to_${to}`}.xlsx`;
       await downloadFrom('/attendance/kpi-report', params, name);
       setSaved(`Saved ${name}`);
     } catch { setError('Could not make the Excel file. Please try again.'); } finally { setBusy(false); }
@@ -123,9 +134,14 @@ export default function KpiReport({ onRangeChange } = {}) {
 
   const c = data ? data.cards : {};
   const parts = data ? data.parts : {};
-  const shownCards = CARDS.filter((k) => !k.onlyIfAny || (c[k.key] || 0) > 0);
+  const tiles = data ? (data.tiles || {}) : {};
+  const notes = data ? (data.notes || {}) : {};
+  const tileNotes = data ? (data.tileNotes || {}) : {};
+  // Small notes on Half day / On leave too (a missing punch stays visible when a leave is applied) - only the ones somebody has.
+  const tileNoteChips = (tk) => Object.keys(NOTE_NAME).filter((nk) => ((tileNotes[tk] || {})[nk] || 0) > 0).map((nk) => [nk, tileNotes[tk][nk]]);
+  const shownCards = CARDS.filter((k) => !k.onlyIfAny || (tiles[k.key] || 0) > 0);
   const listTitle = pick.kpi
-    ? `${NAME[pick.kpi]}${pick.part ? ` — ${(CARDS.find((k) => k.key === pick.kpi).parts || []).find(([v]) => v === pick.part)?.[1] || ''}` : ''}`
+    ? `${NAME[pick.kpi]}${pick.note ? ` — ${NOTE_NAME[pick.note]}` : ''}${pick.leave ? ` — half day leave: ${LEAVE_NAME[pick.leave]}` : ''}${pick.part ? ` — ${(CARDS.find((k) => k.key === pick.kpi).parts || []).find(([v]) => v === pick.part)?.[1] || ''}` : ''}`
     : 'Everyone (headcount)';
   const r = data && data.rule;
 
@@ -140,7 +156,7 @@ export default function KpiReport({ onRangeChange } = {}) {
       <div className="att-kr-bar">
         <div className="att-kr-seg" role="group" aria-label="Period">
           {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([k, l]) => (
-            <button key={k} type="button" className={`btn btn-sm${mode === k ? ' btn-primary' : ''}`} onClick={() => { setMode(k); setPick({ kpi: '', part: '' }); }}>{l}</button>
+            <button key={k} type="button" className={`btn btn-sm${mode === k ? ' btn-primary' : ''}`} onClick={() => { setMode(k); setPick(noPick); }}>{l}</button>
           ))}
         </div>
         <div className="att-kr-nav">
@@ -155,9 +171,10 @@ export default function KpiReport({ onRangeChange } = {}) {
       </div>
 
       <div className="att-kr-filters">
-        <FacetSelect label="Department" allLabel="All departments" value={dept} onChange={(v) => { setDept(v); setPick({ kpi: '', part: '' }); }} options={data?.facets?.department || []} loading={!data} />
-        <FacetSelect label="Employee" allLabel="Everyone" value={emp} onChange={(v) => { setEmp(v); setPick({ kpi: '', part: '' }); }} options={data?.facets?.employeeId || []} loading={!data} />
-        {(dept || emp) && <button type="button" className="btn btn-sm att-kr-clear" onClick={() => { setDept(''); setEmp(''); }}>Clear filters</button>}
+        <FacetSelect label="Department" allLabel="All departments" value={dept} onChange={(v) => { setDept(v); setPick(noPick); }} options={data?.facets?.department || []} loading={!data} />
+        <FacetSelect label="Employee" allLabel="Everyone" value={emp} onChange={(v) => { setEmp(v); setPick(noPick); }} options={data?.facets?.employeeId || []} loading={!data} />
+        <FacetSelect label="Check-in method" allLabel="Any method" value={how} onChange={(v) => { setHow(v); setPick(noPick); }} options={data?.facets?.how || []} loading={!data} />
+        {(dept || emp || how) && <button type="button" className="btn btn-sm att-kr-clear" onClick={() => { setDept(''); setEmp(''); setHow(''); }}>Clear filters</button>}
       </div>
 
       {error && <div className="notice red">{error}</div>}
@@ -181,14 +198,14 @@ export default function KpiReport({ onRangeChange } = {}) {
 
           <div className="att-kr-cards">
             <div className={`att-kr-card tone-navy head${!pick.kpi ? ' on' : ''}`}>
-              <button type="button" className="att-kr-main" onClick={() => setPick({ kpi: '', part: '' })} title="Everyone on the rolls in this period, with each person's status. Click to list them all.">
+              <button type="button" className="att-kr-main" onClick={() => setPick(noPick)} title="Everyone on the rolls in this period, with each person's status. Click to list them all.">
                 <span className="v">{data.headcount}</span>
                 <span className="l">Headcount</span>
                 <span className="h">{data.single ? `${data.people} on the rolls — click to list all` : `${data.people} people × days — click to list all`}</span>
               </button>
             </div>
             {shownCards.map((k) => {
-              const n = c[k.key] || 0;
+              const n = tiles[k.key] || 0;
               const on = pick.kpi === k.key;
               return (
                 <div key={k.key} className={`att-kr-card tone-${k.tone}${on ? ' on' : ''}`}>
@@ -197,6 +214,34 @@ export default function KpiReport({ onRangeChange } = {}) {
                     <span className="l">{k.label}</span>
                     <span className="h">{n ? hintOf(k, r) : 'Nobody'}</span>
                   </button>
+                  {k.key === 'present' && (
+                    <div className="att-kr-parts" aria-label="Notes inside Present">
+                      {NOTES.map((nt) => (
+                        <button key={nt.key} type="button" title={r ? nt.hintOf(r) : ''} className={`att-kr-part${on && pick.note === nt.key ? ' on' : ''}`} onClick={() => choose('present', '', nt.key)}>
+                          {nt.label}{nt.key === 'late' && r ? ` (after ${r.late})` : ''} <b>{notes[nt.key] || 0}</b>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {(k.key === 'halfDay' || k.key === 'onLeave' || k.key === 'absent') && tileNoteChips(k.key).length > 0 && (
+                    <div className="att-kr-parts" aria-label={`Notes inside ${k.label}`}>
+                      {tileNoteChips(k.key).map(([nk, nn]) => (
+                        <button key={nk} type="button" className={`att-kr-part${on && pick.note === nk ? ' on' : ''}`} onClick={() => choose(k.key, '', nk)}>
+                          {NOTE_NAME[nk]} <b>{nn}</b>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {k.key === 'halfDay' && n > 0 && <HalfLeaveSub c={parts.halfDayLeave} short />}
+                  {k.key === 'halfDay' && n > 0 && parts.halfDayLeave && (
+                    <div className="att-kr-parts" aria-label="Half day leave">
+                      {[['Approved', 'approved'], ['Pending', 'pending'], ['None', 'none']].concat(parts.halfDayLeave.rejected ? [['Rejected', 'rejected']] : []).map(([st, ck]) => (
+                        <button key={st} type="button" className={`att-kr-part${on && pick.leave === st ? ' on' : ''}`} onClick={() => choose('halfDay', '', '', st)}>
+                          Leave: {LEAVE_NAME[st]} <b>{parts.halfDayLeave[ck]}</b>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {k.parts && n > 0 && (
                     <div className="att-kr-parts">
                       {k.parts.filter(([pk]) => (parts[k.key]?.[pk] || 0) > 0).map(([pk, pl]) => (
@@ -211,21 +256,21 @@ export default function KpiReport({ onRangeChange } = {}) {
             })}
           </div>
           <div className="att-kr-eq">
-            {SUMMED.filter((k) => shownCards.some((x) => x.key === k)).map((k, i) => <span key={k}>{i ? ' + ' : ''}{NAME[k]} <b>{c[k] || 0}</b></span>)}
-            {' '}= Headcount <b>{data.headcount}</b>{data.single ? '' : <> ({data.people} {data.people === 1 ? 'person' : 'people'} × the days they were on the rolls)</>}. Late <b>{c.late || 0}</b> is counted inside these.
+            {SUMMED.filter((k) => shownCards.some((x) => x.key === k)).map((k, i) => <span key={k}>{i ? ' + ' : ''}{NAME[k]} <b>{tiles[k] || 0}</b></span>)}
+            {' '}= Headcount <b>{data.headcount}</b>{data.single ? '' : <> ({data.people} {data.people === 1 ? 'person' : 'people'} × the days they were on the rolls)</>}. Late, Early logout, Missing check-in and Missing check-out are notes inside Present, not extra tiles.
             {data.workedOnOff ? <> <b>{data.workedOnOff}</b> worked on a week off / holiday (counted in Present etc., tagged in the list).</> : null}
           </div>
 
           <div className="att-kr-list">
             <div className="att-kr-list-head">
               <b>{listTitle}</b> <span className="small-muted">— {list.length} {list.length === 1 ? 'day' : 'days'}</span>
-              {pick.kpi && <button type="button" className="btn btn-sm" onClick={() => setPick({ kpi: '', part: '' })}>Show all days</button>}
+              {pick.kpi && <button type="button" className="btn btn-sm" onClick={() => setPick(noPick)}>Show all days</button>}
               <input type="search" placeholder="Search name, ID, department" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
             </div>
             <ScrollTable maxHeight="60vh">
               <table>
                 <thead>
-                  <tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Date</th><th>In</th><th>Out</th><th>Result</th><th>Why</th></tr>
+                  <tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Date</th><th>In</th><th>Out</th><th>Check-in method</th><th>Result</th><th>Why</th></tr>
                 </thead>
                 <tbody>
                   {page.slice.map((x) => (
@@ -236,12 +281,13 @@ export default function KpiReport({ onRangeChange } = {}) {
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDay(x.date)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkIn)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkOut)}</td>
-                      <td><span className={`att-kr-pill tone-${CARDS.find((k) => k.key === x.kpi)?.tone || 'grey'}`}>{x.kpiLabel}{x.session ? ` · ${x.session === 'First half' ? '1st half' : '2nd half'}` : ''}</span>{x.lateDay && x.kpi !== 'present' ? <span className="att-kr-pill tone-orange">Late</span> : null}{x.workedOnOff ? <span className="att-kr-pill tone-blue" title={`Came in on a ${x.workedOnOff}`}>Worked on {x.workedOnOff.startsWith('holiday') ? 'holiday' : 'week off'}</span> : null}</td>
+                      <td className="cell-muted">{x.howText || x.how || '—'}</td>
+                      <td><span className={`att-kr-pill tone-${CARDS.find((k) => k.key === x.tile)?.tone || 'grey'}`}>{NAME[x.tile] || x.kpiLabel}{x.session ? ` · ${x.session === 'First half' ? '1st half' : '2nd half'}` : ''}</span>{(x.notes || []).map((nk) => <span key={nk} className="att-kr-pill tone-orange">{NOTE_NAME[nk]}</span>)}{x.halfLeave ? <HalfLeaveChip state={x.halfLeave} half={x.halfLeaveHalf} by={x.halfLeaveBy} /> : null}{x.latePermissionText ? <span className={`att-kr-pill tone-${x.lateExcused ? 'green' : 'orange'}`}>{x.latePermissionText}</span> : null}{x.workedOnOff ? <span className="att-kr-pill tone-blue" title={`Came in on a ${x.workedOnOff}`}>Worked on {x.workedOnOff.startsWith('holiday') ? 'holiday' : 'week off'}</span> : null}</td>
                       <td className="att-kr-why">{x.reason}</td>
                     </tr>
                   ))}
                   {list.length === 0 && (
-                    <tr><td colSpan="8" className="att-kr-empty">{pick.kpi ? `No ${NAME[pick.kpi].toLowerCase()} days in this period.` : 'Nobody is on the rolls in this period.'}</td></tr>
+                    <tr><td colSpan="9" className="att-kr-empty">{pick.kpi ? `No ${(pick.note ? NOTE_NAME[pick.note] : NAME[pick.kpi]).toLowerCase()} days in this period.` : 'Nobody is on the rolls in this period.'}</td></tr>
                   )}
                 </tbody>
               </table>

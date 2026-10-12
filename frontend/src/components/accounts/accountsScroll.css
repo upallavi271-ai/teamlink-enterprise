@@ -1,0 +1,46 @@
+/* A table that scrolls INSIDE its own box (Accounts fixes, 2026-10-09).
+   Used by Journal & Ledger -> Fixed Assets (every view) and the payroll month sheet.
+
+   * the box is as tall as the window allows (viewport based), so the title, the
+     sub-tabs, the filters and the buttons stay where they are and only the
+     records scroll;
+   * the vertical scrollbar is ALWAYS drawn (overflow-y: scroll) in the gutter on
+     the right - a classic bar takes its own space, so it never covers data;
+   * the sideways scroll stays (overflow-x: auto);
+   * the header row is sticky inside the box: solid background + z-index, so it
+     stays on top and in line with its columns while scrolling down AND across.
+     The box is itself the scroll container (no parent clips it with overflow:hidden),
+     and its rounded corners are drawn by the box, so sticky and radius work together;
+   * overscroll-behavior stays "auto": when the rows end the wheel carries on
+     scrolling the page - no scroll trap. */
+.acc-scroll, .tbl-wrap.acc-scroll {
+  max-height: clamp(260px, calc(100vh - 380px), 780px);
+  max-height: clamp(260px, calc(100dvh - 380px), 780px);
+  overflow-x: auto;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  overscroll-behavior: auto;
+  position: relative;
+  border-radius: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.acc-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--card2, #f1f4f9);
+  box-shadow: inset 0 -1px 0 var(--line, #dfe5ee);
+  white-space: nowrap;
+}
+/* A sticky first column would need its own layer; the header cell in the corner is not needed here. */
+.acc-scroll::-webkit-scrollbar { width: 14px; height: 14px; }
+.acc-scroll::-webkit-scrollbar-track { background: #e4eaf4; border-radius: 7px; }
+.acc-scroll::-webkit-scrollbar-thumb { background: #8ea0bd; border-radius: 7px; border: 3px solid #e4eaf4; }
+.acc-scroll::-webkit-scrollbar-thumb:hover { background: #1f3864; }
+.acc-scroll::-webkit-scrollbar-corner { background: #e4eaf4; }
+@supports not selector(::-webkit-scrollbar) {
+  .acc-scroll { scrollbar-width: auto; scrollbar-color: #8ea0bd #e4eaf4; }
+}
+@media (max-width: 720px) {
+  .acc-scroll { max-height: clamp(260px, 62vh, 640px); max-height: clamp(260px, 62dvh, 640px); }
+}

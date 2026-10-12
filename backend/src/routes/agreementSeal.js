@@ -83,7 +83,8 @@ async function readUpload(req, { imageOnly = true } = {}) {
   return { stored, fields: parsed.fields || {} };
 }
 function dropFile(stored) { if (stored) { try { attachments.remove(stored); } catch { /* already gone */ } } }
-const ipOf = (req) => String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60);
+// The signing IP written into the audit trail: the safe helper (utils/clientIp.js), never the caller's own X-Forwarded-For.
+const ipOf = (req) => require('../utils/clientIp').ipOf(req); // eslint-disable-line global-require
 
 // The agreement's own audit trail, oldest first.
 async function trailOf(client, { sinceSend = false } = {}) {
@@ -205,7 +206,9 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     if (!loaded) return undefined;
     const { client } = loaded;
     // A kept older signed copy can be downloaded whatever the step is now.
-    if (!req.query.copy && !signing.executedSummary(client).pdfAvailable) return res.status(409).json({ error: 'The PDF is produced once the agreement is signed.' });
+    // Not signed yet: the DRAFT PDF (light grey DRAFT watermark, empty "Initial here"
+    // boxes), so a draft is never mistaken for an executed copy (user, 2026-10-10).
+    if (!req.query.copy && !signing.executedSummary(client).pdfAvailable && !client.agreementDocument) return res.status(409).json({ error: 'There is no agreement draft to print yet.' });
     if (req.query.copy && req.query.copy !== 'signed') {
       const row = await prisma.auditLog.findFirst({ where: { id: String(req.query.copy), entity: 'Client', entityId: client.id, action: { in: [KEPT_ACTION, EMUDHRA_KEPT] } }, select: { toValue: true } });
       const file = row ? attachments.resolveStored(row.toValue) : null;
@@ -228,7 +231,8 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     const us = await consultantParty();
     const trail = await trailOf(client, { sinceSend: true });
     res.set('Content-Type', 'application/pdf');
-    res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-${client.name.replace(/[^\w.-]+/g, '-').slice(0, 40)}.pdf"`);
+    res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-${client.name.replace(/[^\w.-]+/g, '-').slice(0, 40)}${client.agreementSignedAt ? '' : '-DRAFT'}.pdf"`);
+    res.set('Cache-Control', 'private, no-store');
     // eslint-disable-next-line global-require
     await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name }, res);
     return undefined;
@@ -311,14 +315,31 @@ router.patch('/:clientId', requireAuth, async (req, res, next) => {
     if (b.agreementSignedCopyNote !== undefined) data.agreementSignedCopyNote = String(b.agreementSignedCopyNote || '').slice(0, 500) || null;
     if (data.agreementStart && data.agreementEnd && data.agreementEnd < data.agreementStart) return res.status(400).json({ error: 'The end date is before the start date.' });
     if (!Object.keys(data).length) return res.status(400).json({ error: 'Nothing to change.' });
+    // THE "MADE ON" DATE (user, 2026-10-10): correcting the agreement date of a DRAFT
+    // re-prints it in the text. A text already sent or signed keeps the date it
+    // was sent / signed with (the signed paper never changes silently): the
+    // Admin makes a new version to print another date.
+    let textDate = null;
+    if (data.agreementStart) {
+      // eslint-disable-next-line global-require
+      const vendor = require('../utils/vendorAgreement');
+      const doc = loaded.client.agreementDocument;
+      if (doc && vendor.isVendorDocument(doc) && vendor.ddmmyyyy(data.agreementStart) !== vendor.madeOnOf(doc)) {
+        if (signing.statusOf(loaded.client) === 'DRAFT') {
+          const text = vendor.restampMadeOn(doc, data.agreementStart);
+          if (text) { data.agreementDocument = text; textDate = 'updated'; }
+        } else textDate = 'kept';
+      }
+    }
     const updated = await prisma.client.update({ where: { id: loaded.client.id }, data });
     await logAudit({
       userId: req.user.id, action: 'Agreement details edited', entity: 'Client', entityId: loaded.client.id,
       // Old → new (clients role spec §6): the values before this edit.
-      fromValue: Object.keys(data).map((k) => `${k}=${loaded.client[k] == null ? '—' : loaded.client[k]}`).join(', ').slice(0, 500),
-      toValue: Object.entries(data).map(([k, v]) => `${k}=${v == null ? '—' : v}`).join(', ').slice(0, 500),
+      fromValue: Object.keys(data).filter((k) => k !== 'agreementDocument').map((k) => `${k}=${loaded.client[k] == null ? '—' : loaded.client[k]}`).join(', ').slice(0, 500),
+      toValue: Object.entries(data).filter(([k]) => k !== 'agreementDocument').map(([k, v]) => `${k}=${v == null ? '—' : v}`).join(', ').slice(0, 500),
+      ...(textDate ? { reason: textDate === 'updated' ? 'The date printed in the draft text was changed too' : 'The text already sent or signed keeps its printed date' } : {}),
     });
-    return res.json(signing.executedSummary(updated));
+    return res.json({ ...signing.executedSummary(updated), textDate });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     return next(err);
@@ -887,6 +908,7 @@ router.get('/token/:token/pdf', async (req, res, next) => {
     const trail = await trailOf(client, { sinceSend: true });
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}.pdf"`);
+    res.set('Cache-Control', 'private, no-store');
     // eslint-disable-next-line global-require
     await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name }, res);
     return undefined;

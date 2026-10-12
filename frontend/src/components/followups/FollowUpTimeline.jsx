@@ -25,8 +25,8 @@ function outcomeTone(o) {
   return 'amber'; // not picked, busy, call back, no response …
 }
 const MAIL_STATUS = {
-  SENT: ['Sent', 'green'], FAILED: ['Failed', 'red'], QUEUED: ['Sending…', 'amber'], RETRY: ['Sending…', 'amber'],
-  NOT_SENT_NO_PROVIDER: ['Not sent — mail account not set up', 'red'], NOT_SENT_SWITCHED_OFF: ['Not sent — candidate emails are switched off', 'amber'], OPENED_ON_DEVICE: ['Opened on their device', 'blue'],
+  SENT: ['Sent', 'green'], DELIVERED: ['Delivered', 'green'], READ: ['Read', 'green'], RECEIVED: ['Reply received', 'blue'], FAILED: ['Failed', 'red'], QUEUED: ['Sending…', 'amber'], RETRY: ['Sending…', 'amber'],
+  NOT_SENT_NO_PROVIDER: ['Not sent — mail account not set up', 'red'], NOT_SENT_SWITCHED_OFF: ['Not sent — candidate emails are switched off', 'amber'], NOT_SENT_BLOCKED: ['Not sent — blocked', 'red'], OPENED_ON_DEVICE: ['Opened on their device', 'blue'],
 };
 
 function when(at) {

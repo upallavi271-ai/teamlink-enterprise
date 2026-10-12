@@ -27,10 +27,14 @@
 const crypto = require('crypto');
 const prisma = require('../db');
 const { logAudit } = require('../utils/audit');
-const { atsViewRole } = require('../utils/scope');
+const { atsViewRole, isBdeTl, requirementWhere } = require('../utils/scope');
 const { requirementIsLive, requirementStatusLabel, agreementIsActive } = require('../utils/atsVocab');
 const { newWorkRefusal, isSuperAdmin } = require('../utils/clientLifecycle');
 const posting = require('../utils/jobPosting');
+const { can } = require('../middleware/auth');
+const CR = require('../utils/clientRequests');
+const { scopeOf } = require('../utils/scope');
+const { notifyUsers } = require('../utils/notify');
 
 const PAUSED = 'Job paused';
 const RESUMED = 'Job resumed';
@@ -86,7 +90,15 @@ module.exports = function registerJobLifecycle(router, deps) {
       prisma.auditLog.findFirst({ where: { entity: 'Requirement', entityId: r.id, action: CLOSED }, orderBy: { createdAt: 'desc' }, include: { user: { select: { name: true } } } }),
     ]);
     const viewRole = atsViewRole(user);
-    const bde = viewRole === 'bde';
+    const bde = viewRole === 'bde' || isBdeTl(user); // the BDE TL works a job like a BDE: close only
+    // A desk BDE (not the BDE team lead) PAUSES / RESUMES their own jobs and ASKS to close one (user spec 2026-10-10).
+    const deskBde = viewRole === 'bde' && !isBdeTl(user) && !scopeOf(user).global;
+    const [bdePause, bdeResume, bdeClose] = bde ? await Promise.all([
+      can(user, 'ats', 'requirements', 'Pause Requirement', 'edit'),
+      can(user, 'ats', 'requirements', 'Resume Requirement', 'edit'),
+      can(user, 'ats', 'requirements', 'Close Request', 'create'),
+    ]) : [false, false, false];
+    const closeAsk = !!(r.id && await prisma.auditLog.findFirst({ where: { action: CR.KINDS.closejob.action, entity: 'Requirement', entityId: r.id, approvalStatus: 'Pending' }, select: { id: true } }));
     const holdOnly = holdOnlyRole(user);
     const live = requirementIsLive(r.status);
     const sa = isSuperAdmin(user);
@@ -112,9 +124,12 @@ module.exports = function registerJobLifecycle(router, deps) {
       invoices,
       client: client && !r.internal ? { name: client.name, paused: !!paused, message: paused ? `${client.name} is paused, so this job takes no new candidates and nothing new is sent to the client.` : null } : null,
       rights: {
-        pause: !!perms.approve && !bde && live,
-        resume: !!perms.approve && !bde && r.status === 'ON_HOLD',
-        close: !!perms.approve && !holdOnly && r.status !== 'CLOSED',
+        pause: !!perms.approve && live && (!bde || bdePause),
+        resume: !!perms.approve && r.status === 'ON_HOLD' && (!bde || bdeResume),
+        // A desk BDE does not close: they ASK (requestClose), a Manager / Admin approves.
+        close: !!perms.approve && !holdOnly && r.status !== 'CLOSED' && !deskBde,
+        requestClose: deskBde && !!perms.approve && bdeClose && r.status !== 'CLOSED' && r.status !== 'DRAFT' && !closeAsk,
+        closeRequested: closeAsk,
         reopen: !!perms.approve && !holdOnly && !bde && r.status === 'CLOSED',
         // Super Admin only, and never while people or invoices are attached.
         delete: sa && !!perms.delete && apps === 0 && invoices === 0,
@@ -179,7 +194,10 @@ module.exports = function registerJobLifecycle(router, deps) {
   router.post('/:id/close', async (req, res) => {
     const r = req.requirement;
     const lc = await lifecycleOf(req.user, r);
-    if (!lc.rights.close) return res.status(403).json({ error: r.status === 'CLOSED' ? 'This job is already closed.' : 'You cannot close this job. Ask a Manager or an Admin.' });
+    if (!lc.rights.close) {
+      if (lc.rights.requestClose) return res.status(403).json({ error: 'A BDE asks to close a job: press Ask to close. A Manager or an Admin approves it.', code: 'CLOSE_NEEDS_APPROVAL' });
+      return res.status(403).json({ error: r.status === 'CLOSED' ? 'This job is already closed.' : 'You cannot close this job. Ask a Manager or an Admin.' });
+    }
     const outcome = OUTCOMES[String((req.body && req.body.outcome) || '').toLowerCase()];
     if (!outcome) return res.status(400).json({ error: 'Choose why the job is closed: Filled or Cancelled.' });
     const note = String((req.body && req.body.note) || '').trim().slice(0, 300) || null;
@@ -187,11 +205,69 @@ module.exports = function registerJobLifecycle(router, deps) {
     return move(req, res, { to: 'CLOSED', action: CLOSED, toValue: outcome, reason: note, ok: `Closed — ${outcome.toLowerCase()}.` });
   });
 
+  // ---- ASK TO CLOSE (BDE) - a Manager / Admin approves (utils/clientRequests.js 'closejob') -----------
+  router.post('/:id/close-request', async (req, res, next) => {
+    try {
+      const r = req.requirement;
+      const lc = await lifecycleOf(req.user, r);
+      if (!lc.rights.requestClose) {
+        return res.status(lc.rights.closeRequested ? 409 : 403).json({ error: lc.rights.closeRequested ? 'A close request for this job is already waiting for approval.' : (r.status === 'CLOSED' ? 'This job is already closed.' : 'You cannot ask to close this job.') });
+      }
+      const outcome = OUTCOMES[String((req.body && req.body.outcome) || '').toLowerCase()];
+      if (!outcome) return res.status(400).json({ error: 'Choose why the job is closed: Filled (hiring complete) or Cancelled (the client cancelled).' });
+      const why = CR.reasonOf(req.body && (req.body.note ?? req.body.reason), 'note');
+      if (why.error) return res.status(400).json({ error: why.error });
+      const client = r.clientId ? await prisma.client.findUnique({ where: { id: r.clientId } }) : null;
+      if (!client) return res.status(400).json({ error: 'This job has no client.' });
+      const out = await CR.createRequest({ user: req.user, kind: 'closejob', client, requirement: r, reason: why.reason, ask: { field: 'status', fromValue: r.status, toValue: 'Closed - ' + outcome } });
+      return res.status(out.status).json(out.body);
+    } catch (e) { return next(e); }
+  });
+  // The approver's side: close the job exactly as a direct close does (same audit row, same portal push).
+  CR.hooks.closeJob = async ({ user, requirement, outcome, reason }) => {
+    const cur = await prisma.requirement.findUnique({ where: { id: requirement.id } });
+    if (!cur) return { error: 'The job no longer exists.', status: 404 };
+    if (cur.status === 'CLOSED') return { error: 'This job is already closed.', status: 409 };
+    const updated = await prisma.requirement.update({ where: { id: cur.id }, data: { status: 'CLOSED' } });
+    await logAudit({ userId: user.id, actorName: user.name, action: CLOSED, entity: 'Requirement', entityId: cur.id, fromValue: cur.status, toValue: outcome, reason: reason || null, approvalStatus: 'Approved', approvedByName: user.name || null, approvedAt: new Date() });
+    await pushToPortal(updated, { user, trigger: 'status', prevStatus: cur.status });
+    return { ok: true };
+  };
+
+  // ---- ASK FOR A RECRUITER (BDE) - the BDE only asks; the TL picks the recruiter (assign stays the TL's) ------
+  router.post('/:id/recruiter-request', async (req, res, next) => {
+    try {
+      const r = req.requirement;
+      if (atsViewRole(req.user) !== 'bde' && !isBdeTl(req.user)) return res.status(403).json({ error: 'Asking for a recruiter is for the BDE of this client.' });
+      const perms = await requirementPermissions(req.user, r);
+      if (!perms.approve && !perms.edit) return res.status(403).json({ error: 'This job is not yours.' });
+      const note = CR.reasonOf(req.body && req.body.note, 'note');
+      if (note.error) return res.status(400).json({ error: note.error });
+      let wanted = '';
+      if (req.body && req.body.recruiterId) {
+        const u = await prisma.user.findUnique({ where: { id: String(req.body.recruiterId) }, select: { id: true, name: true } });
+        if (!u) return res.status(400).json({ error: 'Pick a recruiter from the list.' });
+        wanted = u.name;
+      }
+      let tlIds = r.tlId ? [r.tlId] : [];
+      if (!tlIds.length && r.department) {
+        const tls = await prisma.user.findMany({ where: { status: 'Active', atsRole: 'TL', OR: [{ atsDepartment: r.department }, { atsScopeDepartments: { contains: r.department } }] }, select: { id: true, name: true, email: true } });
+        tlIds = tls.filter((u) => process.env.TEST_MODE || !/zztest|example\.test/i.test(u.name + ' ' + u.email)).map((u) => u.id);
+      }
+      await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Recruiter requested for job', entity: 'Requirement', entityId: r.id, toValue: wanted || 'Any recruiter', reason: note.reason });
+      await notifyUsers(tlIds, { title: 'Recruiter wanted - ' + (r.reqCode || r.title), message: (req.user.name || 'The BDE') + ' asks for ' + (wanted || 'a recruiter') + ' on ' + r.title + ': ' + note.reason + '.\nOpen: /requirements/' + r.id, exceptUserId: req.user.id });
+      return res.status(201).json({ ok: true, notified: tlIds.length, message: tlIds.length ? 'Your team lead is asked to pick a recruiter.' : 'Saved. No team lead is named on this job yet.' });
+    } catch (e) { return next(e); }
+  });
+
   // ---- posting sites --------------------------------------------------------
   async function sitesPayload(user, r) {
     const perms = await requirementPermissions(user, r);
+    const sites = await posting.siteStatuses(r, user);
     return {
-      sites: await posting.siteStatuses(r, user),
+      sites,
+      // One sentence for the Save & Post panel and the job page ("Posted automatically on 2 of 6 sites. …").
+      summary: require('../utils/jobConnectors').summarise(sites), // eslint-disable-line global-require
       live: requirementIsLive(r.status),
       canEdit: !!(perms.share || perms.edit),
       feeds: posting.FEED_PATHS,
@@ -228,6 +304,67 @@ module.exports = function registerJobLifecycle(router, deps) {
     return res.json({ ...(await sitesPayload(req.user, fresh)), ok: `Saved. ${msg.charAt(0).toUpperCase()}${msg.slice(1)}.`.replace('..', '.') });
   });
 
+  // ---- THE USUAL SITES + THE HAND-POSTING QUEUE (2026-10-10) -----------------------------
+  // GET  /requirements/posting/defaults   the sites a new job starts with ticked (+ may this login change them)
+  // PUT  /requirements/posting/defaults   { sites: ['jobportal', …] } — Admin / Super Admin only
+  // POST /requirements/posting/hand-queue { ids?: [jobId…] } the (job, board) pairs still waiting for a person
+  //      to post them by hand, in this login's scope and only for jobs it may post: the "Post them one by one"
+  //      helper walks through them (Copy text / Open board / I posted it).
+  router.get('/posting/defaults', async (req, res, next) => {
+    try {
+      if ([req.user.role, req.user.atsRole].includes('CLIENT')) return res.status(403).json({ error: 'Posting is internal to TeamLink.' });
+      const d = await posting.defaultSites();
+      return res.json({ ids: d.ids, custom: d.custom, by: d.by || null, at: d.at || null, canEdit: await mayChooseUsual(req.user) });
+    } catch (e) { return next(e); }
+  });
+  // Super Admin and Admin (and anyone who may set up Integrations) choose the usual set.
+  const mayChooseUsual = async (user) => isSuperAdmin(user) || [user.role, user.atsRole].includes('ADMIN') || require('../utils/jobConnectors').canSetUp(user); // eslint-disable-line global-require
+  router.put('/posting/defaults', async (req, res, next) => {
+    try {
+      if (!(await mayChooseUsual(req.user))) return res.status(403).json({ error: 'Only an Admin can change the usual sites for new jobs.' }); // eslint-disable-line global-require
+      const wanted = Array.isArray(req.body && req.body.sites) ? req.body.sites.map(String) : null;
+      if (!wanted) return res.status(400).json({ error: 'Send the list of sites.' });
+      const ids = await posting.setDefaultSites(wanted, req.user);
+      return res.json({ ok: ids.length ? 'Saved. New jobs now start with these sites ticked.' : 'Saved. New jobs now start with no site ticked.', ids, custom: true });
+    } catch (e) { return next(e); }
+  });
+  router.post('/posting/hand-queue', async (req, res, next) => {
+    try {
+      if ([req.user.role, req.user.atsRole].includes('CLIENT')) return res.status(403).json({ error: 'Posting is internal to TeamLink.' });
+      const connectors = require('../utils/jobConnectors'); // eslint-disable-line global-require
+      const guide = require('../utils/jobBoards/guide'); // eslint-disable-line global-require
+      const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String).slice(0, 200) : null;
+      const and = [requirementWhere(req.user), connectors.waitingHandWhere()];
+      if (ids) and.push({ id: { in: ids.length ? ids : ['__none__'] } });
+      const jobs = await prisma.requirement.findMany({ where: { AND: and }, include: { client: { select: { name: true } }, postings: true }, orderBy: { createdAt: 'desc' }, take: 120 });
+      const readyBoards = new Set();
+      for (const b of Object.keys(guide.GUIDE)) {
+        // eslint-disable-next-line no-await-in-loop
+        if (await connectors.boardIsReady(b)) readyBoards.add(b);
+      }
+      const hours = await require('../utils/jobBoards/manual').reminderHours().catch(() => 6); // eslint-disable-line global-require
+      const pairs = [];
+      let skipped = 0;
+      for (const j of jobs) {
+        // eslint-disable-next-line no-await-in-loop
+        const perms = await requirementPermissions(req.user, j);
+        if (!perms.share && !perms.edit) { skipped += 1; continue; } // eslint-disable-line no-continue
+        const boardOrder = Object.keys(guide.GUIDE); // Naukri, Shine, Indeed, LinkedIn
+        j.postings.slice().sort((a, b) => boardOrder.indexOf(a.source) - boardOrder.indexOf(b.source)).filter((p) => guide.GUIDE[p.source] && ['Integration Required', 'Setup Required'].includes(p.status)
+          && posting.siteTicked(j, p.source) && !readyBoards.has(p.source)).forEach((p) => {
+          const waited = Math.floor((Date.now() - new Date(p.createdAt).getTime()) / 3600000);
+          pairs.push({
+            requirementId: j.id, reqCode: j.reqCode || null, title: j.title, client: j.internal || !j.client ? null : j.client.name,
+            board: p.source, boardName: guide.GUIDE[p.source].name, waitedHours: waited, overdue: waited >= hours,
+          });
+        });
+      }
+      const perBoard = {};
+      pairs.forEach((p) => { perBoard[p.board] = (perBoard[p.board] || 0) + 1; });
+      return res.json({ pairs, total: pairs.length, jobs: new Set(pairs.map((p) => p.requirementId)).size, perBoard, skipped });
+    } catch (e) { return next(e); }
+  });
+
   // Retry ONE source now (Save & Post, utils/jobConnectors.js) — waits for
   // that source's answer and returns the fresh statuses.
   router.post('/:id/posting-sites/:source/retry', async (req, res) => {
@@ -247,6 +384,168 @@ module.exports = function registerJobLifecycle(router, deps) {
     const payload = await sitesPayload(req.user, fresh);
     const site = payload.sites.find((x) => x.id === src.id);
     return res.json({ ...payload, ok: site && site.status === 'Posted' ? `${src.label}: posted.` : `${src.label}: ${site ? site.status : 'tried again'}.` });
+  });
+
+  // ---- POST BY HAND (utils/jobBoards/manual.js) ------------------------------
+  // For a board with no open posting API (or one not connected yet): the job in
+  // that board's order of fields, ready to copy; the board's own "post a job"
+  // page; and "I posted it" (with the live link) / "I took it down" / "Undo".
+  // Nothing is ever sent to the board and the row is never shown as Posted.
+  const handDeps = async (req, res) => {
+    if ([req.user.role, req.user.atsRole].includes('CLIENT')) { res.status(403).json({ error: 'Posting is internal to TeamLink.' }); return null; }
+    const perms = await requirementPermissions(req.user, req.requirement);
+    if (!perms.share && !perms.edit) { res.status(403).json({ error: 'You cannot post this job. Ask its TL or an Admin.' }); return null; }
+    const board = String(req.params.source || '');
+    const manual = require('../utils/jobBoards/manual'); // eslint-disable-line global-require
+    if (!require('../utils/jobBoards/guide').GUIDE[board]) { res.status(404).json({ error: 'This site cannot be posted by hand.' }); return null; } // eslint-disable-line global-require
+    return { board, manual };
+  };
+  const handBase = (req) => String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || `${req.protocol}://${req.get('host')}`.replace(':4010', ':5183');
+  router.get('/:id/posting-sites/:source/by-hand', async (req, res, next) => {
+    try {
+      const d = await handDeps(req, res); if (!d) return undefined;
+      const out = await d.manual.helper(req.requirement, d.board, handBase(req));
+      return res.json({ ...out, live: requirementIsLive(req.requirement.status), publicLink: !!process.env.APP_BASE_URL });
+    } catch (e) { return next(e); }
+  });
+  async function handAfter(req, res, d, out, okText) {
+    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    const fresh = await prisma.requirement.findUnique({ where: { id: req.requirement.id } });
+    return res.json({ ...(await sitesPayload(req.user, fresh)), ok: okText, helper: await d.manual.helper(fresh, d.board, handBase(req)) });
+  }
+  router.post('/:id/posting-sites/:source/by-hand/done', async (req, res, next) => {
+    try {
+      const d = await handDeps(req, res); if (!d) return undefined;
+      if (!requirementIsLive(req.requirement.status)) return res.status(400).json({ error: `This job is ${requirementStatusLabel(req.requirement.status)}, so it should not be posted. Open it first.` });
+      // Posting by hand also ticks the board for this job, so the page and the audit agree.
+      if (!posting.tickedSites(req.requirement).includes(d.board)) {
+        const ids = [...posting.tickedSites(req.requirement), d.board];
+        await prisma.requirement.update({ where: { id: req.requirement.id }, data: { postingSources: posting.postingSourcesFor(req.requirement, ids) } });
+      }
+      const out = await d.manual.markDone(req.requirement, d.board, req.user, req.body && req.body.url);
+      return handAfter(req, res, d, out, `Saved: posted on ${require('../utils/jobBoards/guide').GUIDE[d.board].name} by hand by ${req.user.name}.`); // eslint-disable-line global-require
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/posting-sites/:source/by-hand/removed', async (req, res, next) => {
+    try {
+      const d = await handDeps(req, res); if (!d) return undefined;
+      return handAfter(req, res, d, await d.manual.markRemoved(req.requirement, d.board, req.user), 'Saved: taken down.');
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/posting-sites/:source/by-hand/undo', async (req, res, next) => {
+    try {
+      const d = await handDeps(req, res); if (!d) return undefined;
+      return handAfter(req, res, d, await d.manual.markUndone(req.requirement, d.board, req.user), 'Undone: it is not marked as posted any more.');
+    } catch (e) { return next(e); }
+  });
+
+  // ---- WRITE THE JOB POSTS (utils/jobText.js writes, utils/jobPostWriter.js keeps) ------
+  // A Master JD + one text per site, from the job's real fields. POST body { overrides: { salary: '…', … } }
+  // is what the poster typed for the missing items (nothing is saved into the job unless /job-text/save is called).
+  //   GET  /:id/job-posts        the generated texts + the poster's saved edits (who / when) + checklist
+  //   POST /:id/job-posts        { texts: { master: '…', naukri: null (= reset), … } } save / reset edits
+  //   POST /:id/job-posts/check  { texts } the inclusive-wording + client-name check on the texts as they are now
+  //   POST /:id/job-text         (same as GET, with { overrides }): the text refreshes as the poster fills the gaps
+  //   POST /:id/job-text/ai      the optional AI polish (+ { current } to diff against)
+  //   POST /:id/job-text/save    { overrides } saves the typed gaps into the job itself
+  // Same right as posting the job: requirementPermissions().share or .edit, and the job is already in scope.
+  const textDeps = async (req, res) => {
+    if ([req.user.role, req.user.atsRole].includes('CLIENT')) { res.status(403).json({ error: 'Job text is internal to TeamLink.' }); return null; }
+    const perms = await requirementPermissions(req.user, req.requirement);
+    if (!perms.share && !perms.edit) { res.status(403).json({ error: 'You cannot write the text for this job. Ask its TL or an Admin.' }); return null; }
+    const jt = require('../utils/jobText'); // eslint-disable-line global-require
+    const pw = require('../utils/jobPostWriter'); // eslint-disable-line global-require
+    const full = await prisma.requirement.findUnique({ where: { id: req.requirement.id }, include: { client: true } });
+    const ov = {};
+    const given = (req.body && req.body.overrides) || {};
+    jt.OVERRIDE_KEYS.forEach((k) => { if (typeof given[k] === 'string') ov[k] = given[k].slice(0, 4000); });
+    return { jt, pw, full, ov, perms };
+  };
+  const clientNamesOf = (full) => (full.internal || !full.client ? [] : [full.client.name, full.client.legalName].map((n) => String(n || '').trim()).filter((n) => n.length >= 3));
+  // The saved edits, with "the job has moved on since you saved this" per text.
+  const savedView = (saved, generatedTexts, pw) => {
+    if (!saved) return null;
+    const stale = {};
+    Object.keys(saved.texts).forEach((k) => { stale[k] = !!saved.gen[k] && saved.gen[k] !== pw.hashText(generatedTexts[k]); });
+    return { texts: saved.texts, stale, keys: saved.keys || {}, savedAt: saved.savedAt, byName: saved.byName };
+  };
+  const postsPayload = async (req, d) => {
+    const out = await d.jt.generate(d.full, d.ov, handBase(req));
+    const ai = await d.jt.aiStatus();
+    const saved = savedView(await d.pw.loadSaved(d.full.id), out.texts, d.pw);
+    return {
+      ...out, saved, ai: { available: ai.available, reason: ai.available ? null : ai.reason },
+      canSave: !!(d.perms.edit || d.perms.share), canFill: !!d.perms.edit, live: requirementIsLive(req.requirement.status),
+    };
+  };
+  router.get('/:id/job-posts', async (req, res, next) => {
+    try {
+      const d = await textDeps(req, res); if (!d) return undefined;
+      return res.json(await postsPayload(req, d));
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/job-text', async (req, res, next) => {
+    try {
+      const d = await textDeps(req, res); if (!d) return undefined;
+      return res.json(await postsPayload(req, d));
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/job-posts', async (req, res, next) => {
+    try {
+      const d = await textDeps(req, res); if (!d) return undefined;
+      const given = req.body && req.body.texts;
+      if (!given || typeof given !== 'object' || Array.isArray(given)) return res.status(400).json({ error: 'There was no text to save.' });
+      const edits = {};
+      d.pw.TEXT_KEYS.forEach((k) => {
+        if (!(k in given)) return;
+        if (given[k] !== null && typeof given[k] !== 'string') return;
+        edits[k] = given[k];
+      });
+      if (!Object.keys(edits).length) return res.status(400).json({ error: 'There was no text to save.' });
+      // "Same as generated" is judged against what the job writes right now (with the typed gaps, if any).
+      const gen = await d.jt.generate(d.full, d.ov, handBase(req));
+      const out = await d.pw.saveTexts(d.full.id, edits, gen.texts, req.user);
+      if (out.changed.length || out.reset.length) {
+        await logAudit({
+          userId: req.user.id, actorName: req.user.name, action: out.changed.length ? 'Job posts saved' : 'Job posts reset', entity: 'Requirement', entityId: d.full.id,
+          toValue: [out.changed.length ? `saved: ${out.changed.join(', ')}` : '', out.reset.length ? `reset: ${out.reset.join(', ')}` : ''].filter(Boolean).join('; '),
+        });
+      }
+      const msg = out.changed.length
+        ? 'Saved. These post texts are kept for this job and used when you post by hand.'
+        : (out.reset.length ? 'Back to the text TeamLink wrote.' : 'Nothing changed.');
+      return res.json({ ok: msg, changed: out.changed, reset: out.reset, saved: savedView(await d.pw.loadSaved(d.full.id), gen.texts, d.pw) });
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/job-posts/check', async (req, res, next) => {
+    try {
+      const d = await textDeps(req, res); if (!d) return undefined;
+      const given = (req.body && req.body.texts) || {};
+      const texts = {};
+      d.pw.TEXT_KEYS.forEach((k) => { if (typeof given[k] === 'string') texts[k] = given[k].slice(0, d.pw.MAX_TEXT); });
+      return res.json({ warnings: d.jt.lintTexts(texts, clientNamesOf(d.full)) });
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/job-text/ai', async (req, res, next) => {
+    try {
+      const d = await textDeps(req, res); if (!d) return undefined;
+      const current = {};
+      const given = (req.body && req.body.current) || {};
+      d.pw.TEXT_KEYS.forEach((k) => { if (typeof given[k] === 'string') current[k] = given[k].slice(0, d.pw.MAX_TEXT); });
+      const out = await d.jt.aiDraft(d.full, d.ov, handBase(req), current);
+      if (out.error) return res.status(out.status || 400).json({ error: out.error });
+      await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Job posts polished with AI (draft)', entity: 'Requirement', entityId: d.full.id, toValue: `${Object.keys(out.diff || {}).length} text(s) differ` });
+      return res.json({ ...out, canSave: true });
+    } catch (e) { return next(e); }
+  });
+  router.post('/:id/job-text/save', async (req, res, next) => {
+    try {
+      const d = await textDeps(req, res); if (!d) return undefined;
+      if (!d.perms.edit) return res.status(403).json({ error: 'You can read this job but not change it. Ask its TL or an Admin.' });
+      const out = await d.jt.save(d.full, d.ov, req.user);
+      if (!out.saved.length) return res.status(400).json({ error: 'There was nothing typed to save.' });
+      return res.json({ ok: `Saved into the job: ${out.saved.join(', ')}.`, saved: out.saved });
+    } catch (e) { return next(e); }
   });
 
   // ---- undo a bulk assign (24 h) -------------------------------------------

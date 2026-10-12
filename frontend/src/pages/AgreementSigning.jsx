@@ -11,7 +11,10 @@
 //   3. STAMP     the company stamp / seal (PNG / JPG) → preview → "Use this stamp"
 //   4. CONFIRM   name + designation → "Email me the code" (to the contact email
 //                on the company record) → the code → tick → "I agree & sign"
-//   5. DONE      Thank you + Download the signed PDF
+//   5. DONE      the THANK-YOU screen only (components/agreements/AgreementThanks.jsx):
+//                logo, thanks, "Download your agreement (PDF)", what happens next,
+//                the signed details. The agreement text is never shown again after
+//                signing, not even when the signed link is opened later.
 //
 // The server enforces the same order (routes/agreementSeal.js): no signature
 // before "OK, proceed", no "I agree & sign" without the signature AND the
@@ -24,11 +27,13 @@ import api from '../api';
 import SignatureCapture from '../components/agreements/SignatureCapture.jsx';
 import { StampPicker } from '../components/agreements/TeamLinkSeal.jsx';
 import AgreementDocView, { signersFrom } from '../components/agreements/AgreementDocView.jsx';
+import AgreementThanks from '../components/agreements/AgreementThanks.jsx';
+import { AgreementHeader } from '../components/agreements/AgreementBrand.jsx';
 import '../components/agreements/agreements.css';
 import '../components/agreements/agreementSignPage.css';
 
 function when(d) {
-  return d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  return d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
 }
 function day(d) {
   return d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
@@ -47,7 +52,7 @@ function Term({ k, v }) {
 export default function AgreementSigning() {
   const { token } = useParams();
   const [view, setView] = useState(null);
-  const [fatal, setFatal] = useState('');
+  const [fatal, setFatal] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [redo, setRedo] = useState('');
@@ -74,7 +79,11 @@ export default function AgreementSigning() {
         if (o.waiting && o.sentTo) setSent((s) => s || { sentTo: o.sentTo, ttlMinutes: o.ttlMinutes });
         if (res.data.signature?.signedBy) setWho((w) => ({ name: w.name || res.data.signature.signedBy || '', designation: w.designation || res.data.signature.signedByTitle || '' }));
       })
-      .catch((err) => setFatal(err.response?.data?.error || 'This link does not work. Ask your TeamLink contact for a new link.'));
+      .catch((err) => setFatal({
+        text: err.response?.data?.error || 'This link does not work. Ask your TeamLink contact for a new link.',
+        expired: !!err.response?.data?.expired,
+        revoked: !!err.response?.data?.revoked,
+      }));
   }, [token]);
   useEffect(load, [load]);
 
@@ -150,22 +159,13 @@ export default function AgreementSigning() {
     }));
   };
 
-  const header = (
-    <header className="careers-header agrs-noprint">
-      <div className="logo-lockup">
-        <div className="mark">TL</div>
-        <div>
-          <div style={{ fontWeight: 600 }}>TeamLink Consultants</div>
-          <div className="small-muted">Service agreement</div>
-        </div>
-      </div>
-    </header>
-  );
+  const header = <AgreementHeader />;
 
   if (fatal) {
+    const head = fatal.expired ? 'This link has ended' : (fatal.revoked ? 'This link was stopped' : 'This link does not work');
     return (
       <div className="careers-shell">{header}
-        <main className="agr-sign"><div className="agr-card agrs-stop"><h3>This link does not work</h3><p>{fatal}</p></div></main>
+        <main className="agr-sign"><div className="agr-card agrs-stop"><h3>{head}</h3><p>{fatal.text}</p></div></main>
       </div>
     );
   }
@@ -173,6 +173,16 @@ export default function AgreementSigning() {
 
   const t = view.keyTerms || {};
   const signed = !view.open && ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(view.status);
+  // SIGNED (just now, or the signed link opened again): the thank-you screen and
+  // nothing else — the agreement text is not drawn, not even below it.
+  if (signed) return <AgreementThanks view={view} token={token} />;
+  if (!view.open) {
+    return (
+      <div className="careers-shell">{header}
+        <main className="agr-sign"><div className="agr-card agrs-stop"><h3>This agreement is not open for signing</h3><p>Ask your TeamLink contact for a new link.</p></div></main>
+      </div>
+    );
+  }
   const step = !view.open ? 'done'
     : (!view.proceededAt ? 'read'
       : (((!view.signature?.captured && !emudhra) || redo === 'sign') ? 'sign'
@@ -196,22 +206,6 @@ export default function AgreementSigning() {
           <button type="button" className="btn agrs-noprint" onClick={() => window.print()}>Print</button>
         </div>
 
-        {signed && (
-          <div className="agr-card agr-done agrs-noprint">
-            <div className="tick" aria-hidden="true">✓</div>
-            <h3>Signed. Thank you.</h3>
-            <p className="small-muted">{`Signed by ${view.signedBy || '—'}${view.signedByTitle ? ` (${view.signedByTitle})` : ''} on ${when(view.signedAt)}.`}</p>
-            <p style={{ fontSize: 13.5 }}>
-              {view.status === 'ACTIVE' ? 'TeamLink has signed and stamped too — the agreement is now Active.' : 'TeamLink will add its signature and stamp, and then it becomes Active.'}
-            </p>
-            {view.pdfAvailable && <a className="btn btn-primary" href={`/api/agreement/token/${token}/pdf`}>Download the signed PDF</a>}
-            {view.emudhra?.signed && <a className="btn" style={{ marginLeft: 8 }} href={`/api/agreement/token/${token}/pdf?copy=emudhra`}>Download the eMudhra-signed PDF</a>}
-          </div>
-        )}
-        {!signed && !view.open && (
-          <div className="agr-card agrs-stop agrs-noprint"><h3>This agreement is not open for signing</h3><p>Ask your TeamLink contact for a new link.</p></div>
-        )}
-
         {view.open && (
           <ol className="agr-steps agrs-steps agrs-noprint">
             {STEPS.map(([k, label], i) => <li key={k} className={k === step ? 'on' : (i < stepIdx ? 'done' : '')}>{i < stepIdx ? `✓ ${label}` : label}</li>)}
@@ -233,17 +227,18 @@ export default function AgreementSigning() {
           <Term k="Fee" v={t.feeType && t.feeType !== 'PERCENT_CTC' ? t.feeText : (t.feePercent != null ? `${t.feePercent}% of the yearly CTC${t.gstApplicable === false ? '' : ` + GST ${t.gstPercent ?? 18}%`}` : null)} />
           <Term k="Replacement guarantee" v={t.guaranteeDays != null ? (t.guaranteeDays === 0 ? 'No replacement' : `${t.guaranteeDays} days (${t.guaranteeWords})`) : t.guarantee} />
           <Term k="Payment" v={t.paymentDays != null ? `Within ${t.paymentDays} days of the invoice` : t.paymentTerms} />
-          {t.startDate && <Term k="Starts" v={day(`${t.startDate}T00:00:00`)} />}
+          {t.startDate && <Term k="Agreement date" v={day(`${t.startDate}T00:00:00`)} />}
           <Term k="Signs for TeamLink" v={t.signatoryName ? `${t.signatoryName}${t.signatoryTitle ? `, ${t.signatoryTitle}` : ''}` : t.consultantName} />
         </section>
 
         <div className={`agr-doc agr-doc-word agrs-doc${step === 'read' ? ' agrs-doc-read' : ''}`} tabIndex={0}>
           <AgreementDocView
             text={view.document}
+            agreementNo={view.agreementId}
             {...signersFrom({
               company: { signedBy: view.consultant?.signedBy, sealedAt: view.consultant?.sealedAt, hasSignature: !!view.consultant?.hasSignature, hasStamp: !!view.consultant?.hasStamp },
               clientSide: { signedBy: view.signedBy || view.signature?.signedBy, signedByTitle: view.signedByTitle || view.signature?.signedByTitle, hasSignature: !!view.signature?.captured, hasStamp: !!view.hasStamp, esign: view.emudhra?.signed ? 'eMudhra' : null },
-              signedAt: signed ? view.signedAt : null,
+              signedAt: null,
               teamlinkName: t.signatoryName, teamlinkTitle: t.signatoryTitle,
             }, (kind) => <img src={img(kind)} alt={kind} />)}
           />

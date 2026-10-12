@@ -134,7 +134,7 @@ const HR_POLICY_SETTINGS = [
   { label: 'Hours for a half day', field: 'halfDayHours', kind: 'float', what: 'Less than this = absent' },
   { label: 'Hours for a full day', field: 'fullDayHours', kind: 'float', what: 'Less than this = half day' },
   { label: 'Notice period (days)', field: 'noticePeriodDays', kind: 'int', what: 'Sets last working day on resignation' },
-  { label: 'Weekly off days', field: null, kind: 'text', what: 'e.g. Sunday; 2nd and 4th Saturday', why: 'the app has no weekly-off setting yet (HrConfig has no such column)' },
+  { label: 'Weekly off days', field: null, kind: 'text', what: 'e.g. Sunday (Saturday is a working day)', why: 'the app has no weekly-off setting yet (HrConfig has no such column)' },
   { label: 'Weekends paid? (Yes/No)', field: 'weekendsPaid', kind: 'bool', what: 'Attendance to pay' },
   { label: 'Unmarked days unpaid? (Yes/No)', field: 'unmarkedDaysUnpaid', kind: 'bool', what: 'Attendance to pay' },
   { label: 'Paid leave days per month', field: 'paidLeaveDaysPerMonth', kind: 'int', what: 'Leave to pay' },
@@ -434,7 +434,7 @@ const SHEETS = [
       c('Guarantee Period', 'guaranteePeriod', { eg: '3 Months' }),
       c('Commercial Notes', 'commercialNotes'),
       c('City', 'location', { help: 'Client address on invoices.', eg: 'Hyderabad' }),
-      c('Client Code', 'clientCode', { help: 'Your own client number. Unique.', eg: 'CL-0001' }),
+      c('Client Code', 'clientCode', { help: 'Leave empty and the system makes it (CLI0001...). If you type one, it must be unique.', eg: 'CLI0001' }),
       // NOT required by the parser even though the Field Guide marks it so: a
       // blank keeps the client's current fee (8.33% for a new client) rather
       // than refusing every client row that has not been priced yet.
@@ -537,8 +537,8 @@ const SHEETS = [
       c('Current Designation', 'currentDesignation', { eg: 'Staff Nurse' }),
       c('Total Experience (years)', 'experienceYears', { t: 'number', eg: '2' }),
       c('Relevant Experience (years)', 'relevantExperienceYears', { t: 'number', eg: '2' }),
-      c('Current Salary', 'currentSalary', { eg: '2.4 LPA' }),
-      c('Expected Salary', 'expectedSalary', { eg: '3 LPA' }),
+      c('Current Salary', 'currentSalary', { help: 'REQUIRED for a new candidate: yearly in lakhs (4.5 LPA) or monthly (45000 per month); write 0 if fresher. A row without it is not imported - it is listed under Fix these.', eg: '2.4 LPA' }),
+      c('Expected Salary', 'expectedSalary', { help: 'REQUIRED for a new candidate: yearly in lakhs (6 LPA) or monthly (50000 per month). A row without it is not imported - it is listed under Fix these.', eg: '3 LPA' }),
       c('Notice Period', 'noticePeriod', { eg: '30 Days' }),
       c('Education', 'education', { eg: 'B.Sc Nursing' }),
       c('Specialisation', 'specialization', { help: 'For Medical and similar: MBBS, Dermatology, Gynaecology …', eg: '' }),

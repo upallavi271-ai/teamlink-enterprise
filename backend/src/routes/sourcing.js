@@ -186,9 +186,12 @@ router.post('/referrals', async (req, res) => {
     let candidate = await require('../utils/jobPortalBridge').findCandidateByContact({ email, phone });
     const alreadyOnFile = !!candidate;
     if (!candidate) {
+      // A NEW person needs current + expected salary (user note 2026-10-10); someone already on file keeps theirs.
+      const sal = require('../utils/salaryFit').validateSalaries(fields); // eslint-disable-line global-require
+      if (!sal.ok) return { salaryError: sal };
       candidate = await prisma.candidate.create({
         data: {
-          name, email: email || null, phone, source: 'Employee Referral', firstSource: 'Employee Referral',
+          name, email: email || null, phone, currentSalary: sal.values.currentSalary, expectedSalary: sal.values.expectedSalary, source: 'Employee Referral', firstSource: 'Employee Referral',
           referredByEmployeeId: me.employeeId || null, referredByName: me.name,
         },
       });
@@ -234,6 +237,7 @@ router.post('/referrals', async (req, res) => {
     }
     return { candidate, application, referral, alreadyOnFile, alreadyApplied };
   });
+  if (out.salaryError) return res.status(400).json({ error: out.salaryError.message, code: 'SALARY_REQUIRED', errors: out.salaryError.errors });
   if (file) {
     try {
       await store.saveOriginalResume({ candidateId: out.candidate.id, file, user: me, note: `Employee referral by ${me.name}` });

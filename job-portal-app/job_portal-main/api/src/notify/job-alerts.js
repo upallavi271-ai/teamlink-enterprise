@@ -13,7 +13,9 @@
  * Three things it deliberately does NOT do:
  *
  *   - message on one keyword. api/src/ai/match.js applies hard gates
- *     before the score is even consulted;
+ *     before the score is even consulted, and the bar itself is the
+ *     candidate's AI Match (ai/ai-match.js: JD skills matched / JD skills
+ *     required), so a job that lists no skills alerts nobody here;
  *   - message the same candidate about the same job twice. The unique
  *     (job_id, candidate_id) row is the guard, and an already-notified
  *     match is skipped;
@@ -24,7 +26,8 @@
 import { withUser } from '../db.js';
 import { config } from '../config.js';
 import { providers } from './providers.js';
-import { buildEventMessages } from './templates.js';
+import { jobOpportunityMessages } from './job-opportunity.js';
+import { companyLabel } from '../portal/alerts.js';
 import { matchJob, DEFAULT_THRESHOLD } from '../ai/match.js';
 import { toCandidate, toJob } from '../shapes.js';
 import { claimNewJobNotice, releaseNewJobNotice, anySent } from './new-job-notice.js';
@@ -60,7 +63,7 @@ export async function runJobAlerts(jobId, opts = {}) {
     const job = (await c.query(
       `select j.*, co.name as company_name
          from jobs j left join companies co on co.id = j.company_id
-        where j.id = $1`, [jobId])).rows[0];
+        where j.id = $1 and j.source_type = 'TEAMLINK'`, [jobId])).rows[0];   // 0113: TeamLink jobs only
     if (!job) return null;
 
     // Only live postings alert. A draft, a paused or an archived job
@@ -92,7 +95,8 @@ export async function runJobAlerts(jobId, opts = {}) {
   }
 
   const job = toJob(data.job);
-  job.companyName = data.job.company_name || 'TeamLink';
+  /* The label the job's card shows: never a client's name (0051). */
+  job.companyName = companyLabel(data.job.company_name);
   const scored = matchJob(job, data.candidates.map(toCandidate), { threshold });
 
   const out = {
@@ -118,12 +122,12 @@ export async function runJobAlerts(jobId, opts = {}) {
       (await c.query(
         `select job_match_record($1,$2,$3,$4,$5,$6,$7,$8::jsonb) as id`,
         [id, jobId, cand.id, m.score, threshold, m.reason,
-         m.matchedSkills, JSON.stringify(m.breakdown)])).rows[0].id);
+         m.matchedSkills, JSON.stringify({ ...m.breakdown, aiMatch: m.aiMatch })])).rows[0].id);
 
     if (!m.notify) continue;
 
     out.matches.push({
-      matchId, candidateId: cand.id, score: m.score,
+      matchId, candidateId: cand.id, score: m.score, aiMatch: m.aiMatch ? m.aiMatch.score : null,
       matchedSkills: m.matchedSkills, reason: m.reason,
     });
 
@@ -153,20 +157,20 @@ async function sendAlert({ matchId, job, cand, match }) {
   // against the message that caused it.
   const jobUrl = `${base}/?alert=${encodeURIComponent(matchId)}#/job/${job.id}`;
 
-  const messages = buildEventMessages('JOB_MATCH_ALERT', {
-    candidateName: cand.name,
-    jobTitle: job.title,
-    company: job.companyName || 'TeamLink',
-    jobId: job.id,
-    applicationId: null,
-    location: job.location,
-    expLabel: job.exp,
-    payLabel: job.pay,
-    matchedSkills: match.matchedSkills,
-    portalUrl: jobUrl,
-    linkLabel: 'View job & apply',
-    smsLead: `New job matching your profile: ${job.title}` +
-             `${job.location ? ` - ${job.location}` : ''}. View & apply:`,
+  /* The shared job-opportunity format (job-opportunity.js, owner
+     2026-10-06), built only from the job record. The skills it matched on
+     are said in the email's small print, as the old alert said them. */
+  const skills = (match.matchedSkills || []).filter(Boolean);
+  const messages = jobOpportunityMessages(job, {
+    kind: 'profile_match',
+    applyUrl: jobUrl,
+    company: job.companyName,
+    email: {
+      subject: `A ${job.title} role matching your profile`,
+      ctaLabel: 'View job & apply',
+      note: 'You get this because this job matches your TeamLink profile'
+        + (skills.length ? ` (we matched you on: ${skills.join(', ')})` : '') + '.',
+    },
   });
 
   const status = {};

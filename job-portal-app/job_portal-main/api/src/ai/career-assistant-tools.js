@@ -59,7 +59,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'match_me_to_job',
-    description: 'Score the candidate against one open job with TeamLink\'s matching engine: a 0-100 score, matched skills, missing skills, and how experience, location and education fit. This is the only source of match percentages.',
+    description: 'The candidate\'s AI Match for one open job: score = the job\'s required skills the candidate has / the job\'s required skills x 100 (null when the job lists no skills, so say there is no match percentage), the matched and missing skills, and - as words only, never part of the score - how experience, location and education fit. This is the only source of match percentages.',
     strict: true,
     input_schema: {
       type: 'object',
@@ -97,7 +97,9 @@ const TOOL_NAMES = new Set(TOOL_DEFS.map((t) => t.name));
 async function me(c) {
   const row = (await c.query(`select * from candidates where id = app_candidate_id()`)).rows[0];
   if (!row) throw new Error('your profile could not be found');
-  return toCandidate(row);
+  /* resume text is evidence of a skill for the AI Match, exactly as on the
+     card (portal/core.js screeningInputs); it is never returned to the model */
+  return { ...toCandidate(row), resumeText: row.resume_text || '' };
 }
 
 export function missingFields(p) {
@@ -157,7 +159,9 @@ const OPEN = `select j.*, co.name as company_name from jobs_open j left join com
 
 async function searchOpenJobs(c, input = {}) {
   const lim = Math.max(1, Math.min(10, Number.isInteger(input.limit) ? input.limit : 5));
-  const where = ['j.id not in (select job_id from hidden_jobs where candidate_id = app_candidate_id())'];
+  /* 0113: the assistant searches the Jobs page's dataset - TeamLink jobs only. */
+  const where = ["j.source_type = 'TEAMLINK'",
+    'j.id not in (select job_id from hidden_jobs where candidate_id = app_candidate_id())'];
   const vals = [];
   const add = (sql, v) => { vals.push(v); where.push(sql.replace(/\$\?/g, `$${vals.length}`)); };
   const q = clip(input.query, 120);
@@ -176,7 +180,7 @@ async function searchOpenJobs(c, input = {}) {
 }
 
 async function openJob(c, id) {
-  const r = (await c.query(`${OPEN} where j.id = $1`, [String(id || '').slice(0, 80)])).rows[0];
+  const r = (await c.query(`${OPEN} where j.id = $1 and j.source_type = 'TEAMLINK'`, [String(id || '').slice(0, 80)])).rows[0];
   if (!r) throw new Error('that job is not open, or does not exist');
   return r;
 }
@@ -197,13 +201,18 @@ async function getJob(c, input) {
   };
 }
 
+/* The candidate's AI Match (ai-match.js, skills vs the JD only) - the same
+   number as the job card and "Why this match?". Experience, location and
+   education are reported as words beside it and do not move it. */
 export function matchSummary(job, cand) {
   const m = matchCandidate(job, cand);
   const b = m.breakdown;
+  const ai = m.aiMatch;
   return {
-    score: m.score,
-    matched_skills: m.matchedSkills || [],
-    missing_skills: (b.skills && b.skills.missing) || [],
+    score: ai.score,
+    score_basis: ai.score == null ? 'the job lists no skills, so there is no AI Match' : 'JD skills matched / JD skills required',
+    matched_skills: ai.matched,
+    missing_skills: ai.missing,
     experience_fit: b.experience ? b.experience.fit || '' : '',
     location_fit: b.location ? b.location.reason || '' : '',
     education_fit: b.education ? b.education.reason || '' : '',

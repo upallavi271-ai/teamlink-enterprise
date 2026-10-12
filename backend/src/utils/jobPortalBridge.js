@@ -218,6 +218,8 @@ async function portalJobLive(requirementId) {
 const BOARD_NAMES = {
   naukri: 'Naukri', indeed: 'Indeed', shine: 'Shine', linkedin: 'LinkedIn',
   facebook: 'Facebook', whatsapp: 'WhatsApp', x: 'X',
+  // the other tags the ATS's own links carry; every one maps to a clean source (utils/candidateSource.js)
+  website: 'TeamLink Website', google: 'Google Jobs', teamlinkwebsite: 'TeamLink Website',
 };
 
 // An existing candidate with this email or phone, by the Candidate Master's
@@ -328,7 +330,10 @@ async function ingestOne(payload) {
         skills: skills || null,
         education: c.education || null,
         noticePeriod: c.noticePeriod || undefined,
-        expectedSalary: c.expectedCtc != null ? String(c.expectedCtc) : null,
+        // Salary: a readable amount is stored as a clean "6.5 LPA"; missing / unreadable stays EMPTY (never invented) and shows
+        // "Salary missing" - the portal form is the user's own code, so the ATS asks for it before the person goes to the client.
+        currentSalary: require('./salaryFit').normaliseLoose(c.currentCtc != null ? c.currentCtc : c.currentSalary), // eslint-disable-line global-require
+        expectedSalary: require('./salaryFit').normaliseLoose(c.expectedCtc != null ? c.expectedCtc : c.expectedSalary), // eslint-disable-line global-require
         resumeName: c.resumeFile || null,
       },
     });
@@ -336,6 +341,13 @@ async function ingestOne(payload) {
     await prisma.syncLog.create({
       data: { entity: 'Candidates', status: 'Success', reason: `${candidate.name} registered from the TeamLink Job Portal`, recordRef: candidate.id },
     });
+  }
+
+  // dup_: the applicant is somebody already in the ATS (matched by phone / e-mail): say so on their profile, so the
+  // duplicate screen can show "Already in ATS (matched by phone)". A look-alike NEW profile (e.g. a gmail variant) is flagged by the
+  // entry hook instead (utils/candidateDupHook.js). Never fatal.
+  if (!createdCandidate) {
+    try { await require('./candidateDupes').noteAlreadyInAts({ candidate, email, phone, portalApplicationId: app.id }); } catch { /* optional */ } // eslint-disable-line global-require
   }
 
   const existing = await prisma.application.findUnique({

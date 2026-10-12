@@ -1,0 +1,7 @@
+/* DashboardExport — the dashboards' one Export button. Scoped under .dxp. */
+.dxp{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dxp-msg{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 8px;border-radius:6px;max-width:360px}
+.dxp-msg.ok{background:var(--teal-tint);color:var(--teal)}
+.dxp-msg.bad{background:var(--red-tint);color:var(--red)}
+.dxp-x{background:none;border:0;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+@media(max-width:640px){.dxp{width:100%}.dxp-msg{max-width:100%}}

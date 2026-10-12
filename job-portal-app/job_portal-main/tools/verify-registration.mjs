@@ -121,6 +121,7 @@ let code = '', candidateId = '';
 
 await check('Register button opens the registration form, in 7 steps with progress', async () => {
   await p.click('header a[href="#/register/candidate"], a.btn-primary[href="#/register/candidate"]');
+  await p.evaluate(() => { if (window.TLResumeFirst) window.TLResumeFirst.manual(); }); /* 0117: the seven-step form is the manual path */
   await p.waitForTimeout(800);
   must(/^#\/register\/candidate/.test(await p.evaluate(() => location.hash)), 'not on the registration page');
   const s = await p.evaluate(() => ({
@@ -165,14 +166,20 @@ await check('email and mobile format messages', async () => {
 });
 
 await check('duplicate email and duplicate mobile are said inline, under the field', async () => {
+  /* The answer comes from the server (POST /auth/register/check), so it is
+     waited for - up to 8 s on a busy machine - rather than given 900 ms. */
+  const errSoon = async (id, want) => {
+    for (let i = 0; i < 32; i++) { if (await errText(p, id) === want) return want; }
+    return errText(p, id);
+  };
   await fill(p, 'regEmail', existing.email);
   await p.press('#regEmail', 'Tab');
-  await p.waitForTimeout(900);
-  must(await errText(p, 'regEmail') === 'An account with this email already exists. Please Login.', 'email: ' + await errText(p, 'regEmail'));
+  const em = await errSoon('regEmail', 'An account with this email already exists. Please Login.');
+  must(em === 'An account with this email already exists. Please Login.', 'email: ' + em);
   await fill(p, 'regMobile', existing.phone);
   await p.press('#regMobile', 'Tab');
-  await p.waitForTimeout(900);
-  must(await errText(p, 'regMobile') === 'An account with this mobile number already exists.', 'mobile: ' + await errText(p, 'regMobile'));
+  const mo = await errSoon('regMobile', 'An account with this mobile number already exists.');
+  must(mo === 'An account with this mobile number already exists.', 'mobile: ' + mo);
 });
 
 await check('Continue moves on once step 1 is right; Back keeps everything', async () => {
@@ -388,6 +395,9 @@ await check('the profile was created with every step\'s answers; documents saved
   for (const [k, v] of Object.entries(want)) must(me[k] === v, `${k}: ${JSON.stringify(me[k])}`);
   must(me.skills.includes('Spring Boot'), 'skills ' + me.skills);
   must(me.preferredEmploymentTypes.includes('Full Time'), 'employment types');
+  /* Only the work-mode group: Employment Type and Communication are also
+     checkbox rows, and once were stored as work modes ("Full Time", "email"). */
+  must(JSON.stringify(me.preferredWorkModes) === JSON.stringify(['Hybrid']), 'work modes ' + JSON.stringify(me.preferredWorkModes));
   must(me.whatsappOptIn === true && me.smsOptIn === false, 'channels');
   must(me.willingToRelocate === true, 'relocate');
   must(Number(me.expectedCtc) === 9.5, 'expected ' + me.expectedCtc);
@@ -516,6 +526,7 @@ await check('recruiters see the Candidate ID beside the internal id', async () =
 console.log('\nregistration, phone width 390px, keyboard');
 const m = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 const mp = await open(m, '#/register/candidate');
+await mp.evaluate(() => { if (window.TLResumeFirst) window.TLResumeFirst.manual(); }); /* 0117: the seven-step form is the manual path */
 const XSS = 'Ravi <img src=x onerror="window.__xss=1"> Kumar';
 const overflow = () => mp.evaluate(() => document.documentElement.scrollWidth);
 

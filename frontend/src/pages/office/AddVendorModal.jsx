@@ -17,7 +17,7 @@ import { useJumpToInvalid } from './FormSections.jsx';
 import { showToast } from './toast';
 
 const BLANK = {
-  name: '', contactPerson: '', phone: '', email: '', address: '', gstin: '', paymentTerms: '', notes: '',
+  name: '', companyName: '', contactPerson: '', phone: '', email: '', address: '', gstin: '', pan: '', category: '', paymentTerms: '', notes: '',
 };
 const FIELDS = Object.keys(BLANK);
 const TERMS = ['Immediate', 'Advance', 'Net 7', 'Net 15', 'Net 30', 'Net 45', 'Net 60'];
@@ -40,6 +40,8 @@ function validate(v, names) {
   if (v.email.trim() && !EMAIL.test(v.email.trim())) e.email = 'Enter a valid email address';
   const g = cleanId(v.gstin);
   if (g) { const c = checkGstin(g); if (!c.ok) e.gstin = c.error; }
+  const p = cleanId(v.pan);
+  if (p && !/^[A-Z]{5}d{4}[A-Z]$/.test(p)) e.pan = 'PAN is 10 characters, like ABCDE1234F';
   return e;
 }
 
@@ -53,6 +55,7 @@ export default function AddVendorModal({
   const [serverErr, setServerErr] = useState({});
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [warn, setWarn] = useState(null); // a possible duplicate the user may confirm
   const dlgRef = useRef(null);
   const formRef = useRef(null);
   const titleId = useId();
@@ -62,10 +65,12 @@ export default function AddVendorModal({
   // caught before the round trip (the API checks again).
   useEffect(() => {
     let live = true;
-    api.get('/office-expenses/vendors').then((r) => { if (live) setMaster(r.data.map((x) => x.name)); }).catch(() => {});
+    api.get('/office-expenses/vendors', { params: { all: 1 } }).then((r) => { if (live) setMaster(r.data.map((x) => x.name)); }).catch(() => {});
     return () => { live = false; };
   }, []);
-  const names = useMemo(() => [...new Set([...existingNames, ...master].filter(Boolean))], [existingNames, master]);
+  // Only the vendor MASTER blocks a name here. A name that is only typed on old bills may be
+  // added: that is how those vendors get into the master (Admin links the old bills afterwards).
+  const names = useMemo(() => [...new Set(master.filter(Boolean))], [master]);
   const errors = useMemo(() => ({ ...validate(v, names), ...serverErr }), [v, names, serverErr]);
   const show = (k) => (tried || touched[k]) && errors[k];
 
@@ -93,18 +98,23 @@ export default function AddVendorModal({
   const set = (k) => (e) => {
     const val = e.target.value;
     setV((cur) => ({ ...cur, [k]: val }));
+    setWarn(null);
     if (serverErr[k]) setServerErr((cur) => { const n = { ...cur }; delete n[k]; return n; });
   };
   const touch = (k) => () => setTouched((cur) => (cur[k] ? cur : { ...cur, [k]: true }));
 
-  const save = async (e) => {
-    e.preventDefault();
+  const save = async (e, confirmDuplicate) => {
+    if (e && e.preventDefault) e.preventDefault();
     e.stopPropagation(); // never reach an expense form this dialog was opened from
     setTried(true);
     setErr('');
     if (Object.keys(errors).length) { jump(); return; }
     const body = {
       name: squash(v.name),
+      companyName: v.companyName.trim(),
+      pan: cleanId(v.pan),
+      category: v.category.trim(),
+      confirmDuplicate: confirmDuplicate === true,
       contactPerson: v.contactPerson.trim(),
       phone: v.phone.trim(),
       email: v.email.trim(),
@@ -121,7 +131,9 @@ export default function AddVendorModal({
       onSaved(r.data);
     } catch (e2) {
       const d = (e2.response && e2.response.data) || {};
-      if (d.field && FIELDS.includes(d.field)) {
+      if (e2.response && e2.response.status === 409 && d.warning) {
+        setWarn(d);
+      } else if (d.field && FIELDS.includes(d.field)) {
         setServerErr({ [d.field]: d.error });
         jump();
       } else {
@@ -160,6 +172,11 @@ export default function AddVendorModal({
               <input {...inputProps('name')} maxLength={120} autoComplete="organization" placeholder="e.g. Sri Sai Stationers" />
               <Err k="name" />
             </div>
+            <div {...fieldProps('companyName')}>
+              <label htmlFor={`${titleId}-companyName`}><span>Company name</span></label>
+              <input {...inputProps('companyName')} maxLength={160} autoComplete="organization" />
+              <Err k="companyName" />
+            </div>
             <div {...fieldProps('contactPerson')}>
               <label htmlFor={`${titleId}-contactPerson`}><span>Contact person</span></label>
               <input {...inputProps('contactPerson')} maxLength={120} autoComplete="name" />
@@ -182,6 +199,16 @@ export default function AddVendorModal({
                 ? <em className="oe-qx-hint oe-vm-ok">GSTIN valid · {checkGstin(cleanId(v.gstin)).stateName}</em>
                 : <em className="oe-qx-hint">Filled in on this vendor&apos;s bills when a bill has no GSTIN of its own</em>)}
             </div>
+            <div {...fieldProps('pan')}>
+              <label htmlFor={`${titleId}-pan`}><span>PAN</span></label>
+              <input {...inputProps('pan')} maxLength={10} placeholder="10 characters, optional" onChange={(e) => set('pan')({ target: { value: e.target.value.toUpperCase().replace(/s+/g, '') } })} />
+              <Err k="pan" />
+            </div>
+            <div {...fieldProps('category')}>
+              <label htmlFor={`${titleId}-category`}><span>Category</span></label>
+              <input {...inputProps('category')} maxLength={60} placeholder="e.g. Internet, Rent, Stationery" />
+              <Err k="category" />
+            </div>
             <div {...fieldProps('address')}>
               <label htmlFor={`${titleId}-address`}><span>Address</span></label>
               <textarea {...inputProps('address')} rows={2} maxLength={500} autoComplete="street-address" />
@@ -198,14 +225,19 @@ export default function AddVendorModal({
               <textarea {...inputProps('notes')} rows={2} maxLength={1000} />
               <Err k="notes" />
             </div>
+            {warn && <div className="notice amber oe-vm-full" role="alert" style={{ marginBottom: 0 }}><span>{warn.error}</span></div>}
             {err && <div className="notice red oe-vm-full" role="alert" style={{ marginBottom: 0 }}><span>{err}</span></div>}
           </form>
         </div>
         <div className="modal-foot">
           <button type="button" className="btn" onClick={close} disabled={busy}>Cancel</button>
-          <button type="submit" form={`${titleId}-form`} className="btn btn-primary" disabled={busy} aria-busy={busy || undefined}>
-            {busy ? <><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Saving…</> : 'Save vendor'}
-          </button>
+          {warn
+            ? <button type="button" className="btn btn-primary" disabled={busy} onClick={(e) => save(e, true)}>Yes, it is a different vendor — save</button>
+            : (
+              <button type="submit" form={`${titleId}-form`} className="btn btn-primary" disabled={busy} aria-busy={busy || undefined}>
+                {busy ? <><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Saving…</> : 'Save vendor'}
+              </button>
+            )}
         </div>
       </div>
     </div>,

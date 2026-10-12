@@ -6,10 +6,12 @@
 // (required, min / max, longest text, the list of choices). Values are kept
 // per employee in EmployeeFieldValue.
 //
-//   GET    /api/employee-fields                 the fields (active; ?all=1 for the Manage screen)
-//   POST   /api/employee-fields                 add a field          (Employee Management / configure)
-//   PUT    /api/employee-fields/:id             edit a field         (configure)
-//   DELETE /api/employee-fields/:id             remove — or switch off when people already have a value
+//   GET    /api/employee-fields                 the added fields (active); ?all=1 = the ONE list of built-in + added fields (Super Admin / HR; seeds the built-ins on first open)
+//   GET    /api/employee-fields/layout          labels / help / required / Pause / order of the built-in fields (any signed-in login; used by the forms)
+//   POST   /api/employee-fields                 add a field          (Super Admin / HR)
+//   PUT    /api/employee-fields/:id             edit a field, Pause / Resume (built-in: label, help, required, active only)
+//   POST   /api/employee-fields/reorder         move one field up / down inside its section
+//   DELETE /api/employee-fields/:id             remove an added field — or pause it when people already have a value (built-in: refused)
 //   GET    /api/employee-fields/values/:employeeId          one employee's values (view + scope)
 //   PUT    /api/employee-fields/values/:employeeId          save values          (edit + scope)
 //   POST   /api/employee-fields/values/:employeeId/:fieldId/file   upload (edit + scope)
@@ -25,6 +27,8 @@ const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const { employeeWhere, hrmsGlobal } = require('../utils/scope');
 const attachments = require('../utils/attachments');
 const { logAudit } = require('../utils/audit');
+const defs = require('../utils/employeeFieldDefs');
+const cat = require('../utils/employeeFieldCatalog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -41,6 +45,20 @@ router.use((req, res, next) => {
   if (ready()) return next();
   return res.status(503).json({ error: 'Manage Fields needs a database update that has not been applied yet. Please try again later.' });
 });
+
+// Only Super Admin and HR change the field list (the matrix's `configure` is
+// wider — Admin has it too — so this is checked on top of it, on the server).
+const mayManage = (user) => [user.role, user.hrmsRole].some((r) => r === 'SUPER_ADMIN' || r === 'HR');
+// (HR holds the Employee Management `create` right, as the HR desk; a TL / STL does not.)
+async function mayManageNow(user) {
+  return mayManage(user) && can(user, 'hrms', 'hrms', 'Employee Management', 'create');
+}
+async function needManage(req, res, next) {
+  if (await mayManageNow(req.user)) return next();
+  return res.status(403).json({ error: 'Only the Super Admin and HR can change the employee fields.' });
+}
+// The added (custom) fields only — the built-in ones are rows with key core.<column>.
+const ADDED = { NOT: { key: { startsWith: 'core.' } } };
 
 const parseOptions = (raw) => {
   if (Array.isArray(raw)) return raw;
@@ -170,23 +188,125 @@ async function employeeFor(req, res, { write = false } = {}) {
 }
 
 // ---- the definitions --------------------------------------------------------
+const PAUSE_WHY_REQUIRED = (label) => `"${label}" is required, so it cannot be paused. Make it optional first, then pause it.`;
+
+// One built-in field, as the Manage Fields list draws it.
+function shapeBuiltIn(c, r, count) {
+  const required = c.reqLocked ? true : !!r.required;
+  const canPause = !c.needed && !required;
+  return {
+    id: r.id,
+    key: r.key,
+    builtin: true,
+    dbName: c.col,
+    originalName: c.label,
+    label: r.label,
+    type: c.type,
+    typeLabel: TYPE_LABEL[c.type] || c.type,
+    options: [],
+    choicesFrom: c.choices || null,
+    hint: c.hint || '',
+    required,
+    requiredLocked: !!c.reqLocked,
+    helpText: r.helpText || '',
+    active: c.needed ? true : !!r.active,
+    position: r.position,
+    section: c.section,
+    where: c.where,
+    needed: !!c.needed,
+    neededWhy: c.neededWhy || '',
+    canPause,
+    pauseBlockedWhy: c.needed ? `Needed by the system. ${c.neededWhy}` : (required ? PAUSE_WHY_REQUIRED(r.label) : ''),
+    valueCount: count === undefined ? null : count,
+  };
+}
+
+function shapeAdded(f, count, groups) {
+  return {
+    ...shape(f, count),
+    builtin: false,
+    dbName: null,
+    originalName: f.label,
+    section: groups[f.id] || cat.CUSTOM_SECTION,
+    group: groups[f.id] || '',
+    where: { form: true, profile: true, list: false },
+    needed: false,
+    neededWhy: '',
+    requiredLocked: false,
+    canPause: !f.required,
+    pauseBlockedWhy: f.required ? PAUSE_WHY_REQUIRED(f.label) : '',
+  };
+}
+
+const bucketOf = (item) => (item.builtin ? cat.sectionIndex(item.section) : cat.SECTION_ORDER.length - 1);
+const displayOrder = (a, b) => bucketOf(a) - bucketOf(b) || a.position - b.position;
+
+// How many employees hold a value in each built-in column — one read for all.
+async function builtInCounts() {
+  const cols = cat.CATALOG.map((c) => c.col).filter((c) => !['position', 'roleCode'].includes(c));
+  const real = cols.map((c) => (c === 'aadhaarNumber' ? 'aadhaarLast4' : c));
+  const select = Object.fromEntries([...new Set(real)].map((c) => [c, true]));
+  const rows = await prisma.employee.findMany({ select });
+  const out = {};
+  cols.forEach((c) => {
+    const col = c === 'aadhaarNumber' ? 'aadhaarLast4' : c;
+    out[c] = rows.filter((r) => r[col] !== null && r[col] !== undefined && r[col] !== '').length;
+  });
+  return out;
+}
+
 router.get('/', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const all = String(req.query.all || '') === '1';
-  const fields = await prisma.employeeField.findMany({ where: all ? {} : { active: true }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] });
-  let counts = {};
-  if (all) {
-    const g = await prisma.employeeFieldValue.groupBy({ by: ['fieldId'], _count: true, where: { OR: [{ value: { not: null } }, { fileStored: { not: null } }] } });
-    counts = Object.fromEntries(g.map((r) => [r.fieldId, r._count]));
+  const manage = await mayManageNow(req.user);
+  if (!all) {
+    const fields = await prisma.employeeField.findMany({ where: { active: true, ...ADDED }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] });
+    return res.json({
+      types: TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] })),
+      canConfigure: manage,
+      fileRule: 'PDF, PNG, JPEG or WebP, up to 5 MB.',
+      fields: fields.map((f) => shape(f)),
+    });
   }
+  // The full list (with the Pause / Edit powers behind it) is for Super Admin and HR only.
+  if (!manage) return res.status(403).json({ error: 'Only the Super Admin and HR can open the field list.' });
+  // First time anyone with the right opens this screen, the built-in fields
+  // are written down from the real form. Later opens never overwrite them.
+  await defs.ensureBuiltins(req.user.id);
+  const [rows, groups, counts] = await Promise.all([
+    prisma.employeeField.findMany({ orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] }),
+    defs.readGroups(),
+    builtInCounts(),
+  ]);
+  const g = await prisma.employeeFieldValue.groupBy({ by: ['fieldId'], _count: true, where: { OR: [{ value: { not: null } }, { fileStored: { not: null } }] } });
+  const valueCounts = Object.fromEntries(g.map((r) => [r.fieldId, r._count]));
+  const items = [];
+  rows.forEach((r) => {
+    if (cat.isBuiltInKey(r.key)) {
+      const c = cat.BY_KEY.get(r.key);
+      if (c) items.push(shapeBuiltIn(c, r, counts[c.col]));
+    } else items.push(shapeAdded(r, valueCounts[r.id] || 0, groups));
+  });
+  items.sort(displayOrder);
   res.json({
     types: TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] })),
-    canConfigure: await can(req.user, 'hrms', 'hrms', 'Employee Management', 'configure'),
+    canConfigure: manage,
+    seeded: items.some((i) => i.builtin),
+    sections: cat.SECTION_ORDER,
+    groups: [...new Set(Object.values(groups).filter(Boolean))],
     fileRule: 'PDF, PNG, JPEG or WebP, up to 5 MB.',
-    fields: fields.map((f) => shape(f, all ? counts[f.id] || 0 : undefined)),
+    fields: items,
   });
 });
 
-router.post('/', requirePerm(null, 'hrms', 'Employee Management', 'configure'), async (req, res) => {
+// What the forms, the profile and the list need to draw themselves: the label
+// override, help text, required flag, order and Pause state of every built-in
+// field. Any signed-in person may read it (My Profile uses it too); it holds
+// no employee data.
+router.get('/layout', async (req, res) => {
+  res.json(await defs.layoutFor());
+});
+
+router.post('/', needManage, async (req, res) => {
   const { data, error } = cleanDefinition(req.body || {});
   if (error) return res.status(400).json({ error });
   const clash = await prisma.employeeField.findFirst({ where: { label: data.label } });
@@ -195,13 +315,81 @@ router.post('/', requirePerm(null, 'hrms', 'Employee Management', 'configure'), 
   for (let i = 2; await prisma.employeeField.findUnique({ where: { key } }); i += 1) key = `${slug(data.label)}_${i}`; // eslint-disable-line no-await-in-loop
   const last = await prisma.employeeField.aggregate({ _max: { position: true } });
   const field = await prisma.employeeField.create({ data: { ...data, key, position: (last._max.position ?? -1) + 1, createdById: req.user.id } });
-  await logAudit({ userId: req.user.id, action: 'Employee field added', entity: 'EmployeeField', entityId: field.id, toValue: `${field.label} (${TYPE_LABEL[field.type]})` });
+  const group = String((req.body || {}).group || '').trim().slice(0, 40);
+  if (group && group !== cat.CUSTOM_SECTION) await defs.writeGroup(field.id, group, req.user);
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Employee field added', entity: 'EmployeeField', entityId: field.id, field: key, fieldLabel: field.label, toValue: `${field.label} (${TYPE_LABEL[field.type]})` });
   res.status(201).json(shape(field, 0));
 });
 
-router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'configure'), async (req, res) => {
+// Edit a BUILT-IN field. Its database column and type never change; only the
+// label, help text, required flag and Pause / Resume.
+async function editBuiltIn(req, res, existing) {
+  const c = cat.BY_KEY.get(existing.key);
+  if (!c) return res.status(404).json({ error: 'Field not found' });
+  const body = req.body || {};
+  if (body.type !== undefined && String(body.type).toUpperCase() !== existing.type) {
+    return res.status(409).json({ error: `The type of "${existing.label}" is part of the employee record and cannot be changed.` });
+  }
+  if (Array.isArray(body.options) ? body.options.length : String(body.options || '').trim()) {
+    return res.status(409).json({ error: `The choices of "${existing.label}" are kept in Company Setup > Master lists.` });
+  }
+  const patch = {};
+  const notes = [];
+  if (body.label !== undefined) {
+    const label = String(body.label).trim();
+    if (!label) return res.status(400).json({ error: 'Give the field a name.' });
+    if (label.length > 60) return res.status(400).json({ error: 'The field name can have at most 60 characters.' });
+    if (label !== existing.label) {
+      if (await prisma.employeeField.findFirst({ where: { label, NOT: { id: existing.id } } })) {
+        return res.status(409).json({ error: `There is already a field called "${label}".` });
+      }
+      patch.label = label;
+      notes.push({ action: 'Employee field renamed', from: existing.label, to: label });
+    }
+  }
+  if (body.helpText !== undefined) {
+    const help = String(body.helpText || '').trim().slice(0, 200) || null;
+    if (help !== (existing.helpText || null)) { patch.helpText = help; notes.push({ action: 'Employee field help text changed', from: existing.helpText || '', to: help || '' }); }
+  }
+  const wasRequired = c.reqLocked ? true : !!existing.required;
+  const wasActive = c.needed ? true : !!existing.active;
+  let required = wasRequired;
+  let active = wasActive;
+  if (body.required !== undefined) {
+    required = !!body.required;
+    if (c.reqLocked && !required) return res.status(409).json({ error: `"${existing.label}" is always required: the system needs it.` });
+  }
+  if (body.active !== undefined) {
+    active = !!body.active;
+    if (c.needed && !active) return res.status(409).json({ error: `"${existing.label}" is needed by the system and cannot be paused. ${c.neededWhy}` });
+  }
+  if (!active && required) {
+    return res.status(409).json({ error: wasActive ? PAUSE_WHY_REQUIRED(patch.label || existing.label) : `"${existing.label}" is paused. Resume it before making it required.` });
+  }
+  if (required !== wasRequired) { patch.required = required; notes.push({ action: required ? 'Employee field made required' : 'Employee field made optional', from: wasRequired ? 'Required' : 'Optional', to: required ? 'Required' : 'Optional' }); }
+  if (active !== wasActive) { patch.active = active; notes.push({ action: active ? 'Employee field resumed' : 'Employee field paused', from: wasActive ? 'Active' : 'Paused', to: active ? 'Active' : 'Paused' }); }
+  if (Object.keys(patch).length) {
+    await prisma.employeeField.update({ where: { id: existing.id }, data: patch });
+    defs.invalidate();
+    await defs.refresh();
+    // eslint-disable-next-line no-restricted-syntax
+    for (const n of notes) {
+      // eslint-disable-next-line no-await-in-loop
+      await logAudit({
+        userId: req.user.id, actorName: req.user.name, action: n.action, entity: 'EmployeeField', entityId: existing.id,
+        field: c.col, fieldLabel: patch.label || existing.label, fromValue: n.from, toValue: n.to,
+      });
+    }
+  }
+  const fresh = await prisma.employeeField.findUnique({ where: { id: existing.id } });
+  const counts = await builtInCounts();
+  return res.json(shapeBuiltIn(c, fresh, counts[c.col]));
+}
+
+router.put('/:id', needManage, async (req, res) => {
   const existing = await prisma.employeeField.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Field not found' });
+  if (cat.isBuiltInKey(existing.key)) return editBuiltIn(req, res, existing);
   const body = req.body || {};
   const used = await prisma.employeeFieldValue.count({ where: { fieldId: existing.id, OR: [{ value: { not: null } }, { fileStored: { not: null } }] } });
   if (body.type && String(body.type).toUpperCase() !== existing.type && used) {
@@ -213,28 +401,92 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'configure')
     return res.status(409).json({ error: `There is already a field called "${data.label}".` });
   }
   const patch = { ...data };
-  if (body.active !== undefined) patch.active = !!body.active;
-  if (body.position !== undefined && Number.isInteger(Number(body.position))) patch.position = Number(body.position);
+  if (body.active !== undefined) {
+    patch.active = !!body.active;
+    if (!patch.active && data.required) return res.status(409).json({ error: PAUSE_WHY_REQUIRED(data.label) });
+  }
   const field = await prisma.employeeField.update({ where: { id: existing.id }, data: patch });
-  await logAudit({ userId: req.user.id, action: 'Employee field edited', entity: 'EmployeeField', entityId: field.id, fromValue: existing.label, toValue: field.label });
+  if (body.group !== undefined) {
+    const group = String(body.group || '').trim().slice(0, 40);
+    await defs.writeGroup(field.id, group === cat.CUSTOM_SECTION ? '' : group, req.user);
+  }
+  const what = [];
+  if (existing.label !== field.label) what.push(`renamed "${existing.label}" to "${field.label}"`);
+  if (!!existing.required !== !!field.required) what.push(field.required ? 'made required' : 'made optional');
+  if (!!existing.active !== !!field.active) what.push(field.active ? 'resumed' : 'paused');
+  await logAudit({
+    userId: req.user.id,
+    actorName: req.user.name,
+    action: existing.active && !field.active ? 'Employee field paused' : (!existing.active && field.active ? 'Employee field resumed' : 'Employee field edited'),
+    entity: 'EmployeeField',
+    entityId: field.id,
+    field: field.key,
+    fieldLabel: field.label,
+    fromValue: existing.label,
+    toValue: what.join('; ') || field.label,
+  });
   res.json(shape(field, used));
 });
 
-// REMOVE. A field nobody has filled in is deleted. One that holds values is
-// switched off instead — hidden from every form, the values kept — so a
-// mis-click never wipes data; "Switch on" brings it back.
-router.delete('/:id', requirePerm(null, 'hrms', 'Employee Management', 'configure'), async (req, res) => {
+// MOVE a field one step up or down inside its section. The positions of the
+// whole list are rewritten in one go so two fields never share a place.
+router.post('/reorder', needManage, async (req, res) => {
+  const { id, direction } = req.body || {};
+  if (!['up', 'down'].includes(direction)) return res.status(400).json({ error: 'Say whether to move it up or down.' });
+  const rows = await prisma.employeeField.findMany({ orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] });
+  const items = rows.map((r) => ({
+    r,
+    bucket: cat.isBuiltInKey(r.key) ? (cat.BY_KEY.get(r.key) ? cat.sectionIndex(cat.BY_KEY.get(r.key).section) : 99) : cat.SECTION_ORDER.length - 1,
+  })).sort((a, b) => a.bucket - b.bucket || a.r.position - b.r.position);
+  const i = items.findIndex((x) => x.r.id === id);
+  if (i < 0) return res.status(404).json({ error: 'Field not found' });
+  const j = direction === 'up' ? i - 1 : i + 1;
+  if (j < 0 || j >= items.length || items[j].bucket !== items[i].bucket) {
+    return res.status(409).json({ error: direction === 'up' ? 'It is already first in its section.' : 'It is already last in its section.' });
+  }
+  [items[i], items[j]] = [items[j], items[i]];
+  const ops = [];
+  items.forEach((x, n) => { if (x.r.position !== n) ops.push(prisma.employeeField.update({ where: { id: x.r.id }, data: { position: n } })); });
+  await prisma.$transaction(ops);
+  defs.invalidate();
+  const moved = rows.find((r) => r.id === id);
+  await logAudit({
+    userId: req.user.id,
+    actorName: req.user.name,
+    action: 'Employee field moved',
+    entity: 'EmployeeField',
+    entityId: id,
+    field: moved.key,
+    fieldLabel: moved.label,
+    toValue: direction === 'up' ? 'Moved up' : 'Moved down',
+  });
+  res.json({ ok: true });
+});
+
+// REMOVE (added fields only). A field nobody has filled in is deleted. One that
+// holds values is paused instead — hidden from every form, the values kept — so
+// a mis-click never wipes data; "Resume" brings it back. Built-in fields are
+// part of the employee record: they can be paused, never removed.
+router.delete('/:id', needManage, async (req, res) => {
   const existing = await prisma.employeeField.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Field not found' });
+  if (cat.isBuiltInKey(existing.key)) {
+    return res.status(409).json({ error: `"${existing.label}" is part of the employee record and cannot be removed. Use Pause to hide it.` });
+  }
   const used = await prisma.employeeFieldValue.count({ where: { fieldId: existing.id, OR: [{ value: { not: null } }, { fileStored: { not: null } }] } });
   if (used) {
     await prisma.employeeField.update({ where: { id: existing.id }, data: { active: false } });
-    await logAudit({ userId: req.user.id, action: 'Employee field switched off', entity: 'EmployeeField', entityId: existing.id, fromValue: existing.label, reason: `${used} value(s) kept` });
-    return res.json({ ok: true, removed: false, switchedOff: true, message: `"${existing.label}" is hidden now. ${used} employee${used === 1 ? '' : 's'} had a value, so the values are kept.` });
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Employee field paused', entity: 'EmployeeField', entityId: existing.id, field: existing.key, fieldLabel: existing.label, fromValue: 'Active', toValue: 'Paused', reason: `${used} value(s) kept`,
+    });
+    return res.json({ ok: true, removed: false, switchedOff: true, message: `"${existing.label}" is paused now. ${used} employee${used === 1 ? '' : 's'} had a value, so the values are kept.` });
   }
   await prisma.employeeFieldValue.deleteMany({ where: { fieldId: existing.id } });
   await prisma.employeeField.delete({ where: { id: existing.id } });
-  await logAudit({ userId: req.user.id, action: 'Employee field removed', entity: 'EmployeeField', entityId: existing.id, fromValue: existing.label });
+  await defs.writeGroup(existing.id, '', req.user);
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Employee field removed', entity: 'EmployeeField', entityId: existing.id, field: existing.key, fieldLabel: existing.label, fromValue: existing.label,
+  });
   return res.json({ ok: true, removed: true, message: `"${existing.label}" removed.` });
 });
 
@@ -243,14 +495,15 @@ router.get('/values/:employeeId', async (req, res) => {
   const ctx = await employeeFor(req, res);
   if (!ctx) return;
   const [fields, values] = await Promise.all([
-    prisma.employeeField.findMany({ where: { active: true }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] }),
+    prisma.employeeField.findMany({ where: { active: true, ...ADDED }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] }),
     prisma.employeeFieldValue.findMany({ where: { employeeId: ctx.employee.id } }),
   ]);
   const byField = new Map(values.map((v) => [v.fieldId, v]));
+  const groups = await defs.readGroups();
   res.json({
     canEdit: ctx.mayEdit,
     fileRule: 'PDF, PNG, JPEG or WebP, up to 5 MB.',
-    fields: fields.map((f) => ({ ...shape(f), value: readValue(f, byField.get(f.id)) })),
+    fields: fields.map((f) => ({ ...shape(f), group: groups[f.id] || '', value: readValue(f, byField.get(f.id)) })),
   });
 });
 
@@ -258,7 +511,7 @@ router.put('/values/:employeeId', async (req, res) => {
   const ctx = await employeeFor(req, res, { write: true });
   if (!ctx) return;
   const input = (req.body && req.body.values) || {};
-  const fields = await prisma.employeeField.findMany({ where: { active: true, type: { not: 'FILE' } } });
+  const fields = await prisma.employeeField.findMany({ where: { active: true, type: { not: 'FILE' }, ...ADDED } });
   const errors = {};
   const writes = [];
   for (const f of fields) {
@@ -295,7 +548,7 @@ router.post('/values/:employeeId/:fieldId/file', async (req, res) => {
   const ctx = await employeeFor(req, res, { write: true });
   if (!ctx) return;
   const field = await prisma.employeeField.findUnique({ where: { id: req.params.fieldId } });
-  if (!field || !field.active || field.type !== 'FILE') return res.status(404).json({ error: 'Field not found' });
+  if (!field || !field.active || field.type !== 'FILE' || cat.isBuiltInKey(field.key)) return res.status(404).json({ error: 'Field not found' });
   let parsed;
   try {
     parsed = await attachments.parseMultipart(req);

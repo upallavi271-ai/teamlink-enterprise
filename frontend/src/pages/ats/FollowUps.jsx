@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import InboxPanel from '../../components/messaging/InboxPanel.jsx';
+import useUnreadReplies from '../../components/messaging/useUnreadReplies.js';
+import '../../components/messaging/conversation.css';
 import api from '../../api';
-import { PanelPad, EmptyMini } from '../../components/proto.jsx';
+import { PanelPad, EmptyMini, Modal } from '../../components/proto.jsx';
+import ConversationView from '../../components/messaging/ConversationView.jsx';
+import { useContactRule } from '../../components/messaging/useMayMessage.js';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
@@ -72,7 +77,7 @@ const MINE_SORTS = [
   { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.candidateName || '').localeCompare(String(b.candidateName || '')) },
 ];
 
-function Rows({ rows, empty }) {
+function Rows({ rows, empty, onChat }) {
   if (!rows.length) return empty && typeof empty === 'object' ? empty : <EmptyMini>{empty}</EmptyMini>;
   return (
     <div className="tbl-wrap">
@@ -104,6 +109,7 @@ function Rows({ rows, empty }) {
                 <Link className="btn btn-sm btn-primary" to={`/candidates/${f.candidateId}`}>
                   {f.status === 'Upcoming' ? 'View' : 'Contact'}
                 </Link>
+                {onChat && <button type="button" className="btn btn-sm" style={{ marginLeft: 4 }} onClick={() => onChat(f)}>Chat</button>}
               </td>
             </tr>
           ))}
@@ -126,8 +132,25 @@ export function FollowUpsRoute() {
 export default function FollowUps({ embedded = false }) {
   const { user } = useAuth();
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
+  // Follow-ups | Inbox: the Inbox is the same screen, next to the lists (omnichannel: replies to every Call / Mail / WhatsApp / SMS).
+  const [sp, setSp] = useSearchParams();
+  const sub = sp.get('sub') === 'inbox' ? 'inbox' : 'list';
+  const setSub = (v) => { const n = new URLSearchParams(sp); if (v === 'inbox') n.set('sub', 'inbox'); else n.delete('sub'); setSp(n, { replace: true }); };
+  const [unreadN, refreshUnread, setUnreadN] = useUnreadReplies(true);
+  // Contacting is its own right (Role Catalog > Contact): a role without it still sees the list, with the reason in plain words.
+  const contact = useContactRule('candidates');
+  const [chat, setChat] = useState(null);
+  const subTabs = (
+    <div className="cv-subtabs" role="tablist" aria-label="Follow-ups">
+      <button type="button" role="tab" aria-selected={sub === 'list'} className={`btn btn-sm${sub === 'list' ? ' btn-primary' : ''}`} onClick={() => setSub('list')}>Follow-ups</button>
+      <button type="button" role="tab" aria-selected={sub === 'inbox'} className={`btn btn-sm${sub === 'inbox' ? ' btn-primary' : ''}`} onClick={() => setSub('inbox')}>Inbox{unreadN > 0 && <span className="cv-count-badge">{unreadN}</span>}</button>
+    </div>
+  );
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  // The server sends the last 30 and next 30 days (and everything late or due today);
+  // "Show older" asks for the rest.
+  const [older, setOlder] = useState(false);
   const [hier, setHier] = useState(EMPTY_HIERARCHY);
   const tree = useHierarchy();
   const hierKey = JSON.stringify(toParams(hier, tree.data));
@@ -135,12 +158,12 @@ export default function FollowUps({ embedded = false }) {
   const showHier = !!(lv.department || lv.section || lv.tl || lv.recruiter);
 
   const load = useCallback(() => {
-    api.get('/followups/dashboard', { params: { rows: 'all', ...JSON.parse(hierKey) } })
+    api.get('/followups/dashboard', { params: { rows: 'all', ...(older ? { older: '1' } : {}), ...JSON.parse(hierKey) } })
       .then((r) => { setData(r.data); setError(''); })
       .catch((err) => setError(err.response?.data?.error || (err.response?.status === 403
         ? 'Follow-ups are not part of your role.'
         : 'Could not load follow-ups. Please try again.')));
-  }, [hierKey]);
+  }, [hierKey, older]);
   useEffect(load, [load]);
 
   const mineLf = useListFilters((data && data.mine && data.mine.rows) || [], [
@@ -164,11 +187,20 @@ export default function FollowUps({ embedded = false }) {
   });
   const teamPage = usePaged(teamLf.rows);
 
+  if (sub === 'inbox') {
+    return (
+      <div>
+        {subTabs}
+        <InboxPanel onCount={(c) => { setUnreadN(c); refreshUnread(); }} />
+      </div>
+    );
+  }
   if (error) return <div className="error-text">{error}</div>;
-  if (!data) return <div className="small-muted">Loading follow-ups…</div>;
+  if (!data) return <div className="small-muted">Loading follow-ups...</div>;
 
   return (
     <div>
+      {subTabs}
       {/* The Shell already draws the breadcrumb — no second one here. */}
       <div className="page-head">
         <div>
@@ -217,12 +249,23 @@ export default function FollowUps({ embedded = false }) {
       <PanelPad style={{ marginTop: 14 }}>
         <h3>My follow-ups</h3>
         <Tiles t={data.mine} />
+        {contact.loaded && !contact.allowed && <div className="msg-box orange">You can look at follow-ups, but your role does not contact people from here. {contact.reason}</div>}
+        {contact.allowed && contact.masked && <div className="msg-box blue">You reach candidates through TeamLink: you never see their number or mail address.</div>}
         <ListFilterBar lf={mineLf} storageKey="fu-mine" noun="follow-ups" />
         <Rows
           rows={minePage.slice}
+          onChat={contact.allowed ? setChat : null}
           empty={mineLf.activeCount ? <ListEmpty lf={mineLf} noun="follow-ups" /> : 'No follow-ups for you right now.'}
         />
         {mineLf.rows.length > 0 && <Pager page={minePage} noun="follow-ups" />}
+        {(data.mine.olderCount > 0 || older) && (
+          <div className="small-muted" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>{older ? 'Showing all your follow-ups.' : 'Showing late and due today, plus the last and next 30 days.'}</span>
+            <button type="button" className="btn btn-sm" onClick={() => setOlder(!older)}>
+              {older ? 'Show fewer' : `Show older (${Number(data.mine.olderCount).toLocaleString('en-IN')})`}
+            </button>
+          </div>
+        )}
       </PanelPad>
 
       {/* §22 / §23 — who has not followed up, answered directly. */}
@@ -298,6 +341,12 @@ export default function FollowUps({ embedded = false }) {
             It leaves this list once it is done. The owner still does the work.
           </div>
         </PanelPad>
+      )}
+
+      {chat && (
+        <Modal title={`Conversation with ${chat.candidateName}`} onClose={() => { setChat(null); refreshUnread(); }} footer={<button type="button" className="btn" onClick={() => { setChat(null); refreshUnread(); load(); }}>Close</button>}>
+          <ConversationView audience="candidates" personId={chat.candidateId} name={chat.candidateName} applicationId={chat.applicationId} requirementId={chat.requirementId} onChanged={load} />
+        </Modal>
       )}
 
       {/* C1 (2026-10-03): when a follow-up is due, per step. Only the people

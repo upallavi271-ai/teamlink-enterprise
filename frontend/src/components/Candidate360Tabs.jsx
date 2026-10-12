@@ -39,19 +39,21 @@ export const candidateCode = (id) => `CAN-${String(id || '').slice(-8).toUpperCa
 // activity) map onto the new ones (C360_TAB_ALIAS) so old links keep working.
 // ATS LAYOUT v3 (2026-10-03): the left side holds personal info, the resume,
 // skills, CTC and notice period (components/candidate/ProfileLeft.jsx); the
-// right side has FOUR tabs — Applications (the result per client, steps,
-// interviews, offers, joining, Fit, rejection history) · Notes · Documents ·
-// Timeline (follow-ups, activity, messages; key 'history'). Overview / Fit /
-// Resume fold in, so their old keys land on Applications.
+// right side has the tabs — Applications (the result per client, steps,
+// interviews, offers, joining, Fit, rejection history) · Resume (2026-10-09: the
+// Resume card moved here from the left) · Notes · Documents ·
+// Timeline (follow-ups, activity, messages; key 'history'). Overview / Fit
+// fold in, so their old keys land on Applications.
 export const C360_TABS = [
   ['applications', 'Applications'],
+  ['resume', 'Resume'], // the Resume card (file, Edit resume, versions, facts) — was on the left of the page
   ['notes', 'Notes'],
   ['documents', 'Documents'],
   ['history', 'Timeline'],
+  ['conversation', 'Conversation'], // omnichannel: Call · Mail · WhatsApp · SMS in one timeline, with a reply box (internal logins only)
 ];
 export const C360_TAB_ALIAS = {
   overview: 'applications',
-  resume: 'applications',
   fit: 'applications',
   ai: 'applications',
   pipeline: 'applications',
@@ -98,7 +100,7 @@ export function C360Tabs({ tab, setTab, c, className = '' }) {
   const n = tabCounts(c);
   const internal = !!(c && c.viewer && c.viewer.internal);
   // Fit and Notes are TeamLink's own; a client / candidate login has none.
-  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes'].includes(key));
+  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes', 'conversation'].includes(key));
   return (
     <div className={`tabs c360t-tabs ${className}`} role="tablist">
       {tabs.map(([key, label]) => (
@@ -444,7 +446,7 @@ export function ApplicationsMini({ c, app, onSelect }) {
       {apps.length > 0 && (
         <div className="tbl-wrap">
           <table className="c360t-table">
-            <thead><tr><th>Job</th><th>Client</th><th>Step</th>{internal && <th style={{ textAlign: 'right' }}>Fit</th>}<th>Status</th></tr></thead>
+            <thead><tr><th>Job</th><th>Client</th><th>Step</th>{internal && <th>Where from</th>}{internal && <th style={{ textAlign: 'right' }}>Fit</th>}<th>Status</th></tr></thead>
             <tbody>
               {apps.slice(0, 8).map((a) => (
                 <tr
@@ -456,6 +458,7 @@ export function ApplicationsMini({ c, app, onSelect }) {
                   <td>{a.requirement?.title || '—'}</td>
                   <td className="cell-muted">{clientOf(a) || '—'}</td>
                   <td><StatusChip status={a.stageGroupLabel || stageLabel(a.stage)}>{a.stageLabel || stageLabel(a.stage)}</StatusChip></td>
+                  {internal && <td className="cell-muted" title={a.sourceRaw && a.sourceRaw !== a.sourceKey ? `Recorded as: ${a.sourceRaw}` : undefined}>{a.sourceKey || '—'}</td>}
                   {internal && <td style={{ textAlign: 'right' }}>{a.matchScore != null ? `${a.matchScore}%` : (a.resumeScore != null ? `${a.resumeScore}%` : '—')}</td>}
                   <td className="cell-muted">{a.lifeStatus || '—'}</td>
                 </tr>

@@ -19,7 +19,7 @@ function DayRules({ canEdit }) {
   const [err, setErr] = useState('');
   useEffect(() => { api.get('/attendance/policy').then((r) => setPolicy(r.data)).catch(() => {}); }, []);
   if (!policy) return null;
-  const offs = new Set(String(policy.weeklyOffDays ?? '0,6').split(',').filter((x) => x !== '').map(Number));
+  const offs = new Set(String(policy.weeklyOffDays ?? '0').split(',').filter((x) => x !== '').map(Number));
 
   async function save(patch) {
     setMsg(''); setErr('');

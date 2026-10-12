@@ -31,6 +31,9 @@ const { designationRows, productRolesForDesignation, loginRoleFor } = require('.
 const { mappingFor } = require('./identity');
 const { sendCredentials, unguessablePasswordHash } = require('./employeeInvite');
 const { SYSTEM_ACCOUNT_ROLES } = require('./systemAccounts');
+// Manage Fields: a paused field (phone, location, employee type …) is left out of the sample
+// and ignored in an older file — the file still imports.
+const fieldDefs = require('./employeeFieldDefs');
 
 const EXAMPLE_PREFIX = 'EXAMPLE-';
 const MAX_ROWS = 1000;
@@ -141,15 +144,16 @@ async function optionLists({ scopeDepts, designationFilter }) {
 // SAMPLE WORKBOOK
 // ---------------------------------------------------------------------------
 function sampleWorkbook(opts) {
+  const FIELDS = IMPORT_FIELDS.filter((f) => !fieldDefs.isPaused(f.key));
   const wb = XLSX.utils.book_new();
-  const headers = IMPORT_FIELDS.map((f) => (f.required ? `${f.label} *` : f.label));
+  const headers = FIELDS.map((f) => (f.required ? `${f.label} *` : f.label));
   const dept0 = opts.departments[0] || '';
-  const examples = EXAMPLES.map((ex) => IMPORT_FIELDS.map((f) => (f.key === 'department' ? dept0 : ex[f.key] || '')));
+  const examples = EXAMPLES.map((ex) => FIELDS.map((f) => (f.key === 'department' ? dept0 : ex[f.key] || '')));
   const ws = XLSX.utils.aoa_to_sheet([headers, ...examples]);
-  ws['!cols'] = IMPORT_FIELDS.map((f) => ({ wch: f.width || 16 }));
+  ws['!cols'] = FIELDS.map((f) => ({ wch: f.width || 16 }));
   // Text-format the ID, phone and date columns so Excel keeps leading zeros
   // and does not turn 2026-04-01 into a serial.
-  const textCols = ['employeeCode', 'phone', 'dateOfJoining'].map((k) => IMPORT_FIELDS.findIndex((f) => f.key === k));
+  const textCols = ['employeeCode', 'phone', 'dateOfJoining'].map((k) => FIELDS.findIndex((f) => f.key === k));
   for (let r = 0; r <= examples.length + 200; r += 1) {
     textCols.forEach((c) => {
       const ref = XLSX.utils.encode_cell({ r, c });
@@ -157,7 +161,7 @@ function sampleWorkbook(opts) {
       ws[ref].z = '@';
     });
   }
-  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: examples.length + 200, c: IMPORT_FIELDS.length - 1 } });
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: examples.length + 200, c: FIELDS.length - 1 } });
   XLSX.utils.book_append_sheet(wb, ws, 'Employees');
 
   const ins = [
@@ -171,7 +175,7 @@ function sampleWorkbook(opts) {
     ['6. One person = one login: an email already used by an employee or a login is refused. Tick "Create logins" to give each imported employee a login; no password is generated or emailed — each gets a single-use set-password link.'],
     [''],
     ['Field', 'Required', 'Rule / allowed values'],
-    ...IMPORT_FIELDS.map((f) => [f.label, f.required ? 'Yes *' : 'No', f.rule]),
+    ...FIELDS.map((f) => [f.label, f.required ? 'Yes *' : 'No', f.rule]),
     [''],
     ['ALLOWED VALUES'],
   ];
@@ -248,6 +252,7 @@ function parseUpload(buffer, fileName = '') {
     sheetName,
     rows,
     ignoredColumns: headers.filter((h, c) => h && !mapped[c]),
+    ignoredPaused: headers.filter((h, c) => h && mapped[c] && fieldDefs.isPaused(mapped[c])),
   };
 }
 
@@ -305,6 +310,8 @@ async function validateRows(rows, ctx) {
     prisma.employee.findMany({ where: ctx.managerWhere || {}, select: { id: true, name: true, email: true, employeeCode: true } }),
   ]);
   const lower = (s) => String(s || '').toLowerCase();
+  // A reporting manager must be a lead of the employee's own department (utils/reportingLine.js).
+  const reportingRules = await require('./reportingLine').eligibility();
   const eMail = new Map(empByEmail.map((e) => [lower(e.email), e]));
   const uMail = new Map(userByEmail.map((u) => [lower(u.email), u]));
   const ePhone = new Map(empByPhone.map((e) => [String(e.phone), e]));
@@ -318,7 +325,7 @@ async function validateRows(rows, ctx) {
 
   rows.forEach((raw) => {
     const r = {};
-    IMPORT_FIELDS.forEach((f) => { r[f.key] = norm(raw[f.key]); });
+    IMPORT_FIELDS.forEach((f) => { r[f.key] = fieldDefs.isPaused(f.key) ? '' : norm(raw[f.key]); });
     const line = raw.line;
     if (r.employeeCode.toUpperCase().startsWith(EXAMPLE_PREFIX)) { skipped.push({ row: line, name: r.name, reason: 'Example row from the sample file' }); return; }
     const rowErrors = [];
@@ -409,8 +416,11 @@ async function validateRows(rows, ctx) {
       const byMail = managers.filter((e) => lower(e.email) === m);
       const byName = managers.filter((e) => lower(e.name) === m);
       const hit = byCode.length ? byCode : byMail.length ? byMail : byName;
-      if (hit.length === 1) r.reportingManagerId = hit[0].id;
-      else if (hit.length > 1) fail('Reporting Manager', `"${r.reportingManager}" matches ${hit.length} employees.`, 'use the manager\'s Employee ID');
+      if (hit.length === 1) {
+        r.reportingManagerId = hit[0].id;
+        const why = reportingRules.problem({ department: r.department, designation: r.designation }, hit[0].id);
+        if (why) fail('Reporting Manager', `${hit[0].name}: ${why}`, `a team lead of ${r.department}`);
+      } else if (hit.length > 1) fail('Reporting Manager', `"${r.reportingManager}" matches ${hit.length} employees.`, 'use the manager\'s Employee ID');
       else if (fileCodes.has(m) && lower(r.employeeCode) !== m) r.reportingManagerRow = fileCodes.get(m);
       else fail('Reporting Manager', `"${r.reportingManager}" could not be found in your scope.`, 'the Employee ID, email or exact name of an existing employee');
     }
@@ -439,7 +449,7 @@ async function validateRows(rows, ctx) {
   return { errors, prepared, skipped, opts };
 }
 
-function previewPayload({ rows, errors, prepared, skipped, createLogins, scopeLabel }) {
+function previewPayload({ rows, errors, prepared, skipped, createLogins, scopeLabel, ignoredPaused = [] }) {
   const valid = prepared.filter((p) => p.valid);
   const invalidLines = new Set(prepared.filter((p) => !p.valid).map((p) => p.line));
   return {
@@ -460,8 +470,10 @@ function previewPayload({ rows, errors, prepared, skipped, createLogins, scopeLa
     createLogins,
     scope: scopeLabel,
     canImport: valid.length > 0,
+    ignoredPaused,
     message: `${valid.length} valid row(s), ${invalidLines.size} invalid row(s)${skipped.length ? `, ${skipped.length} example row(s) skipped` : ''}. `
-      + (valid.length ? `Only the ${valid.length} valid row(s) will be imported${createLogins ? ' with logins' : ''}.` : 'Nothing can be imported as the file stands.'),
+      + (valid.length ? `Only the ${valid.length} valid row(s) will be imported${createLogins ? ' with logins' : ''}.` : 'Nothing can be imported as the file stands.')
+      + (ignoredPaused.length ? ` Left out because the field is paused: ${ignoredPaused.join(', ')}.` : ''),
   };
 }
 
@@ -546,6 +558,7 @@ async function importRows({ prepared, errors, skipped, createLogins, req, profil
       }, { timeout: 30000 });
       imported.push({ row: r.line, employeeCode, name: r.name, id: out.employee.id, email: r.email, userId: out.userId });
       createdByLine.set(r.line, out);
+      require('./stationeryKit').onActive(out.employee.id); // default stationery kit, once (utils/stationeryKit.js)
     } catch (err) {
       taken.delete(employeeCode.toLowerCase());
       failures.set(r.line, [`Database: ${String(err.message || err).split('\n').pop().slice(0, 200)}`]);

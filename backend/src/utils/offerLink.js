@@ -160,7 +160,7 @@ async function markCurrent(applicationId, status, { via, reason } = {}) {
 // --- expiry ---------------------------------------------------------------------
 async function staffOf(app) {
   const r = app.requirement || {};
-  return [r.recruiterId, ...String(r.recruiterIds || '').split(',').map((s) => s.trim()), r.tlId].filter(Boolean);
+  return require('./clientBdes').withClientBdes([r.recruiterId, ...String(r.recruiterIds || '').split(',').map((s) => s.trim()), r.tlId].filter(Boolean), r); // eslint-disable-line global-require
 }
 // Expire every Sent version whose time is up (all, or one application's).
 // Conditional updates, so two passes cannot both notify. Returns the count.
@@ -178,7 +178,7 @@ async function expireDue({ now = new Date(), applicationId = null } = {}) {
     if (!done.count) continue;
     n += 1;
     // eslint-disable-next-line no-await-in-loop
-    const app = await prisma.application.findUnique({ where: { id: v.applicationId }, include: { candidate: { select: { name: true } }, requirement: { select: { title: true, recruiterId: true, recruiterIds: true, tlId: true } } } });
+    const app = await prisma.application.findUnique({ where: { id: v.applicationId }, include: { candidate: { select: { name: true } }, requirement: { select: { title: true, recruiterId: true, recruiterIds: true, tlId: true, bdeId: true, clientId: true, internal: true } } } });
     if (!app) continue;
     if (app.offerStatus === 'Offer Released') {
       // eslint-disable-next-line no-await-in-loop

@@ -3,7 +3,7 @@ import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
 import { PRIORITY_CHOICES, priorityLabel } from './reqFormat.jsx';
-import { TlOptions, RecruiterOptions } from './assignPeople.jsx';
+import { TlOptions, RecruiterOptions, leastBusyTl } from './assignPeople.jsx';
 import './jobops.css';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   const [bench, setBench] = useState(null); // { departments, jobs, people }
   const [dept, setDept] = useState('');
   const [userId, setUserId] = useState('');
+  const [recommended, setRecommended] = useState('');
   const [priority, setPriority] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -65,6 +66,12 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
         });
         const named = (d.departments || []).filter((x) => x.name);
         if (named.length >= 1) setDept(named[0].name);
+        // Assign team lead, jobs of ONE department: its team lead is preselected —
+        // the only one, or the least busy of several — so it is one click.
+        if (kind === 'assign-tl' && named.length === 1) {
+          const best = leastBusyTl((d.people || []).filter((p) => (p.atsRole || p.role) === 'TL'), named[0].name);
+          if (best) { setUserId(best.id); setRecommended(best.id); }
+        }
       })
       .catch(() => { setBench({ departments: [], jobs: [], people: [] }); setError('Could not load the people you can assign.'); });
   }, [kind]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -221,6 +228,10 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
                 ))}
               </Combo>
             </label>
+            {kind === 'assign-tl' && recommended && userId === recommended && (() => {
+              const p = people.find((x) => x.id === recommended);
+              return p ? <div className="jobops-ok">{`Recommended: ${p.name} — the ${dept || 'department'} team lead with the fewest open jobs. You can pick someone else.`}</div> : null;
+            })()}
             {anyDept && kind !== 'assign-tl' && (() => {
               const top = people.find((p) => p.leastBusy);
               return top ? <div className="jobops-ok">{`Least busy: ${top.name}`}</div> : null;

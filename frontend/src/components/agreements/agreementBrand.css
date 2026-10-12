@@ -1,0 +1,26 @@
+/* The TeamLink logo on the agreement screens (AgreementBrand.jsx). Scoped .agb-* only. */
+.agb-header { background: var(--navy-deep, #0f1b3d); padding: 12px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.agb-plate { display: inline-flex; background: #fff; border-radius: 9px; padding: 7px 12px; line-height: 0; }
+.agb-plate .brand-mark { height: auto; }
+.agb-label { color: #c9d2ee; font-size: 13.5px; font-weight: 600; }
+.agb-docbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 0 8px; margin: 0 0 10px; border-bottom: 1px solid #c9d0dc; }
+.agb-docbar .brand-mark { height: auto; max-height: 34px; width: auto; }
+.agb-docno { font-size: 12px; font-weight: 700; color: #1f2a44; white-space: nowrap; }
+.agb-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 16px; padding-top: 8px; border-top: 1px solid #c9d0dc; font-family: Calibri, Carlito, 'Segoe UI', Arial, sans-serif; color: #5b6474; }
+.agb-foot-side { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.agb-foot-imgs { display: flex; gap: 4px; }
+.agb-foot-box { width: 40px; height: 40px; border: 1px dashed #b8c0cd; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; background: #fff; }
+.agb-foot-box i { font-size: 8px; color: #9aa3b2; font-style: normal; text-align: center; }
+.agb-foot-box img { max-width: 100%; max-height: 100%; border: 0; }
+.agb-foot-wide { width: 62px; }
+.agb-foot-cap { font-size: 9px; }
+.agb-foot-mid { flex: 1 1 auto; text-align: center; display: flex; flex-direction: column; gap: 2px; font-size: 10.5px; min-width: 0; }
+.agb-foot-mid b { color: #1f2a44; font-size: 11.5px; }
+@media (max-width: 640px) {
+  .agb-header { padding: 10px 14px; }
+  .agb-foot { flex-wrap: wrap; justify-content: center; }
+  .agb-foot-mid { order: -1; flex: 1 1 100%; }
+}
+@media print {
+  .agb-docbar, .agb-foot { break-inside: avoid; }
+}

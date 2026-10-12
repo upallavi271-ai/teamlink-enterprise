@@ -121,7 +121,7 @@ function Funnel({ w, onDrill }) {
 function Joinings({ w, onDrill }) {
   const data = w.points.map((p) => ({ label: p.label, value: p.value, tone: 'green', onClick: p.value ? () => onDrill(p.drill) : undefined }));
   return (
-    <Box title={w.title}>
+    <Box title={w.title} note={w.sub ? `${w.sub}${w.note ? `. ${w.note}` : ''}` : null}>
       <BarChart data={data} height={200} empty="No joinings in the last 6 months" title={w.title} />
     </Box>
   );
@@ -138,16 +138,35 @@ function Rejections({ w, onDrill }) {
 
 // DEPARTMENT OVERVIEW: the name narrows the whole page to that department;
 // every number opens its list; a mini bar shows its size against the others.
+// Each column says what it counts (as of today / the dates picked / in total);
+// a real zero is a quiet grey 0 (never a dash); the last row adds the departments up.
 function Departments({ w, onDrill, onPickDept }) {
+  const jn = w.joinNote;
+  const joined = (w.columns || []).find((c) => c.key === 'joined');
+  const n = (r, c, drills) => (r[c.key]
+    ? (
+      <>
+        <button type="button" className={`ahv3-n t-${c.tone}`} onClick={() => onDrill(drills[c.key])} title={`${c.hint} (${c.basis}) — open the list`}>{fmt(r[c.key])}</button>
+        {r !== w.totals && <MiniBar value={r[c.key]} max={w.max[c.key] || 1} tone={c.tone} title={`${fmt(r[c.key])} of ${fmt(w.max[c.key])} (largest)`} />}
+      </>
+    )
+    : <span className="cell-muted ahv3-zero" title={`None: ${c.hint} (${c.basis})`}>0</span>);
   return (
-    <Box title={w.title} note={`Open and Selected are as of now; the rest are ${w.word}. Click a department to see only it.`}>
+    <Box
+      title={w.title}
+      note={`Open, Selected and Late are as of today. ${w.periodAll ? 'The rest count from the start.' : `Sent to client, Interviews and Joined (${(joined && joined.basis) || w.word}) follow the dates you picked.`} Joined in total is everyone marked Joined. Click a department to see only it.`}
+    >
       {!w.rows.length ? <div className="ahv3-empty">No department in your area yet.</div> : (
         <div className="tbl-wrap ahv3-scroll">
           <table className="ahv3-tbl">
             <thead>
               <tr>
                 <th>Department</th>
-                {w.columns.map((c) => <th key={c.key} className="num" title={c.hint}>{c.label}</th>)}
+                {w.columns.map((c) => (
+                  <th key={c.key} className={`num ahv3-th is-${c.kind}`} title={`${c.hint} (${c.basis})`}>
+                    <span className="ahv3-th-l">{c.label}</span><small className="ahv3-th-b">{c.basis}</small>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -158,22 +177,35 @@ function Departments({ w, onDrill, onPickDept }) {
                       ? <StatusChip tone="grey">No department</StatusChip>
                       : <button type="button" className="ahv3-dept" onClick={() => onPickDept(r.department)} title={`Show only ${r.department}`}>{r.department}</button>}
                   </td>
-                  {w.columns.map((c) => (
-                    <td key={c.key} className="num ahv3-mcell">
-                      {r[c.key]
-                        ? (
-                          <>
-                            <button type="button" className={`ahv3-n t-${c.tone}`} onClick={() => onDrill(r.drills[c.key])} title={`${c.hint} — open the list`}>{fmt(r[c.key])}</button>
-                            <MiniBar value={r[c.key]} max={w.max[c.key] || 1} tone={c.tone} title={`${fmt(r[c.key])} of ${fmt(w.max[c.key])} (largest)`} />
-                          </>
-                        )
-                        : <span className="cell-muted">–</span>}
-                    </td>
-                  ))}
+                  {w.columns.map((c) => <td key={c.key} className="num ahv3-mcell">{n(r, c, r.drills)}</td>)}
                 </tr>
               ))}
             </tbody>
+            {w.totals && (
+              <tfoot>
+                <tr className="ahv3-total">
+                  <td>All departments</td>
+                  {w.columns.map((c) => <td key={c.key} className="num ahv3-mcell">{n(w.totals, c, w.totalDrills || {})}</td>)}
+                </tr>
+              </tfoot>
+            )}
           </table>
+        </div>
+      )}
+      {jn && (jn.noDate > 0 || jn.wrong > 0) && (
+        <div className="ahv3-note ahv3-joinnote">
+          {jn.noDate > 0 && (
+            <div>
+              <b>{fmt(jn.noDate)}</b> {jn.noDate === 1 ? 'person is' : 'people are'} marked Joined but {jn.noDate === 1 ? 'has' : 'have'} no joining date, so {jn.noDate === 1 ? 'is' : 'are'} in the total but in no month.{' '}
+              <button type="button" className="link-btn" onClick={() => onDrill(jn.drills.noDate)}>See who</button>
+            </div>
+          )}
+          {jn.wrong > 0 && (
+            <div>
+              <b>{fmt(jn.wrong)}</b> {jn.wrong === 1 ? 'joining date looks' : 'joining dates look'} wrong (like 2203 or 1954){jn.noMonth - jn.noDate >= jn.wrong ? `, so ${jn.wrong === 1 ? 'that person is' : 'those people are'} also in no month` : ''}.{' '}
+              <button type="button" className="link-btn" onClick={() => onDrill(jn.drills.wrong)}>See who</button>
+            </div>
+          )}
         </div>
       )}
     </Box>

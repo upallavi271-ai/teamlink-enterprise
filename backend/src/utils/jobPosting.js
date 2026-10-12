@@ -75,6 +75,38 @@ const SITES = [
 ];
 const FREE_SITE_IDS = SITES.filter((s) => s.kind === 'free').map((s) => s.id);
 const PUBLIC_SITE_IDS = ['jobportal', 'website', 'google'];
+
+// WHAT A NEW JOB STARTS WITH TICKED in Save & Post (user, 2026-10-10: "Save & Post chesaka Naukri
+// vaatiki kuda vellali"). Our own sites go out by themselves; the four boards are ticked too, and a
+// board with no connection becomes a "post it by hand" task (utils/jobBoards/manual.js).
+// Super Admin / Admin can change the usual set (AppSetting posting.defaultSites, a JSON list of
+// site ids); a person can still untick any site on a job.
+const DEFAULT_SITES_KEY = 'posting.defaultSites';
+const DEFAULT_SITE_IDS = ['jobportal', 'website', 'google', 'naukri', 'shine', 'indeed', 'linkedin'];
+async function defaultSites() {
+  const row = await prisma.appSetting.findUnique({ where: { key: DEFAULT_SITES_KEY } }).catch(() => null);
+  if (!row) return { ids: [...DEFAULT_SITE_IDS], custom: false };
+  try {
+    const list = JSON.parse(row.value);
+    const ids = Array.isArray(list) ? SITES.map((s) => s.id).filter((id) => list.includes(id)) : null;
+    if (ids) return { ids, custom: true, by: row.updatedByName || null, at: row.updatedAt };
+  } catch { /* fall back */ }
+  return { ids: [...DEFAULT_SITE_IDS], custom: false };
+}
+async function setDefaultSites(ids, user) {
+  const clean = SITES.map((s) => s.id).filter((id) => ids.includes(id));
+  const value = JSON.stringify(clean);
+  await prisma.appSetting.upsert({
+    where: { key: DEFAULT_SITES_KEY },
+    create: { key: DEFAULT_SITES_KEY, value, updatedById: user.id, updatedByName: user.name },
+    update: { value, updatedById: user.id, updatedByName: user.name },
+  });
+  await logAudit({
+    userId: user.id, actorName: user.name, action: 'Usual posting sites changed', entity: 'AppSetting', entityId: DEFAULT_SITES_KEY,
+    toValue: clean.map((id) => SITES.find((s) => s.id === id).name).join(', ') || 'None',
+  }).catch(() => {});
+  return clean;
+}
 const NONE_TICKED = 'None';
 const siteCsv = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
 // The ticked site ids. Nothing recorded -> the free sites.
@@ -262,4 +294,5 @@ function plainPortalReason(raw) {
 module.exports = {
   autoPost, postingChannels, JOB_BOARDS, FEED_PATHS,
   SITES, tickedSites, siteTicked, wantsPublic, postingSourcesFor, siteStatuses, plainPortalReason,
+  DEFAULT_SITE_IDS, defaultSites, setDefaultSites,
 };

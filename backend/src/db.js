@@ -53,4 +53,14 @@ const prisma = new PrismaClient();
   await pragma('PRAGMA busy_timeout=5000', true);
 })();
 
+// dup_: every way a candidate comes in or changes gets its duplicate check (utils/candidateDupHook.js).
+// Never throws; answers nothing when the duplicate tables are not there.
+prisma.$use(async (params, next) => {
+  const result = await next(params);
+  if (params.model === 'Candidate' || params.model === 'CandidateResume' || params.model === 'CandidateDocument') {
+    try { await require('./utils/candidateDupHook').after(params, result); } catch (err) { console.error('[dup] hook:', err.message); } // eslint-disable-line global-require
+  }
+  return result;
+});
+
 module.exports = prisma;

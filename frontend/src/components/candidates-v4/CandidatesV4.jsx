@@ -49,9 +49,15 @@ export function usePipelineOverview(params, { enabled = true } = {}) {
         const by = {};
         (Array.isArray(c.stageOptions) ? c.stageOptions : []).forEach((o) => { if (o && o.key) by[o.key] = Number(o.count) || 0; });
         const steps = {};
-        STRIP_STEPS.forEach((s) => { steps[s.id] = s.keys.reduce((n, k) => n + (by[k] || 0), 0); });
+        // The server's tally (utils/pipelineTally.js) is THE count: the strip, the tiles and the list
+        // totals all read it. The stage-option sum is only the fallback for an older server.
+        const tally = c.tally || null;
+        STRIP_STEPS.forEach((s) => {
+          const t = tally && (tally.steps || []).find((x) => x.id === s.id);
+          steps[s.id] = t ? Number(t.count) || 0 : s.keys.reduce((n, k) => n + (by[k] || 0), 0);
+        });
         setOut({
-          subs: c.subs || {}, quick: c.quick || {}, byKey: by, steps,
+          subs: c.subs || {}, quick: c.quick || {}, byKey: by, steps, tally,
         });
       })
       .catch(() => { if (live) setOut(null); });

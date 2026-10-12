@@ -24,6 +24,16 @@ export default function OfficeSpends({
   const [edit, setEdit] = useState(null);
   const [bill, setBill] = useState(null);
   const [busy, setBusy] = useState('');
+  // The pills under the cards are filters: each count opens the bills it counts (reconciliation 2026-10-06).
+  const [pill, setPill] = useState('');
+  const PILLS = {
+    all: ['Records', 'blue', () => true],
+    paid: ['Paid', 'green', (r) => r.paid > 0],
+    pending: ['To be paid', 'amber', (r) => r.pending > 0],
+    late: ['Late', 'red', (r) => r.overdue],
+    proof: ['Paid, proof missing', 'red', (r) => r.proofMissing],
+  };
+  const shown = pill ? office.rows.filter(PILLS[pill][2]) : office.rows;
   const access = useOfficeAccess();
   const changed = () => { detailCache.clear(); onChanged(); };
 
@@ -107,11 +117,19 @@ export default function OfficeSpends({
         <div className="acd-card"><div className="acd-cl">TDS we cut</div><div className="acd-cv">{money(office.tds)}</div><div className="acd-cs">paid to Government, not the vendor</div></div>
       </div>
       <div className="acd-strip">
-        <span className="acd-pill blue">Records · {c.records}</span>
-        <span className="acd-pill green">Paid · {c.paid}</span>
-        <span className="acd-pill amber">To be paid · {c.pending}</span>
-        <span className={`acd-pill ${c.overdue ? 'red' : 'grey'}`}>Late · {c.overdue}</span>
-        <span className={`acd-pill ${c.missingProof ? 'red' : 'green'}`}>Paid, proof missing · {c.missingProof}</span>
+        {[['all', c.records, 'blue'], ['paid', c.paid, 'green'], ['pending', c.pending, 'amber'], ['late', c.overdue, c.overdue ? 'red' : 'grey'], ['proof', c.missingProof, c.missingProof ? 'red' : 'green']].map(([k, n, tone]) => (
+          <button
+            key={k}
+            type="button"
+            className={`acd-pill ${tone}`}
+            style={{ cursor: 'pointer', outline: pill === k ? '2px solid var(--acd-blue)' : undefined }}
+            aria-pressed={pill === k}
+            title="Click to list these bills below"
+            onClick={() => setPill((p) => (p === k ? '' : k))}
+          >
+            {PILLS[k][0]} · {n}
+          </button>
+        ))}
       </div>
 
       <h3 style={{ fontSize: 13.5, margin: '12px 0 4px' }}>Who has to be paid</h3>
@@ -119,10 +137,10 @@ export default function OfficeSpends({
         <DataTable columns={toPayCols} rows={office.toPay} noun="bills to pay" foot initialSort={{ key: 'daysOverdue', dir: 'desc' }} />
       ) : <div className="notice"><span>Every bill in view is paid.</span></div>}
 
-      <h3 style={{ fontSize: 13.5, margin: '14px 0 4px' }}>Every bill</h3>
+      <h3 style={{ fontSize: 13.5, margin: '14px 0 4px' }}>{pill ? `${PILLS[pill][0]} — ${shown.length} bill${shown.length === 1 ? '' : 's'}` : 'Every bill'} <span className="small-muted" style={{ fontWeight: 400 }}>— the totals line adds up the cards above</span>{pill && <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={() => setPill('')}>Show every bill</button>}</h3>
       <DataTable
         columns={cols}
-        rows={office.rows}
+        rows={shown}
         search={(r) => [r.category, r.vendor, r.billNumber, r.code, r.employee, r.gstin, r.payStatus, r.proofStatus].join(' ')}
         placeholder="Search vendor, bill no, category, GSTIN…"
         noun="bills"

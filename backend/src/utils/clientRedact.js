@@ -148,32 +148,93 @@ function redactClientRow(o, level) {
 }
 
 // ---------------------------------------------------------------------------
-// A BDE NEVER RECEIVES RECRUITER NOTES OR INTERNAL SCORES (per-role spec
-// 2026-10-03: "Hidden: other BDEs' clients, recruiter notes, internal
-// scores"). Same response-filter approach as the client fields above, so
-// every ATS payload is covered in one place.
+// A BDE NEVER RECEIVES THE INSIDE OF THE RECRUITMENT (per-role spec
+// 2026-10-03, hardened by the user's answers 2026-10-09):
+//   * internal scores            match / resume / AI interview score
+//   * internal notes             every candidate note (recruiter, TL ...)
+//   * internal interview record  the panel's feedback, the panel itself, the
+//                                AI interview tab: the CLIENT's feedback and
+//                                the outcome stay
+//   * candidate contact + pay    email, phone, current / expected salary
+// Same response-filter approach as the client fields above, so every ATS payload
+// is covered in one place.
+//
+// "Candidate contact and salary" is ALSO a Role Catalog switch (candidates /
+// Candidate Contact & Salary / view): any role without it gets the contact and
+// salary fields cut from every payload, whatever the role is. A BDE does not
+// hold it by default. (req.user.caps.candidateContact, middleware/auth.js.)
 // ---------------------------------------------------------------------------
 const INTERNAL_SCORE_FIELDS = ['matchScore', 'resumeScore', 'aiInterviewScore', 'aiInterviewFeedback', 'aiScore', 'aiRecommendation',
   // B8: the Fit's version / explanation and the override reason are internal too.
   'matchVersion', 'matchDetail', 'overrideReason', 'overrideByName', 'overrideById'];
-const RECRUITER_NOTE_ROLES = ['RECRUITER', 'EMPLOYEE'];
-const isNoteRow = (o) => Object.prototype.hasOwnProperty.call(o, 'authorRole') && Object.prototype.hasOwnProperty.call(o, 'body') && Object.prototype.hasOwnProperty.call(o, 'candidateId');
-function stripInternalForBde(value, depth = 0) {
+// The internal panel's own record + the AI interview: never a BDE's.
+const BDE_INTERNAL_INTERVIEW_FIELDS = ['internalFeedback', 'panel', 'ai', 'aiCode', 'aiInterviewStatus', 'aiInterviewDeadline',
+  'interviewScore', 'interviewFeedback', 'internalInterviewFeedback'];
+// The offer's pay and its notes (the notes carry the salary in words): a BDE never reads them
+// (security review 2026-10-09). The write side is untouched: a BDE can still type a joining CTC.
+const BDE_OFFER_FIELDS = ['offerNotes', 'offeredCtc'];
+const BDE_HIDDEN_FIELDS = new Set([...INTERNAL_SCORE_FIELDS, ...BDE_INTERNAL_INTERVIEW_FIELDS, ...BDE_OFFER_FIELDS]);
+// Candidate profile details a BDE never receives (security review 2026-10-09): where the person lives,
+// birth date, employer, education and the resume file name. Only on an object that IS a candidate.
+const BDE_CANDIDATE_PRIVATE_FIELDS = new Set(['location', 'dob', 'currentCompany', 'education', 'specialization', 'institute', 'passingYear', 'resumeName']);
+// Candidate contact + pay. FLAT = wherever they appear; CONTACT = only on an
+// object that is a candidate (a key of that name on a user / client is not).
+const CANDIDATE_FLAT_FIELDS = new Set(['candidateEmail', 'candidatePhone', 'candidateMobile', 'currentSalary', 'expectedSalary',
+  'currentCtc', 'expectedCtc', 'currentCTC', 'expectedCTC', 'altPhone', 'alternatePhone', 'candidateWhatsapp',
+  // salaryFit (utils/salaryFit.js): the hike % between current and expected pay is salary too.
+  'salaryHikePct', 'candidateCurrentSalary', 'candidateExpectedSalary']);
+const CANDIDATE_CONTACT_FIELDS = new Set(['email', 'phone', 'mobile', 'whatsapp', 'whatsApp', 'whatsappNumber', 'contactNumber']);
+const CANDIDATE_CONTAINER_KEYS = new Set(['candidate', 'candidates', 'cand', 'applicant', 'applicants', 'duplicates', 'matches']);
+const CANDIDATE_SHAPE_KEYS = ['experienceYears', 'noticePeriod', 'currentCompany', 'currentDesignation', 'resumeName', 'profileStatus', 'technicalSkills', 'candidateId',
+  'currentStage', 'lifeStatus', 'applications', 'skills'];
+const hasKey = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const looksLikeCandidate = (o) => hasKey(o, 'name') && CANDIDATE_SHAPE_KEYS.some((k) => hasKey(o, k));
+const isNoteRow = (o) => hasKey(o, 'authorRole') && hasKey(o, 'body') && hasKey(o, 'candidateId');
+// An InterviewFeedback row of the INTERNAL panel (the client's own is kind 'Client').
+const isInternalFeedbackRow = (o) => o.kind === 'Internal' && hasKey(o, 'recommendation') && hasKey(o, 'overall');
+
+// flags: { bde: cut the internal record for a BDE, contact: cut candidate contact + pay }
+function sanitizeAts(value, flags, depth = 0, inCandidate = false) {
   if (depth > 20 || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) {
     return value
-      .filter((v) => !(v && typeof v === 'object' && !Array.isArray(v) && isNoteRow(v) && RECRUITER_NOTE_ROLES.includes(String(v.authorRole || '').toUpperCase())))
-      .map((v) => stripInternalForBde(v, depth + 1));
+      .filter((v) => !(flags.bde && v && typeof v === 'object' && !Array.isArray(v) && (isNoteRow(v) || isInternalFeedbackRow(v))))
+      .map((v) => sanitizeAts(v, flags, depth + 1, inCandidate));
   }
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) return value;
+  const cand = inCandidate || looksLikeCandidate(value);
   const out = {};
   Object.keys(value).forEach((k) => {
-    if (INTERNAL_SCORE_FIELDS.includes(k)) return;
-    out[k] = stripInternalForBde(value[k], depth + 1);
+    if (flags.bde && BDE_HIDDEN_FIELDS.has(k)) return;
+    if (flags.bde && cand && BDE_CANDIDATE_PRIVATE_FIELDS.has(k)) return;
+    if (flags.contact && (CANDIDATE_FLAT_FIELDS.has(k) || (cand && CANDIDATE_CONTACT_FIELDS.has(k)))) return;
+    out[k] = sanitizeAts(value[k], flags, depth + 1, CANDIDATE_CONTAINER_KEYS.has(k));
   });
   return out;
 }
+
+// Back-compat name: the BDE cut (internal record + contact + pay).
+function stripInternalForBde(value) {
+  return sanitizeAts(value, { bde: true, contact: true });
+}
+
+// What this login must not receive. null = nothing to cut.
+//   bde      the BDE team (BDE and the BDE TL): no internal record
+//   contact  no candidate contact / pay: a BDE always, any other role when
+//            the Role Catalog switch is off for it
+function privacyFlagsFor(user) {
+  if (!user) return null;
+  // eslint-disable-next-line global-require
+  const { clientViewRole } = require('./scope');
+  // eslint-disable-next-line global-require
+  const { isExternalLogin } = require('./permissions');
+  if (isExternalLogin(user)) return null;
+  const bde = clientViewRole(user) === 'bde';
+  const contact = bde || !!(user.caps && user.caps.candidateContact === false);
+  return bde || contact ? { bde, contact } : null;
+}
+
 
 function redactClients(value, depth = 0, level = 'min') {
   if (depth > 20 || value === null || typeof value !== 'object') return value;
@@ -202,9 +263,8 @@ function clientFieldGuard(req, res, next) {
     const user = req.user;
     if (!user) return json(body);
     const level = clientLevelFor(user);
-    // eslint-disable-next-line global-require
-    const bde = require('./scope').clientViewRole(user) === 'bde';
-    const cut = bde ? stripInternalForBde(body) : body;
+    const flags = privacyFlagsFor(user);
+    const cut = flags ? sanitizeAts(body, flags) : body;
     if (level === 'full' && isClientLogin(user)) return json(redactClients(cut, 0, 'client'));
     if (level === 'full') return json(cut);
     return json(redactClients(cut, 0, level));
@@ -212,8 +272,22 @@ function clientFieldGuard(req, res, next) {
   next();
 }
 
+// For the ATS routers that are NOT under clientFieldGuard (clients, rejections ...):
+// the same BDE / candidate-contact cut, without touching Client fields.
+function atsPrivacyGuard(req, res, next) {
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    const flags = req.user ? privacyFlagsFor(req.user) : null;
+    return json(flags ? sanitizeAts(body, flags) : body);
+  };
+  next();
+}
+
 module.exports = {
   clientFieldGuard,
+  atsPrivacyGuard,
+  sanitizeAts,
+  privacyFlagsFor,
   redactClients,
   redactClientFor,
   redactClientRow,

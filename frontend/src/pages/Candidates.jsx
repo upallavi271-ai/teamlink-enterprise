@@ -10,7 +10,7 @@ import { candidateFieldsToForm, CANDIDATE_FIELD_NAMES } from '../components/ui/f
 import ScopeLine from '../components/ScopeLine.jsx';
 import {
   STAGE_LABELS, LOCS,
-  CANDIDATE_SOURCES, CANDIDATE_FIRST_SOURCES, CANDIDATE_FILTER_SOURCES, APPLICATION_METHODS,
+  APPLICATION_METHODS,
   CANDIDATE_GENDERS, CANDIDATE_NOTICE_PERIODS, CANDIDATE_AVAILABILITY, CANDIDATE_JOB_PREFERENCES,
   CANDIDATE_EMPLOYMENT_TYPES, CANDIDATE_WORK_MODES, CANDIDATE_EDUCATION,
   protoDate, initials,
@@ -30,13 +30,17 @@ import {
   StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import ColumnChooser, { useStoredState } from '../components/ColumnChooser.jsx';
+// Where they came from: the clean source list, the tick-box filter with counts, and the cell helpers.
+import MultiFacetSelect from '../components/ui/MultiFacetSelect.jsx';
+import { PICK_SOURCES, IMPORTED_SOURCE, OTHER_SOURCE, recordedAs } from '../utils/candidateSource.js';
 import CandidateDrawer from '../components/CandidateDrawer.jsx';
 import CandidateBulkActions from '../components/CandidateBulkActions.jsx';
 import BulkCallQueue from '../components/BulkCallQueue.jsx';
 import SavedViews from '../components/SavedViews.jsx';
 import CandidateDuplicatePanel from '../components/CandidateDuplicatePanel.jsx';
 import JobPortalCandidates from '../components/portal/JobPortalCandidates.jsx';
-import CandidateDuplicates from './CandidateDuplicates.jsx';
+import DupWorklist from '../components/duplicates/DupWorklist.jsx'; // dup_: the Duplicates tab
+import { DupChip } from '../components/duplicates/DupChip.jsx';
 import StatusChip from '../components/ui/StatusChip.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import { nextActionsFor, ReturnDialog } from '../components/Candidate360.jsx';
@@ -62,8 +66,12 @@ import {
   KpiRow, KpiTile, Panel, StageStrip, AttentionList, BarList, QuickActions,
 } from '../components/atskit/AtsKit.jsx';
 import {
-  STRIP_STEPS, stripFilter, stripStepOf, usePipelineOverview, useAttentionRequirements, TopRequirements, StageDonut, topFacet,
+  STRIP_STEPS, stripFilter, stripStepOf, usePipelineOverview, TopRequirements, StageDonut, topFacet,
 } from '../components/candidates-v4/CandidatesV4.jsx';
+// The light job list (GET /requirements/picker, /requirements/attention): the page no longer downloads every job.
+import {
+  JobPickerCombo, useJobRows, useAttentionTop, useClientNameOfJobs,
+} from '../components/JobPicker.jsx';
 
 // The Step filter's options in everyday words (the server's names are the
 // old ones: "TL Review", "Client Submitted"…). Internal hiring keeps its own.
@@ -91,7 +99,7 @@ const EMPTY = {
   preferredEmploymentType: 'Full Time', preferredWorkMode: 'Hybrid',
   education: 'B.Tech', specialization: '', institute: '', passingYear: '',
   skills: '', goodToHaveSkills: '', technicalSkills: '', softSkills: '',
-  resumeName: '', source: 'Direct', firstSource: '', sourceCampaign: '',
+  resumeName: '', source: "Recruiter's own search", sourceNote: '', firstSource: '', sourceCampaign: '',
   applicationMethod: 'Manual', requirementId: '',
 };
 
@@ -151,6 +159,8 @@ const MAIN_VIEWS = [
   { id: 'pipeline', label: 'Job applications', say: 'One row for each person + job. A person who applied to 3 jobs shows 3 times.', hint: 'People already working through a job' },
   { id: 'job-portal', label: 'New from job portal', say: 'People who applied on the job portal and are not checked yet. Check them, then send to a job.', hint: 'Not checked yet — check, then send to a job' },
   { id: 'master', label: 'People', say: 'One row for each person, however many jobs they applied to.', hint: 'One row per person, with all their applications' },
+  // dup_: the people who look like someone already on file — each is held at the first step until it is sorted out.
+  { id: 'duplicates', label: 'Duplicates', say: 'People who look like someone already on file. Check them before they move on.', hint: 'Check these before they move on — merge, same person, not a duplicate, or reject' },
 ];
 const PIPE_SUBS = [
   { id: 'all', label: 'All', hint: 'Every application, any status' },
@@ -162,7 +172,6 @@ const PIPE_SUBS = [
 ];
 const MASTER_SUBS = [
   { id: 'all', label: 'All people', hint: 'Every person you can see — one row each, however many jobs' },
-  { id: 'duplicates', label: 'Duplicates', hint: 'Possible duplicate profiles — compare, then Merge or Keep Separate (never automatic)', admin: true },
   { id: 'inactive', label: 'Inactive', hint: 'No application activity in the chosen number of days' },
   // cand7_: archived people are hidden everywhere else; open one to bring it back.
   { id: 'archived', label: 'Archived', hint: 'Archived people — hidden from every list, nothing deleted. Open one to bring it back.', archive: true },
@@ -192,6 +201,8 @@ const QUICK_IN_FILTERS = QUICK.filter(([id]) => !QUICK_ON_SCREEN.includes(id));
 // one-click Next step. Everything else stays under ⚙ Columns.
 const COLUMNS = [
   { id: 'candidate', label: 'Name', locked: true, sort: 'name' },
+  // Where from: right after the name (the job sits under the name), shown by default.
+  { id: 'source', label: 'Source', tip: 'Where this person came from: Naukri, Job Portal, Referral… Hover a source to see the word that was recorded.' },
   { id: 'phone', label: 'Phone' },
   { id: 'skills', label: 'Skills' },
   { id: 'experience', label: 'Experience', sort: 'experience' },
@@ -204,7 +215,6 @@ const COLUMNS = [
   { id: 'next', label: 'Next step', tip: 'The one thing to do now for this person, and its button' },
   { id: 'lastContact', label: 'Last contact', sort: 'lastContact' },
   { id: 'fit', label: 'Fit %', sort: 'fit', tip: 'Fit % = how well the CV matches the job (0–100). Higher is better.' },
-  { id: 'source', label: 'Source' },
   { id: 'applied', label: 'Added', sort: 'applied' },
   { id: 'client', label: 'Client' },
   { id: 'due', label: 'Due', sort: 'due' },
@@ -221,8 +231,23 @@ const COLUMNS = [
 // 7 columns by default (user, 2026-10-05: "max 7, the rest via Columns"):
 // name (with the job under it) first, then the step and the next step.
 // Notice period, Department, Source… stay one click away under ⚙ Columns.
-const DEFAULT_COLS = ['candidate', 'phone', 'skills', 'experience', 'ctc', 'stage', 'next'];
+const DEFAULT_COLS = ['candidate', 'source', 'phone', 'skills', 'experience', 'ctc', 'stage', 'next'];
 const COLUMN_IDS = new Set(COLUMNS.map((c) => c.id));
+// Someone who chose their own columns before the Source column existed keeps them, plus Source after the name.
+function colsFromV6(uid) {
+  try {
+    const old = JSON.parse(localStorage.getItem(`tl.candidates.cols.v6.${uid}`));
+    if (Array.isArray(old) && old.length) {
+      const next = old.filter((id) => COLUMN_IDS.has(id));
+      if (!next.includes('source')) next.splice(Math.min(1, next.length), 0, 'source');
+      return next;
+    }
+  } catch { /* nothing remembered */ }
+  return DEFAULT_COLS;
+}
+// Source filter: a comma list (?source=Naukri,Shine) — tick or un-tick one word.
+const csvList = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+const toggleCsv = (v, one) => { const l = csvList(v); return (l.includes(one) ? l.filter((x) => x !== one) : [...l, one]).join(','); };
 // Client Feedback Pending shows its own list (spec §7).
 const FEEDBACK_COLUMNS = ['candidate', 'client', 'requirement', 'ivdate', 'waiting', 'next'];
 // The Rejected tab shows its own set (change list §10): Job (client) · Rejected by · Reason · Date.
@@ -309,7 +334,7 @@ function followUpFromUrl(raw) {
   return FOLLOWUP_ALIASES[v.toLowerCase()] || v;
 }
 const LEGACY_SUB = { all: 'all', any: 'all', active: 'active', hold: 'hold', selected: 'selected', joined: 'joined' };
-function fromUrl(sp, portalAllowed) {
+function fromUrl(sp, portalAllowed, dupAllowed = true) {
   const followUp = followUpFromUrl(sp.get('followUp'));
   let stageFilter = stageFromUrl(sp.get('stage'));
   let status = normStatus(sp.get('status'));
@@ -318,7 +343,7 @@ function fromUrl(sp, portalAllowed) {
   let main = 'pipeline';
   let sub = '';
   if (rawView === 'job-portal' || rawView === 'jobportal') main = portalAllowed ? 'job-portal' : 'pipeline';
-  else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
+  else if (rawView === 'duplicates' || (rawView === 'master' && rawSub === 'duplicates')) { main = dupAllowed ? 'duplicates' : 'master'; sub = 'all'; } else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
   else if (rawView === 'pipeline' || !rawView) sub = PIPE_SUBS.some((x) => x.id === rawSub) ? rawSub : '';
   if (stageFilter === 'stage:REJECTED') { stageFilter = ''; status = status || 'Rejected'; }
   if (stageFilter === 'stage:HOLD') { stageFilter = ''; sub = sub || 'hold'; }
@@ -331,7 +356,7 @@ function fromUrl(sp, portalAllowed) {
     sub,
     quick: sp.get('quick') || '',
     filters: {
-      ...EMPTY_FILTERS, stage: stageFilter, status, followUp, bde: sp.get('bde') || '',
+      ...EMPTY_FILTERS, stage: stageFilter, status, followUp, bde: sp.get('bde') || '', source: sp.get('source') || '',
       requirementId: sp.get('requirementId') || '', clientId: sp.get('clientId') || '',
       hiring: ['client', 'internal'].includes(sp.get('hiring') || sp.get('type')) ? (sp.get('hiring') || sp.get('type')) : '',
     },
@@ -350,10 +375,12 @@ export default function Candidates() {
   const tier = tierOf(user);
   const uid = (user && user.id) || 'anon';
   const portalTab = canSeePortalApplications(user);
+  // dup_: the Duplicates tab is for the recruiting side (the server says who: GET /candidate-duplicates/status).
+  const [dupStatus, setDupStatus] = useState(null);
+  const dupTab = !!(dupStatus && dupStatus.show);
   const dupAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role) || ['SUPER_ADMIN', 'ADMIN'].includes(user?.atsRole);
   const initial = useMemo(() => fromUrl(searchParams, portalTab), []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [requirements, setRequirements] = useState([]);
   const [form, setForm] = useState(() => (searchParams.get('add') === '1' && searchParams.get('requirementId')
     ? { ...EMPTY, requirementId: searchParams.get('requirementId') } : EMPTY));
   const [main, setMain] = useState(initial.main);
@@ -383,7 +410,7 @@ export default function Candidates() {
     (v) => v && MASTER_SORTS.some(([k]) => k === v.key));
   // v3: the ATS Pipeline column set (Candidate | Requirement | Client | Stage |
   // Owner | Next Action | Due).
-  const [cols, setCols] = useStoredState(`tl.candidates.cols.v6.${uid}`, DEFAULT_COLS,
+  const [cols, setCols] = useStoredState(`tl.candidates.cols.v7.${uid}`, () => colsFromV6(uid),
     (v) => Array.isArray(v) && v.length > 0 && v.every((id) => COLUMN_IDS.has(id)));
   const [page, setPage] = useState(1);
   // cand7_: List | Progress board (pipeline view, TeamLink staff).
@@ -400,6 +427,8 @@ export default function Candidates() {
   const [loadError, setLoadError] = useState('');
   const [tick, setTick] = useState(0);
   const reload = () => setTick((t) => t + 1);
+  const loadDupStatus = () => api.get('/candidate-duplicates/status').then((r) => setDupStatus(r.data)).catch(() => null);
+  useEffect(() => { loadDupStatus(); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Selection (ATS Pipeline): application row id -> the facts the bulk bar
   // and call queue need ({ id: candidateId, latestApplicationId: appId, … }).
@@ -417,7 +446,7 @@ export default function Candidates() {
   function writeUrl(nextMain, nextSub) {
     const sp = new URLSearchParams(searchParams);
     sp.set('view', nextMain);
-    if (nextMain === 'job-portal') sp.delete('sub'); else sp.set('sub', nextSub);
+    if (nextMain === 'job-portal' || nextMain === 'duplicates') sp.delete('sub'); else sp.set('sub', nextSub);
     ['add', 'status', 'stage', 'followUp', 'quick', 'layout'].forEach((k) => sp.delete(k));
     ownWrite.current = true;
     setSearchParams(sp, { replace: true });
@@ -473,10 +502,14 @@ export default function Candidates() {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
-
+  // The Source filter lives in the address bar (?source=Naukri,Shine): a link can be shared, and Back works.
   useEffect(() => {
-    api.get('/requirements').then((res) => setRequirements(res.data)).catch(() => setRequirements([]));
-  }, []);
+    if ((searchParams.get('source') || '') === (filters.source || '')) return;
+    const sp = new URLSearchParams(searchParams);
+    if (filters.source) sp.set('source', filters.source); else sp.delete('source');
+    ownWrite.current = true;
+    setSearchParams(sp, { replace: true });
+  }, [filters.source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Search waits for typing to pause.
   const [search, setSearch] = useState(filters.search);
@@ -543,7 +576,7 @@ export default function Candidates() {
     const { sort: _s, dir: _d, ...rest } = baseParams; // eslint-disable-line no-unused-vars
     return rest;
   }, [baseParams]);
-  const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' });
+  const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' && main !== 'duplicates' });
   const facetLabel = (key, value) => ((facets[key] || []).find((o) => String(o.value) === String(value)) || {}).label;
   // How it works: the count at each step, over everything in your area with
   // the other filters on; a click shows the people at that step.
@@ -567,7 +600,10 @@ export default function Candidates() {
     try { if (on) localStorage.setItem(hiwKey, '1'); else localStorage.removeItem(hiwKey); } catch { /* not remembered */ }
   }
   const [attnAll, setAttnAll] = useState(false);
-  const reqAttention = useAttentionRequirements(requirements);
+  const reqAttention = useAttentionTop(); // top jobs needing attention, ranked on the server
+  const chosenJobs = useJobRows(filters.requirementId ? [filters.requirementId] : []);
+  const clientNameFromJobs = useClientNameOfJobs(filters.clientId && !facetLabel('clientId', filters.clientId) ? filters.clientId : '');
+  const formJob = useJobRows(form.requirementId ? [form.requirementId] : []);
   const plainStep = (o) => (filters.hiring === 'internal' ? o.label : (STEP_PLAIN[o.key] || o.label));
 
   // --- ATS layout v3: the filter bar (Department · Date range · Client ·
@@ -613,11 +649,16 @@ export default function Candidates() {
   }, [facetParams]);
   const cardKey = JSON.stringify(cardParams);
   useEffect(() => {
-    if (main === 'job-portal' || ['CLIENT', 'CANDIDATE'].includes(user?.role)) return undefined;
+    if (main === 'job-portal' || main === 'duplicates' || ['CLIENT', 'CANDIDATE'].includes(user?.role)) return undefined;
     let live = true;
+    // The fast counts first; "available for matching" needs the people rows (the slow build) and
+    // is asked for on its own, so nothing else waits for it.
     api.get('/candidates/cards', { params: cardParams })
-      .then((r) => { if (live) setCards(r.data); })
+      .then((r) => { if (live) setCards((old) => ({ ...r.data, ...(old && old.available != null ? { available: old.available } : {}) })); })
       .catch(() => { if (live) setCards(null); });
+    api.get('/candidates/cards', { params: { ...cardParams, only: 'available' } })
+      .then((r) => { if (live) setCards((old) => ({ ...(old || {}), available: r.data.available })); })
+      .catch(() => {});
     return () => { live = false; };
   }, [cardKey, tick, main]); // eslint-disable-line react-hooks/exhaustive-deps
   // Card → its list (drill-down).
@@ -645,7 +686,7 @@ export default function Candidates() {
   // every login may filter by client (user decision 2026-10-03).
   const levels = (hierTree.data && hierTree.data.viewer && hierTree.data.viewer.levels) || {};
   const show = {
-    source: tier === 'admin' || tier === 'tl',
+    source: true, // every TeamLink login sees where a person came from (incl. client managers and their leads)
     bde: tier !== 'recruiter' && tier !== 'bde',
     tl: !!levels.tl,
     recruiter: !!levels.recruiter,
@@ -767,7 +808,7 @@ export default function Candidates() {
     ].filter(Boolean);
   }
   const rowCtx = {
-    user, onAct: rowAct, menuFor: rowMenuFor, busyId: rowBusy, rejectedTab: main === 'pipeline' && pipeSub === 'rejected',
+    user, onAct: rowAct, menuFor: rowMenuFor, busyId: rowBusy, rejectedTab: main === 'pipeline' && pipeSub === 'rejected', reload,
   };
 
   function sortBy(key) {
@@ -848,12 +889,12 @@ export default function Candidates() {
     { key: 'hiring', label: 'Hiring', value: filters.hiring === 'internal' ? 'Internal' : filters.hiring === 'client' ? 'Client' : '', onRemove: () => setFilter({ hiring: '' }) },
     { key: 'quick', label: 'Show', value: main === 'pipeline' && quick ? (QUICK.find((x) => x[0] === quick) || [])[1] : '', onRemove: () => setQuick('') },
     { key: 'bde', label: 'Client manager', value: filters.bde ? (filters.bde.startsWith('name:') ? filters.bde.slice(5) : 'selected') : '', onRemove: () => setFilter({ bde: '' }) },
-    { key: 'client', label: 'Client', value: filters.clientId ? (facetLabel('clientId', filters.clientId) || ((requirements.find((r) => r.clientId === filters.clientId) || {}).client || {}).name || 'selected') : '', onRemove: () => setFilter({ clientId: '', requirementId: '' }) },
-    { key: 'req', label: 'Job', value: filters.requirementId ? ((requirements.find((r) => r.id === filters.requirementId) || {}).title || facetLabel('requirementId', filters.requirementId) || 'selected') : '', onRemove: () => setFilter({ requirementId: '' }) },
+    { key: 'client', label: 'Client', value: filters.clientId ? (facetLabel('clientId', filters.clientId) || clientNameFromJobs || 'selected') : '', onRemove: () => setFilter({ clientId: '', requirementId: '' }) },
+    { key: 'req', label: 'Job', value: filters.requirementId ? ((chosenJobs.get(filters.requirementId) || {}).title || facetLabel('requirementId', filters.requirementId) || 'selected') : '', onRemove: () => setFilter({ requirementId: '' }) },
     { key: 'stage', label: 'Step', value: main === 'pipeline' ? stageChipLabel : '', onRemove: () => setFilter({ stage: '' }) },
     { key: 'status', label: 'Status', value: main === 'pipeline' ? filters.status : '', onRemove: () => setFilter({ status: '' }) },
     { key: 'location', label: 'Location', value: filters.location, onRemove: () => setFilter({ location: '' }) },
-    { key: 'source', label: 'Source', value: filters.source, onRemove: () => setFilter({ source: '' }) },
+    { key: 'source', label: 'Source', value: csvList(filters.source).join(', '), onRemove: () => setFilter({ source: '' }) },
     { key: 'followUp', label: 'Follow-up', value: main === 'pipeline' ? String(filters.followUp || '').replace(/Overdue/g, 'Late').replace(/Due Today/g, 'Due today') : '', onRemove: () => setFilter({ followUp: '' }) },
     { key: 'from', label: 'Applied from', value: filters.appliedFrom, onRemove: () => setFilter({ appliedFrom: '' }) },
     { key: 'to', label: 'Applied to', value: filters.appliedTo, onRemove: () => setFilter({ appliedTo: '' }) },
@@ -971,7 +1012,17 @@ export default function Candidates() {
 
   // --- v4 (reference layout): tiles, attention, quick actions, insights ----
   const ov = overview;
-  const subN = (k) => (ov ? Number(ov.subs[k] ?? 0) : null);
+  // ONE definition of every count (backend utils/pipelineTally.js): the tiles, the strip, the funnel and the
+  // list totals all read the server's tally, so they cannot disagree.
+  const tl = ov && ov.tally;
+  const subN = (k) => {
+    if (!ov) return null;
+    const t = tl && ({ all: tl.applications, active: tl.active, joined: tl.joined, hold: tl.hold, rejected: tl.rejected })[k];
+    return Number(t ?? ov.subs[k] ?? 0);
+  };
+  const nIn = (n) => Number(n || 0).toLocaleString('en-IN');
+  // Filters that narrow the tally: everything but the step / tab / queue the person clicked.
+  const tallyFilters = Math.max(0, filterCount - (filters.stage ? 1 : 0)) + (filters.search ? 1 : 0);
   const qN = (k) => (ov ? Number(ov.quick[k] ?? 0) : null);
   const plainList = !quick && !filters.stage && !cardOn;
   // A tile is a drill-down: it drops the step / card picks that would hide its own rows.
@@ -999,7 +1050,7 @@ export default function Candidates() {
       onClick: () => pickQuick('today_interviews'), active: quick === 'today_interviews', title: defs.today_interviews,
     },
     {
-      key: 'client_feedback', icon: 'chat', tone: 'pink', label: 'Feedback pending', value: qN('client_feedback'), sub: 'From the client',
+      key: 'client_feedback', icon: 'chat', tone: 'pink', label: 'Interview done, no feedback', value: qN('client_feedback'), sub: 'Nobody has recorded it yet',
       onClick: () => pickQuick('client_feedback'), active: quick === 'client_feedback', title: defs.client_feedback,
     },
     {
@@ -1021,7 +1072,7 @@ export default function Candidates() {
     },
     ...(attnAll ? [
       { key: 'new', count: qN('new'), label: 'New, not checked yet', sub: 'Nobody has acted since it arrived', tone: 'teal', action: quickBtn('new') },
-      { key: 'client_feedback', count: qN('client_feedback'), label: 'Waiting for client feedback', sub: 'Client interview done, no feedback', tone: 'pink', action: quickBtn('client_feedback', 'Chase') },
+      { key: 'client_feedback', count: qN('client_feedback'), label: 'Interview done, no feedback', sub: 'Nobody has recorded the feedback yet', tone: 'pink', action: quickBtn('client_feedback', 'Chase') },
       cards && cards.notFollowed30 != null && {
         key: 'nf30', count: cards.notFollowed30, label: 'No follow-up 30+ days', sub: 'Not contacted for a month', tone: 'red', action: { label: cardOn === 'nf30' ? 'Showing' : 'Chase', onClick: () => openCard('nf30') },
       },
@@ -1071,7 +1122,7 @@ export default function Candidates() {
     { key: 'rejected', label: 'Rejected', value: subN('rejected') || 0, tab: 'rejected' },
   ].map((d) => ({ ...d, onClick: () => (d.tab ? goTile(d.tab) : pickStageFilter(d.filter)) }));
   const donutOn = (DONUT.find((d) => (d.tab ? pipeSub === d.tab && plainList : d.filter && stageOn(d.filter))) || {}).key || '';
-  const cardNote = cardOn && main !== 'job-portal' && (
+  const cardNote = cardOn && main !== 'job-portal' && main !== 'duplicates' && (
     <div className="small-muted cviews-def">
       {{
         unverified: 'Showing: unverified — new people nobody has checked yet.',
@@ -1107,13 +1158,16 @@ export default function Candidates() {
           <p>
             Everyone who applied, and which step they&apos;re at.
             <span className="cv4-scope">
-              {main !== 'job-portal'
+              {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main !== 'job-portal'
                 ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
                 : <span className="small-muted">New from the job portal — not checked yet</span>}
             </span>
           </p>
         </div>
         <div className="ak-page-tools cv4-tools">
+          {dupTab && Number(dupStatus.waiting) > 0 && main !== 'duplicates' && (
+            <button type="button" className="dupx-badge" onClick={() => goMain('duplicates')} title="People who look like someone already on file. They cannot move on until you check them.">{`${Number(dupStatus.waiting).toLocaleString('en-IN')} duplicate${Number(dupStatus.waiting) === 1 ? '' : 's'} waiting`}</button>
+          )}
           {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
             <button type="button" className="btn btn-primary cv4-add" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>+ Add candidate</button>
           )}
@@ -1130,15 +1184,15 @@ export default function Candidates() {
               })}
             />
           )}
-          {main !== 'job-portal' && (
+          {main !== 'job-portal' && main !== 'duplicates' && (
             <SavedViews storageKey="cand" label="Saved filters" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
           )}
         </div>
       </header>
 
       <div className="cviews cv4-views" role="tablist" aria-label="Candidates views" title={(MAIN_VIEWS.find((v) => v.id === main) || {}).say}>
-        {MAIN_VIEWS.filter((v) => v.id !== 'job-portal' || portalTab).map((v) => {
-          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : viewCounts.jobPortal;
+        {MAIN_VIEWS.filter((v) => (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates')).map((v) => {
+          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : v.id === 'duplicates' ? (dupStatus ? dupStatus.waiting : null) : viewCounts.jobPortal;
           return (
             <button
               key={v.id}
@@ -1146,7 +1200,7 @@ export default function Candidates() {
               role="tab"
               aria-selected={main === v.id}
               title={v.id === 'job-portal' ? `${v.hint}. The number is how many are still waiting to be checked.` : v.hint}
-              className={`cviews-btn${main === v.id ? ' is-on' : ''}`}
+              className={`cviews-btn${main === v.id ? ' is-on' : ''}${v.id === 'duplicates' && Number(n) > 0 ? ' has-dup' : ''}`}
               onClick={() => goMain(v.id)}
             >
               {v.label}
@@ -1294,7 +1348,6 @@ export default function Candidates() {
             <CandidateDuplicatePanel
               matches={dupe.matches}
               possible={dupe.possible}
-              requirements={requirements}
               defaultRequirementId={form.requirementId}
               canApply={can(user, 'ats', 'candidates', 'Applications', 'create')}
               onOpen={(m) => { closeForm(); setDrawer({ candidateId: m.id }); }}
@@ -1423,21 +1476,20 @@ export default function Candidates() {
             candidate without one. A named resume also becomes the first row of the Documents tab.
           </div>
 
-          <SectionHead caps>F. Source</SectionHead>
+          <SectionHead caps>F. Where from</SectionHead>
           <div className="grid-2">
             <label className="field">
-              <span>Source</span>
-              <Combo creatable value={form.source} onChange={(e) => set({ source: e.target.value })}>
-                {CANDIDATE_SOURCES.map((x) => <option key={x}>{x}</option>)}
+              <span>Where did this person come from?</span>
+              <Combo value={form.source} onChange={(e) => set({ source: e.target.value })}>
+                {PICK_SOURCES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
-            <label className="field">
-              <span>First Source</span>
-              <Combo creatable value={form.firstSource} onChange={(e) => set({ firstSource: e.target.value })}>
-                <option value="">Same as source</option>
-                {CANDIDATE_FIRST_SOURCES.map((x) => <option key={x}>{x}</option>)}
-              </Combo>
-            </label>
+            {form.source === OTHER_SOURCE && (
+              <label className="field">
+                <span>Tell us where from</span>
+                <input placeholder="e.g. Friend of the owner" value={form.sourceNote} onChange={(e) => set({ sourceNote: e.target.value })} />
+              </label>
+            )}
             <label className="field">
               <span>Source Campaign</span>
               <input placeholder="e.g. Sep-2026 Java drive" value={form.sourceCampaign} onChange={(e) => set({ sourceCampaign: e.target.value })} />
@@ -1456,12 +1508,7 @@ export default function Candidates() {
           <div className="grid-2">
             <label className="field">
               <span>Add to job</span>
-              <Combo value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })}>
-                <option value="">None — add to database only</option>
-                {requirements.filter((r) => r.status !== 'CLOSED').map((r) => (
-                  <option key={r.id} value={r.id}>{r.title} — {r.internal ? 'TeamLink Internal' : r.client?.name}</option>
-                ))}
-              </Combo>
+              <JobPickerCombo value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })} blank="None — add to database only" enabled={showForm} />
             </label>
             <label className="field">
               <span>Job / Client</span>
@@ -1469,7 +1516,7 @@ export default function Candidates() {
                 readOnly
                 placeholder="—"
                 value={(() => {
-                  const r = requirements.find((x) => x.id === form.requirementId);
+                  const r = formJob.get(form.requirementId);
                   return r ? `${r.title} · ${r.internal ? 'TeamLink Internal' : r.client?.name || '—'}` : '';
                 })()}
               />
@@ -1492,6 +1539,7 @@ export default function Candidates() {
               between"). Each view has its own sub-tabs, columns, filters
               and counts. --- */}
       {main === 'job-portal' && portalTab && <JobPortalCandidates onSentToAts={reload} />}
+      {main === 'duplicates' && <DupWorklist onCountChange={() => loadDupStatus()} />}
 
       {main === 'master' && (
         <>
@@ -1515,7 +1563,6 @@ export default function Candidates() {
               </label>
             )}
           />
-          {masterSub === 'duplicates' && dupAdmin && <CandidateDuplicates embedded />}
           {masterSub !== 'duplicates' && (
             <>
               <ListToolbar
@@ -1541,12 +1588,7 @@ export default function Candidates() {
                       </Combo>
                     </PanelField>
                     {show.source && (
-                      <PanelField label="Source">
-                        <Combo value={filters.source} onChange={(e) => setFilter({ source: e.target.value })} title="Source">
-                          <option value="">All sources</option>
-                          {CANDIDATE_FILTER_SOURCES.map((x) => <option key={x}>{x}</option>)}
-                        </Combo>
-                      </PanelField>
+                      <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={facets.source} loading={facetsLoading} title="Where the person came from" />
                     )}
                   </>
                 )}
@@ -1570,6 +1612,7 @@ export default function Candidates() {
                   <thead>
                     <tr>
                       <th className="cpl-sticky cpl-sticky-1">Candidate</th>
+                      <th>Source</th>
                       <th>Phone</th>
                       <th>Email</th>
                       <th style={{ textAlign: 'right' }}>Applications</th>
@@ -1585,9 +1628,11 @@ export default function Candidates() {
                           <span className="avatarsm">{initials(c.name)}</span>
                           <span className="cpl-cand-name">{c.name}</span>
                           <RejectedBadge row={c} />
+                          <DupChip dup={c.dup} candidateId={c.id} onChanged={reload} />
                           {c.partner && <PartnerBadge p={c.partner} />}
                           <div className="small-muted cviews-code">{c.code}</div>
                         </td>
+                        <Cell col="source" c={c} />
                         <td className="cell-muted cpl-nowrap">{c.phone || '—'}</td>
                         <td className="cell-muted cviews-email">{c.email || '—'}</td>
                         <td style={{ textAlign: 'right' }}><b>{c.applicationsCount}</b></td>
@@ -1609,11 +1654,11 @@ export default function Candidates() {
                       </tr>
                     ))}
                     {!loading && fresh && rows.length === 0 && (
-                      <tr><td colSpan={7} style={{ padding: 0 }}>
+                      <tr><td colSpan={8} style={{ padding: 0 }}>
                         <EmptyState compact icon="🗂️" title={masterSub === 'inactive' ? 'Nobody is inactive for that long.' : 'No candidates match.'} hint="Try removing a filter." />
                       </td></tr>
                     )}
-                    {!fresh && <tr><td colSpan={7} className="small-muted" style={{ padding: 16 }}>Loading candidates…</td></tr>}
+                    {!fresh && <tr><td colSpan={8} className="small-muted" style={{ padding: 16 }}>Loading candidates…</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -1643,16 +1688,40 @@ export default function Candidates() {
                   className="cv4-strip"
                   icon="trend"
                   title="Candidate pipeline"
-                  sub={ov ? `Active: ${Number(ov.subs.active ?? 0).toLocaleString('en-IN')} · every person moves left to right — click a step to see who is there` : 'Every person moves left to right — click a step to see who is there'}
+                  sub={ov ? `Active: ${nIn(subN('active'))} (the first six steps) · every application moves left to right — click a number to see exactly those applications` : 'Every application moves left to right — click a number to see those applications'}
                   extra={<button type="button" className="ak-panel-link cv4-hide" title="Hide (you can show it again)" onClick={() => hideStrip(true)}>Hide ×</button>}
                 >
                   <StageStrip
                     compact
-                    steps={STRIP_STEPS.map((s) => ({
-                      key: s.id, label: s.label, icon: s.icon, tone: s.tone, value: ov ? st[s.id] : null, active: stepOn === s.id,
-                      onClick: () => pickStep(stepOn === s.id ? '' : s.id),
-                    }))}
+                    steps={STRIP_STEPS.map((s) => {
+                      const imp = s.id === 'interview' && tl ? Number(tl.importedAtInterview || 0) : 0;
+                      return {
+                        key: s.id, label: s.label, icon: s.icon, tone: s.tone, value: ov ? st[s.id] : null, loading: !ov, active: stepOn === s.id,
+                        onClick: () => pickStep(stepOn === s.id ? '' : s.id),
+                        sub: imp > 0 ? `${nIn(imp)} came from imported sheets` : null,
+                        title: imp > 0 ? `${s.hint}. ${nIn(imp)} of these applications were imported from spreadsheets straight at this step: they have no "Sent to client" or "Client shortlisted" step in TeamLink.` : s.hint,
+                      };
+                    })}
                   />
+                  <div className="cv4-outcomes">
+                    <span className="cv4-outcomes-h">Not moving:</span>
+                    <StageStrip
+                      compact
+                      steps={[
+                        { key: 'hold', label: 'On hold', icon: 'pause', tone: 'amber', value: ov ? subN('hold') : null, loading: !ov, active: pipeSub === 'hold' && plainList, onClick: () => goTile('hold'), title: 'Paused on purpose. Not counted in Active.' },
+                        { key: 'rejected', label: 'Rejected', icon: 'x', tone: 'red', value: ov ? subN('rejected') : null, loading: !ov, active: pipeSub === 'rejected' && plainList, onClick: () => goTile('rejected'), title: 'Closed, never deleted. Not counted in Active.' },
+                      ]}
+                    />
+                  </div>
+                  {tl && (
+                    <p className="cv4-eq" role="note">
+                      <b>{`Active ${nIn(tl.active)}`}</b>
+                      {` + Joined ${nIn(tl.joined)} + On hold ${nIn(tl.hold)} + Rejected ${nIn(tl.rejected)} = `}
+                      <b>{`All applications ${nIn(tl.applications)}`}</b>
+                      {` (${nIn(tl.people)} people — one person can have several applications)`}
+                      {tallyFilters > 0 && <span className="cv4-eq-note">{' · Your filters are on, so only the matching applications are counted.'}</span>}
+                    </p>
+                  )}
                 </Panel>
               )}
               <div className="cv4-row3">
@@ -1763,7 +1832,7 @@ export default function Candidates() {
                 <FacetSelect label="Qualification" allLabel="Any qualification" value={filters.qualificationId} onChange={(v) => setFilter({ qualificationId: v })} options={withCurrent(facets.qualificationId, filters.qualificationId)} loading={facetsLoading} />
                 <FacetSelect label="Specialization" allLabel="Any specialization" value={filters.specialisationId} onChange={(v) => setFilter({ specialisationId: v })} options={withCurrent(facets.specialisationId, filters.specialisationId)} loading={facetsLoading} />
                 {show.source && (
-                  <FacetSelect label="Source" allLabel="All sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={withCurrent(facets.source, filters.source)} loading={facetsLoading} />
+                  <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={facets.source} loading={facetsLoading} title="Where the person came from" />
                 )}
                 <FacetSelect
                   label="Step"
@@ -2008,7 +2077,7 @@ export default function Candidates() {
                   {stepFacet}
                   <FacetSelect label="Department" allLabel="All departments" value={hier.department} onChange={(v) => setPageFilters({ ...pfValue, department: v })} options={pfOptions.department} loading={facetsLoading} />
                   {show.source && (
-                    <FacetSelect label="Source" allLabel="All sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={withCurrent(facets.source, filters.source)} loading={facetsLoading} />
+                    <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={facets.source} loading={facetsLoading} title="Where the person came from" />
                   )}
                   <FacetSelect label="Client" allLabel="All clients" value={filters.clientId} onChange={(v) => setPageFilters({ ...pfValue, clientId: v })} options={pfOptions.clientId} loading={facetsLoading} />
                   <FacetSelect
@@ -2067,7 +2136,7 @@ export default function Candidates() {
             </Panel>
             {show.source ? (
               <Panel icon="send" title="Applications by source" sub="In this list — click to filter">
-                <BarList rows={topFacet(facets.source, 5).map((o) => ({ key: o.value, label: o.label || o.value, value: Number(o.count), onClick: () => setFilter({ source: filters.source === o.value ? '' : o.value }) }))} />
+                <BarList rows={topFacet(facets.source, 5).map((o) => ({ key: o.value, label: o.label || o.value, value: Number(o.count), onClick: () => setFilter({ source: toggleCsv(filters.source, o.value) }) }))} />
               </Panel>
             ) : (
               <Panel icon="building" title="Applications by client" sub="In this list — click to filter">
@@ -2097,6 +2166,7 @@ function Cell({
           <span className="avatarsm">{initials(c.name)}</span>
           <span className="cpl-cand-name">{c.name}</span>
           <RejectedBadge row={c} minTimes={ctx && ctx.rejectedTab ? 2 : 1} />
+          <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx && ctx.reload} />
           <div className="small-muted cviews-code">
             {/* v3: the job this row is about, when the Job column is off. */}
             {ctx && ctx.showJob && c.requirementTitle ? `${c.requirementTitle}${c.clientName ? ` · ${c.clientName}` : ''}` : c.code}
@@ -2294,7 +2364,14 @@ function Cell({
     case 'applied': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{protoDate(c.appliedDate || c.createdAt)}</td>;
     case 'activity': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.lastActivityAt ? dateTime(c.lastActivityAt) : '—'}</td>;
     case 'location': return <td className="cell-muted">{c.location || '—'}</td>;
-    case 'source': return <td className="cell-muted">{c.source || '—'}</td>;
+    case 'source': {
+      const k = c.sourceKey || c.source;
+      return (
+        <td className={`cell-source${k === IMPORTED_SOURCE ? ' is-unknown' : ''}`} title={recordedAs(c)}>
+          {k === IMPORTED_SOURCE ? <>Imported sheet<div className="small-muted" style={{ fontSize: 11 }}>unknown origin</div></> : (k || dash)}
+        </td>
+      );
+    }
     case 'phone': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>;
     default: return <td />;
   }
@@ -2331,7 +2408,7 @@ function PhoneCards({
           <span className="cpl-card-line">{[c.requirementTitle, c.clientName].filter(Boolean).join(' · ') || 'No job yet'}</span>
           {c.partner && <span className="cpl-card-line"><PartnerBadge p={c.partner} /></span>}
           <span className="cpl-card-line small-muted">
-            {[c.owner && c.owner !== '—' ? `With ${c.owner}` : null, `Last contact: ${agoText(c.lastContactAt)}`, c.matchScore != null ? `Fit ${c.matchScore}%` : null].filter(Boolean).join(' · ')}
+            {[c.sourceKey ? `From ${c.sourceKey}` : null, c.owner && c.owner !== '—' ? `With ${c.owner}` : null, `Last contact: ${agoText(c.lastContactAt)}`, c.matchScore != null ? `Fit ${c.matchScore}%` : null].filter(Boolean).join(' · ')}
           </span>
           {c.nextAction && c.nextAction !== '—' && <span className={`cpl-card-next${c.dueStatus === 'overdue' ? ' is-late' : ''}`}>{`Next: ${c.nextAction}${c.dueStatus === 'overdue' ? ' (late)' : ''}`}</span>}
         </button>

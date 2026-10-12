@@ -245,8 +245,10 @@ module.exports = function reportsPlus(H) {
     byMonth.sort = (a, b) => String(a.key).localeCompare(String(b.key));
     addTotal(byMonth, derive);
     const all = [...(measured.vals ? measured.vals.values() : [])];
-    t.value('median', 'Usual days to fill', median(all), 'median — half were faster');
-    t.value('avg', 'Average days to fill', average(all));
+    // Batch 1 (2026-10-09): say how many of the joined people the number is based on.
+    const basis = `based on ${all.length} of ${all.length + undated.n + odd.n} joined people`;
+    t.value('median', 'Usual days to fill', median(all), `median — half were faster · ${basis}`);
+    t.value('avg', 'Average days to fill', average(all), basis);
     if (undated.n) t.push('undated', 'Joined, no joining date', undated, 'not measured — add the joining date');
     if (odd.n) t.push('odd', 'Dates do not add up', odd, 'not measured — check the joining date');
 
@@ -510,7 +512,8 @@ module.exports = function reportsPlus(H) {
     const sumAmt = (list) => rupees(list.reduce((n, i) => n + Number(i.netAmount || 0), 0));
     tile('invoiced', 'Invoiced', sumAmt(inRange), tInv, inRange.length ? `${plural(inRange.length, 'invoice', 'invoices')} · before GST` : 'no invoices in this period');
     tile('received', 'Received', rupees(pays.reduce((n, p) => n + Number(p.amount || 0), 0)), tRec, pays.length ? plural(pays.length, 'payment', 'payments') : 'no payments in this period');
-    tile('outstanding', 'Still to come', rupees(live.reduce((n, i) => n + Math.max(0, A.invoiceOutstanding(i)), 0)), tOut, 'all open invoices, now');
+    // The same invoices as its list and the per-client rows (outstanding above ₹0.5 — a smaller balance is settled).
+    tile('outstanding', 'Still to come', rupees(live.filter((i) => A.invoiceOutstanding(i) > 0.5).reduce((n, i) => n + A.invoiceOutstanding(i), 0)), tOut, 'all open invoices, now');
     tile('late', 'Late', rupees(late.reduce((n, i) => n + A.invoiceOutstanding(i), 0)), tLate, late.length ? `${plural(late.length, 'invoice', 'invoices')} past due date, now` : 'nothing past due today');
 
     const columns = [
@@ -560,10 +563,12 @@ module.exports = function reportsPlus(H) {
     const cellFor = (r, col) => ({ invoices: r.cells.invoices, invoiced: r.cells.invoices, received: r.cells.received, outstanding: r.cells.outstanding, lateCount: r.cells.late, late: r.cells.late })[col];
     const total = { client: 'Total', invoices: 0, invoiced: 0, received: 0, outstanding: 0, lateCount: 0, late: 0, oldest: null };
     list.forEach((r) => {
-      ['invoiced', 'received', 'outstanding', 'late'].forEach((k) => { r.v[k] = rupees(r.v[k]); total[k] += r.v[k]; });
+      ['invoiced', 'received', 'outstanding', 'late'].forEach((k) => { total[k] += r.v[k]; r.v[k] = rupees(r.v[k]); });
       total.invoices += r.v.invoices; total.lateCount += r.v.lateCount;
       if (r.v.oldest !== null) total.oldest = Math.max(total.oldest || 0, r.v.oldest);
     });
+    // The total is worked out from the exact amounts and rounded once (rows rounded one by one can add up to a rupee more or less).
+    ['invoiced', 'received', 'outstanding', 'late'].forEach((k) => { total[k] = rupees(total[k]); });
     const totalCells = { invoices: tInv, invoiced: tInv, received: tRec, outstanding: tOut, lateCount: tLate, late: tLate };
     // ATS layout v3 §5 — money month by month (the line chart): the SAME
     // invoices and receipts as the tiles, Invoiced by the invoice date and
@@ -586,7 +591,8 @@ module.exports = function reportsPlus(H) {
     pays.forEach((p) => { const r = monthOf(p.date); r.v.received += Number(p.amount || 0); r.cells.received.add(p.id); });
     const months = [...monthRows.values()].sort((a, b) => (a.key === '—') - (b.key === '—') || a.key.localeCompare(b.key));
     const monthTotal = { month: 'Total', invoices: 0, invoiced: 0, received: 0 };
-    months.forEach((r) => { r.v.invoiced = rupees(r.v.invoiced); r.v.received = rupees(r.v.received); monthTotal.invoices += r.v.invoices; monthTotal.invoiced += r.v.invoiced; monthTotal.received += r.v.received; });
+    months.forEach((r) => { monthTotal.invoices += r.v.invoices; monthTotal.invoiced += r.v.invoiced; monthTotal.received += r.v.received; r.v.invoiced = rupees(r.v.invoiced); r.v.received = rupees(r.v.received); });
+    monthTotal.invoiced = rupees(monthTotal.invoiced); monthTotal.received = rupees(monthTotal.received);
     const monthColumns = [
       { key: 'month', label: 'Month', type: 'text' },
       { key: 'invoices', label: 'Invoices', type: 'num', drill: true },
@@ -743,6 +749,8 @@ module.exports = function reportsPlus(H) {
     const matchName = (k, x, v) => {
       const got = val[k](x);
       if (got === v) return true;
+      // Source takes several choices (?source=naukri,shine): the clean list's names, lower-case.
+      if (k === 'source' && v.includes(',')) return v.split(',').map((s) => s.trim()).includes(got);
       // a "n:<name>" choice matches the login of that name and vice versa
       if (['tl', 'recruiter', 'bde', 'stl'].includes(k) && got && v.startsWith('n:')) {
         const p = k === 'recruiter' ? x.recruiter : x[k];

@@ -697,7 +697,7 @@ async function main() {
   while (workdays < 10) {
     const d = new Date(Date.now() - dayOffset * 86400000);
     dayOffset += 1;
-    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    if (d.getDay() === 0) continue; // Sunday is the only week off; Saturday is a working day
     workdays += 1;
     const iso = d.toISOString().slice(0, 10);
     punchEmployees.forEach((emp, i) => {

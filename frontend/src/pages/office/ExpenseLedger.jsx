@@ -258,8 +258,9 @@ export default function ExpenseLedger({
                 <Money v={r.pending} cls="oe-pend" />
                 <td className="oe-nowrap"><ApprovalBadge s={r.status} /></td>
                 <td className="oe-nowrap">
-                  {r.paymentDate ? fmtD(r.paymentDate)
-                    : <span className="cell-muted" title={r.status === 'PAID' ? 'Paid before payment dates were recorded' : 'Not paid yet'}>—</span>}
+                  {r.paymentDate
+                    ? <span title={r.paymentDateSource === 'bank' ? 'The date on the bank statement line that paid it' : (r.paymentDateSource === 'marked' ? 'The day it was marked paid - no bank line or payment date is on record' : 'The payment date recorded on the bill')}>{fmtD(r.paymentDate)}{r.paymentDateSource === 'marked' && <span className="cell-muted"> (marked)</span>}</span>
+                    : <span className="cell-muted" title={r.status === 'PAID' ? 'No payment date is on record for this bill' : 'Not paid yet'}>{r.status === 'PAID' ? 'date not recorded' : '—'}</span>}
                 </td>
                 <td className="oe-nowrap">
                   {r.bill && r.bill.onServer && <button type="button" className="link-btn" onClick={() => setBill(r)}>View</button>}

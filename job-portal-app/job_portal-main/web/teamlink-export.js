@@ -170,8 +170,20 @@
     return !!(tr && ownTick(tr));
   }
 
+  /* Recruiter -> Applications keeps its own selection (teamlink-app-
+     selection.js): one Set of application ids, drawn into the same tick
+     column. Export reads it rather than drawing a second one. */
+  function appSelection() {
+    var s = window.TLAppSelection;
+    return s && typeof s.active === 'function' && s.active() ? s : null;
+  }
+
   function decorate(table) {
     if (table.__tlx) return;
+    if (window.TLAppSelection && typeof TLAppSelection.owns === 'function' && TLAppSelection.owns(table)) {
+      TLAppSelection.sync();
+      return;
+    }
     var head = table.querySelector('thead tr');
     var body = table.querySelector('tbody');
     if (!head || !body) return;
@@ -254,6 +266,8 @@
     /* Where the screen owns the boxes it may also clear them - a filter
        change, a page turn - so the DOM is the truth for the rows that
        are on screen, and `picked` carries the ones that are not. */
+    var sel = appSelection();
+    if (sel) return sel.candidateIds();
     var t = document.querySelector(TABLE);
     if (t && tableHasOwnTicks(t)) {
       [].slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr) {
@@ -333,9 +347,38 @@
     });
   }
 
+  /* ------------------------------------------------------------------ *
+   * 0130: the Applications screen filters in the browser, so "everything
+   * matching the current filters" there is the list it is showing - the
+   * filtered applications, one row each, with their Applied On - not the
+   * last Talent Pool query.
+   * ------------------------------------------------------------------ */
+  function onApps() {
+    return /^#\/recruiter\/applications/.test(String(location.hash || ''))
+      && typeof window.tlAppFilteredRows === 'function';
+  }
+  var realApp = function (id) { return !!id && !/^(primary__|app_new)/.test(String(id)); };
+  function appRowsFiltered() {
+    try { return (window.tlAppFilteredRows() || []).filter(function (a) { return a && a.candidateId; }); }
+    catch (e) { return []; }
+  }
+  function uniq(list) {
+    var seen = {}; return list.filter(function (x) { if (!x || seen[x]) return false; seen[x] = 1; return true; });
+  }
+  function appIdsFor(scope) {
+    if (!onApps()) return [];
+    if (scope === 'filtered') return uniq(appRowsFiltered().map(function (a) { return a.id; }).filter(realApp));
+    if (scope === 'page') {
+      return uniq([].slice.call(document.querySelectorAll('.tl-apps-wrap tbody tr[data-app-id]'))
+        .map(function (tr) { return tr.getAttribute('data-app-id'); }).filter(realApp));
+    }
+    return [];
+  }
+
   function render(cat) {
     var nSel = pickedIds().length;
     var nPage = pageIds().length;
+    var nApps = onApps() ? appRowsFiltered().length : 0;
 
     var back = document.createElement('div');
     back.className = 'tlx-back';
@@ -364,9 +407,12 @@
           nSel ? 'The rows you have ticked.' : 'Tick some rows first.', nSel > 0, nSel === 0)
       + scopeOpt('page', 'This page (' + nPage + ')',
           'Every row currently shown.', nSel === 0, nPage === 0)
-      + scopeOpt('filtered', 'Everything matching the current filters',
-          'Asks the server for the same list again, without the page limit.', false,
-          !lastList)
+      + (onApps()
+        ? scopeOpt('filtered', 'Everything matching the current filters (' + nApps + ' application' + (nApps === 1 ? '' : 's') + ')',
+            'Exactly the filtered applications, one row each, with their Applied On date.', false, nApps === 0)
+        : scopeOpt('filtered', 'Everything matching the current filters',
+            'Asks the server for the same list again, without the page limit.', false,
+            !lastList))
 
       + '<div class="tlx-lab">What</div>'
       + scopeOpt('__f_csv', 'Export List (CSV)', 'Opens in Excel, Sheets or Numbers.', true, false)
@@ -439,6 +485,7 @@
   function idsFor(scope) {
     if (scope === 'selected') return Promise.resolve(pickedIds());
     if (scope === 'page') return Promise.resolve(pageIds());
+    if (onApps()) return Promise.resolve(uniq(appRowsFiltered().map(function (a) { return a.candidateId; })));
     return filteredIds();
   }
 
@@ -481,6 +528,8 @@
 
       var body = { ids: ids, scope: scope, filters: filtersForAudit() };
       if (format !== 'zip') { body.format = format; body.columns = columns; }
+      var appIds = format !== 'zip' ? appIdsFor(scope) : [];
+      if (appIds.length) body.applicationIds = appIds.slice(0, 5000);
 
       return fetch(path, {
         method: 'POST',
@@ -504,8 +553,9 @@
             + (Number(out.missing) ? ' · ' + out.missing
               + ' had no file, listed in missing_resumes.txt' : ''), '✅');
         } else {
-          toast(ids.length + ' candidate' + (ids.length === 1 ? '' : 's')
-            + ' exported as ' + format.toUpperCase(), '✅');
+          toast(appIds.length
+            ? appIds.length + ' application' + (appIds.length === 1 ? '' : 's') + ' exported as ' + format.toUpperCase()
+            : ids.length + ' candidate' + (ids.length === 1 ? '' : 's') + ' exported as ' + format.toUpperCase(), '✅');
         }
       });
     }).catch(function (err) {
@@ -561,6 +611,14 @@
 
   /** What the sidebar had set, for the audit line. Never candidate data. */
   function filtersForAudit() {
+    if (onApps() && typeof window.tlAppFilterState === 'function') {
+      try {
+        var f = window.tlAppFilterState(), out = {};
+        Object.keys(f).forEach(function (k) { if (f[k]) out[k] = f[k]; });
+        out.screen = 'applications';
+        return out;
+      } catch (e) { return {}; }
+    }
     if (!lastList) return {};
     try {
       var qs = lastList.split('?')[1] || '';

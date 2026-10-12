@@ -350,7 +350,11 @@ const DEFAULT_RULES = [
   // ASSIGN is its own action: the assignment chain (TL -> Recruiter(s) -> BDE)
   // is what drives scope, so handing it out is a lead's decision, not a
   // side-effect of being able to edit. A BDE assigns the client side of it.
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE, 'BDE'] },
+  // BDE ASSIGN RECRUITER IS RESTRICTED (user spec 2026-10-10): the BDE asks, the TL picks the recruiter (Role Catalog can tick it on).
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE] },
+  // BDE BUSINESS WORKSPACE (user spec 2026-10-10): pause / resume own jobs, ask to close one (a Manager / Admin decides).
+  { module: 'requirements', features: ['Pause Requirement', 'Resume Requirement'], actions: ['edit'], roles: ['BDE'] },
+  { module: 'requirements', features: ['Close Request'], actions: ['create'], roles: ['BDE'] },
   // PERMANENT DELETE (per-role spec 2026-10-03): Super Admin only — an Admin
   // closes instead. routes/requirements.js still refuses it (409) while the
   // requirement carries any candidate or invoice.
@@ -368,7 +372,8 @@ const DEFAULT_RULES = [
   // jobs directly. Super Admin / Admin, Manager (their departments) and HR
   // (internal jobs only) import directly; a BDE imports REQUESTS (view
   // without create — ioAccessFor() importMode 'request').
-  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'HR'] },
+  // (2026-10-09, Q1: the Manager no longer imports: view + approve only.)
+  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'HR'] },
   { module: 'requirements', features: ['Bulk Import'], actions: ['view'], roles: ['BDE'] },
 
   // --- ATS: Jobs / Requirements -> Job Portal ---------------------------
@@ -458,9 +463,21 @@ const DEFAULT_RULES = [
   { module: 'clients', features: ['Pause / Reactivate Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER'] },
   { module: 'clients', features: ['Pause / Reactivate Client'], actions: ['create'], roles: ['BDE'] },
   { module: 'clients', features: ['Archive Client'], actions: ['edit'], roles: SET.ADMIN },
+  // BDE BUSINESS WORKSPACE (user spec 2026-10-10). A BDE PAUSES and RESUMES their own clients with a reason;
+  // deactivate / delete / change of owner / merge are REQUESTS a Manager or Admin decides (routes/clientRequests.js).
+  // Deactivate: edit = do it directly (Admin, Manager of the department), create = ask (UNTICKED for the BDE by default).
+  { module: 'clients', features: ['Pause / Reactivate Client'], actions: ['edit'], roles: ['BDE'] },
+  { module: 'clients', features: ['Resume Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
+  { module: 'clients', features: ['Deactivate Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER'] },
+  { module: 'clients', features: ['Client Delete Request', 'Client Ownership Request', 'Client Merge Request'], actions: ['create'], roles: ['BDE'] },
+  { module: 'clients', features: ['Client Contacts', 'Client Documents'], actions: ['create'], roles: [...SET.ADMIN, 'BDE'] },
+  { module: 'clients', features: ['Client Follow-ups', 'Client Approval Submission'], actions: ['create'], roles: ['BDE'] },
+  { module: 'clients', features: ['Client Invoice Status'], actions: ['view'], roles: ['BDE'] },
   // Notes on a client (Activity): Admin, Manager (their departments), the
   // owner BDE, Accounts.
-  { module: 'clients', features: ['Client Notes'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'BDE', 'ACCOUNTANT'] },
+  // (P10, 2026-10-09: Accounts reads clients and agreements, it does not write notes.)
+  { module: 'clients', features: ['Client Notes'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
+  { module: 'clients', features: ['Client Notes'], actions: ['view'], roles: ['ACCOUNTANT'] },
   // generate / send / resend / activate — Super Admin / Admin
   // Spec 6 (2026-10-03): the agreement and its terms are EDITED by Super
   // Admin and Admin only — a BDE views their own clients' agreements.
@@ -484,13 +501,26 @@ const DEFAULT_RULES = [
   // (privacy / delete-my-data requests, archiving idle logins).
   { module: 'candidates', features: ['Candidate Portal Invite'], actions: ['create'], roles: [...SET.ADMIN, 'TL', 'RECRUITER'] },
   { module: 'candidates', features: ['Candidate Portal Invite'], actions: ['view', 'approve'], roles: SET.ADMIN },
+  // CANDIDATE CONTACT AND SALARY (user's matrix, 2026-10-09): a switch of its own,
+  // SEPARATE from viewing the candidate. view = may receive email, phone, current
+  // and expected salary: in lists, details, calendar, joining, offers and the
+  // export columns. A role without it gets those fields cut from every payload
+  // (utils/clientRedact.js). ON for every role that works with candidates today;
+  // OFF for the BDE (Q4: a BDE sees name, step, client feedback, outcome).
+  { module: 'candidates', features: ['Candidate Contact & Salary'], actions: ['view'], roles: [...SET.PIPELINE.filter((r) => r !== 'BDE'), 'HR'] },
+  // CONTACT (user, 2026-10-10): "Contact (Mail / WhatsApp / SMS / Call)" is its OWN right, separate from
+  // view / edit / approve: every role that follows people up may use all four channels for the people in
+  // its own area (utils/contactAccess.js decides WHICH kinds of people, and whether the number is shown or
+  // only used by the server). ON by default for the roles that follow up; OFF for a plain Employee.
+  // The Manager / Assistant Manager (view + approve roles) hold it too: contacting is not editing.
+  { module: 'candidates', features: ['Contact (Mail / WhatsApp / SMS / Call)'], actions: ['view'], roles: [...SET.PIPELINE, 'HR', 'ACCOUNTANT'] },
   // Export: Admin, Manager (department), BDE (own clients), Accounts — not
   // an Assistant Manager (the export carries revenue / terms).
   { module: 'clients', features: ['Client List'], actions: ['export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE', 'ACCOUNTANT'] },
   // Import clients / agreement updates: Admin and a Manager (their
   // departments) directly; a BDE imports REQUESTS (view without create).
   // Merge Duplicates stays Admin-only (routes/clientMerge.js).
-  { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER'] },
+  { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN] },
   { module: 'clients', features: ['Bulk Import'], actions: ['view'], roles: ['BDE'] },
 
   // --- ATS: Candidates & Pipeline ---------------------------------------
@@ -501,15 +531,19 @@ const DEFAULT_RULES = [
   { module: 'candidates', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold'], actions: ['view'], roles: ['BDE'] },
   // CANDIDATE IMPORT (2026-10-03): Admin, Manager (dept), TL (team),
   // Recruiter (own), HR (internal) — each into their own scope.
-  { module: 'candidates', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'MANAGER', 'TL', 'RECRUITER', 'HR'] },
+  { module: 'candidates', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'TL', 'RECRUITER', 'HR'] },
   // requireRole(...RECRUITING_ROLES) on POST / and PUT /:id
   { module: 'candidates', features: ['Add Candidate'], actions: ['create'], roles: SET.RECRUITING },
   { module: 'candidates', features: ['Candidate Master'], actions: ['edit'], roles: SET.RECRUITING },
   { module: 'candidates', features: ['Candidate List'], actions: ['export'], roles: SET.MATCHING },
   // requireRole(...PIPELINE_ROLES) on POST /applications, plus stage moves
   { module: 'candidates', features: ['Applications'], actions: ['create', 'edit'], roles: SET.PIPELINE },
-  { module: 'candidates', features: ['Pipeline Stages'], actions: ['create', 'edit', 'approve', 'assign'], roles: SET.PIPELINE },
-  { module: 'candidates', features: ['Rejection & Hold'], actions: ['edit', 'approve'], roles: SET.PIPELINE },
+  // P9 (user, 2026-10-09): a RECRUITER does not approve: they work the steps
+  // (edit: Send to TL, Hold, Reject) and the TL / leads approve.
+  { module: 'candidates', features: ['Pipeline Stages'], actions: ['create', 'edit', 'assign'], roles: SET.PIPELINE },
+  { module: 'candidates', features: ['Pipeline Stages'], actions: ['approve'], roles: SET.PIPELINE.filter((r) => r !== 'RECRUITER') },
+  { module: 'candidates', features: ['Rejection & Hold'], actions: ['edit'], roles: SET.PIPELINE },
+  { module: 'candidates', features: ['Rejection & Hold'], actions: ['approve'], roles: SET.PIPELINE.filter((r) => r !== 'RECRUITER') },
   { module: 'candidates', features: ['Resume & Scores'], actions: ['edit'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
 
   // --- ATS: Recruiter & BDE ---------------------------------------------
@@ -530,7 +564,9 @@ const DEFAULT_RULES = [
   // INTERNAL interview feedback — the panel's own record. A client never
   // writes this one; they write Client Feedback below, which is a separate
   // record on the same interview.
-  { module: 'interviews', features: ['Interview Feedback'], actions: ['create', 'edit', 'approve'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
+  { module: 'interviews', features: ['Interview Feedback'], actions: ['create', 'edit'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
+  // (P9) taking the interview DECISION is an approval: not a Recruiter's, not a BDE's.
+  { module: 'interviews', features: ['Interview Feedback'], actions: ['approve'], roles: SET.PIPELINE.filter((r) => r !== 'BDE' && r !== 'RECRUITER') },
   { module: 'interviews', features: ['Client Feedback'], actions: ['create', 'edit'], roles: [...SET.PIPELINE, 'CLIENT'] },
   // Offers and Joining are recruitment work; a client watches their own.
   { module: 'interviews', features: ['Offers', 'Joining'], actions: ['create', 'edit'], roles: SET.PIPELINE },
@@ -705,6 +741,7 @@ const DEFAULT_RULES = [
   // TL team, BDE client performance); Internal HR the internal hiring.
   { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['view', 'export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE'] },
   { module: 'reports', features: ['ATS Reports'], actions: ['view', 'export'], roles: ['HR'] },
+  { module: 'reports', features: ['My Clients Report', 'My Requirements Report', 'My Follow-ups Report'], actions: ['view'], roles: ['BDE'] },
   // RECRUITER: their own data only (scope.js RECRUITER branch) + MY RESULTS —
   // submitted, interviews, selected, joined (routes/atsReports.js
   // /my-results). Export of their own data (2026-10-03 import / export rule).
@@ -822,22 +859,41 @@ const VIEW_ONLY_ROLES = ['MANAGER', 'ASSISTANT_MANAGER'];
 //              feedback; clients: notes, pause / reactivate; import (dept)
 //   Asst Mgr   jobs: create, assign recruiter, hold; candidates: move own
 //              steps; Recruiter & BDE: reassign; interviews: schedule, feedback
+//
+// 2026-10-09 (user, Q1): Manager, Assistant Manager and STL are VIEW + APPROVE in
+// ATS. No create / edit of jobs or candidates, no import, no scheduling, no
+// direct step moves: only the approvals (a job's activate / hold / close, the
+// pipeline's Approve / Select / Reject / Hold, the interview decision, offers,
+// joinings). Assigning people (a TL / recruiter to a job) is NOT an approval: it is
+// refused for them too (reported by the dashboard agent, 2026-10-09); a Role
+// Catalog row can re-grant 'assign' per role. Seeing
+// more (the Manager reads every department) never adds an edit.
+// A stored Role Catalog row still re-grants any of it per role.
 const LEAD_ATS_WRITES = {
   MANAGER: {
-    requirements: { 'Create Requirement': ['create'], 'Requirement Detail': ['edit', 'approve', 'assign'], 'Bulk Import': ['create'], 'Requirement Request': ['approve'] },
-    clients: { 'Client Notes': ['create'], 'Pause / Reactivate Client': ['edit'], 'Bulk Import': ['create'], 'Client Portal Logins': ['approve'] },
-    candidates: {
-      'Add Candidate': ['create'], 'Candidate Master': ['edit'], Applications: ['create', 'edit'], 'Pipeline Stages': ['create', 'edit', 'approve', 'assign'], 'Rejection & Hold': ['edit', 'approve'], 'Bulk Import': ['create'],
-    },
-    recruiterbde: { 'Team View': ['assign'] },
-    interviews: { 'Schedule Interview': ['create', 'edit'], 'Interview Feedback': ['create', 'edit'] },
+    requirements: { 'Requirement Detail': ['approve'], 'Requirement Request': ['approve'] },
+    clients: { 'Client Notes': ['create'], 'Pause / Reactivate Client': ['edit'], 'Resume Client': ['edit'], 'Deactivate Client': ['edit'], 'Client Portal Logins': ['approve'] },
+    candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
+    recruiterbde: {},
+    interviews: {},
   },
   ASSISTANT_MANAGER: {
-    requirements: { 'Create Requirement': ['create'], 'Requirement Detail': ['edit', 'approve', 'assign'] },
+    requirements: { 'Requirement Detail': ['approve'] },
     clients: {},
-    candidates: { 'Pipeline Stages': ['edit'], 'Rejection & Hold': ['edit'] },
-    recruiterbde: { 'Team View': ['assign'] },
-    interviews: { 'Schedule Interview': ['create', 'edit'], 'Interview Feedback': ['create', 'edit'] },
+    candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
+    recruiterbde: {},
+    interviews: {},
+  },
+  // The STL approves what the section's TLs send up, and signs off interview
+  // decisions, offers and joinings of the section.
+  STL: {
+    requirements: { 'Requirement Detail': ['approve'] },
+    clients: {},
+    candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
+    recruiterbde: {},
+    interviews: {
+      'Interview Feedback': ['approve'], Offers: ['approve'], Joining: ['approve'], 'Internal Hiring': ['approve'],
+    },
   },
 };
 function viewOnlyApplies(moduleId) {
@@ -982,6 +1038,18 @@ function mergeAccess(role, moduleId, ...rows) {
     const features = {};
     (mod ? mod.features : []).forEach((f) => {
       features[f] = { ...out.features[f], ...(saved[f] || {}) };
+      // "Candidate Contact & Salary" is newer than the saved rows: a role saved
+      // before it existed (a custom role included) keeps what it had, i.e. it
+      // may see contact and salary wherever it may see the candidate list.
+      // The BDE stays off.
+      if (f === 'Candidate Contact & Salary' && !saved[f] && role !== 'BDE') {
+        features[f] = { ...features[f], view: !!((saved['Candidate List'] || out.features['Candidate List'] || {}).view) };
+      }
+      // "Contact (Mail / WhatsApp / SMS / Call)" is newer still: a role saved before it existed keeps
+      // contacting wherever it may see applications (the system roles get it from DEFAULT_RULES).
+      if (f === 'Contact (Mail / WhatsApp / SMS / Call)' && !saved[f]) {
+        features[f] = { ...features[f], view: !!features[f].view || !!((saved.Applications || out.features.Applications || {}).view) };
+      }
     });
     out = { moduleEnabled: !!row.moduleEnabled, features };
   });
@@ -1110,10 +1178,59 @@ const REPORT_FEATURE_PRODUCT = {
   'ATS Reports': 'ats', 'Job Portal Reports': 'ats', 'Accounts Reports': 'accounts', 'My Results': 'ats', 'Client Reports': 'ats',
 };
 
+// P10 (user, 2026-10-09): the plain ACCOUNTS desk (an Accountant with no ATS
+// access) READS Clients and Agreements, read-only: the billing view of
+// the clients (utils/scope.js clientWhere ACCOUNTANT, utils/clientRedact.js
+// 'billing'). No ATS dashboard, jobs, candidates or interviews, and nothing to write.
+// What the BDE TL may do on top of the TL matrix (see can(), step 3): the BDE
+// client desk's own rights, for ANY client (utils/scope.js gives them all).
+const BDE_TL_RIGHTS = {
+  'clients|Add Client|create': true,
+  'clients|Client Detail|edit': true,
+  'clients|Client Detail|assign': true,
+  'clients|Client Notes|create': true,
+  'clients|Client Portal Logins|create': true,
+  'clients|Pause / Reactivate Client|create': true,
+  'clients|Pause / Reactivate Client|edit': true,
+  'clients|Resume Client|edit': true,
+  'clients|Client Contacts|create': true,
+  'clients|Client Documents|create': true,
+  'clients|Client Follow-ups|create': true,
+  'clients|Client Approval Submission|create': true,
+  'clients|Client Invoice Status|view': true,
+  'requirements|Pause Requirement|edit': true,
+  'requirements|Resume Requirement|edit': true,
+  'reports|My Clients Report|view': true,
+  'reports|My Requirements Report|view': true,
+  'reports|My Follow-ups Report|view': true,
+  'requirements|Requirement Request|view': true,
+  'requirements|Requirement Request|create': true,
+  'requirements|Requirement Detail|edit': true,
+  'requirements|Requirement Detail|approve': true,
+  'requirements|Job Posting|create': true,
+  'requirements|Job Posting|edit': true,
+};
+const ACCOUNTS_CLIENT_READ = ['Client List', 'Client Detail', 'Client Requirements', 'Agreement Lifecycle', 'Commercial Terms'];
+function accountsClientReader(user) {
+  const p = (user && user.products) || {};
+  return !!user && !p.ats && !!p.accounts && roleForProduct(user, 'accounts') === 'ACCOUNTANT';
+}
+
 async function can(user, product, moduleId, feature, action, record = undefined) {
   // 1. user identity
   if (!user || !user.id) return false;
   if (user.status && user.status !== 'Active') return false;
+
+  // 1b. THE ACCOUNTS DESK'S READ OF CLIENTS (P10) — before the ATS product test.
+  if (moduleId === 'clients' && action === 'view' && ACCOUNTS_CLIENT_READ.includes(feature) && accountsClientReader(user)) {
+    const acc = await accessFor('ACCOUNTANT', 'clients', 'ats');
+    if (!(acc.moduleEnabled && acc.features[feature] && acc.features[feature].view)) return false;
+    if (record !== undefined && record !== null) {
+      const { recordInScope } = require('./scope'); // eslint-disable-line global-require
+      return recordInScope(user, 'clients', record);
+    }
+    return true;
+  }
 
   // 1a. LEGACY AREA NAMES. 'hrms' / 'accounts' are no longer modules of their
   //     own (roleAccess.js SPLIT_MODULES); an old guard such as
@@ -1148,7 +1265,7 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   if (owningProduct === 'ats' && isExternalLogin(user) && !EXTERNAL_ATS_FEATURES.includes(feature)) return false;
   // 2c. CLIENT LOGIN TYPE (spec B1): Reviewer / Viewer / Billing only ever
   //     narrow what the CLIENT role holds (utils/clientPortalTypes.js).
-  if (user.portalType && !require('./clientPortalTypes').portalTypeAllows(user, moduleId, feature, action)) return false; // eslint-disable-line global-require
+  if ((user.portalType || user.portalPerms) && !require('./clientPortalTypes').portalTypeAllows(user, moduleId, feature, action)) return false; // eslint-disable-line global-require
 
   // 3. PRODUCT ROLE — the role for THIS product, never the account-level one.
   //    accountsRole = None means Accounts is refused however senior the
@@ -1158,13 +1275,26 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   // THE BDE TL (user, 2026-10-08) READS the client book — clients and their
   // agreements — as a BDE does; utils/scope.js clientWhere() gives them all of
   // it. Viewing only: adding, editing and the agreement actions stay as set.
-  if (moduleId === 'clients' && action === 'view' && !roles.includes('BDE')
+  // 2026-10-09: and downloads it (export) — reading the whole book includes taking a copy.
+  if (moduleId === 'clients' && (action === 'view' || action === 'export') && !roles.includes('BDE')
     && require('./scope').isBdeTl(user)) roles.push('BDE'); // eslint-disable-line global-require
+  // THE CLIENT-REQUEST FLOW (user, 2026-10-09): the BDE TL works a new client and
+  // a client's job request for ANY client, as a BDE does for their own — add the
+  // client, pick its BDE, ask for a job, open / complete / post it. Only these
+  // named rights; the rest of the TL's matrix is untouched.
+  if (!roles.includes('BDE') && BDE_TL_RIGHTS[`${moduleId}|${feature}|${action}`]
+    && require('./scope').isBdeTl(user)) roles.push('BDE'); // eslint-disable-line global-require
+
+  // INTERNAL HR (user, 2026-10-10; utils/internalHr.js), HRMS only: the actions listed in
+  // INTERNAL_HR_BLOCKED (employee delete ...) are refused whatever any role says; every
+  // other HRMS action a Super Admin has is granted on top of the HR desk role.
+  const ih = owningProduct === 'hrms' ? user.internalHr : null;
+  if (ih && require('./internalHr').denies(ih, moduleId, feature, action)) return false; // eslint-disable-line global-require
 
   // 4. module permission + 5. action permission
   const key = isProduct ? owningProduct : '*';
-  let granted = false;
-  for (const role of roles) {
+  let granted = !!(ih && require('./internalHr').overlayAllows(ih, moduleId, feature, action)); // eslint-disable-line global-require
+  for (const role of granted ? [] : roles) {
     // MANAGER AND ASSISTANT MANAGER ARE VIEW-ONLY — every department, nothing
     // changed (the user's rule, 2026-09-25). They may look and download
     // (view / export); create, edit, approve, assign, delete and configure are
@@ -1180,6 +1310,12 @@ async function can(user, product, moduleId, feature, action, record = undefined)
     }
   }
   if (!granted) return false;
+  // THE BDE TL (user, 2026-10-10): "Candidate Contact & Salary" is OFF for the BDE team.
+  // clientRedact.privacyFlagsFor already cuts contact + pay by role; the answer here (and
+  // the switch drawn on /auth/me) now says the same, so the screen never claims access
+  // the data does not give.
+  if (moduleId === 'candidates' && feature === 'Candidate Contact & Salary'
+    && require('./scope').isBdeTl(user)) return false; // eslint-disable-line global-require
 
   // 6/7. data scope and record ownership
   if (record !== undefined && record !== null) {
@@ -1299,13 +1435,33 @@ function stageGlobal(user) {
 // Which target stages this login may move a candidate to. Access half first,
 // ownership half second — a login that fails the access half gets an empty
 // list, not a shorter one.
+// A login that may only APPROVE on the pipeline (Manager / Assistant Manager /
+// STL, 2026-10-09) makes the decision moves and nothing else: Approve a TL's
+// review (-> With BDE), Select, Reject, Hold. Anything else needs Pipeline
+// Stages / edit.
+const APPROVE_MOVES = {
+  WITH_BDE: 'Pipeline Stages', SELECTED: 'Pipeline Stages', REJECTED: 'Rejection & Hold', HOLD: 'Rejection & Hold',
+};
+async function mayMoveTo(user, stage) {
+  if (await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit')) return true;
+  const feature = APPROVE_MOVES[stage];
+  return feature ? can(user, 'ats', 'candidates', feature, 'approve') : false;
+}
+
 async function allowedStagesFor(user) {
-  const mayAct = await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
-  if (!mayAct) return [];
   // Super Admin / Admin own every stage, as they always have.
   const global = stageGlobal(user);
   const atsRole = stageRoleOf(user);
+  const mayEdit = await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
+  let approve = {};
+  if (!mayEdit) {
+    const feats = [...new Set(Object.values(APPROVE_MOVES))];
+    const oks = await Promise.all(feats.map((f) => can(user, 'ats', 'candidates', f, 'approve')));
+    approve = Object.fromEntries(feats.map((f, i) => [f, oks[i]]));
+    if (!oks.some(Boolean)) return [];
+  }
   return Object.keys(STAGE_OWNERS)
+    .filter((stage) => mayEdit || (APPROVE_MOVES[stage] && approve[APPROVE_MOVES[stage]]))
     .filter((stage) => global || STAGE_OWNERS[stage].includes(atsRole));
 }
 
@@ -1313,7 +1469,7 @@ async function allowedStagesFor(user) {
 // { status, body } refusal to send.
 async function canMoveToStage(user, stage) {
   if (!STAGE_OWNERS[stage]) return { status: 400, body: { error: 'Unknown stage' } };
-  if (!await can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit')) {
+  if (!await mayMoveTo(user, stage)) {
     return { status: 403, body: { error: "This action isn't included in your role's permissions" } };
   }
   const global = stageGlobal(user);
@@ -1441,7 +1597,7 @@ function ioScopeOf(user) {
   if (s.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return 'own-profile';
   if (s.role === 'CLIENT' || s.atsRole === 'CLIENT') return 'own-company';
   switch (s.atsRole) {
-    case 'MANAGER': return 'department';
+    case 'MANAGER': return 'all';
     case 'ASSISTANT_MANAGER': return s.teamUserIds ? 'teams' : 'department';
     case 'STL': return 'section';
     case 'TL': return 'team';
@@ -1514,6 +1670,16 @@ async function effectiveMatrix(user) {
     const isProduct = ROLE_PRODUCTS.includes(owning);
     if (isProduct && !(user.products || {})[owning]) {
       out[m.id] = defaultAccessForRole(NO_SUCH_ROLE, m.id);
+      // P10: the Accounts desk's read-only Clients / Agreements.
+      if (m.id === 'clients' && accountsClientReader(user)) {
+        const acc = await accessFor('ACCOUNTANT', 'clients', 'ats'); // eslint-disable-line no-await-in-loop
+        const features = {};
+        Object.entries(acc.features || {}).forEach(([f, actions]) => {
+          features[f] = {};
+          Object.keys(actions).forEach((a) => { features[f][a] = a === 'view' && ACCOUNTS_CLIENT_READ.includes(f) && !!actions[a]; });
+        });
+        out[m.id] = { moduleEnabled: !!acc.moduleEnabled, features };
+      }
       continue;
     }
     const roles = rolesFor(user, isProduct ? owning : null);
@@ -1538,19 +1704,46 @@ async function effectiveMatrix(user) {
       });
       return { ...acc, features };
     }));
-    // The BDE TL's client-book read — the same widening can() applies.
-    if (m.id === 'clients' && !roles.includes('BDE') && require('./scope').isBdeTl(user)) { // eslint-disable-line global-require
+    // The BDE TL's client-book read and the BDE desk's own rights (BDE_TL_RIGHTS) — the same
+    // widening can() applies, so a button is drawn exactly when the API would accept it
+    // (role report, Surprise #6: Add client, Edit client, notes, job request ... were allowed by
+    // the API but never drawn).
+    const bdeTlWide = !roles.includes('BDE') && require('./scope').isBdeTl(user); // eslint-disable-line global-require
+    const namedRights = Object.keys(BDE_TL_RIGHTS).filter((k) => k.startsWith(`${m.id}|`));
+    if (bdeTlWide && (m.id === 'clients' || namedRights.length)) {
       const acc = await accessFor('BDE', m.id, key); // eslint-disable-line no-await-in-loop
       const features = {};
       Object.entries(acc.features || {}).forEach(([f, actions]) => {
         features[f] = {};
-        Object.entries(actions).forEach(([a, v]) => { features[f][a] = !!v && a === 'view'; });
+        Object.entries(actions).forEach(([a, v]) => {
+          const read = m.id === 'clients' && (a === 'view' || a === 'export');
+          features[f][a] = !!v && (read || BDE_TL_RIGHTS[`${m.id}|${f}|${a}`] === true);
+        });
       });
       list.push({ ...acc, features });
     }
     out[m.id] = list.length ? unionAccess(m.id, list) : defaultAccessForRole(NO_SUCH_ROLE, m.id);
+    // The BDE TL's candidate contact + pay is cut by role: draw the switch OFF.
+    if (m.id === 'candidates' && require('./scope').isBdeTl(user) // eslint-disable-line global-require
+      && out[m.id].features && out[m.id].features['Candidate Contact & Salary']) {
+      out[m.id].features['Candidate Contact & Salary'] = { ...out[m.id].features['Candidate Contact & Salary'], view: false };
+    }
+    // INTERNAL HR: the same overlay and refusals can() applies, so a button is drawn exactly
+    // when the API accepts it (Delete employee is never drawn).
+    if (owning === 'hrms' && user.internalHr && out[m.id] && out[m.id].features) {
+      const IH = require('./internalHr'); // eslint-disable-line global-require
+      let any = !!out[m.id].moduleEnabled;
+      Object.entries(out[m.id].features).forEach(([f, actions]) => {
+        Object.keys(actions).forEach((a) => {
+          if (IH.denies(user.internalHr, m.id, f, a)) actions[a] = false;
+          else if (IH.overlayAllows(user.internalHr, m.id, f, a)) actions[a] = true;
+          if (actions[a]) any = true;
+        });
+      });
+      out[m.id].moduleEnabled = any;
+    }
     // Client login type (spec B1) — the same clamp can() applies.
-    if (user.portalType) {
+    if (user.portalType || user.portalPerms) {
       const { portalTypeAllows } = require('./clientPortalTypes'); // eslint-disable-line global-require
       Object.entries(out[m.id].features || {}).forEach(([f, actions]) => {
         Object.keys(actions).forEach((a) => { if (actions[a] && !portalTypeAllows(user, m.id, f, a)) actions[a] = false; });
@@ -1579,6 +1772,7 @@ module.exports = {
   requireProduct,
   requireInternal,
   isExternalLogin,
+  accountsClientReader,
   accessFor,
   accessMatrix,
   effectiveMatrix,

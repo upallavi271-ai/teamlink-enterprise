@@ -1,0 +1,62 @@
+/* JobTextPanel.jsx — Write the job text. Scoped under .jtp */
+.jtp { display: grid; gap: 10px; font-size: 13.5px; }
+.jtp-fill { padding: 10px 12px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 10px; display: grid; gap: 6px; }
+.jtp-fill code { background: #fff; padding: 0 4px; border-radius: 4px; }
+.jtp-fill-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+.jtp-fill-item { display: grid; gap: 3px; font-size: 12.5px; }
+.jtp-fill-item span { color: var(--ink-soft, #64748b); font-weight: 600; }
+.jtp-fill-item input, .jtp-fill-item textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--line, #cbd5e1); border-radius: 8px; background: #fff; }
+.jtp-opt summary { cursor: pointer; color: var(--ink-soft, #64748b); font-size: 12.5px; }
+.jtp-opt .jtp-fill-grid { margin-top: 8px; }
+.jtp-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.jtp-warn { padding: 10px 12px; border: 1px solid #fecaca; background: #fef2f2; color: #7f1d1d; border-radius: 10px; }
+.jtp-warn ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.jtp-who { margin-top: -2px; }
+.jtp-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line, #e2e8f0); padding-bottom: 6px; }
+.jtp-tab { border: 1px solid var(--line, #e2e8f0); background: #fff; border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.jtp-tab.on { background: var(--blue, #1d4ed8); color: #fff; border-color: transparent; }
+.jtp-box { display: grid; gap: 4px; }
+.jtp-box-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jtp-box-h b { flex: 1; min-width: 140px; }
+.jtp-count { font-size: 12px; color: var(--ink-soft, #64748b); }
+.jtp-count.is-over { color: #b91c1c; font-weight: 700; }
+.jtp-text { width: 100%; font: inherit; font-size: 12.5px; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 8px; background: var(--surface-2, #f8fafc); resize: vertical; box-sizing: border-box; }
+.jtp-ai { padding: 8px 12px; border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 10px; display: grid; gap: 4px; }
+.jtp-ai ul { margin: 4px 0; padding-left: 18px; }
+.jtp-bad { color: #b91c1c; font-weight: 600; }
+@media (max-width: 640px) { .jtp-fill-grid { grid-template-columns: 1fr; } }
+
+/* Write the job posts — edit / save / checklist / suggestions / diff */
+.jtp-fill-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jtp-fill-h b { flex: 1; min-width: 120px; }
+.jtp-guess { margin-left: 6px; font-style: normal; font-size: 11px; font-weight: 700; color: #9a3412; background: #ffedd5; border-radius: 999px; padding: 1px 7px; }
+.jtp-sugg { padding: 8px 10px; border: 1px dashed #fdba74; border-radius: 8px; background: #fffbeb; display: grid; gap: 6px; }
+.jtp-sugg-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jtp-sugg-h span { flex: 1; min-width: 160px; font-weight: 600; }
+.jtp-sugg ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.jtp-note { padding: 8px 12px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; border-radius: 10px; }
+.jtp-box.is-edited .jtp-text { border-color: #93c5fd; background: #fff; }
+.jtp-box-f { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-height: 4px; }
+.jtp-unsaved { font-size: 12px; color: #1d4ed8; font-weight: 600; }
+.jtp-stale { padding: 6px 10px; border-radius: 8px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 12.5px; }
+.jtp-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.jtp-chip { border: 1px solid var(--line, #cbd5e1); background: #fff; border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.jtp-chip.is-done { background: #dcfce7; border-color: #86efac; }
+.jtp-badge { margin-left: 6px; background: #dc2626; color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; font-weight: 700; }
+.jtp-tab.on .jtp-badge { background: #fff; color: #dc2626; }
+.jtp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; margin-left: 6px; vertical-align: middle; }
+.jtp-check { display: grid; gap: 6px; }
+.jtp-check-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.jtp-check-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; background: #fff; }
+.jtp-check-item.is-fix { border-color: #fecaca; background: #fef2f2; }
+.jtp-check-item.is-check { border-color: #fed7aa; background: #fff7ed; }
+.jtp-check-item.is-ok { border-color: #bbf7d0; background: #f0fdf4; }
+.jtp-chip-s { flex: none; font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 2px 9px; background: #fff; border: 1px solid currentColor; white-space: nowrap; }
+.is-fix .jtp-chip-s { color: #b91c1c; }
+.is-check .jtp-chip-s { color: #c2410c; }
+.is-ok .jtp-chip-s { color: #15803d; }
+.jtp-diff { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: #fff; border: 1px solid #e0e7ff; border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+.jtp-d.is-add { background: #dcfce7; }
+.jtp-d.is-del { background: #fee2e2; text-decoration: line-through; color: #7f1d1d; }
+@media (max-width: 640px) { .jtp-check-item { flex-direction: column; gap: 4px; } .jtp-fill-h .btn { width: 100%; } }
+.jps-hint { margin: -2px 0 6px; font-size: 12px; }

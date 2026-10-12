@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Panel, PanelHead, QaRow } from '../../components/proto.jsx';
@@ -9,6 +9,8 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import AudiencePicker, { DeliverVia, audienceReady } from '../../components/AudiencePicker.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
+import Modal from '../../components/Modal.jsx';
+import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import {
   ComposeModal, Field, Row, AiAssist, ResultNote, useSubmit,
 } from '../../components/ComposeForm.jsx';
@@ -24,6 +26,42 @@ function targetStatusOf(r) {
   const achieved = Number(r.achieved) || 0;
   if (target > 0 && achieved >= target) return 'Achieved';
   return achieved > 0 ? 'In Progress' : 'Not Started';
+}
+
+// Active / Exited / Relieved (user, 2026-10-09). Anyone who has not left (Active,
+// probation, notice period, exit process) is Active. Targets of people who have
+// left stay in the list (and in their history) - nothing is deleted on exit.
+const statusGroupOf = (e) => (e && e.employmentStatus === 'Relieved' ? 'Relieved' : e && e.employmentStatus === 'Exited' ? 'Exited' : 'Active');
+const SG_ORDER = ['Active', 'Exited', 'Relieved'];
+const SG_FIELDS = [{ key: 'sg', get: (r) => statusGroupOf(r.employee) }];
+const pctWords = (r) => { const t = Number(r.amount) || 0; return t > 0 ? `${Math.round(((Number(r.achieved) || 0) / t) * 100)}%` : '—'; };
+
+// One person's targets, month by month: target, achieved, completion.
+function HistoryModal({ rows, onClose }) {
+  const list = [...rows].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const e = (list[0] && list[0].employee) || {};
+  const hit = list.filter((r) => (Number(r.amount) || 0) > 0 && (Number(r.achieved) || 0) >= Number(r.amount)).length;
+  return (
+    <Modal title={`Target history — ${e.name || ''}`} onClose={onClose} foot={<button className="btn" onClick={onClose}>Close</button>}>
+      <div className="small-muted" style={{ marginBottom: 10 }}>
+        {e.employeeCode ? `${e.employeeCode} · ` : ''}{e.department || ''} · {statusGroupOf(e)}{statusGroupOf(e) !== 'Active' ? ' — their targets are kept for the record' : ''}
+        {' · '}Reached the target in {hit} of {list.length} month(s).
+      </div>
+      <div className="tbl-wrap">
+        <table>
+          <thead><tr><th>Month</th><th>Goal</th><th>Target</th><th>Achieved</th><th>Completion</th><th>Result</th></tr></thead>
+          <tbody>
+            {list.map((r) => (
+              <tr key={r.id}>
+                <td>{r.date || '—'}</td><td>{r.title}</td><td>{Number(r.amount) || 0} {r.unit || ''}</td><td>{Number(r.achieved) || 0} {r.unit || ''}</td>
+                <td><b>{pctWords(r)}</b></td><td>{targetStatusOf(r)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
 }
 
 // The reference compose layout. ASSIGN TO is the shared AudiencePicker: one
@@ -83,6 +121,8 @@ export default function Targets() {
   const [done, setDone] = useState('');
   const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, month: '' });
   const [sort, setSort] = useState('month');
+  const [sg, setSg] = useState('');
+  const [histFor, setHistFor] = useState('');
 
   function load() {
     api.get('/targets').then((res) => setRecords(res.data));
@@ -97,7 +137,8 @@ export default function Targets() {
   }
 
   const shown = records.filter((r) => textMatches(`${r.title || ''} ${r.detail || ''} ${r.unit || ''}`, pf.q)
-    && peopleMatches(r, pf, undefined, targetStatusOf) && (!pf.month || r.date === pf.month));
+    && peopleMatches(r, pf, undefined, targetStatusOf) && (!pf.month || r.date === pf.month) && (!sg || statusGroupOf(r.employee) === sg));
+  const sgFacets = useLocalFacets(records, SG_FIELDS, { sg });
   const opts = peopleOptions(records);
   const pctOf = (r) => ((Number(r.amount) || 0) > 0 ? (Number(r.achieved) || 0) / Number(r.amount) : 0);
   const SORTS = {
@@ -106,7 +147,7 @@ export default function Targets() {
     name: (a, b) => String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')),
   };
   const page = usePaged([...shown].sort(SORTS[sort] || SORTS.month));
-  const clearPf = () => setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, ''])));
+  const clearPf = () => { setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, '']))); setSg(''); };
 
   return (
     <div>
@@ -137,6 +178,8 @@ export default function Targets() {
             search="Goal" labels={{ month: 'Month' }}
           >
             <input type="month" aria-label="Month" title="Month" value={pf.month} onChange={(e) => setPf((f) => ({ ...f, month: e.target.value }))} />
+            <FacetSelect label="Employee status" allLabel="Active, Exited and Relieved" value={sg} onChange={setSg}
+              options={[...(sgFacets.sg || [])].sort((a, b) => SG_ORDER.indexOf(a.value) - SG_ORDER.indexOf(b.value))} />
             <label className="lf-sort">
               Sort
               <select value={sort} onChange={(e) => setSort(e.target.value)}>
@@ -158,7 +201,10 @@ export default function Targets() {
                   const pct = target > 0 ? Math.round((achieved / target) * 100) : 0;
                   return (
                     <tr key={r.id}>
-                      <td>{r.employee?.name}</td>
+                      <td>
+                        <button type="button" className="link-btn" title="See this person's targets month by month" onClick={() => setHistFor(r.employeeId)}>{r.employee?.name}</button>
+                        {statusGroupOf(r.employee) !== 'Active' && <div className="small-muted">{statusGroupOf(r.employee)}</div>}
+                      </td>
                       <td className="cell-muted">{r.date || '—'}</td>
                       <td className="cell-muted">{target} {r.unit || ''}</td>
                       <td className="cell-muted">
@@ -176,6 +222,7 @@ export default function Targets() {
         {page.total > 0 && <Pager page={page} noun="targets" />}
       </Panel>
 
+      {histFor && <HistoryModal rows={records.filter((r) => r.employeeId === histFor)} onClose={() => setHistFor('')} />}
       {open && <SetTargetModal onClose={() => setOpen(false)} onSaved={(r) => { setOpen(false); setDone(`Target set for ${r.label} — ${r.created} employee(s). ${r.deliveryText || ''}`); load(); }} />}
     </div>
   );

@@ -1,0 +1,32 @@
+/* Edit resume form (components/resume/ResumeEditForm.jsx). Scoped under .ref-* */
+.ref{display:flex;flex-direction:column;gap:0;min-width:0}
+.ref-top{margin-bottom:6px}
+.ref-title{font-size:14px;margin:0 0 2px}
+.ref-sec{padding:12px 0;border-top:1px solid var(--line,#e3e8f0)}
+.ref-h{font-family:inherit;font-size:13.5px;font-weight:700;margin:0 0 2px;color:var(--ink,#22333B)}
+.ref-hint{font-size:12.5px;color:var(--ink-soft,#56666E);margin-bottom:8px}
+.ref-input,.ref-area{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;line-height:1.5;color:var(--ink,#22333B);
+  border:1px solid var(--line,#dde5e2);border-radius:8px;padding:8px 10px;background:var(--paper-raised,#fff);min-width:0;
+  hyphens:manual;-webkit-hyphens:manual;word-break:normal;overflow-wrap:break-word}
+.ref-input:focus,.ref-area:focus{outline:none;border-color:var(--brand,#4A6F64);box-shadow:0 0 0 3px var(--brand-ring,rgba(94,139,126,.34))}
+.ref-area{resize:none;overflow:hidden;white-space:pre-wrap}
+.ref-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.ref-chip{display:inline-flex;align-items:center;gap:4px;background:var(--brand-tint,#e6efeb);color:var(--brand-ink,#2A4139);border:1px solid var(--brand-tint-2,#c9dcd4);border-radius:999px;padding:3px 4px 3px 11px;font-size:12.5px;max-width:100%;overflow-wrap:anywhere}
+.ref-chip-x{border:0;background:transparent;cursor:pointer;font-size:16px;line-height:1;color:inherit;width:22px;height:22px;border-radius:50%;padding:0}
+.ref-chip-x:hover{background:rgba(0,0,0,.08)}
+.ref-addrow{display:flex;gap:8px;align-items:center}
+.ref-addrow .ref-input{flex:1 1 auto}
+.ref-rows,.ref-jobs{display:flex;flex-direction:column;gap:8px}
+.ref-rows > .btn,.ref-jobs > .btn{align-self:flex-start}
+.ref-row{display:flex;gap:8px;align-items:center}
+.ref-row .ref-area{flex:1 1 auto}
+.ref-job{border:1px solid var(--line,#dde5e2);border-radius:10px;padding:8px 10px 10px;background:var(--paper,#EFF3F1)}
+.ref-job-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;font-size:12.5px}
+.ref-job .ref-area{background:var(--paper-raised,#fff)}
+/* ONE sticky action bar */
+.ref-bar{position:sticky;bottom:0;z-index:4;margin:6px -14px -12px;padding:10px 14px;background:var(--paper-raised,#fff);border-top:1px solid var(--line,#dde5e2);box-shadow:0 -6px 14px rgba(16,24,40,.06);border-radius:0 0 10px 10px}
+.ref-privacy{font-size:12px;line-height:1.45;padding:10px 0 4px;border-top:1px solid var(--line,#e3e8f0)}
+.ref-bar-btns{display:flex;gap:8px;margin-bottom:4px}
+.ref-bar-btns .btn{min-width:96px;justify-content:center}
+.ref-bar-note{font-size:12px;line-height:1.45}
+.pfl-resume .ref-bar{margin:6px -14px -12px}

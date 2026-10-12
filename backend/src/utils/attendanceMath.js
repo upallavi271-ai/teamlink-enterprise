@@ -95,13 +95,17 @@ function calendarDays(month) {
   return new Date(y, m, 0).getDate();
 }
 
-function businessDays(month) {
+// Working days of a month = every day that is not a weekly off. Week off is
+// SUNDAY ONLY (user, 2026-10-09: Saturday is a working day); `weeklyOffDays` is
+// HrConfig.weeklyOffDays ('0' = Sunday). Company holidays are not removed here.
+function businessDays(month, weeklyOffDays = '0') {
   const [y, m] = String(month || '').split('-').map(Number);
   if (!y || !m) return 0;
+  const offs = new Set(String(weeklyOffDays ?? '0').split(',').map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6));
   let n = 0;
   for (let d = 1; d <= calendarDays(month); d++) {
     const dow = new Date(y, m - 1, d).getDay();
-    if (dow !== 0 && dow !== 6) n++;
+    if (!offs.has(dow)) n++;
   }
   return n;
 }
@@ -116,7 +120,8 @@ function monthLabel(month) {
 // Attendance rows; lateness is derived from punches (distinct dates with a late
 // check-in) unioned with any day explicitly marked Late, so hand-marked history
 // still counts. Days beyond the free monthly allowance become half-day cuts.
-function monthStats({ month, records, punches, cfg }) {
+// excusedDates (optional Set of YYYY-MM-DD): late days whose late coming was APPROVED (utils/latePermission.js) - not late arrivals.
+function monthStats({ month, records, punches, cfg, excusedDates }) {
   const present = records.filter((r) => r.status === 'Present' || r.status === 'WFH').length;
   const halfDay = records.filter((r) => r.status === 'Half Day').length;
   const absent = records.filter((r) => r.status === 'Absent').length;
@@ -125,6 +130,7 @@ function monthStats({ month, records, punches, cfg }) {
 
   const lateDates = new Set(records.filter((r) => r.status === 'Late').map((r) => r.date));
   punches.filter((p) => p.direction === 'In' && isLate(p.time, cfg.graceTime)).forEach((p) => lateDates.add(p.date));
+  if (excusedDates && excusedDates.size) excusedDates.forEach((d) => lateDates.delete(d));
   const late = lateDates.size;
 
   const free = Number(cfg.freeLateArrivalsPerMonth || 0);
@@ -132,7 +138,7 @@ function monthStats({ month, records, punches, cfg }) {
   const working = calendarDays(month);
   // Late days are still worked days, so they count towards Present for the percentage.
   const pct = working > 0 ? Math.round((((present + markedLate) + halfDay * 0.5) / working) * 100) : 0;
-  return { present, halfDay, absent, leave, late, halfDayCut, working, businessDays: businessDays(month), pct };
+  return { present, halfDay, absent, leave, late, halfDayCut, working, businessDays: businessDays(month, cfg.weeklyOffDays), pct };
 }
 
 // Code / name / department / designation filters, shared by every HR-facing tab.

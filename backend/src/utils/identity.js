@@ -28,8 +28,18 @@
 const prisma = require('../db');
 const { resolvePositionScope } = require('./positionScope');
 const { scopeAliasFor } = require('./roleRegistry');
+const internalHr = require('./internalHr');
 const { bdeDesks, canonicalDepartment } = require('./bdeDesk');
 const { isSystemAccount } = require('./systemAccounts');
+
+// The distinct Client.ownerDepartment spellings (a few rows), cached briefly.
+let ownerDeptCache = { at: 0, list: [] };
+async function clientOwnerDepartments() {
+  if (Date.now() - ownerDeptCache.at < 60000) return ownerDeptCache.list;
+  const rows = await prisma.client.groupBy({ by: ['ownerDepartment'], where: { ownerDepartment: { not: null } } }).catch(() => []);
+  ownerDeptCache = { at: Date.now(), list: rows.map((o) => o.ownerDepartment) };
+  return ownerDeptCache.list;
+}
 
 // Seeded fallback for the designation -> ATS role mapping, used only when the
 // DesignationRole table is empty (fresh DB before seed). The real mapping is
@@ -195,7 +205,12 @@ async function resolveIdentity(userId, preloaded = null) {
       || user.role
       || NO_ROLE;
   };
-  const hrmsRole = productRole('hrms', user.hrmsRole);
+  // INTERNAL HR (user, 2026-10-10): whoever sits in the Internal HR department acts as
+  // the HR desk in HRMS (every employee, the HR desk's actions), plus the Super Admin
+  // overlay in permissions.js minus what utils/internalHr.js blocks. A department
+  // rule, HRMS only: ATS / Accounts roles on the same login are untouched.
+  const internalHrInfo = await internalHr.resolveFor(employee, user, products).catch(() => null);
+  const hrmsRole = (internalHrInfo && internalHr.liftedHrmsRole(internalHrInfo, productRole('hrms', user.hrmsRole))) || productRole('hrms', user.hrmsRole);
   const accountsRole = productRole('accounts', user.accountsRole);
   // The ATS role keeps its extra step: an external CLIENT / CANDIDATE login
   // carries no employee record and no designation, so its account kind is its
@@ -311,13 +326,21 @@ async function resolveIdentity(userId, preloaded = null) {
   let atsJoinedRequirementIds = null;
   let atsBdeDeskDepartments = null;
   let atsBdeDeskRequirementDepartments = null;
+  // Q3 (user, 2026-10-09): a BDE works their OWN clients' jobs, candidates and
+  // interviews. Only a handful of real clients carry a BDE yet, so the clients of
+  // the BDE's desk that have NO BDE assigned (no Owner BDE, no second BDE) count
+  // as theirs too, until somebody is named on them.
+  let atsBdeUnownedClientIds = null;
   if (named(atsScopeRole) === 'BDE' && user.name) {
     // Owner BDE is typed free text: match it trimmed and case-blind (SQLite
     // LIKE narrows, the exact compare decides).
     const me = String(user.name).trim().toLowerCase();
+    // ... or the second BDE on it (Client.secondaryBde, user 2026-10-09).
+    const nm = String(user.name).trim();
     atsOwnedClientIds = (await prisma.client.findMany({
-      where: { bdeOwner: { contains: String(user.name).trim() } }, select: { id: true, bdeOwner: true },
-    }).catch(() => [])).filter((c) => String(c.bdeOwner || '').trim().toLowerCase() === me).map((c) => c.id);
+      where: { OR: [{ bdeOwner: { contains: nm } }, { secondaryBde: { contains: nm } }] }, select: { id: true, bdeOwner: true, secondaryBde: true },
+    }).catch(() => [])).filter((c) => String(c.bdeOwner || '').trim().toLowerCase() === me
+      || String(c.secondaryBde || '').trim().toLowerCase() === me).map((c) => c.id);
   }
   if (named(atsScopeRole) === 'BDE') {
     const seats = employee ? await prisma.positionAssignment.findMany({
@@ -340,9 +363,32 @@ async function resolveIdentity(userId, preloaded = null) {
         .filter((d) => desks.includes(canonicalDepartment(d)));
       atsBdeDeskRequirementDepartments = reqDepts.map((o) => o.department)
         .filter((d) => desks.includes(canonicalDepartment(d)));
+      if (atsBdeDeskDepartments.length) {
+        atsBdeUnownedClientIds = (await prisma.client.findMany({
+          where: {
+            ownerDepartment: { in: atsBdeDeskDepartments },
+            AND: [{ OR: [{ bdeOwner: null }, { bdeOwner: '' }] }, { OR: [{ secondaryBde: null }, { secondaryBde: '' }] }],
+          },
+          select: { id: true, bdeOwner: true, secondaryBde: true },
+        }).catch(() => [])).filter((c) => !String(c.bdeOwner || '').trim() && !String(c.secondaryBde || '').trim()).map((c) => c.id);
+      }
     }
   }
-  if (named(atsScopeRole) === 'ACCOUNTANT') {
+  // A TL / STL sees EVERY client of THEIR OWN DEPARTMENT in the Clients list
+  // (user, 2026-10-09: "EDU clients andaru EDU TL login lo kanipinchali; same
+  // for MED, MFG, IT"). Department = the employee's department / scope
+  // departments + their seat's department, matched with the BDE-desk aliases
+  // (Education / Educational / EDU ...). Exact stored spellings, so scope.js can
+  // filter with a plain `in`. null = no department known (old team arm).
+  let atsDeptClientDepartments = null;
+  if (['TL', 'STL'].includes(named(atsScopeRole))) {
+    const wanted = new Set([...departments, ...((atsPositionScope && atsPositionScope.departments) || [])]
+      .map((d) => canonicalDepartment(d)).filter((d) => d && d !== 'BDE'));
+    if (wanted.size) {
+      atsDeptClientDepartments = (await clientOwnerDepartments()).filter((d) => wanted.has(canonicalDepartment(d)));
+    }
+  }
+  if (named(atsScopeRole) === 'ACCOUNTANT' || (!products.ats && products.accounts && named(accountsRole) === 'ACCOUNTANT')) {
     atsJoinedRequirementIds = (await prisma.application.findMany({
       where: { stage: { in: ['JOINED', 'HIRED'] } },
       select: { requirementId: true }, distinct: ['requirementId'],
@@ -362,6 +408,8 @@ async function resolveIdentity(userId, preloaded = null) {
     // The three product roles. THESE are what the engine resolves against.
     hrmsRole,
     accountsRole,
+    // Internal HR department login (utils/internalHr.js): null for everybody else.
+    internalHr: internalHrInfo,
 
     employeeId: employee ? employee.id : null,
     employeeCode: employee ? employee.employeeCode : null,
@@ -376,6 +424,9 @@ async function resolveIdentity(userId, preloaded = null) {
     // Client login type (spec B1): REVIEWER | VIEWER | BILLING, or null for a
     // client login created before types existed. utils/clientPortalTypes.js.
     portalType: user.role === 'CLIENT' || user.atsRole === 'CLIENT' ? (user.portalType || null) : null,
+    portalPerms: user.role === 'CLIENT' || user.atsRole === 'CLIENT' ? (user.portalPerms || null) : null,
+    // The ticks (2026-10-09): ['VIEW','REQUEST',…], or null for an older full-access login.
+    portalCaps: user.role === 'CLIENT' || user.atsRole === 'CLIENT' ? require('./clientPortalTypes').capsOf(user) : null, // eslint-disable-line global-require
 
     products,
     atsRole,
@@ -393,6 +444,8 @@ async function resolveIdentity(userId, preloaded = null) {
     atsOwnedClientIds,
     atsBdeDeskDepartments,
     atsBdeDeskRequirementDepartments,
+    atsBdeUnownedClientIds,
+    atsDeptClientDepartments,
     atsJoinedRequirementIds,
     landingWorkspace: user.landingWorkspace || (mapping ? mapping.landing : null) || null,
   };

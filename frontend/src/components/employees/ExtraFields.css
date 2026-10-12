@@ -25,3 +25,28 @@
   .xfields .xf-form,.xfields .xf-grid,.xfields .xf-view{grid-template-columns:1fr}
   .xfields .xf-acts{width:100%}
 }
+
+/* Manage fields — the ONE list (built-in + added), all scoped under .xfields */
+.xfields .xf-help{font-size:13px;color:var(--ink-soft,#5b6474);margin-bottom:10px;line-height:1.45}
+.xfields .xf-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.xfields .xf-search{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--line,#dde3ee);border-radius:8px;font:inherit}
+.xfields .xf-filters{display:flex;gap:6px;flex-wrap:wrap}
+.xfields .xf-filter.on{background:var(--blue,#1d4ed8);border-color:var(--blue,#1d4ed8);color:#fff}
+.xfields .xf-filter .xf-count{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:rgba(0,0,0,.08);font-size:11px}
+.xfields .xf-filter.on .xf-count{background:rgba(255,255,255,.25)}
+.xfields .xf-section{margin:14px 0 6px;font-size:11.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--ink-soft,#5b6474)}
+.xfields .xf-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line,#dde3ee);color:var(--ink-soft,#5b6474)}
+.xfields .xf-tag.added{border-color:var(--teal,#0f766e);color:var(--teal,#0f766e)}
+.xfields .xf-main .status{margin-left:8px}
+.xfields .xf-where{display:inline-flex;gap:4px;vertical-align:middle}
+.xfields .xf-w{padding:0 7px;border-radius:6px;font-size:11px;background:var(--blue-tint,#e8f0fe);color:var(--blue,#1d4ed8)}
+.xfields .xf-row.off .xf-w{background:var(--line-soft,#eef1f6);color:var(--ink-soft,#5b6474)}
+.xfields .xf-why{margin-top:3px;font-size:12px;color:var(--amber,#b45309)}
+.xfields .xf-needed{display:inline-flex;align-items:center;padding:4px 10px;border-radius:8px;font-size:12px;background:var(--line-soft,#eef1f6);color:var(--ink-soft,#5b6474);white-space:nowrap}
+.xfields .xf-ro{padding:8px 10px;border:1px dashed var(--line,#dde3ee);border-radius:8px;font-size:13px;background:var(--line-soft,#f6f8fb)}
+.xfields .xf-notice{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.xfields .xf-row.off{opacity:.75}
+@media (max-width:640px){
+  .xfields .xf-filters .xf-filter{flex:1 1 auto}
+  .xfields .xf-acts .btn,.xfields .xf-acts .xf-needed{flex:1 1 auto;justify-content:center}
+}

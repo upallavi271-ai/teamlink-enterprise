@@ -67,7 +67,8 @@ router.get(
     // "Received and Paid mean the same thing — the whole invoice is in."
     .filter((i) => statusMatch(deriveInvoiceStatus(i), req.query.status))
     .filter((i) => !q || [i.invoiceNumber, i.client?.name, i.client?.gst].join(' ').toLowerCase().includes(q));
-  const scopedExpenses = expenses.filter((e) => range.all || inRange(e.expenseDate, range));
+  // The Office page's own rule: a hand loan / the owner's money and a REJECTED bill are not costs (routes/office.js officeScope).
+  const scopedExpenses = expenses.filter((e) => e.entryKind !== 'hand' && e.approvalStatus !== 'REJECTED').filter((e) => range.all || inRange(e.expenseDate, range));
   const live = scoped.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled');
 
   const sum = (list, f) => ROUND(list.reduce((s, x) => s + f(x), 0));
@@ -1555,12 +1556,24 @@ const HOME_CACHE = new Map();
 router.get('/ats/health', ...ATS_BOARD_GUARDS, async (req, res, next) => {
   try { return res.json(await atsHome.healthDot(req.user)); } catch (err) { return next(err); }
 });
+// May this login EXPORT the dashboard? The same answer as the Export buttons
+// on the other ATS screens (routes/atsIo.js GET /access -> exports.dashboard):
+// the role's export right for this screen AND (the Role Catalog's KPI Overview
+// export OR one of the spec's export roles). Export is a separate right from view.
+async function mayExportAtsHome(user) {
+  const { ioAccessFor } = require('../utils/ioAccess'); // eslint-disable-line global-require
+  const { SPEC_EXPORT_ROLES } = require('./atsIo'); // eslint-disable-line global-require
+  const access = await ioAccessFor(user, 'dashboard').catch(() => ({}));
+  if (!access.export) return false;
+  return !!(await can(user, 'ats', 'dashboard', 'KPI Overview', 'export')) || (SPEC_EXPORT_ROLES || []).includes(access.role);
+}
 router.get('/ats/home', ...ATS_BOARD_GUARDS, async (req, res, next) => {
   try {
-    const b = await atsHome.buildHome(req.user, req);
+    const b = await atsHome.buildHomeCached(req.user, req);
     HOME_CACHE.set(homeKey(req), { at: Date.now(), b });
     if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
-    return res.json(atsHome.publicHome(b));
+    // mayExport: the page shows its Export button only when this is true (the export route checks again).
+    return res.json({ ...atsHome.publicHome(b), mayExport: await mayExportAtsHome(req.user) });
   } catch (err) {
     if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
     return next(err);
@@ -1582,7 +1595,7 @@ router.get('/ats/home/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     const hit = HOME_CACHE.get(key);
     let b = hit && Date.now() - hit.at < 60000 ? hit.b : null;
     if (!b) {
-      b = await atsHome.buildHome(req.user, req);
+      b = await atsHome.buildHomeCached(req.user, req);
       HOME_CACHE.set(key, { at: Date.now(), b });
       if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
     }
@@ -1607,6 +1620,40 @@ router.get('/ats/home/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     }
     const { _all, ...out } = list; // eslint-disable-line no-unused-vars
     return res.json(out);
+  } catch (err) {
+    if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+});
+
+// THE DASHBOARD'S OWN EXPORT (user, 2026-10-09): everything on the page for
+// the filters picked — the tiles, the charts' numbers, the panels and the lists
+// behind the numbers — as one Excel workbook (?format=csv for plain text).
+// Built from the SAME board the page was drawn from (the 60 s cache the lists
+// use), so the file and the screen agree. Export is its own right (checked
+// here, not just hidden in the page); it is audited like every ATS export, and
+// the board is already limited to this login's area and to what the role may see.
+router.get('/ats/home/export', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    const { formatOf, sendBook } = require('../utils/exportKit'); // eslint-disable-line global-require
+    const format = formatOf(req.query);
+    if (!format || format === 'pdf') return res.status(400).json({ error: 'Pick Excel or CSV.' });
+    if (!(await mayExportAtsHome(req.user))) return res.status(403).json({ error: 'Your role cannot export the dashboard.' });
+    const key = homeKey(req);
+    const hit = HOME_CACHE.get(key);
+    let b = hit && Date.now() - hit.at < 60000 ? hit.b : null;
+    if (!b) {
+      b = await atsHome.buildHomeCached(req.user, req);
+      HOME_CACHE.set(key, { at: Date.now(), b });
+      if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
+    }
+    const { sheets } = await require('../utils/dashboardExport').atsHomeBook(req.user, b); // eslint-disable-line global-require
+    const viaAts = Object.create(req, { baseUrl: { value: '/api/ats/dashboard' } });
+    return sendBook(viaAts, res, {
+      format, name: `ats-dashboard-${b.title || 'home'}`, sheets, entity: 'Dashboard', what: `ATS dashboard (${b.title || 'home'})`,
+      scope: require('../utils/scope').scopeLabel(req.user, 'ats'), // eslint-disable-line global-require
+      period: b.period && b.period.key !== 'all' ? { from: b.period.from, to: b.period.to } : null,
+    });
   } catch (err) {
     if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
     return next(err);
@@ -1719,8 +1766,32 @@ const MONEY_GUARDS = [
     ? next()
     : res.status(403).json({ error: 'Money figures are open to Accounts, Admin and Super Admin only' })),
 ];
+// Export is its own right (Accounts Dashboard / export — Accountant, Admin and
+// Super Admin hold it; a view-only Manager never reaches the money figures at all).
+const mayExportMoney = (user) => can(user, 'accounts', 'accounts', 'Accounts Dashboard', 'export');
 router.get('/accounts/control', ...MONEY_GUARDS, async (req, res, next) => {
-  try { return res.json(await AC.buildControl(req.user, req.query)); } catch (err) { return next(err); }
+  try {
+    const out = await AC.buildControl(req.user, req.query);
+    // mayExport: the page shows its Export button only when this is true (GET /accounts/control/export checks again).
+    return res.json({ ...out, mayExport: !!(await mayExportMoney(req.user)) });
+  } catch (err) { return next(err); }
+});
+// THE DASHBOARD'S OWN EXPORT (user, 2026-10-09): the summary, the client table,
+// the invoices, the office bills, GST and proof lists for the filters picked —
+// from the SAME buildControl payload the page shows. Audited; the Super Admin is told.
+router.get('/accounts/control/export', ...MONEY_GUARDS, async (req, res, next) => {
+  try {
+    const { formatOf, sendBook } = require('../utils/exportKit'); // eslint-disable-line global-require
+    const format = formatOf(req.query);
+    if (!format || format === 'pdf') return res.status(400).json({ error: 'Pick Excel or CSV.' });
+    if (!(await mayExportMoney(req.user))) return res.status(403).json({ error: 'Your role cannot export the Accounts dashboard.' });
+    const data = await AC.buildControl(req.user, req.query);
+    const { sheets } = require('../utils/dashboardExport').accountsBook(data); // eslint-disable-line global-require
+    return sendBook(req, res, {
+      format, name: 'accounts-dashboard', sheets, entity: 'AccountsDashboard', what: 'Accounts dashboard', scope: 'All Accounts (money desk)',
+      period: data.period && !data.period.all ? { from: data.period.from, to: data.period.to } : null, screen: 'Accounts Dashboard',
+    });
+  } catch (err) { return next(err); }
 });
 // REMIND ACCOUNTANT — in-app only (no SMS / WhatsApp / email provider is
 // connected). keys = the records to remind; none = every missing proof under

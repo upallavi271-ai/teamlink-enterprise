@@ -53,12 +53,13 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const { logAudit } = require('./audit');
-const { requirementIsLive, requirementStatusLabel } = require('./atsVocab');
+const { requirementIsLive, requirementStatusLabel, REQUIREMENT_LIVE_STATUSES } = require('./atsVocab');
 const http = require('./jobBoards/http');
 const indeed = require('./jobBoards/indeed');
 const linkedin = require('./jobBoards/linkedin');
 const google = require('./jobBoards/google');
 const { naukri, shine } = require('./jobBoards/partner');
+const boardGuide = require('./jobBoards/guide');
 
 const ENTITY = 'RequirementPosting';
 const INTEGRATIONS_PAGE = '/admin/integrations';
@@ -76,8 +77,8 @@ const SOURCES = [
   { id: 'website', label: 'Website', kind: 'own' },
   { id: 'google', label: 'Google Jobs', kind: 'google', integrationId: 'google-jobs' },
   { id: 'naukri', label: 'Naukri', kind: 'board', integrationId: 'naukri' },
-  { id: 'indeed', label: 'Indeed', kind: 'board', integrationId: 'indeed', autoCheck: true },
   { id: 'shine', label: 'Shine', kind: 'board', integrationId: 'shine' },
+  { id: 'indeed', label: 'Indeed', kind: 'board', integrationId: 'indeed', autoCheck: true },
   { id: 'linkedin', label: 'LinkedIn', kind: 'board', integrationId: 'linkedin', autoCheck: true },
 ];
 const sourceById = (id) => SOURCES.find((s) => s.id === id) || null;
@@ -96,7 +97,12 @@ const STATUS = {
   // INTEGRATION REQUIRED = no employer / partner / feed arrangement entered at
   // all; SETUP REQUIRED = one was entered but a required item is missing.
   SETUP: 'Setup Required',
+  // POST BY HAND (2026-10-09, utils/jobBoards/manual.js): a person posted it on
+  // the board's own site and pressed "I posted it". Never shown as Posted.
+  HAND_DONE: 'Posted by hand',
+  HAND_REMOVE: 'Take down by hand',
 };
+const HAND = [STATUS.HAND_DONE, STATUS.HAND_REMOVE];
 const WAITING = [STATUS.PENDING, STATUS.FEED];
 const IN_FLIGHT = [STATUS.QUEUED, STATUS.POSTING, STATUS.RETRYING];
 const STALE_MS = 3 * 60 * 1000; // an in-flight row older than this was interrupted (restart)
@@ -434,6 +440,18 @@ async function runOne(r, src, row, want, ctx) {
   const now = new Date();
   const tries = (row ? row.attempts || 0 : 0) + 1;
   try {
+    // A job a person posted by hand: TeamLink never touches it again except to
+    // ask for it to be taken down by hand when the job closes / is unticked.
+    if (row && HAND.includes(row.status)) {
+      if (want === 'up') {
+        if (row.status === STATUS.HAND_DONE) return row;
+        return await saveRow(r.id, src.id, { status: STATUS.HAND_DONE, lastTriedAt: now }); // the job is live again: it is still up there
+      }
+      if (row.status === STATUS.HAND_REMOVE) return row;
+      const saved = await saveRow(r.id, src.id, { status: STATUS.HAND_REMOVE, lastTriedAt: now });
+      await audit(ctx, r, src, 'Take down by hand', `The job is ${requirementStatusLabel(r.status)}${requirementIsLive(r.status) ? ' (unticked)' : ''} but is still up on ${src.label} — a person must take it down there.`);
+      return saved;
+    }
     if (want === 'down') {
       if (!row || row.status === STATUS.REMOVED) return row;
       // Never live there (Integration Required / Failed): nothing to take down.
@@ -453,6 +471,15 @@ async function runOne(r, src, row, want, ctx) {
       return saved;
     }
 
+    // A board that is still not connected stays a "post it by hand" task: no need to flick it to
+    // "Posting…" and back on every save (the row keeps the date the task was made).
+    if (src.kind === 'board' && row && [STATUS.NEEDS, STATUS.SETUP].includes(row.status) && ctx.trigger !== 'retry') {
+      const cfg = await BOARDS[src.id].config();
+      if (!cfg.ready) {
+        const x = setupOf(src, cfg);
+        if (row.status === x.status && (row.errorMessage || '') === x.message) return row;
+      }
+    }
     const isPosted = row && row.status === STATUS.POSTED;
     const isWaiting = row && WAITING.includes(row.status) && !!row.externalJobId;
     // A background status check never re-sends a job that is already up.
@@ -532,9 +559,22 @@ async function markQueued(requirementId, ctx = {}) {
   const want = wanted(r);
   const rows = await rowsOf(r.id);
   const only = Array.isArray(ctx.only) && ctx.only.length ? ctx.only : null;
-  await Promise.all(SOURCES.filter((src) => want[src.id] === 'up' && (!only || only.includes(src.id))).map((src) => {
+  await Promise.all(SOURCES.filter((src) => want[src.id] === 'up' && (!only || only.includes(src.id))).map(async (src) => {
     const row = rows.find((x) => x.source === src.id);
+    if (row && HAND.includes(row.status)) return null;
     if (row && [STATUS.POSTED, ...WAITING, STATUS.POSTING, STATUS.RETRYING].includes(row.status) && !isStale(row)) return null;
+    // A board that is not connected is a "post it by hand" task from this very moment (2026-10-10):
+    // the row says so before the save even answers, and the audit names who pressed Save & Post.
+    if (src.kind === 'board') {
+      const cfg = await BOARDS[src.id].config();
+      if (!cfg.ready) {
+        const x = setupOf(src, cfg);
+        if (row && row.status === x.status && (row.errorMessage || '') === x.message) return null;
+        const saved = await saveRow(r.id, src.id, { status: x.status, errorMessage: x.message });
+        await audit(ctx, r, src, 'Waiting to post by hand', `${src.label} cannot be posted by TeamLink yet: a person posts it by hand. The text is ready.`);
+        return saved;
+      }
+    }
     return saveRow(r.id, src.id, { status: STATUS.QUEUED, errorMessage: null });
   }));
 }
@@ -607,6 +647,8 @@ const VIEW = {
   [STATUS.QUEUED]: ['QUEUED', '⏳ Queued'],
   [STATUS.POSTING]: ['POSTING', '⏳ Posting…'],
   [STATUS.RETRYING]: ['RETRYING', '⏳ Retrying…'],
+  [STATUS.HAND_DONE]: ['POSTED_BY_HAND', '✓ Posted (by hand)'],
+  [STATUS.HAND_REMOVE]: ['TAKE_DOWN_BY_HAND', '⚠ Take it down by hand'],
   [STATUS.PENDING]: ['POSTING', '⏳ Sent, waiting for confirmation'],
   [STATUS.FEED]: ['POSTING', '⏳ Sent, waiting for confirmation'],
   [STATUS.FAILED]: ['FAILED', '✕ Failed'],
@@ -623,6 +665,7 @@ const VIEW = {
 const TONE = {
   [STATUS.POSTED]: 'green', [STATUS.PENDING]: 'blue', [STATUS.FEED]: 'blue', [STATUS.NEEDS]: 'grey', [STATUS.SETUP]: 'grey', [STATUS.FAILED]: 'red', [STATUS.REMOVED]: 'grey',
   [STATUS.QUEUED]: 'blue', [STATUS.POSTING]: 'blue', [STATUS.RETRYING]: 'blue',
+  [STATUS.HAND_DONE]: 'green', [STATUS.HAND_REMOVE]: 'orange',
 };
 
 async function canSetUp(user) {
@@ -633,19 +676,40 @@ async function canSetUp(user) {
 }
 
 // The Posting Sources the form offers, each with whether it can post now.
+// Each choice also says, BEFORE saving, in one honest line what will happen (2026-10-10):
+//   mode 'auto'  Goes out by itself   (our own sites; a board with a saved connection)
+//   mode 'feed'  Goes into our feed   (Indeed / Naukri feed mode: the board reads it on its own schedule)
+//   mode 'hand'  You post it by hand  (a board TeamLink cannot post to: we prepare the text)
+// isDefault = ticked for a new job (Setting posting.defaultSites, Admin changes it).
 async function sourceChoices(user) {
   const setUp = await canSetUp(user);
+  const defaults = await posting().defaultSites();
   const siteOf = (id) => posting().SITES.find((x) => x.id === id);
   return Promise.all(SOURCES.map(async (s) => {
-    const base = { id: s.id, name: s.label, source: siteOf(s.id).source, kind: s.kind };
-    if (s.kind === 'own') return { ...base, ready: true, hint: null, readyText: 'Posts at once' };
+    const base = { id: s.id, name: s.label, source: siteOf(s.id).source, kind: s.kind, isDefault: defaults.ids.includes(s.id) };
+    if (s.kind === 'own') return { ...base, ready: true, hint: null, readyText: 'Posts at once', mode: 'auto', line: 'Goes out by itself.' };
     if (s.kind === 'google') {
-      const cfg = await google.config();
-      return { ...base, ready: true, hint: null, readyText: 'Posts at once (Google shows it within a few days)' };
+      await google.config();
+      return { ...base, ready: true, hint: null, readyText: 'Posts at once (Google shows it within a few days)', mode: 'auto', line: 'Goes out by itself. Google shows it within a few days.' };
     }
     const cfg = await BOARDS[s.id].config();
-    return {
+    const ask = (boardGuide.CONNECT[s.integrationId] || {}).ask || null;
+    const common = {
       ...base, ready: cfg.ready, hint: cfg.ready ? null : peopleHint(s, cfg), setupStatus: cfg.ready ? null : setupOf(s, cfg).status, readyText: cfg.ready ? `Sent to ${s.label} at once` : null, setupLink: !cfg.ready && setUp ? INTEGRATIONS_PAGE : null,
+    };
+    if (cfg.ready && cfg.feed) {
+      return { ...common, mode: 'feed', line: `Goes into our ${s.label} feed. ${s.label} reads it on its own schedule, so it is not Posted until ${s.label} shows it.` };
+    }
+    if (cfg.ready) return { ...common, mode: 'auto', line: s.id === 'naukri' ? 'Goes out by itself. Naukri checks every job first (up to 24 hours).' : 'Goes out by itself.' };
+    return {
+      ...common,
+      mode: 'hand',
+      line: 'You post it by hand: we prepare the text for you.',
+      notice: cfg.configured ? setupOf(s, cfg).message.replace(NOT_CONFIGURED, 'Not set up fully yet.').trim() : null,
+      why: boardGuide.WHY[s.id] || null,
+      ask,
+      cardLink: setUp ? INTEGRATIONS_PAGE : null,
+      askAdmin: !setUp,
     };
   }));
 }
@@ -667,6 +731,7 @@ async function siteStatuses(r, user = null) {
   const live = requirementIsLive(r.status);
   const label = requirementStatusLabel(r.status);
   const choices = await sourceChoices(user);
+  const handHours = await require('./jobBoards/manual').reminderHours().catch(() => 6); // eslint-disable-line global-require
   if (live) recheckLater(r, rows).catch(() => {});
   const notLive = (() => {
     if (r.status === 'AGREEMENT_CHECK') return { status: 'Waiting', tone: 'orange', reason: 'Will post when the agreement is Active.' };
@@ -680,25 +745,64 @@ async function siteStatuses(r, user = null) {
   function withLabel(s, row) {
     const v = statusOf(s, row);
     const [code, label] = VIEW[v.status] || [String(v.status).toUpperCase(), v.status];
+    // A board TeamLink cannot post to is a task for a person, not a failure (2026-10-10); a board that
+    // reads our feed says so in words and is never "Posted" (the board has not shown it yet).
+    if (v.waitHand) return { ...v, code: 'WAITING_BY_HAND', label: '⏳ Waiting for you to post (by hand)', waiting: false };
+    if (v.readyToSend) return { ...v, code, label: '⏳ Connected: press Retry to send', waiting: false };
+    if (v.inFeed) return { ...v, code: 'IN_FEED', label: `⏳ In our ${s.label} feed`, waiting: true };
     return { ...v, code, label, waiting: WAITING.includes(v.status) };
   }
+  function handWhy(s) { return `${s.label} cannot be posted by TeamLink yet, so a person posts it. The job text is ready.`; }
   function statusOf(s, row) {
     const isTicked = ticked.includes(s.id);
     const choice = choices.find((c) => c.id === s.id);
     const shownId = row && row.externalJobId && BOARDS[s.id] ? BOARDS[s.id].shownId(row.externalJobId) : (row ? row.externalJobId : null);
+    const handRow = !!(row && HAND.includes(row.status));
+    const connected = s.kind !== 'board' || !!(choice && choice.ready);
+    // Auto = TeamLink itself puts it there; By hand = a person did; Not connected = no account yet.
+    const mode = handRow ? 'hand' : connected ? 'auto' : 'none';
+    const waited = row && !handRow ? Math.floor((Date.now() - new Date(row.createdAt || row.updatedAt || Date.now()).getTime()) / 3600000) : 0;
     const base = {
       id: s.id,
       name: s.label,
       kind: s.kind,
       ticked: isTicked,
       canRetry: false,
-      link: row && row.status === STATUS.POSTED ? row.externalUrl || null : null,
+      mode,
+      modeLabel: mode === 'hand' ? 'By hand' : mode === 'auto' ? 'Auto' : 'Not connected',
+      // The "Post by hand" helper (utils/jobBoards/manual.js): offered for a board that is not
+      // connected, one whose automatic try failed, and one already posted by hand.
+      hand: s.kind === 'board' ? {
+        openUrl: (boardGuide.GUIDE[s.id] || {}).openUrl || null,
+        openLabel: `Open ${s.label}`,
+        offer: !connected || handRow || !!(row && row.status === STATUS.FAILED),
+        state: row && row.status === STATUS.HAND_REMOVE ? 'remove' : row && row.status === STATUS.HAND_DONE ? 'done' : 'todo',
+        by: handRow ? row.errorMessage || null : null,
+        at: handRow ? row.postedAt || null : null,
+        url: handRow ? row.externalUrl || null : null,
+        waitedHours: waited,
+        reminderHours: handHours,
+        overdue: !connected && !handRow && waited >= handHours,
+      } : null,
+      link: row && (row.status === STATUS.POSTED || row.status === STATUS.HAND_DONE) ? row.externalUrl || null : null,
       externalJobId: shownId || null,
       postedAt: row ? row.postedAt || null : null,
       lastTriedAt: row ? row.lastTriedAt || null : null,
       retryCount: row ? row.attempts || 0 : 0, // RequirementPosting.attempts
       setupLink: choice ? choice.setupLink || null : null,
+      // For a board that must be posted by hand: why, who to ask, the Connect card (plain words).
+      why: choice && choice.mode === 'hand' ? choice.why || null : null,
+      ask: choice && choice.mode === 'hand' ? choice.ask || null : null,
+      cardLink: choice && choice.mode === 'hand' ? choice.cardLink || null : null,
     };
+    // Posted by hand: still up there until a person takes it down.
+    if (handRow && (!isTicked || !live || row.status === STATUS.HAND_REMOVE)) {
+      return { ...base, status: STATUS.HAND_REMOVE, tone: TONE[STATUS.HAND_REMOVE], reason: `This job was posted on ${s.label} by hand and is ${live ? 'not ticked for it any more' : requirementStatusLabel(r.status)}. Take it down on ${s.label}, then press "I took it down".`, canRetry: false };
+    }
+    if (handRow && isTicked && live) {
+      const when = new Date(row.postedAt || row.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+      return { ...base, status: STATUS.HAND_DONE, tone: TONE[STATUS.HAND_DONE], reason: `${row.errorMessage || 'Posted by hand'} on ${when}. TeamLink cannot see whether ${s.label} still shows it.`, canRetry: false };
+    }
     // Off this source but still up there (a remove that did not go through).
     if ((!isTicked || !live) && row && [STATUS.POSTED, ...WAITING].includes(row.status)) {
       return { ...base, status: 'Removing', tone: row.errorMessage ? 'red' : 'blue', reason: row.errorMessage || 'Taking it off this site…', canRetry: !!row.errorMessage };
@@ -710,12 +814,25 @@ async function siteStatuses(r, user = null) {
       return { ...base, status: 'Not posted', tone: 'grey', reason: r.portalUnpublishedAt ? 'Taken off by hand. Press Post now to put it back.' : 'Not posted yet. Press Post now.', canRetry: true };
     }
     if (!row) {
-      if (s.kind === 'board' && choice && !choice.ready) return { ...base, status: choice.setupStatus || STATUS.NEEDS, tone: TONE[STATUS.NEEDS], reason: choice.hint, canRetry: false };
+      if (s.kind === 'board' && choice && !choice.ready) return { ...base, status: choice.setupStatus || STATUS.NEEDS, tone: 'orange', waitHand: true, reason: handWhy(s), canRetry: false };
       return { ...base, status: STATUS.QUEUED, tone: TONE[STATUS.QUEUED], reason: 'Waiting for its turn…' };
     }
     if (row.status === STATUS.REMOVED) return { ...base, status: STATUS.QUEUED, tone: TONE[STATUS.QUEUED], reason: 'Putting it back up…' };
     if (isStale(row)) return { ...base, status: STATUS.FAILED, tone: TONE[STATUS.FAILED], reason: 'The last try was interrupted. Press Retry.', canRetry: true };
     if (IN_FLIGHT.includes(row.status)) return { ...base, status: row.status, tone: TONE[row.status], reason: row.status === STATUS.QUEUED ? 'Waiting for its turn…' : `Sending to ${s.label}…` };
+    if (s.kind === 'board' && [STATUS.NEEDS, STATUS.SETUP].includes(row.status) && choice && !choice.ready) {
+      return { ...base, status: row.status, tone: 'orange', waitHand: true, reason: handWhy(s), canRetry: false };
+    }
+    if (s.kind === 'board' && [STATUS.NEEDS, STATUS.SETUP].includes(row.status) && choice && choice.ready) {
+      // The board got its connection after the by-hand task was made: the same row goes out through the connector.
+      return { ...base, status: row.status, tone: 'blue', readyToSend: true, canRetry: true, reason: `${s.label} is connected now. Press Retry and TeamLink sends this job by itself.` };
+    }
+    if (s.kind === 'board' && row.status === STATUS.FEED && choice && choice.mode === 'feed') {
+      return {
+        ...base, status: row.status, tone: 'blue', inFeed: true, canRetry: true,
+        reason: `It is in our ${s.label} feed. ${s.label} reads the feed on its own schedule (about 4 times a day once your ${s.label} contact has added our feed link). It is not Posted until ${s.label} shows it.`,
+      };
+    }
     let reason = row.errorMessage || '';
     if (row.status === STATUS.POSTED && !row.errorMessage) {
       const when = new Date(row.postedAt || row.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
@@ -734,6 +851,99 @@ async function siteStatuses(r, user = null) {
   }
 }
 
+// ONE SENTENCE for a job — the Save & Post panel, the job page and (shorter) the Jobs list read the
+// same words (2026-10-10). Only the ticked sites count. "Posted" is kept for a site's own
+// confirmation: a board that must be posted by hand is "waiting for you", a board that reads our
+// feed is "sent and waiting for the site to show it".
+function summarise(sites) {
+  // Six sites are counted: Job Portal, Website, Naukri, Shine, Indeed, LinkedIn. Google Jobs rides along
+  // with the Website (it reads our job pages), so it is not counted as a seventh.
+  const t = (sites || []).filter((x) => x.ticked && x.code !== 'NOT_SELECTED' && x.id !== 'google');
+  const pick = (fn) => t.filter(fn);
+  const auto = pick((x) => x.code === 'POSTED');
+  const hand = pick((x) => x.code === 'WAITING_BY_HAND');
+  const handDone = pick((x) => x.code === 'POSTED_BY_HAND');
+  const takeDown = pick((x) => x.code === 'TAKE_DOWN_BY_HAND');
+  const feed = pick((x) => x.waiting);
+  const going = pick((x) => ['QUEUED', 'POSTING', 'RETRYING', 'REMOVING'].includes(x.code) && !x.waiting);
+  const failed = pick((x) => x.code === 'FAILED' || x.code === 'NOT_POSTED' || ((x.code === 'INTEGRATION_REQUIRED' || x.code === 'SETUP_REQUIRED') && x.canRetry));
+  const names = (a) => a.map((x) => x.name).join(', ');
+  const is = (a) => (a.length === 1 ? 'is' : 'are');
+  const parts = [];
+  if (!t.length) parts.push('No site is ticked, so the job is not posted anywhere.');
+  const nPosted = auto.length + handDone.length;
+  if (nPosted) {
+    parts.push(handDone.length
+      ? `${nPosted} of ${t.length} sites posted (${auto.length ? `${auto.length} automatically, ` : ''}${handDone.length} by hand: ${names(handDone)}).`
+      : `${auto.length} of ${t.length} site${t.length === 1 ? '' : 's'} posted automatically.`);
+  }
+  if (hand.length) parts.push(`${hand.length} you must post by hand: ${names(hand)}.`);
+  if (feed.length) parts.push(`${feed.length} sent and waiting for the site to show it: ${names(feed)}.`);
+  if (going.length) parts.push(`Still sending to: ${names(going)}.`);
+  if (failed.length) parts.push(`${failed.length} did not go through: ${names(failed)}.`);
+  if (takeDown.length) parts.push(`Take it down by hand on: ${names(takeDown)}.`);
+  return {
+    total: t.length,
+    posted: auto.length + handDone.length,
+    postedAuto: auto.length,
+    postedByHand: handDone.length,
+    waitingHand: hand.map((x) => ({ id: x.id, name: x.name })),
+    waitingSite: feed.length,
+    going: going.length,
+    failed: failed.length,
+    line: parts.join(' '),
+  };
+}
+
+// The Jobs list: one short summary per row — "Posted on 2/6 sites" and how many wait for a person.
+// One read of RequirementPosting for the whole page; rows that are not live say nothing.
+async function listSummaries(rows) {
+  const out = new Map();
+  const live = (rows || []).filter((r) => requirementIsLive(r.status));
+  if (!live.length || !hasTable()) return out;
+  const posts = await prisma.requirementPosting.findMany({ where: { requirementId: { in: live.map((r) => r.id) } }, select: { requirementId: true, source: true, status: true } }).catch(() => []);
+  const by = new Map();
+  posts.forEach((p) => { if (!by.has(p.requirementId)) by.set(p.requirementId, new Map()); by.get(p.requirementId).set(p.source, p.status); });
+  live.forEach((r) => {
+    const ticked = posting().tickedSites(r).filter((id) => id !== 'google');
+    const mine = by.get(r.id) || new Map();
+    let posted = 0; let waiting = 0;
+    const waitNames = [];
+    ticked.forEach((id) => {
+      const st = mine.get(id);
+      if (st === STATUS.POSTED || st === STATUS.HAND_DONE) posted += 1;
+      else if ([STATUS.NEEDS, STATUS.SETUP].includes(st) && (sourceById(id) || {}).kind === 'board') { waiting += 1; waitNames.push(sourceById(id).label); }
+    });
+    if (!ticked.length || !mine.size) return; // a job that never went through Save & Post says nothing here
+    out.set(r.id, {
+      total: ticked.length,
+      posted,
+      waitingHand: waiting,
+      waitingNames: waitNames,
+      text: posted ? `Posted on ${posted}/${ticked.length} sites` : 'Not posted anywhere yet',
+      waitText: waiting ? `${waiting} waiting for you to post by hand` : null,
+    });
+  });
+  return out;
+}
+
+// The Jobs-list quick view "Waiting to be posted by hand": live jobs with a ticked board that is a task
+// for a person (a Prisma where-arm; the row exists only while the board is ticked and the job is live).
+function waitingHandWhere() {
+  return {
+    status: { in: REQUIREMENT_LIVE_STATUSES },
+    postings: { some: { source: { in: Object.keys(BOARDS) }, status: { in: [STATUS.NEEDS, STATUS.SETUP] } } },
+  };
+}
+
+// Is this board connected (so it posts by itself)? Used by the reminder sweep so a board that got
+// connected after the task was made does not keep nagging.
+async function boardIsReady(id) {
+  const mod = BOARDS[id];
+  if (!mod) return false;
+  try { return !!(await mod.config()).ready; } catch { return false; }
+}
+
 // Administration → Integrations: what a board connector needs, and how it
 // stands (used by the Test button of a job-board card).
 async function boardSetupReport(integrationId) {
@@ -745,12 +955,48 @@ async function boardSetupReport(integrationId) {
     last = await prisma.requirementPosting.findFirst({ where: { source: src.id }, orderBy: { updatedAt: 'desc' } }).catch(() => null);
   }
   const lastText = last ? ` Last job: ${last.status}${last.errorMessage ? ` (${http.plain(last.errorMessage, 140)})` : ''}.` : '';
-  return {
-    ready: cfg.ready,
-    result: cfg.ready
-      ? `Ready — TeamLink sends jobs to ${src.label} on the next Save & Post (nothing was sent by this test).${lastText}`
-      : `Not ready — ${cfg.hint}${lastText}`,
-  };
+  if (!cfg.ready) {
+    await saveCheck(src.integrationId, { ok: false, text: cfg.hint });
+    return { ready: false, result: `Not ready — ${cfg.hint}${lastText}` };
+  }
+  // CHECK CONNECTION: where the board has a sign-in step, do it for real (nothing is posted).
+  const mod = src.kind === 'google' ? google : BOARDS[src.id];
+  if (cfg.feed) {
+    const mine = await selfGetText(`/api/public/feeds/${src.id}.xml`);
+    const ok = mine.ok && mine.code === 200 && /<source>/.test(mine.text);
+    const jobs = ok ? (mine.text.match(/<job>/g) || []).length : 0;
+    const text = ok
+      ? `Your ${src.label} feed link works and has ${jobs} job(s) in it. ${src.label} must still read it: send the link to them (nothing was sent by this check).${lastText}`
+      : `Your ${src.label} feed link did not answer. ${mine.ok ? `HTTP ${mine.code}` : mine.error}`;
+    await saveCheck(src.integrationId, { ok: false, feedOnly: true, text });
+    return { ready: true, result: text };
+  }
+  if (mod && typeof mod.handshake === 'function') {
+    const hs = await mod.handshake(cfg);
+    await saveCheck(src.integrationId, { ok: !!hs.ok, text: hs.text });
+    return { ready: true, verified: !!hs.ok, result: `${hs.ok ? 'Connected' : 'Problem'} — ${hs.text}${lastText}` };
+  }
+  const text = `Details are filled in. ${src.label} has no test call, so the first job you post shows whether they work (nothing was sent by this check).${lastText}`;
+  await saveCheck(src.integrationId, { ok: false, noTest: true, text });
+  return { ready: true, result: text };
+}
+
+// What the last "Check connection" and the "I have applied" flag said (AppSetting, no new table).
+async function saveCheck(id, data) {
+  const key = `board.${id}.check`;
+  const value = JSON.stringify({ ...data, at: new Date().toISOString() });
+  await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } }).catch(() => {});
+}
+async function getSetting(key) {
+  const row = await prisma.appSetting.findUnique({ where: { key } }).catch(() => null);
+  try { return row ? JSON.parse(row.value) : null; } catch { return null; }
+}
+async function setApplied(id, on, by, note) {
+  const key = `board.${id}.applied`;
+  if (!on) { await prisma.appSetting.deleteMany({ where: { key } }).catch(() => {}); return null; }
+  const value = JSON.stringify({ at: new Date().toISOString(), by: by || null, note: String(note || '').slice(0, 200) });
+  await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } }).catch(() => {});
+  return JSON.parse(value);
 }
 
 // The job-board card on Administration → Integrations (spec §14): connection,
@@ -781,6 +1027,29 @@ async function boardStatus(integrationId) {
     const fr = await prisma.appSetting.findUnique({ where: { key: `feed.${src.id}.lastRead` } }).catch(() => null);
     try { feedRead = fr ? JSON.parse(fr.value) : null; } catch { feedRead = null; }
   }
+  const chk = await getSetting(`board.${integrationId}.check`);
+  const applied = await getSetting(`board.${integrationId}.applied`);
+  const jobsCount = { posted: n([STATUS.POSTED]), waiting: n(WAITING), failed: n([STATUS.FAILED]), setup: n([STATUS.NEEDS, STATUS.SETUP]), byHand: n([STATUS.HAND_DONE]) };
+  // THE FOUR WORDS (user, 2026-10-09): Not connected / Waiting for approval / Connected / Problem.
+  // "Connected" only on proof: the board accepted our sign-in, a job reached Posted, or the board read the feed.
+  let word = 'Not connected';
+  let wordWhy = cfg.ready ? '' : (cfg.configured ? cfg.hint : 'Nothing is set up for this board yet.');
+  const proof = (chk && chk.ok === true) || jobsCount.posted > 0 || !!feedRead;
+  if (cfg.ready && (plainErr || (chk && chk.ok === false && !chk.feedOnly && !chk.noTest))) { word = 'Problem'; wordWhy = plainErr || chk.text; }
+  else if (cfg.ready && proof) { word = 'Connected'; wordWhy = feedRead ? 'The board has read your job feed.' : (chk && chk.ok ? chk.text : 'A job reached this board and was confirmed live.'); }
+  else if (cfg.ready) { word = 'Waiting for approval'; wordWhy = cfg.feed ? 'Your feed is on. Waiting for the board to start reading it.' : 'The details are saved but nothing has confirmed them yet. The first job you post shows whether they work.'; }
+  else if (applied) { word = 'Waiting for approval'; wordWhy = `Applied by ${applied.by || 'a team member'} on ${new Date(applied.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}${applied.note ? ` (${applied.note})` : ''}. Paste the details in Configure when the board sends them.`; }
+  const guideText = require('./jobBoards/connectText').CONNECT[integrationId] || null; // eslint-disable-line global-require
+  const feedLinks = [];
+  if (integrationId === 'indeed') {
+    const ir = await getSetting('feed.indeed.lastRead');
+    feedLinks.push({ label: 'Indeed job feed link (send this to Indeed)', url: relOrAbs('/api/public/feeds/indeed.xml'), lastRead: ir, note: 'Indeed reads it about 4 times a day once they have added it.' });
+  }
+  if (integrationId === 'naukri' && cfg.feed) feedLinks.push({ label: 'Naukri job feed link', url: relOrAbs('/api/public/feeds/naukri.xml'), lastRead: feedRead });
+  if (integrationId === 'google-jobs') {
+    feedLinks.push({ label: 'Sitemap (submit once in Google Search Console)', url: relOrAbs('/sitemap.xml'), note: 'Lists every job page.' });
+    feedLinks.push({ label: 'All job data in one file (JobPosting)', url: relOrAbs('/api/public/jobs.jsonld') });
+  }
   let connection = 'Not set up';
   if (row && row.connected === false && row.values) connection = 'Switched off';
   else if (cfg.ready && plainErr) connection = 'Error';
@@ -797,17 +1066,25 @@ async function boardStatus(integrationId) {
     methods: integrationId === 'naukri' ? ['Amplify API', 'XML feed'] : null,
     feedUrl: cfg.feed ? relOrAbs(`/api/public/feeds/${src.id}.xml`) : null,
     feedLastRead: feedRead,
+    word,
+    wordWhy,
+    applied,
+    lastCheck: chk,
+    connect: guideText,
+    feedLinks,
+    publicAddressSet: !!http.publicUrl('/'),
+    canPostByHand: !!require('./jobBoards/guide').GUIDE[src.id], // eslint-disable-line global-require
     lastSuccessAt: row && row.lastSync ? row.lastSync : null,
     lastError: plainErr || null,
     lastErrorDetails: details || null,
-    jobs: { posted: n([STATUS.POSTED]), waiting: n(WAITING), failed: n([STATUS.FAILED]), setup: n([STATUS.NEEDS, STATUS.SETUP]) },
+    jobs: jobsCount,
   };
 }
 
 module.exports = {
   boardStatus,
   SOURCES, STATUS, VIEW, CONNECTORS, sourceById,
-  syncAll, syncAllLater, retry, siteStatuses, sourceChoices, rowsOf, boardSetupReport,
+  syncAll, syncAllLater, retry, siteStatuses, sourceChoices, rowsOf, boardSetupReport, setApplied, summarise, listSummaries, boardIsReady, canSetUp, waitingHandWhere,
   BOARD_FIELDS: {
     indeed: indeed.FIELDS, linkedin: linkedin.FIELDS, naukri: naukri.FIELDS, shine: shine.FIELDS, 'google-jobs': google.FIELDS,
   },

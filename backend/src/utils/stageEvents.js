@@ -27,6 +27,15 @@ const { stageLabel, pendingTermOfStage } = require('./atsVocab');
 const { groupLabelOfStage } = require('./pipelineView');
 
 // The people whose queue a move on this requirement lands in or leaves.
+// Moves from the BDE step onward concern the client's BDE: the job's BDE, the client's Owner BDE and second BDE.
+async function withClientBdesForMove(ids, requirement, fromStage, toStage) {
+  // eslint-disable-next-line global-require
+  const { BDE_CANDIDATE_STAGES } = require('./scope');
+  const inList = (s) => BDE_CANDIDATE_STAGES.includes(s);
+  if (!inList(toStage) || (toStage === 'REJECTED' && !inList(fromStage))) return ids;
+  // eslint-disable-next-line global-require
+  return require('./clientBdes').withClientBdes(ids, requirement);
+}
 function stageMoveAudience(requirement) {
   const r = requirement || {};
   return [r.recruiterId, r.tlId, r.bdeId].filter(Boolean);
@@ -74,7 +83,7 @@ async function stageEventData({
 
 async function recordWorkflowMove({
   user, existing, application, toStage, action, comment,
-  reasonCategory, reasonDetail, rejectionSide, skipEvent = false,
+  reasonCategory, reasonDetail, rejectionSide, skipEvent = false, silent = false,
 }) {
   if (!existing || !toStage || existing.stage === toStage) return;
   const requirement = existing.requirement || {};
@@ -109,6 +118,7 @@ async function recordWorkflowMove({
       toStage,
       user,
       comment,
+      silent,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -135,7 +145,9 @@ async function recordWorkflowMove({
   }
 
   try {
-    await notifyUsers(stageMoveAudience(requirement), {
+    // The client's own BDE (named on the CLIENT, not on the job) hears about the moves that concern the client side.
+    const audience = await withClientBdesForMove(stageMoveAudience(requirement), requirement, existing.stage, toStage);
+    await notifyUsers(audience, {
       ...stageMoveNotice(existing.candidate ? existing.candidate.name : 'Candidate', toStage, requirement),
       exceptUserId: user.id,
     });
@@ -146,5 +158,5 @@ async function recordWorkflowMove({
 }
 
 module.exports = {
-  recordWorkflowMove, stageMoveAudience, stageMoveNotice, stageEventData,
+  recordWorkflowMove, withClientBdesForMove, stageMoveAudience, stageMoveNotice, stageEventData,
 };

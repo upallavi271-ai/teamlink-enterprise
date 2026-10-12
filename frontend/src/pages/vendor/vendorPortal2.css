@@ -1,0 +1,19 @@
+/* Vendor Portal - tabs, money tiles, simple cards (2026-10-09). Scoped .vp-* */
+.vp-tabs{display:flex;gap:4px;padding:0 20px;background:var(--paper-raised);border-bottom:1px solid var(--line);overflow-x:auto}
+.vp-tab{padding:11px 14px;font-size:14px;font-weight:600;color:var(--ink-soft);text-decoration:none;border-bottom:3px solid transparent;white-space:nowrap}
+.vp-tab:hover{color:var(--ink)}
+.vp-tab.on{color:var(--brand,#1F3864);border-bottom-color:var(--brand,#1F3864)}
+.vp-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.vp-tile{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.vp-tile span{display:block;font-size:12px;color:var(--ink-soft)}
+.vp-tile b{display:block;font-size:20px;margin-top:2px}
+.vp-tile.green b{color:var(--green)}
+.vp-tile.orange b{color:var(--amber)}
+.vp-seg{display:flex;gap:6px;flex-wrap:wrap}
+.vp-card{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.vp-dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px 20px;margin:0}
+.vp-dl dt{font-size:12px;color:var(--ink-soft);font-weight:600}
+.vp-dl dd{margin:2px 0 0;overflow-wrap:anywhere;font-size:14.5px}
+.vp-why{font-size:12px;color:var(--red);margin-top:2px}
+.vp-invnote{font-size:12.5px;color:var(--ink-soft)}
+@media (max-width:760px){.vp-tabs{padding:0 8px}.vp-tab{padding:10px 10px;font-size:13px}.vp-tile b{font-size:17px}}

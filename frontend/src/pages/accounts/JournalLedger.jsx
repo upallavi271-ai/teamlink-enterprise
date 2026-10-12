@@ -10,6 +10,7 @@
 // Accounts roles and Super Admin / Admin only: the page is behind
 // accounts / Journal & Ledger / view, which the API enforces as well.
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import TabsPage from '../../components/TabsPage.jsx';
@@ -22,6 +23,7 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { JournalTab, LedgerTab, BooksReportsTab, PayrollMappingTab } from '../../components/accounts/JournalTabs.jsx';
 import FixedAssetsTab from '../../components/accounts/FixedAssetsTab.jsx';
+import EmployeeSalaryTab from '../../components/accounts/EmployeeSalaryTab.jsx';
 import '../../components/ui/ui.css';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -125,6 +127,8 @@ export function ReconciliationPanel({ initialMonth }) {
 export default function JournalLedger() {
   const { user } = useAuth();
   const [tab, setTab] = useState('journal');
+  const [, setParams] = useSearchParams();
+  const [salaryOf, setSalaryOf] = useState('');
   if (!can(user, 'accounts', 'accounts', 'Journal & Ledger', 'view')) {
     return <div className="small-muted" style={{ padding: 20 }}>The journal and ledger aren&apos;t included in your role&apos;s permissions.</div>;
   }
@@ -138,8 +142,9 @@ export default function JournalLedger() {
       value={tab}
       onChange={setTab}
       tabs={[
-        { key: 'journal', label: 'Journal', element: <JournalTab canPost={canPost} /> },
-        { key: 'ledger', label: 'Ledger', element: <LedgerTab /> },
+        { key: 'journal', label: 'Journal', element: <JournalTab canPost={canPost} onOpenSalaryOf={(id) => { setSalaryOf(id); setTab('salary'); }} /> },
+        { key: 'ledger', label: 'Ledger', element: <LedgerTab canPost={canPost} onOpenEmployees={() => { setSalaryOf(''); setTab('salary'); }} /> },
+        { key: 'salary', label: 'Employee salary', element: <EmployeeSalaryTab key={salaryOf} initialEmployeeId={salaryOf} onOpenVoucher={(id) => { setParams({ je: id }); setTab('journal'); }} /> },
         { key: 'reports', label: 'Reports', element: <BooksReportsTab /> },
         { key: 'assets', label: 'Fixed Assets', element: <FixedAssetsTab canPost={canPost} canEdit={canEdit} /> },
         { key: 'mapping', label: 'Payroll Mapping', element: <PayrollMappingTab /> },

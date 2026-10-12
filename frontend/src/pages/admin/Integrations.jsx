@@ -9,6 +9,8 @@ import JobPortalSyncPanel from '../ats/JobPortalSyncPanel.jsx';
 import IntegrationHealthPanel from './IntegrationHealth.jsx';
 // Save & Post (2026-10-05): a job board's own details panel on its card.
 import JobBoardIntegration from '../../components/jobs/JobBoardIntegration.jsx';
+// Naukri: every method, what works, what needs Naukri's account, what Naukri does not offer.
+import NaukriMethods from '../../components/jobs/NaukriMethods.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged, PAGE_SIZES } from '../../components/Pager.jsx';
 
@@ -238,7 +240,7 @@ export default function Integrations() {
                             )}
                             <button className="btn btn-sm btn-ghost" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/disconnect`), `${c.name} disconnected.`)}>Disconnect</button>
                           </>
-                        ) : (
+                        ) : c.jobBoard ? null : (
                           <button className="btn btn-sm btn-primary" onClick={() => run(() => api.post(`/admin/integrations/${c.id}/connect`), `${c.name} connected — Demo / Simulated, no live API call was made.`)}>
                             {c.state === 'Not Connected' ? 'Connect' : 'Reconnect'}
                           </button>
@@ -249,6 +251,7 @@ export default function Integrations() {
                     </div>
                     {c.error && !c.jobBoard && <div className="cell-muted" style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--red)' }}>{c.error}</div>}
                     {c.jobBoard && <JobBoardIntegration channel={c} run={run} onConfigure={openConfigure} reloadKey={`${c.state}|${c.lastTest || ''}|${c.lastSync || ''}`} />}
+                    {c.id === 'naukri' && <NaukriMethods />}
                   </div>
                 ))}
               </div>
@@ -511,8 +514,7 @@ function EmailPanel({ mail, testTo, setTestTo, sending, onSend, onRunWorker }) {
           keeps the provider&rsquo;s own message reference. Delivery to the inbox is <strong>not</strong> confirmed —
           there is no bounce or delivery webhook yet. Messages go out with the sending employee&rsquo;s address in
           the <code>From</code> header over an authenticated envelope sender, which needs SPF, DKIM and DMARC on
-          that employee&rsquo;s domain or the mail will be spam-foldered. SMS and WhatsApp still have no provider
-          and their rows stay &ldquo;recorded, not transmitted&rdquo;.
+          that employee&rsquo;s domain or the mail will be spam-foldered. Use Message templates → Channels → &ldquo;Check my email domain&rdquo; to see whether those three records exist.
         </span>
       </div>
     </div>

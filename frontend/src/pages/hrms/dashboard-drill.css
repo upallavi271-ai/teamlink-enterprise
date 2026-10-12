@@ -1,0 +1,64 @@
+/* HRMS Dashboard tiles + in-place lists (DashboardDrill.jsx) — scoped under .hd-* */
+.hd-tiles{align-items:stretch;grid-template-columns:repeat(auto-fill,minmax(168px,1fr))}
+.hd-tile{position:relative;display:flex;flex-direction:column}
+.hd-tile.on{box-shadow:inset 0 0 0 2px var(--navy);border-color:var(--navy)}
+.hd-tile-main{all:unset;box-sizing:border-box;display:flex;flex-direction:column;cursor:pointer;width:100%;padding-right:18px}
+.hd-tile-main:hover .v{color:var(--navy)}
+.hd-tile-main:focus-visible{outline:2px solid var(--navy);outline-offset:4px;border-radius:4px}
+.hd-sub{font-size:11px;color:var(--ink-soft);margin-top:6px;line-height:1.4;font-weight:400;text-transform:none;letter-spacing:0}
+.hd-parts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.hd-part{font:inherit;font-size:11.5px;border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:2px 8px;cursor:pointer;color:var(--ink)}
+.hd-part:hover{border-color:var(--navy);background:var(--navy-tint)}
+.hd-part.on{border-color:var(--navy);background:var(--navy-tint)}
+.hd-help{position:absolute;top:8px;right:8px;width:16px;height:16px;border-radius:50%;border:1px solid var(--ink-faint);color:var(--ink-soft);font-size:10.5px;font-weight:700;line-height:14px;text-align:center;cursor:help;background:var(--paper-raised)}
+.hd-help:hover,.hd-help:focus{outline:none;border-color:var(--navy);color:var(--navy)}
+.hd-help:hover::after,.hd-help:focus::after{content:attr(data-tip);position:absolute;z-index:20;top:20px;right:-6px;width:240px;max-width:70vw;padding:8px 10px;border-radius:8px;background:var(--navy-deep,#14243f);color:#fff;font-size:11.5px;font-weight:400;line-height:1.45;text-align:left;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:normal}
+.hd-eq{font-size:12px;color:var(--ink-soft);margin:2px 0 12px;line-height:1.55}
+.hd-eq b{color:var(--ink)}
+.hd-subhead{font-size:11.5px;color:var(--ink-soft);margin:10px 0 6px;font-weight:600}
+.hd-drill{border:1px solid var(--navy);border-radius:10px;background:var(--paper-raised);padding:12px 14px 12px;margin:8px 0 16px;box-shadow:0 2px 14px rgba(31,56,100,.10)}
+.hd-drill-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.hd-drill-title{font-size:14px;min-width:0}
+.hd-count{color:var(--ink-soft);font-size:13px}
+.hd-drill-actions{display:flex;gap:6px}
+.hd-switch{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.hd-saved{font-size:12px;color:var(--teal);margin:-2px 0 6px}
+.hd-note{font-size:12px;color:var(--ink-soft);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.5}
+.hd-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.hd-tools input[type=search]{flex:1 1 220px;max-width:320px}
+.hd-sortpick{display:none;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft)}
+.hd-th{all:unset;cursor:pointer;font-weight:700;white-space:nowrap}
+.hd-th:hover{color:var(--navy)}
+.hd-th:focus-visible{outline:2px solid var(--navy);outline-offset:2px}
+.hd-table td.hd-why{font-size:12.5px;min-width:260px}
+.hd-empty{text-align:center;color:var(--ink-soft);padding:18px}
+.hd-more{margin-top:8px;font-size:12.5px}
+.hd-panel-row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.hd-link{font:inherit;font-size:11.5px;border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:2px 9px;cursor:pointer;color:var(--ink);margin-left:6px}
+.hd-link:hover{border-color:var(--navy);background:var(--navy-tint)}
+.hd-link.on{border-color:var(--navy);background:var(--navy-tint)}
+.hd-scroll{max-height:260px;overflow-y:auto}
+.hd-celeb-head{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:0 14px 8px}
+
+@media (max-width:620px){
+  .hd-tiles{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:8px}
+  .hd-tile{padding:11px 11px}
+  .hd-drill{padding:10px 10px 10px;margin-left:0;margin-right:0}
+  .hd-tools input[type=search]{flex:1 1 100%;max-width:none}
+  .hd-sortpick{display:flex}
+  /* One person = one small card: no sideways scroll on a phone. */
+  .hd-table{display:block;min-width:0 !important;width:100%}
+  .hd-table thead{display:none}
+  .hd-table tbody{display:block}
+  .hd-table tr{display:block;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:var(--paper)}
+  .hd-table td{display:flex;justify-content:space-between;gap:12px;border:0 !important;padding:2px 0 !important;font-size:12.5px;white-space:normal !important;text-align:right;min-width:0 !important}
+  .hd-table td::before{content:attr(data-label);color:var(--ink-soft);font-size:11px;text-align:left;flex:0 0 38%}
+  .hd-table td.hd-first{font-size:14px;border-bottom:1px solid var(--line) !important;padding-bottom:5px !important;margin-bottom:3px}
+  .hd-table td.hd-first::before{display:none}
+  .hd-table td.hd-why{min-width:0 !important}
+  .hd-table td.hd-empty{display:block;text-align:center}
+  .hd-table td.hd-empty::before{display:none}
+  .hd-drill .att-wide-top{display:none !important}
+  /* the cards flow with the page; no scroll box inside a scroll page */
+  .hd-drill .att-wide .att-wide-body{max-height:none !important;overflow:visible;border:0}
+}

@@ -111,7 +111,16 @@ export function splitSections(text) {
        * punctuation. Those close the current section into a bucket
        * nothing reads, which is the right place for text we cannot name.
        */
-      const shouted = bare === bare.toUpperCase() && /[A-Z]{3}/.test(bare)
+      /*
+       * ...but a BULLETED line is an item, never a heading, and one short
+       * acronym on its own line ("AWS", "SQL", "HTML") is a skill in a
+       * one-per-line list. "Key Skills / • Java / • React / • AWS" read
+       * "• AWS" as an unknown heading and closed the skills section on it,
+       * so the last skill of every bulleted DOCX list was dropped.
+       */
+      const bulleted = /^[•●▪◦▸►*–—-]\s*/.test(bare);
+      const acronym = /^[A-Z0-9+#./]{2,4}$/.test(bare);
+      const shouted = !bulleted && !acronym && bare === bare.toUpperCase() && /[A-Z]{3}/.test(bare)
         && bare.split(' ').length <= 5 && !/[.,;:]$/.test(bare);
       if (shouted) {
         current = '_unknown';
@@ -216,11 +225,14 @@ function repairEmail(raw) {
   return original;
 }
 
-function findEmail(text) {
+function findEmail(text, notes) {
   const all = (String(text).match(EMAIL_RE) || []).map(repairEmail);
   // Skip obvious non-personal addresses that appear in headers/footers.
-  const personal = all.find((e) => !/^(info|hr|careers|jobs|support|noreply|no-reply)@/i.test(e));
-  return personal || all[0] || null;
+  const people = all.filter((e) => !/^(info|hr|careers|jobs|support|noreply|no-reply)@/i.test(e));
+  const pool = people.length ? people : all;
+  const pick = contactIn(text, pool);
+  if (pick.ambiguous && notes) notes.emailAmbiguous = true;
+  return pick.value;
 }
 
 function findPhones(text) {
@@ -490,6 +502,14 @@ function findLocation(text, which) {
   const v = labelledValue(text, LABELLED(labels, '[^\\n]{0,120}'));
 
   if (v) {
+    /* PREFERRED: every city they name ("Hyderabad, Bengaluru"), not only the first - up to the next field
+       on the same line ("| Notice Period: 30 Days"). */
+    if (preferred) {
+      const own = String(v).split(/\s*\|\s*/)[0];
+      const cities = own.split(/\s*(?:,|\/|;|\band\b|&)\s*/i).map((p) => cityIn(p)).filter(Boolean)
+        .filter((c, i, a) => a.indexOf(c) === i);
+      if (cities.length) return cities.join(', ');
+    }
     const city = cityIn(v);
     if (city) return city;
     if (preferred) return v;
@@ -533,15 +553,227 @@ function findQualification(text, sections) {
   return m ? clean(m[0]) : null;
 }
 
+/*
+ * EVERY EDUCATION RECORD, NOT ONLY THE HIGHEST (0117).
+ *
+ * `education` keeps the section as one line and `qualification` the top
+ * degree; a resume listing B.Tech, Intermediate and SSC filled one field
+ * and dropped the other two. Each line naming a level starts a record;
+ * the lines under it until the next level add the institution, the year
+ * and the score. Nothing is guessed: a value not on those lines is null.
+ */
+const EDU_LEVELS = [
+  ['Doctorate', /\b(?:Ph\.?\s?D|Doctorate)\b/i],
+  ['Post Graduation', /\b(?:M\.?\s?Tech|M\.E\b|MBA|MCA|M\.?\s?Sc|M\.?\s?Com|M\.A\b|M\.?\s?Pharm|PGDM|Post[\s-]*Graduat\w*|Master(?:'s|s)?\s+(?:of|in)\b)/i],
+  ['Graduation', /\b(?:B\.?\s?Tech|B\.E\b|B\.?\s?Sc|BCA|BBA|B\.?\s?Com|B\.A\b|B\.?\s?Pharm|MBBS|BDS|Bachelor(?:'s|s)?\s+(?:of|in)\b|Graduation)/i],
+  ['Diploma', /\b(?:Diploma|Polytechnic|ITI)\b/i],
+  ['12th', /\b(?:12th|XII|Intermediate|Inter\b|HSC|Senior\s+Secondary|Higher\s+Secondary|PUC|\+2)\b/i],
+  ['10th', /\b(?:10th|SSC|S\.S\.C|Matriculation|Secondary\s+School|High\s+School|CBSE\s+X\b|X\s+Standard)\b/i],
+];
+const EDU_INSTITUTION = /\b(?:University|College|Institute|Institution|School|Vidyalaya|Academy|IIT|NIT|IIIT|Polytechnic|Board)\b/i;
+
+/* "Bachelor of Technology (B.Tech)" is a B.Tech: the long names, as the short ones the levels and the
+   registration's qualification list know. Most specific first. */
+const LONG_DEGREE = [
+  [/bachelor\s+of\s+computer\s+applications?/i, 'BCA'],
+  [/bachelor\s+of\s+business\s+administration/i, 'BBA'],
+  [/bachelor\s+of\s+technology/i, 'B.Tech'],
+  [/bachelor\s+of\s+engineering/i, 'B.E'],
+  [/bachelor\s+of\s+pharmacy/i, 'B.Pharm'],
+  [/bachelor\s+of\s+commerce/i, 'B.Com'],
+  [/bachelor\s+of\s+science/i, 'B.Sc'],
+  [/bachelor\s+of\s+arts/i, 'B.A'],
+  [/master\s+of\s+computer\s+applications?/i, 'MCA'],
+  [/master\s+of\s+business\s+administration/i, 'MBA'],
+  [/master\s+of\s+technology/i, 'M.Tech'],
+  [/master\s+of\s+engineering/i, 'M.E'],
+  [/master\s+of\s+pharmacy/i, 'M.Pharm'],
+  [/master\s+of\s+commerce/i, 'M.Com'],
+  [/master\s+of\s+science/i, 'M.Sc'],
+  [/master\s+of\s+arts/i, 'M.A'],
+  [/doctor\s+of\s+philosophy/i, 'Ph.D'],
+];
+export function shortDegree(line) {
+  for (const [re, ab] of LONG_DEGREE) {
+    if (re.test(line)) {
+      /* with its own abbreviation in brackets after it, the brackets go too */
+      return line.replace(new RegExp(re.source + '\\s*\\(\\s*[A-Za-z.]{2,9}\\s*\\)', 'i'), ab).replace(re, ab);
+    }
+  }
+  return line;
+}
+
+function levelOf(line) {
+  for (const [level, re] of EDU_LEVELS) {
+    const m = re.exec(line);
+    if (m) return { level, degree: clean(m[0]) };
+  }
+  return null;
+}
+
+export function findEducationRecords(section) {
+  const lines = String(section || '').split('\n')
+    .map((l) => shortDegree(clean(l.replace(/^[\s•●▪*\-–—>]+/, ''))))
+    .filter((l) => l.length >= 2 && l.length <= 240);
+  const records = [];
+  let cur = null;
+
+  const take = (rec, line) => {
+    const years = line.match(/\b(19[6-9]\d|20[0-4]\d)\b/g);
+    if (years && years.length) rec.passingYear = years[years.length - 1];
+    const pct = /(\d{2}(?:\.\d{1,2})?)\s*%/.exec(line);
+    const gpa = /\b(?:CGPA|GPA|CPI|SGPA)\s*[:\-–]?\s*(\d{1,2}(?:\.\d{1,2})?)(?:\s*\/\s*(?:10|4))?/i.exec(line)
+      || /\b(\d\.\d{1,2})\s*\/\s*10\b/.exec(line)
+      || /\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:CGPA|GPA|CPI)\b/i.exec(line);
+    if (!rec.score && pct) rec.score = pct[1] + '%';
+    else if (!rec.score && gpa) rec.score = gpa[1] + ' CGPA';
+    if (!rec.institution) {
+      const parts = line.split(/\s*[|,;–—]\s*|\s+-\s+/).map((p) => clean(p)).filter(Boolean);
+      const isDegreePart = (p, i) => i === 0 && !!levelOf(p) && levelOf(p).degree === rec.qualification;
+      const leftover = parts.filter((p, i) => !isDegreePart(p, i) && p !== rec.specialization
+        && !/^(?:\(?\s*(?:19|20)\d\d\s*\)?|[\d.]+\s*%|(?:CGPA|GPA|CPI)?\s*[:\-]?\s*\d{1,2}(?:\.\d{1,2})?(?:\s*\/\s*10)?(?:\s*CGPA)?)$/i.test(p)
+        && /[A-Za-z]{3,}/.test(p));
+      const part = leftover.find((p) => EDU_INSTITUTION.test(p))
+        || (isLevelLine ? leftover.find((p) => !levelOf(p) || EDU_INSTITUTION.test(p)) : null);
+      if (part) rec.institution = clean(part.replace(/\(?\b(19|20)\d\d\b.*$/, '')).slice(0, 160) || null;
+    }
+  };
+  let isLevelLine = false;
+
+  for (const line of lines) {
+    const lv = levelOf(line);
+    if (lv && records.length < 8) {
+      cur = { level: lv.level, qualification: lv.degree, specialization: null,
+              institution: null, passingYear: null, score: null };
+      const spec = /\(([^)]{3,60})\)/.exec(line)
+        || new RegExp(lv.degree.replace(/[.+*?^$()[\]{}|\\]/g, '\\$&') + '\\s*(?:in|-|–|:|,)\\s*([A-Za-z&. ]{3,60})', 'i').exec(line);
+      if (spec && !/\d/.test(spec[1]) && !EDU_INSTITUTION.test(spec[1])) cur.specialization = clean(spec[1]);
+      isLevelLine = true;
+      take(cur, line.replace(/\([^)]*\)/, ''));
+      records.push(cur);
+    } else if (cur) {
+      isLevelLine = false;
+      take(cur, line);
+    }
+  }
+  return records.map((r) => ({ ...r, educationType: r.level }));
+}
+
+/* A date range, as resumes write them: "June 2023 – Present", "Jan 2019 - Mar 2021", "2018 - 2020",
+   "06/2019 - 05/2021". */
+const MON_RX = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?';
+const DATE_POINT = '(?:(?:' + MON_RX + '\\s*,?\\s*)?(?:19|20)\\d{2}|(?:0?[1-9]|1[0-2])[/.-](?:19|20)\\d{2})';
+const DATE_RANGE = new RegExp('(' + DATE_POINT + ')\\s*(?:-|–|—|to|till)\\s*(' + DATE_POINT
+  + '|present|current|till\\s*date|to\\s*date|now|ongoing)', 'i');
+const COMPANY_HINT = /\b(?:pvt|private|ltd|limited|llp|inc|corp|corporation|company|technolog\w*|solutions?|systems?|labs?|software|services|consult\w*|infotech|infosystems|global|enterprises?|industries|group|hospitals?|bank|motors|retail)\b/i;
+
+/**
+ * "Software Developer | ABC Technologies Pvt. Ltd. — Hyderabad" with "June 2023 – Present" on its own line
+ * below (or on the same line). The common modern layout, which the one-line "Company - Title (dates)" reading
+ * below does not see at all - so the company, the job list and the total experience all came back empty.
+ * Which side is the company: the one with a company word (Pvt, Ltd, Technologies...), else the one without a
+ * job-title word. A bullet is a responsibility, never a job.
+ */
+function findEmploymentPiped(src) {
+  const lines = String(src || '').split(/\r?\n/).map((l) => l.trim());
+  const rows = []; const at = [];
+  const stripPlace = (p) => p.split(/\s+[—–]\s+|\s+-\s+/)[0].trim();
+  for (let i = 0; i < lines.length && rows.length < 12; i++) {
+    const raw = lines[i];
+    if (!raw || /^[•●▪*\u2022\u25aa\u25cf-]\s*/.test(raw) && ACTION_START.test(raw.replace(/^[•●▪*\u2022\u25aa\u25cf-]\s*/, ''))) continue;
+    if (!/\||\s+at\s+/i.test(raw)) continue;
+    const parts = raw.replace(DATE_RANGE, ' ').replace(/[()]/g, ' ').split(/\s*\|\s*|\s+at\s+/i)
+      .map((p) => clean(p)).filter((p) => p && /[A-Za-z]{2,}/.test(p));
+    if (parts.length < 2 || parts.length > 4) continue;
+    const a = stripPlace(parts[0]); const b = stripPlace(parts[1]);
+    if (!a || !b || ACTION_START.test(a) || LABEL_WORDS.test(a) || LABEL_WORDS.test(b)) continue;
+    const aCo = COMPANY_HINT.test(a); const bCo = COMPANY_HINT.test(b);
+    const aT = JOB_TITLE.test(a); const bT = JOB_TITLE.test(b);
+    let company; let title;
+    if (bCo && !aCo) { company = b; title = a; }
+    else if (aCo && !bCo) { company = a; title = b; }
+    else if (aT && !bT) { title = a; company = b; }
+    else if (bT && !aT) { title = b; company = a; }
+    else continue;
+    /* the dates: on this line, or alone on one of the next two */
+    let period = (DATE_RANGE.exec(raw) || [])[0] || null;
+    let bodyFrom = i + 1;
+    if (!period) {
+      for (let k = i + 1; k <= i + 2 && k < lines.length; k++) {
+        const m = DATE_RANGE.exec(lines[k]);
+        if (m && lines[k].replace(m[0], '').replace(/[()|,\s]/g, '').length < 30) { period = m[0]; bodyFrom = k + 1; break; }
+      }
+    }
+    if (!period && !(aCo || bCo)) continue;             // no dates and no company word: not evidence of a job
+    rows.push({ company: clean(company).slice(0, 120), title: clean(title).slice(0, 120), period: period ? clean(period) : null });
+    at.push({ start: i, bodyFrom });
+  }
+  rows.forEach((row, i) => {
+    const to = i + 1 < at.length ? at[i + 1].start : lines.length;
+    const body = lines.slice(at[i].bodyFrom, to)
+      .map((l) => l.replace(/^[\s•*\u2022\u25aa\u25cf-]+/, '').replace(/[.;]\s*$/, '').trim()).filter((l) => l.length > 2);
+    const text = clean(body.join('; ')).slice(0, 700);
+    if (text) row.details = text;
+  });
+  return rows;
+}
+
+/* ------------------------------------------------------------------ *
+ * TOTAL EXPERIENCE, from the jobs' own dates
+ * ------------------------------------------------------------------ */
+function monthOf(point, isEnd, now) {
+  const p = String(point || '').toLowerCase().trim();
+  if (/present|current|till|to\s*date|now|ongoing/.test(p)) return now;
+  const num = /(\d{1,2})[/.-]((?:19|20)\d{2})/.exec(p);
+  if (num) return Number(num[2]) * 12 + Number(num[1]) - 1;
+  const y = /((?:19|20)\d{2})/.exec(p);
+  if (!y) return null;
+  const mo = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/.exec(p);
+  return Number(y[1]) * 12 + (mo ? MONTHS[mo[1]] - 1 : (isEnd ? 11 : 0));
+}
+
+/**
+ * Months worked across ALL the jobs whose dates can be read, overlaps counted once; null when none can.
+ * Every job, not the latest one: a candidate with a year at one company and three at the next has four
+ * years of experience, whatever the headline says.
+ */
+export function totalExperienceMonths(rows, today = new Date()) {
+  const now = today.getFullYear() * 12 + today.getMonth();
+  const spans = [];
+  for (const r of rows || []) {
+    const m = r && r.period ? DATE_RANGE.exec(r.period) : null;
+    if (!m) continue;
+    const a = monthOf(m[1], false, now); const b = monthOf(m[2], true, now);
+    if (a == null || b == null || b < a || b > now + 1) continue;
+    spans.push([a, b + 1]);                            // the end month is a month worked
+  }
+  if (!spans.length) return null;
+  spans.sort((x, y) => x[0] - y[0]);
+  let total = 0; let [cs, ce] = spans[0];
+  for (const [st, en] of spans.slice(1)) {
+    if (st <= ce) ce = Math.max(ce, en);
+    else { total += ce - cs; cs = st; ce = en; }
+  }
+  return total + (ce - cs);
+}
+
 /** Employment history: "Company — Title (2021 - Present)" and variants. */
 function findEmployment(sections) {
   const src = sections.experience || '';
+  const piped = findEmploymentPiped(src);
+  if (piped.length) return piped;
   const rows = [];
   const re = /^[\s•*-]*([A-Z][\w&.,'()\- ]{2,60}?)\s*(?:[—–|,-]{1,2}|\bat\b)\s*([\w&.,'()\/\- ]{2,60}?)\s*(?:\(([^)]{4,40})\))?\s*$/gm;
   let m;
+  /* What each job says it did: the lines between its heading and the next one. A bullet that describes work
+     ("Developed REST APIs, SQL reporting") has the same shape as "Company, Title" and is never a job of its own. */
+  const spans = [];
   while ((m = re.exec(src)) && rows.length < 12) {
     const a = clean(m[1]); const b = clean(m[2]); const period = clean(m[3] || '');
     if (!a || !b) continue;
+    const isBullet = /^\s*[•*\u2022\u25aa\u25cf-]\s*\S/.test(m[0]);
+    if (isBullet && !period && ACTION_START.test(a)) continue;
+    if (ACTION_START.test(a) && !period) continue;
     if (/^(responsibilit|achievement|project|skill)/i.test(a)) continue;
     // A two-column table row ("Current Location | Hyderabad") has the same
     // shape as "Company - Title". Reject anything whose left side is one of
@@ -560,7 +792,16 @@ function findEmployment(sections) {
     const company = titleish.test(a) && !titleish.test(b) ? b : a;
     const title   = company === a ? b : a;
     rows.push({ company, title, period: period || null });
+    spans.push({ start: m.index, end: m.index + m[0].length });
   }
+  rows.forEach((row, i) => {
+    const from = spans[i].end;
+    const to = i + 1 < spans.length ? spans[i + 1].start : src.length;
+    const body = src.slice(from, to < from ? src.length : to).split(/\r?\n/)
+      .map((l) => l.replace(/^[\s•*\u2022\u25aa\u25cf-]+/, '').trim()).filter((l) => l.length > 2);
+    const text = clean(body.join('; ')).slice(0, 700);
+    if (text) row.details = text;
+  });
   return rows;
 }
 
@@ -664,7 +905,7 @@ function findList(section, { max = 40, minLen = 2 } = {}) {
     const parts = body.includes(',') && body.length < 200 ? body.split(',') : [body];
     for (const p of parts) {
       const v = clean(p).replace(/[.;]+$/, '');
-      if (v.length >= minLen && v.length <= 60 && !items.includes(v)) items.push(v);
+      if (v.length >= minLen && v.length <= 60 && !items.some((x) => x.toLowerCase() === v.toLowerCase())) items.push(v);
       if (items.length >= max) return items;
     }
   }
@@ -1095,6 +1336,173 @@ export function parseConfidence({ fields, chars }) {
   return Math.round((identity * 40) + (substance * 40) + (text * 20));
 }
 
+/* ------------------------------------------------------------------ *
+ * PROJECTS: a title with its details, never a list of lines (the "12 projects" bug)
+ * ------------------------------------------------------------------ */
+
+/*
+ * WHAT WAS WRONG. Projects were read with findList(), the reader built for SKILLS: one item per
+ * line, split again at every comma, up to twelve. A resume with two projects, each with a few bullet
+ * points ("Built the login module using Spring Security", "Wrote 40 unit tests"), came back with
+ * twelve - every bullet, and every comma-separated technology, was a project of its own. The profile,
+ * the recruiter's page and the registration summary all showed "12 projects".
+ *
+ * A project is now a TITLE with its DETAILS attached:
+ *   - a bullet that reads like a name ("Student Management System") is a title;
+ *   - a bullet that reads like a sentence ("Developed ...", more than a few words, or ending in a full
+ *     stop) is a detail of the project above it;
+ *   - lines under a plain title line, and lines indented further than their neighbours, are details;
+ *   - "Technologies: ...", "Role: ...", "Duration: ..." are details, never projects;
+ *   - "Name - what it did" on one line is one project;
+ *   - the same title twice is one project.
+ * Nothing is added to reach a count.
+ */
+const BULLET_RE = /^[\s•●▪‣⁃◦*\-–—>]+/;
+const DETAIL_LABEL = /^(?:tech(?:nolog(?:y|ies))?(?:\s*(?:stack|used))?|tools?(?:\s*used)?|role|duration|team(?:\s*size)?|description|responsibilit(?:y|ies)|environment|stack|links?|github|url|domain|client|period)\s*[:\-–]/i;
+const ACTION_START = /^(?:developed|built|designed|implemented|created|used|using|worked|managed|led|handled|wrote|written|integrated|deployed|improved|reduced|increased|achieved|responsible|collaborated|performed|analy[sz]ed|tested|maintained|configured|automated|optimi[sz]ed|conducted|coordinated|prepared|supported|enabled|ensured|designed|engineered|utili[sz]ed|involved|participated|contributed|explored|studied|applied)\b/i;
+
+function findProjects(section, max = 12) {
+  if (!section) return [];
+  const rows = String(section).split('\n').map((raw) => {
+    const indent = (/^[ \t]*/.exec(raw) || [''])[0].replace(/\t/g, '    ').length;
+    return { indent, bullet: /^\s*[•●▪‣⁃◦*\-–—>]\s*\S/.test(raw), text: clean(raw.replace(BULLET_RE, '')) };
+  }).filter((r) => r.text && !END_OF_RESUME.test(r.text) && !NOT_A_SKILL.test(r.text));
+  if (!rows.length) return [];
+
+  const words = (t) => t.split(/\s+/).filter(Boolean).length;
+  const titleLike = (t) => words(t) <= 10 && !/[.;]$/.test(t) && !ACTION_START.test(t) && !DETAIL_LABEL.test(t);
+  const minIndent = Math.min(...rows.map((r) => r.indent));
+  const hasPlainTitles = rows.some((r) => !r.bullet && titleLike(r.text) && r.indent <= minIndent + 1);
+
+  const projects = [];
+  let cur = null;
+  const open = (name, desc) => {
+    const key = name.toLowerCase();
+    const dup = projects.find((p) => p.name.toLowerCase() === key);
+    if (dup) { cur = dup; if (desc) dup.desc.push(desc); return; }
+    if (projects.length >= max) { cur = null; return; }
+    cur = { name, desc: desc ? [desc] : [] };
+    projects.push(cur);
+  };
+
+  for (const r of rows) {
+    const t = r.text;
+    /* "Name - what it did", one line */
+    const one = /^(.{3,80}?)\s+[-–—:|]\s+(.{6,})$/.exec(t);
+    const named = one && words(one[1]) <= 9 && !DETAIL_LABEL.test(t) && !ACTION_START.test(one[1]) ? one : null;
+    const deeper = cur && r.indent >= minIndent + 2 && r.bullet && !named;
+
+    if (DETAIL_LABEL.test(t) || deeper) { if (cur) cur.desc.push(t); continue; }
+    if (named && (r.bullet || r.indent <= minIndent + 1)) { open(clean(named[1]), clean(named[2])); continue; }
+
+    if (hasPlainTitles) {
+      /* titles are the plain lines; bullets and sentences belong to the project above */
+      if (!r.bullet && r.indent <= minIndent + 1 && titleLike(t)) open(t);
+      else if (cur) cur.desc.push(t);
+      else if (titleLike(t)) open(t);
+    } else if (titleLike(t) && (!cur || !r.bullet || cur.desc.length === 0 || words(t) <= 6)) {
+      open(t);                                    // a list of bullets that are names
+    } else if (cur) {
+      cur.desc.push(t);
+    }
+  }
+  return projects.map((p) => {
+    const d = clean(p.desc.join(' ')).slice(0, 320);
+    return d ? `${p.name} - ${d}` : p.name;
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * HIGHEST EDUCATION, for the registration form
+ * ------------------------------------------------------------------ */
+const EDU_RANK = { Doctorate: 6, 'Post Graduation': 5, Graduation: 4, Diploma: 3, '12th': 2, '10th': 1 };
+/** The values the registration dropdown offers, for each level the parser reads. */
+export const EDU_FORM_LABEL = {
+  Doctorate: 'PhD', 'Post Graduation': "Master's Degree", Graduation: "Bachelor's Degree",
+  Diploma: 'Diploma', '12th': 'Intermediate', '10th': '10th',
+};
+export const EDU_FORM_VALUES = ['10th', 'Intermediate', 'Diploma', "Bachelor's Degree", "Master's Degree", 'PhD', 'Other'];
+
+/**
+ * The highest qualification the DOCUMENT supports, or null. Rank, not order of appearance: a resume that
+ * lists SSC first and B.Tech last still reports a bachelor's degree. Nothing is invented - no record that
+ * names a recognisable level means no answer.
+ */
+export function highestEducation(records, qualification) {
+  let best = null;
+  for (const r of records || []) {
+    const rank = EDU_RANK[r && r.level];
+    if (rank && (!best || rank > best.rank)) best = { rank, level: r.level };
+  }
+  if (!best && qualification) {
+    const lv = levelOf(String(qualification));
+    if (lv && EDU_RANK[lv.level]) best = { rank: EDU_RANK[lv.level], level: lv.level };
+  }
+  return best ? EDU_FORM_LABEL[best.level] : null;
+}
+
+/* ------------------------------------------------------------------ *
+ * THE MOST RECENT EMPLOYER, by its dates
+ * ------------------------------------------------------------------ */
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+/** When a period ends, as a sortable number; Infinity for "Present"; null when it says nothing usable. */
+function periodEnd(period) {
+  const p = String(period || '').toLowerCase();
+  if (!p) return null;
+  if (/\b(present|current|till\s*date|to\s*date|ongoing|now)\b/.test(p)) return Infinity;
+  const parts = p.split(/\s*(?:-|–|—|\bto\b)\s*/);
+  const last = parts[parts.length - 1] || '';
+  const y = /\b(19[7-9]\d|20[0-4]\d)\b/.exec(last);
+  if (y) {
+    const m = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/.exec(last);
+    return Number(y[1]) * 12 + (m ? MONTHS[m[1]] : 12);
+  }
+  /* "2019 - 21" and "Jan 2015-16": the end year is the short number */
+  const short = /\b(\d{2})\b\s*$/.exec(last);
+  const start = /\b(19[7-9]\d|20[0-4]\d)\b/.exec(p);
+  if (short && start) {
+    const yy = Number(String(start[1]).slice(0, 2) + short[1]);
+    return (yy < Number(start[1]) ? yy + 100 : yy) * 12 + 12;
+  }
+  return null;
+}
+/**
+ * The entry the dates say is the latest. { row, certain }. With one entry, or dates on every entry,
+ * the answer is certain; with several entries and no usable dates the first is returned as a
+ * best guess and `certain` is false, so the registration can ask the candidate to check it.
+ */
+export function recentEmployment(rows) {
+  if (!rows || !rows.length) return null;
+  if (rows.length === 1) return { row: rows[0], certain: true };
+  const ends = rows.map((r) => periodEnd(r.period));
+  const dated = ends.filter((e) => e !== null);
+  if (dated.length === rows.length) {
+    let bi = 0;
+    ends.forEach((e, i) => { if (e > ends[bi]) bi = i; });
+    const ties = ends.filter((e) => e === ends[bi]).length > 1;
+    return { row: rows[bi], certain: !ties };
+  }
+  if (ends.includes(Infinity)) return { row: rows[ends.indexOf(Infinity)], certain: ends.filter((e) => e === Infinity).length === 1 };
+  return { row: rows[0], certain: false };
+}
+
+/* ------------------------------------------------------------------ *
+ * WHICH EMAIL / PHONE IS THE CANDIDATE'S
+ * ------------------------------------------------------------------ */
+/**
+ * The address (or number) in the heading block - the first lines, where a candidate puts their own
+ * contact details. When there is more than one distinct one and nothing in the heading settles it, the
+ * answer is null: a referee's address taken as the candidate's would become their sign-in.
+ */
+function contactIn(text, all) {
+  const distinct = all.filter((v, i) => all.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i);
+  if (distinct.length <= 1) return { value: distinct[0] || null, ambiguous: false };
+  const head = String(text).split('\n').slice(0, 14).join('\n').toLowerCase();
+  const inHead = distinct.filter((v) => head.includes(v.toLowerCase()));
+  if (inHead.length === 1) return { value: inHead[0], ambiguous: false };
+  return { value: null, ambiguous: true };
+}
+
 export function extractFields(text) {
   const t = String(text || '');
   if (!t.trim()) return { fields: {}, found: 0 };
@@ -1103,13 +1511,29 @@ export function extractFields(text) {
   // References contain other people's names and numbers.
   const personal = t.replace(sections.references || '\x00', '');
 
-  const email = findEmail(personal);
+  const notes = {};
+  const email = findEmail(personal, notes);
   /* Read once: the name and, when there is none, the guess. */
   const nameRead = nameFrom(personal, email);
-  const phones = findPhones(personal);
+  /* 0117: digits inside an email address ("rahul.9876543210@...") are not
+     a phone number. */
+  const phones = (() => {
+    const all = findPhones(personal.replace(/[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}/gi, ' '));
+    if (all.length <= 1) return all;
+    /* several numbers: the ones in the heading block are the candidate's own (home, mobile); numbers further down
+       are referees, employers or family. None in the heading and several below: left for the candidate. */
+    const head = String(personal).split('\n').slice(0, 14).join('\n').replace(/\D/g, '');
+    const inHead = all.filter((n) => head.includes(n));
+    if (inHead.length) return inHead;
+    notes.phoneAmbiguous = true;
+    return [];
+  })();
   const links = findLinks(t);
 
   const employment = findEmployment(sections);
+  /* the entry the DATES say is the latest, not whichever happens to be written first */
+  const recent = recentEmployment(employment);
+  if (recent && !recent.certain) notes.recentEmploymentUncertain = true;
 
   /*
    * A FRESHER HAS NO EMPLOYER.
@@ -1130,7 +1554,7 @@ export function extractFields(text) {
 
   const skills = findList(sections.skills, { max: 40 });
   const certifications = findList(sections.certifications, { max: 15, minLen: 4 });
-  const projects = findList(sections.projects, { max: 12, minLen: 4 });
+  const projects = findProjects(sections.projects, 12);
   /* One item per LINE, not per comma: "Winner, Smart India Hackathon
      2022" is one achievement, and "Data Science Intern, Acme Analytics"
      is one internship. */
@@ -1138,6 +1562,8 @@ export function extractFields(text) {
     .map((l) => l.replace(/^[\s\u2022\u25cf\u25aa\u2023\u2043*\-–—>]+/, '').replace(/^\d+[.)]\s+/, '').trim())
     .filter((l) => l.length >= 4 && l.length <= 300)
     .slice(0, max);
+  /* 0117: a project is usually one line - "Name - what it did" - and longer
+     than a skill. When the list reader keeps none, the lines are the list. */
   const internships = lineItems(sections.internships, 10);
   const achievements = lineItems(sections.achievements, 12);
   const languages = findList(sections.languages, { max: 10, minLen: 3 });
@@ -1167,12 +1593,12 @@ export function extractFields(text) {
     /* Every branch goes through plausibleValue: a labelled line is only
        believed when what follows the label is actually a value, not the
        next heading of a flattened two-column table. */
-    title: plausibleValue(firstSegment(employment[0]?.title), { maxWords: 9 })
+    title: plausibleValue(firstSegment(recent && recent.row.title), { maxWords: 9 })
       || plausibleValue(firstSegment(firstMatch(t,
           LABELLED('(?:^|\\n)[ \\t]*(?:designation|current\\s*designation|job\\s*title)',
                    '[^\\n]{0,50}'))), { maxWords: 9 })
       || findTitle(t, sections, nameRead.name),
-    currentCompany: plausibleValue(employment[0]?.company, { maxWords: 6 })
+    currentCompany: plausibleValue(recent && recent.row.company, { maxWords: 6 })
       || (hasWorked
         ? plausibleValue(firstMatch(t,
             LABELLED('(?:^|\\n)[ \\t]*(?:current\\s*(?:company|employer)|company\\s*name)',
@@ -1187,9 +1613,13 @@ export function extractFields(text) {
       || plausibleValue(scanForHealthOrg(sections.experience, t), { maxWords: 7 })
       || plausibleValue(scanForHealthOrg(t, t, { needEvidence: true }), { maxWords: 7 })
       || (hasWorked ? findCurrentCompany(t, employment, sections.experience) : ''),
-    previousCompanies: employment.slice(1).map((e) => e.company),
+    previousCompanies: employment.filter((e) => !recent || e !== recent.row).map((e) => e.company),
     employmentHistory: employment,
-    expYears: findExperienceYears(t),
+    /* from the jobs' dates, all of them, when they can be read; the stated figure otherwise */
+    expYears: (() => {
+      const months = totalExperienceMonths(employment);
+      return months != null ? Math.round((months / 12) * 10) / 10 : findExperienceYears(t);
+    })(),
     relevantExpYears: (() => {
       const v = firstMatch(t, LABELLED('relevant\\s*experience', '[^\\n]{0,40}'));
       if (!v) return null;
@@ -1201,6 +1631,8 @@ export function extractFields(text) {
     expectedSalary: findSalary(t, 'expected'),
     qualification: findQualification(t, sections),
     education: sections.education ? clean(sections.education).slice(0, 600) : null,
+    educationRecords: findEducationRecords(sections.education),
+    highestEducation: null,        // filled below, from the records
     summary: sections.summary ? clean(sections.summary).slice(0, 1200) : null,
     skills,
     certifications,
@@ -1214,6 +1646,8 @@ export function extractFields(text) {
     achievements,
   };
 
+  raw.highestEducation = highestEducation(raw.educationRecords, raw.qualification);
+
   // Drop everything that was not found. An absent key is the signal the
   // form uses to leave a field alone.
   const fields = {};
@@ -1223,5 +1657,5 @@ export function extractFields(text) {
     if (typeof v === 'string' && !v.trim()) continue;
     fields[k] = v;
   }
-  return { fields, found: Object.keys(fields).length };
+  return { fields, found: Object.keys(fields).length, notes };
 }

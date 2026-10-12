@@ -29,7 +29,9 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
-const { tenuresOf, positionOfEmployee, today } = require('../utils/positions');
+const { tenuresOf, positionOfEmployee, today, hasLeft } = require('../utils/positions');
+// A seat is freed when its holder leaves; a holder on notice frees it after the last working day.
+const seatRelease = require('../utils/seatRelease');
 const { employeeWhere, scopeOf, hrmsGlobal } = require('../utils/scope');
 const { descendants } = require('../utils/positionScope');
 
@@ -42,6 +44,7 @@ function dayBefore(iso) {
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(seatRelease.actorScope);
 
 // Seats are part of how the company is set up, so they are held to the same
 // permission as the rest of the employee master rather than a new one.
@@ -78,6 +81,19 @@ async function structureFields(body, existing = null) {
   return { data };
 }
 
+// The last working day of every open holder who is on notice: Map(employeeId -> YYYY-MM-DD | null).
+async function noticeEndsOf(assignments) {
+  const out = new Map();
+  for (const a of assignments) {
+    if (!a.toDate && a.employee && seatRelease.isNotice(a.employee.employmentStatus) && !out.has(a.employeeId)) {
+      // eslint-disable-next-line no-await-in-loop
+      const l = await seatRelease.lastWorkingDayOf(a.employeeId);
+      out.set(a.employeeId, l ? l.date : null);
+    }
+  }
+  return out;
+}
+
 // --- the list --------------------------------------------------------------
 router.get('/', VIEW, async (req, res, next) => {
   try {
@@ -86,6 +102,7 @@ router.get('/', VIEW, async (req, res, next) => {
     if (req.query.active === 'true') where.active = true;
     if (req.query.active === 'false') where.active = false;
 
+    await seatRelease.ensureFresh(); // anyone who has left no longer holds a seat
     const positions = await prisma.position.findMany({ where, orderBy: [{ department: 'asc' }, { code: 'asc' }] });
 
     // Current holder and tenure count for each, in two queries rather than
@@ -94,7 +111,7 @@ router.get('/', VIEW, async (req, res, next) => {
     const assignments = ids.length
       ? await prisma.positionAssignment.findMany({
         where: { positionId: { in: ids } },
-        include: { employee: { select: { id: true, name: true, employeeCode: true } } },
+        include: { employee: { select: { id: true, name: true, employeeCode: true, employmentStatus: true } } },
         orderBy: { fromDate: 'desc' },
       })
       : [];
@@ -103,6 +120,7 @@ router.get('/', VIEW, async (req, res, next) => {
       if (!byPosition.has(a.positionId)) byPosition.set(a.positionId, []);
       byPosition.get(a.positionId).push(a);
     });
+    const noticeEnds = await noticeEndsOf(assignments);
 
     // How much work carries each seat's code. Counted on the SNAPSHOT, so a
     // retired seat still shows what it did.
@@ -119,13 +137,17 @@ router.get('/', VIEW, async (req, res, next) => {
 
     res.json(positions.map((p) => {
       const list = byPosition.get(p.id) || [];
-      const current = list.find((a) => !a.toDate) || null;
+      // An open tenure of somebody who has left is not a holder (belt and braces: it is ended on exit).
+      const current = list.find((a) => !a.toDate && !(a.employee && hasLeft(a.employee.employmentStatus))) || null;
+      const onNotice = !!(current && current.employee && seatRelease.isNotice(current.employee.employmentStatus));
       return {
         ...p,
         holder: current && current.employee
-          ? { id: current.employee.id, name: current.employee.name, employeeCode: current.employee.employeeCode, since: current.fromDate }
+          ? { id: current.employee.id, name: current.employee.name, employeeCode: current.employee.employeeCode, since: current.fromDate, status: current.employee.employmentStatus }
           : null,
         vacant: !current,
+        onNotice,
+        freesOn: onNotice ? noticeEnds.get(current.employeeId) || null : null,
         tenureCount: list.length,
         work: {
           requirements: reqN[p.code] || 0,
@@ -277,6 +299,7 @@ router.get('/history', SEAT_HISTORY_VIEW, async (req, res, next) => {
           applications: appIds.size,
           joined: joined.size,
           note: a.note || null,
+          endedBecause: a.toDate && /^(Exited|Notice ended)/.test(a.note || '') ? 'Exited' : null,
         };
       });
       return { id: p.id, code: p.code, name: p.name, department: p.department, tenures };
@@ -299,6 +322,7 @@ router.get('/history', SEAT_HISTORY_VIEW, async (req, res, next) => {
 // ---------------------------------------------------------------------------
 router.get('/structure', VIEW, async (req, res, next) => {
   try {
+    await seatRelease.ensureFresh(); // anyone who has left no longer holds a seat
     const positions = await prisma.position.findMany({ orderBy: [{ department: 'asc' }, { code: 'asc' }] });
     const ids = positions.map((p) => p.id);
     const codes = positions.map((p) => p.code);
@@ -321,6 +345,7 @@ router.get('/structure', VIEW, async (req, res, next) => {
       if (!byPosition.has(a.positionId)) byPosition.set(a.positionId, []);
       byPosition.get(a.positionId).push(a);
     });
+    const noticeEnds = await noticeEndsOf(assignments);
     const person = (a) => ({
       assignmentId: a.id,
       employeeId: a.employee ? a.employee.id : a.employeeId,
@@ -331,10 +356,13 @@ router.get('/structure', VIEW, async (req, res, next) => {
       from: a.fromDate,
       to: a.toDate,
       note: a.note || null,
+      // Why the tenure ended: 'Exited' when the person left (their status ended the seat).
+      endedBecause: a.toDate && /^(Exited|Notice ended)/.test(a.note || '') ? 'Exited' : null,
     });
     const node = (p) => {
       const list = byPosition.get(p.id) || [];
-      const current = list.find((a) => !a.toDate) || null;
+      const current = list.find((a) => !a.toDate && !(a.employee && hasLeft(a.employee.employmentStatus))) || null;
+      const onNotice = !!(current && current.employee && seatRelease.isNotice(current.employee.employmentStatus));
       return {
         id: p.id,
         code: p.code,
@@ -347,7 +375,9 @@ router.get('/structure', VIEW, async (req, res, next) => {
         reportsToId: p.reportsToId,
         holder: current ? person(current) : null,
         vacant: !current,
-        previous: list.filter((a) => a.toDate).map(person),
+        onNotice,
+        freesOn: onNotice ? noticeEnds.get(current.employeeId) || null : null,
+        previous: list.filter((a) => a !== current).map(person),
         work: { requirements: reqN[p.code] || 0, stageMoves: evN[p.code] || 0, followUps: fuN[p.code] || 0 },
       };
     };
@@ -464,6 +494,11 @@ router.post('/:id/assign', MANAGE, async (req, res, next) => {
     if (!employeeId) return res.status(400).json({ error: 'Choose the employee taking this position.' });
     const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    // Somebody who has left cannot take a seat (a returning employee is set back to Active first).
+    if (hasLeft(employee.employmentStatus)) {
+      return res.status(409).json({ error: `${employee.name} has left the company (${employee.employmentStatus}). If they are coming back, set their status to Active first, then give them the seat.` });
+    }
+    await seatRelease.ensureFresh(); // a holder who has left no longer holds it
 
     const fromDate = String(req.body.fromDate || today()).slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) return res.status(400).json({ error: 'Pick the date the new person takes the position.' });
@@ -479,8 +514,16 @@ router.post('/:id/assign', MANAGE, async (req, res, next) => {
     // recorded from the handover date on carries the new holder.
     const current = await prisma.positionAssignment.findFirst({
       where: { positionId: position.id, toDate: null },
-      include: { employee: { select: { name: true } } },
+      include: { employee: { select: { name: true, employmentStatus: true } } },
     });
+    // Somebody on notice keeps the seat until their last working day.
+    if (current && current.employeeId !== employeeId && current.employee && seatRelease.isNotice(current.employee.employmentStatus)) {
+      const l = await seatRelease.lastWorkingDayOf(current.employeeId);
+      return res.status(409).json({
+        error: `${current.employee.name} is on notice${l ? ` until ${l.date}` : ' and has no last working day yet'}. ${position.code} is free the day after their last working day${l ? '' : ' - set that date on their record first'}.`,
+        onNotice: true, freesOn: l ? l.date : null,
+      });
+    }
     if (current && current.employeeId === employeeId) {
       return res.status(409).json({ error: `${employee.name} already holds ${position.code}.` });
     }
@@ -614,6 +657,7 @@ router.get('/employee/:employeeId', VIEW, async (req, res, next) => {
         toDate: a.toDate,
         current: !a.toDate,
         note: a.note,
+        endedBecause: a.toDate && /^(Exited|Notice ended)/.test(a.note || '') ? 'Exited' : null,
       })),
       // Work across every seat they have held. NOT the same as "work by this
       // person" — a seat's totals include whoever else sat in it — so the

@@ -15,6 +15,7 @@
 // ---------------------------------------------------------------------------
 import { useMemo } from 'react';
 import './agreementLink.css';
+import { DocLogoBar, PageFootNote } from './AgreementBrand.jsx';
 
 const esc = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -28,7 +29,7 @@ function Mark({ text, re, set }) {
 //   x   { company, clientSide, signedAt, teamlinkName, teamlinkTitle }
 //   img (kind) => a React node showing that stored image
 export function signersFrom(x, img) {
-  const d = (v) => (v ? new Date(v).toLocaleDateString('en-GB').split('/').join('-') : '');
+  const d = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }).split('/').join('-') : ''); // India time, like the PDF
   const tl = (x && x.company) || {};
   const cl = (x && x.clientSide) || {};
   return {
@@ -42,13 +43,16 @@ export function signersFrom(x, img) {
       signNode: cl.hasSignature ? img('client-sign') : (cl.esign ? <span className="agrd-esign">Digitally signed with Aadhaar eSign (eMudhra)</span> : null),
       stampNode: cl.hasStamp ? img('client-stamp') : null,
       waiting: cl.hasSignature || cl.esign ? null : 'Waiting for client signature', waitingStamp: 'Waiting for client stamp',
+      esign: !!cl.esign && !cl.hasSignature,
     },
   };
 }
 
 export const isVendorText = (t) => String(t || '').startsWith('Vendor Services Agreement');
 
-export default function AgreementDocView({ text, words = [], signer = null, teamlink = null, className = '' }) {
+//   agreementNo   printed beside the TeamLink logo at the top (like every PDF page)
+//   logo          show the logo bar + the "every PDF page has…" strip (default on)
+export default function AgreementDocView({ text, words = [], signer = null, teamlink = null, className = '', agreementNo = '', logo = true }) {
   const { re, set } = useMemo(() => {
     const list = words.filter((w) => w && String(w).trim().length > 1);
     return {
@@ -59,7 +63,13 @@ export default function AgreementDocView({ text, words = [], signer = null, team
   const M = (t) => <Mark text={t} re={re} set={set} />;
 
   if (!isVendorText(text)) {
-    return <div className={`agrd agrd-plain ${className}`}>{text ? M(text) : 'No agreement document yet.'}</div>;
+    return (
+      <div className={`agrd ${className}`}>
+        {logo && text ? <DocLogoBar agreementNo={agreementNo} /> : null}
+        <div className="agrd-plain">{text ? M(text) : 'No agreement document yet.'}</div>
+        {logo && text ? <PageFootNote agreementNo={agreementNo} teamlink={teamlink} signer={signer} /> : null}
+      </div>
+    );
   }
   const lines = String(text).split('\n');
   const out = [];
@@ -144,5 +154,11 @@ export default function AgreementDocView({ text, words = [], signer = null, team
     }
     i += 1;
   }
-  return <div className={`agrd ${className}`}>{out}</div>;
+  return (
+    <div className={`agrd ${className}`}>
+      {logo ? <DocLogoBar agreementNo={agreementNo} /> : null}
+      {out}
+      {logo ? <PageFootNote agreementNo={agreementNo} teamlink={teamlink} signer={signer} /> : null}
+    </div>
+  );
 }

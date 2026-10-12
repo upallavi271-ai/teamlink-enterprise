@@ -75,6 +75,25 @@ async function ensureAccount({ code, name, type, aliases = null, description = n
   }
 }
 
+// EMPLOYEE-WISE SALARY (2026-10-09): true once the migration
+// 20261009210000_employee_wise_salary_vouchers is applied AND the Prisma client
+// is regenerated. Until then postJournal ignores the employee fields and the
+// payroll posting keeps booking its older one-voucher-with-totals journal.
+let ewCache = { ok: false, at: 0 };
+async function employeeWiseReady() {
+  if (ewCache.ok) return true;
+  if (Date.now() - ewCache.at < 15000) return false;
+  ewCache.at = Date.now();
+  try {
+    if (!prisma.payrollVoucherEmployee || !prisma.payrollVoucherPayment) return false;
+    await prisma.payrollVoucherEmployee.count({ where: { id: '__probe__' } });
+    await prisma.journalLine.findFirst({ select: { employeeId: true, department: true, payrollRunId: true } });
+    await prisma.journalEntry.findFirst({ select: { voucherType: true, payrollRunId: true } });
+    ewCache.ok = true;
+    return true;
+  } catch { return false; }
+}
+
 class LedgerError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
@@ -135,16 +154,24 @@ function normaliseMonth(body) {
 //   { employee_id, month, year, debit: [{account, amount}], credit: [{account, amount}] }
 // plus the envelope: idempotency_key (or the Idempotency-Key header),
 // payroll_run_id / reference_type / reference_id, date, narration.
-async function postJournal(payload, { idempotencyKey: headerKey = null, actor = null } = {}) {
+async function postJournal(payload, { idempotencyKey: headerKey = null, actor = null, employeeRows = null, afterBook = null } = {}) {
   const body = payload || {};
   const key = String(body.idempotency_key || headerKey || '').trim();
   if (!key) throw new LedgerError(400, 'idempotency_key is required');
   if (key.length > 200) throw new LedgerError(400, 'idempotency_key is too long');
   const month = normaliseMonth(body);
   if (!month) throw new LedgerError(400, 'month (1-12) and year are required');
+  // Lines come as debit[] + credit[] (the SPEC B shape), or as one ordered
+  // lines[] ({ side: 'debit'|'credit', ... }) - the employee-wise payroll
+  // voucher uses the latter so each employee's lines stay together.
+  const ordered = Array.isArray(body.lines) ? body.lines : null;
   const debit = Array.isArray(body.debit) ? body.debit : null;
   const credit = Array.isArray(body.credit) ? body.credit : null;
-  if (!debit || !credit || !debit.length || !credit.length) throw new LedgerError(400, 'debit and credit lines are required');
+  if (ordered) {
+    if (!ordered.length) throw new LedgerError(400, 'lines are required');
+  } else if (!debit || !credit || !debit.length || !credit.length) throw new LedgerError(400, 'debit and credit lines are required');
+  const wantsEw = !!((employeeRows && employeeRows.length) || ordered || afterBook || body.voucher_type);
+  const ew = wantsEw ? await employeeWiseReady() : false;
 
   const index = await accountIndex();
   const lines = [];
@@ -157,7 +184,7 @@ async function postJournal(payload, { idempotencyKey: headerKey = null, actor = 
       if (!acct) throw new LedgerError(422, `Unknown account "${l.account || l.code}"`);
       if (!acct.isActive) throw new LedgerError(422, `Account "${acct.name}" is inactive`);
       if (paise(amount) === 0) return; // a zero line (e.g. TDS 0) is not booked
-      lines.push({
+      const row = {
         accountId: acct.id, accountCode: acct.code, accountName: acct.name,
         debit: side === 'debit' ? paise(amount) / 100 : 0,
         credit: side === 'credit' ? paise(amount) / 100 : 0,
@@ -165,15 +192,43 @@ async function postJournal(payload, { idempotencyKey: headerKey = null, actor = 
         // A line may name its own record (e.g. one asset in a depreciation run).
         lineRefType: l.reference_type ? String(l.reference_type).slice(0, 60) : null,
         lineRefId: l.reference_id ? String(l.reference_id).slice(0, 100) : null,
-      });
+      };
+      if (ew && l.employee_id) {
+        row.employeeId = String(l.employee_id).slice(0, 100);
+        row.employeeName = l.employee_name ? String(l.employee_name).slice(0, 200) : null;
+        row.department = l.department ? String(l.department).slice(0, 100) : null;
+        row.payrollRunId = body.payroll_run_id ? String(body.payroll_run_id).slice(0, 100) : null;
+      }
+      lines.push(row);
     });
   };
-  take('debit', debit);
-  take('credit', credit);
+  if (ordered) {
+    ordered.forEach((l, i) => {
+      if (l.side !== 'debit' && l.side !== 'credit') throw new LedgerError(422, `line ${i + 1}: side must be debit or credit`);
+      take(l.side, [l]);
+    });
+  } else {
+    take('debit', debit);
+    take('credit', credit);
+  }
   const dr = lines.reduce((n, l) => n + paise(l.debit), 0);
   const cr = lines.reduce((n, l) => n + paise(l.credit), 0);
   if (dr === 0) throw new LedgerError(422, 'The entry has no amount');
   if (dr !== cr) throw new LedgerError(422, `Unbalanced entry: debits ${(dr / 100).toFixed(2)} vs credits ${(cr / 100).toFixed(2)}`);
+  // Each employee's own group of lines must balance as well (the voucher can
+  // balance by luck while one employee's lines do not).
+  if (ew) {
+    const per = new Map();
+    lines.filter((l) => l.employeeId).forEach((l) => {
+      const g = per.get(l.employeeId) || { name: l.employeeName, d: 0, c: 0 };
+      g.d += paise(l.debit); g.c += paise(l.credit); per.set(l.employeeId, g);
+    });
+    const bad = [...per.values()].filter((g) => g.d !== g.c);
+    if (bad.length) {
+      const list = bad.slice(0, 3).map((g) => `${g.name || 'an employee'} (Dr ${(g.d / 100).toFixed(2)} vs Cr ${(g.c / 100).toFixed(2)})`).join(', ');
+      throw new LedgerError(422, `Unbalanced for ${list}${bad.length > 3 ? ` and ${bad.length - 3} more` : ''}`);
+    }
+  }
 
   const referenceType = body.reference_type || (body.payroll_run_id ? 'PAYROLL_RUN' : null);
   const referenceId = body.reference_id || body.payroll_run_id || null;
@@ -187,26 +242,56 @@ async function postJournal(payload, { idempotencyKey: headerKey = null, actor = 
   }
 
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : new Date().toISOString().slice(0, 10);
+  // The payload column is a record of what was received. A voucher with
+  // hundreds of employee lines would be cut mid-JSON at 20000 characters, so
+  // the lines are left out of it once they do not fit (they are the lines).
+  let payloadJson = JSON.stringify(body);
+  if (payloadJson.length > 20000) {
+    const {
+      debit: _d, credit: _c, lines: _l, employee_rows: _e, ...envelope
+    } = body;
+    payloadJson = JSON.stringify({ ...envelope, lines_omitted: lines.length }).slice(0, 20000);
+  }
+  const data = {
+    date, month,
+    narration: body.narration ? String(body.narration).slice(0, 500) : null,
+    source: body.source || (referenceType && referenceType.startsWith('PAYROLL') ? 'HRMS_PAYROLL' : 'MANUAL'),
+    referenceType, referenceId, idempotencyKey: key,
+    employeeId: body.employee_id || null, employeeName: body.employee_name || null,
+    totalDebit: dr / 100, totalCredit: cr / 100,
+    payload: payloadJson,
+    createdBy: actor && actor.id ? actor.id : null,
+    createdByName: actor ? actor.name : null,
+  };
+  if (ew) {
+    if (body.voucher_type) data.voucherType = String(body.voucher_type).slice(0, 40);
+    if (body.payroll_run_id) data.payrollRunId = String(body.payroll_run_id).slice(0, 100);
+  }
+  const lineData = lines.map(({ lineRefType, lineRefId, ...l }, i) => ({
+    ...l, lineNo: i + 1, referenceType: lineRefType || referenceType, referenceId: lineRefId || referenceId,
+  }));
   try {
-    const entry = await prisma.journalEntry.create({
-      data: {
-        date, month,
-        narration: body.narration ? String(body.narration).slice(0, 500) : null,
-        source: body.source || (referenceType && referenceType.startsWith('PAYROLL') ? 'HRMS_PAYROLL' : 'MANUAL'),
-        referenceType, referenceId, idempotencyKey: key,
-        employeeId: body.employee_id || null, employeeName: body.employee_name || null,
-        totalDebit: dr / 100, totalCredit: cr / 100,
-        payload: JSON.stringify(body).slice(0, 20000),
-        createdBy: actor && actor.id ? actor.id : null,
-        createdByName: actor ? actor.name : null,
-        lines: {
-          create: lines.map(({ lineRefType, lineRefId, ...l }, i) => ({
-            ...l, lineNo: i + 1, referenceType: lineRefType || referenceType, referenceId: lineRefId || referenceId,
-          })),
-        },
-      },
-      include: { lines: true },
-    });
+    if (ew && (employeeRows || afterBook)) {
+      // ONE transaction: the voucher, its lines and the employee-wise rows.
+      const entry = await prisma.$transaction(async (tx) => {
+        const je = await tx.journalEntry.create({ data });
+        for (let i = 0; i < lineData.length; i += 500) {
+          // eslint-disable-next-line no-await-in-loop
+          await tx.journalLine.createMany({ data: lineData.slice(i, i + 500).map((l) => ({ ...l, journalEntryId: je.id })) });
+        }
+        if (employeeRows && employeeRows.length) {
+          for (let i = 0; i < employeeRows.length; i += 200) {
+            // eslint-disable-next-line no-await-in-loop
+            await tx.payrollVoucherEmployee.createMany({ data: employeeRows.slice(i, i + 200).map((r) => ({ ...r, journalEntryId: je.id })) });
+          }
+        }
+        if (afterBook) await afterBook(tx, je);
+        return je;
+      }, { timeout: 120000, maxWait: 30000 });
+      const full = await prisma.journalEntry.findUnique({ where: { id: entry.id }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
+      return { status: 201, replay: false, entry: full };
+    }
+    const entry = await prisma.journalEntry.create({ data: { ...data, lines: { create: lineData } }, include: { lines: true } });
     return { status: 201, replay: false, entry };
   } catch (err) {
     if (err && err.code === 'P2002') {
@@ -243,9 +328,14 @@ async function reverseJournal(entryId, { actor = null, narration = null, date = 
     idempotency_key: key,
     employee_id: orig.employeeId, employee_name: orig.employeeName,
     reverses: orig.id,
-    // Mirror the lines (each keeps its own record reference).
-    debit: orig.lines.filter((l) => l.credit > 0).map((l) => ({ account: l.accountCode, amount: l.credit, memo: l.memo, reference_type: l.referenceType, reference_id: l.referenceId })),
-    credit: orig.lines.filter((l) => l.debit > 0).map((l) => ({ account: l.accountCode, amount: l.debit, memo: l.memo, reference_type: l.referenceType, reference_id: l.referenceId })),
+    voucher_type: orig.voucherType ? `${orig.voucherType} reversal` : undefined,
+    payroll_run_id: orig.payrollRunId || undefined,
+    // Mirror the lines in the same order (each keeps its own record reference and employee).
+    lines: orig.lines.map((l) => ({
+      side: l.credit > 0 ? 'debit' : 'credit', account: l.accountCode, amount: l.credit > 0 ? l.credit : l.debit, memo: l.memo,
+      reference_type: l.referenceType, reference_id: l.referenceId,
+      employee_id: l.employeeId || undefined, employee_name: l.employeeName || undefined, department: l.department || undefined,
+    })),
   }, { actor });
 }
 
@@ -281,5 +371,5 @@ async function isClosedMonth(month) {
 
 module.exports = {
   CHART, LedgerError, ensureChart, ensureAccount, accountIndex, serviceToken, isServiceToken, postJournal, paise,
-  groupOf, debitNatured, reverseJournal, reversalOf, reversalKey, monthOfDate, monthEnd, closedUpTo, isClosedMonth, CLOSED_KEY,
+  groupOf, debitNatured, employeeWiseReady, reverseJournal, reversalOf, reversalKey, monthOfDate, monthEnd, closedUpTo, isClosedMonth, CLOSED_KEY,
 };

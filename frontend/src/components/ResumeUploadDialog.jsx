@@ -13,12 +13,14 @@
 import { useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
+import { PICK_SOURCES } from '../utils/candidateSource.js';
 
 export default function ResumeUploadDialog({ onClose, onDone }) {
   const [items, setItems] = useState([]); // { token, fileName, fields, error, duplicate, warning, edit:{}, skip }
   const [progress, setProgress] = useState(null);
   const [update, setUpdate] = useState(false);
   const [reqCode, setReqCode] = useState('');
+  const [source, setSource] = useState(''); // where these resumes came from (the clean source list); blank = Other
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [result, setResult] = useState(null);
@@ -60,6 +62,7 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
     try {
       const payload = {
         requirementCode: reqCode.trim() || undefined,
+        source: source || undefined,
         updateExisting: update,
         items: items.filter((it) => it.token).map((it) => ({
           token: it.token, skip: statusOf(it) !== 'valid', name: val(it, 'name'), email: val(it, 'email'), phone: val(it, 'phone'),
@@ -126,6 +129,12 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
           </label>
           <label className="field" style={{ margin: 0, minWidth: 200 }}><span>Add to requirement (code, optional)</span>
             <input value={reqCode} onChange={(e) => setReqCode(e.target.value)} placeholder="e.g. MED-0001" />
+          </label>
+          <label className="field" style={{ margin: 0, minWidth: 200 }}><span>Where did these resumes come from?</span>
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">Not sure (Other)</option>
+              {PICK_SOURCES.filter((s) => s !== 'Other').map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
           </label>
         </div>
         <label className="atsio-check" style={{ marginBottom: 8 }}>

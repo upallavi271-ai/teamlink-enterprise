@@ -310,6 +310,8 @@ export const SETUP_TABS = [
   { ...leaf('🔑', '/admin/vendor-logins', 'Vendor logins', null), when: (u) => !!u && !u.viewAs && (['SUPER_ADMIN', 'ADMIN'].includes(u.role) || can(u, null, 'administration', 'Vendor Logins', 'view') || can(u, null, 'administration', 'Users', 'edit')) },
   // B7 agency / freelancer partners: the master, their logins, the Partner emails switch — Super Admin / Admin, or an Accounts desk login (the server allows only Accounts approvers).
   { ...leaf('🤝', '/admin/partners', 'Partners', null), when: (u) => !!u && !u.viewAs && (['SUPER_ADMIN', 'ADMIN'].includes(u.role) || ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'].includes(u.accountsRole)) },
+  // Message templates (2026-10-09): the words of every Email / SMS / WhatsApp message, the channels' honest status, sent messages, limits. Admin, HR, TL edit; managers look (server-enforced).
+  { ...leaf('✉️', '/admin/message-templates', 'Message templates', null), when: (u) => !!u && !u.viewAs && [u.role, u.hrmsRole, u.atsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r)) },
   { ...leaf('💾', '/admin/system', 'Backups & safety', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.viewAs },
 ];
 export const SETUP_PATHS = SETUP_TABS.map((t) => t.to);

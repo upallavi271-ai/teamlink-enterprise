@@ -15,12 +15,13 @@ import MyAttendance, { downloadFrom } from './attendance/MyAttendance.jsx';
 // The Monthly Summary also carries the old "Reports (Monthly)" figures; the
 // Team Attendance tab is gone — the Biometric list is the day-by-day view.
 import { MonthlySummaryTab, PunchImageButton } from './attendance/TeamAttendance.jsx';
-import { DayKpis, RangeBar, RangeKpis, DateTotalsTable, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
+import { HalfLeaveChip, DayKpis, PersonDayTiles, RangeBar, RangeKpis, DateTotalsTable, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
 import { DayStatus } from './attendance/MyAttendance.jsx';
 import NotifySettings from './attendance/NotifySettings.jsx';
 import CheckinSettings from './attendance/CheckinSettings.jsx';
 import AlertSettings from './attendance/AlertSettings.jsx';
 import KpiReport from './attendance/KpiReport.jsx';
+import LateComing from './attendance/LatePermission.jsx'; // Late coming: tell why I was late + approvals (same chain as leave)
 import ExportMenu from '../components/ExportMenu.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../components/dataio/DataIoBar.jsx';
@@ -70,10 +71,15 @@ const TREND_RANGE_KEY = 'tl_range_attendance_trend';
 
 const KPI_NAME = {
   ...BUCKET_LABEL,
-  headcount: 'Everyone (headcount)', late: 'Late arrivals', checkedIn: 'Checked in', checkedOut: 'Checked out', missingCheckOut: 'Missing check-out', punched: 'People with punches',
+  headcount: 'Everyone (headcount)', late: 'Present - Late', earlyLogout: 'Present - Early logout', missingCheckIn: 'Present - Missing check-in', checkedIn: 'Checked in', checkedOut: 'Checked out', missingCheckOut: 'Present - Missing check-out', punched: 'People with punches',
   presentAny: 'Present on ≥ 1 day', presentAll: 'Present every working day', halfDayAny: 'Half day on ≥ 1 day', absentAny: 'Absent on ≥ 1 day',
   onLeaveAny: 'On leave on ≥ 1 day', noRecordAny: 'No device data on ≥ 1 day', lateAny: 'Late on ≥ 1 day',
 };
+// 'pd:present' (a person-day count of the period) reads like the count it came from.
+const kpiName = (k) => { const s = String(k || ''); const base = s.replace(/^pd:/, ''); return `${KPI_NAME[base] || base}${s.startsWith('pd:') ? ' (person-days)' : ''}`; };
+
+['halfDay', 'onLeave', 'absent'].forEach((t) => Object.entries({ late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' })
+  .forEach(([n, w]) => { KPI_NAME[`${t}:${n}`] = `${BUCKET_LABEL[t]} - ${w}`; }));
 
 function NoDataNotice({ data, to }) {
   if (!data || !data.latestDataDate || !(to > data.latestDataDate) || to > data.today) return null;
@@ -312,19 +318,20 @@ const bioFields = (seen, roles) => [
   { key: 'status', label: 'Status', allLabel: 'All day statuses', primary: true, options: seen.statuses || [] },
   { key: 'role', label: 'Role', options: roles },
   { key: 'hrStatus', label: 'Employee status', options: HR_STATUSES },
-  { key: 'method', label: 'Method', options: seen.methods || [] },
-  { key: 'source', label: 'Source', options: seen.sources || [] },
+  // ONE control: the check-in method (the old Method and Source filters said the same thing).
+  { key: 'method', label: 'Check-in method', allLabel: 'Any method', primary: true, options: seen.methods || [] },
 ];
 
 const REPORT_COLS = [
   ['employeeNo', 'Employee No'], ['employeeRef', 'Employee Ref No'], ['name', 'Employee Name'], ['department', 'Department'],
-  ['designation', 'Designation'], ['dateLabel', 'Date'], ['dayStatusCol', 'Day status'], ['firstCheckIn', 'First Check In'], ['lastCheckOut', 'Last Check Out'],
+  ['designation', 'Designation'], ['dateLabel', 'Date'], ['dayStatusCol', 'Day status'], ['methodText', 'Check-in method'], ['firstCheckIn', 'First Check In'], ['lastCheckOut', 'Last Check Out'],
   ['workLocation', 'Work Location'], ['totalTimeWorked', 'Total Time Worked'], ['totalBreak', 'Total Time In Break'], ['totalHours', 'Total Hours'],
 ];
 
-function BiometricTab() {
-  const [range, setRange] = useState({ from: today(), to: today() });
-  const [kpi, setKpi] = useState('');
+// `preset` = { from, to, kpi, q, n }: another tab (the Monthly Summary) opened this list for those dates / that count / that person.
+function BiometricTab({ preset = null, goSummary = null }) {
+  const [range, setRange] = useState(() => (preset ? { from: preset.from, to: preset.to } : { from: today(), to: today() }));
+  const [kpi, setKpi] = useState(() => (preset && preset.kpi) || '');
   const [everyone, setEveryone] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -332,6 +339,14 @@ function BiometricTab() {
   const roles = useRoles(true);
   const seen = useSeen(data, (d) => ({ departments: (d.rows || []).map((r) => r.department), ...(d.facets || {}) }));
   const lf = useListFilters([], bioFields(seen, roles), { server: true });
+  // opened from the Monthly Summary: take its dates, its count and (for a person's number) that person
+  const presetN = preset ? preset.n : 0;
+  useEffect(() => {
+    if (!preset) return;
+    setRange({ from: preset.from, to: preset.to });
+    setKpi(preset.kpi || '');
+    lf.setValue('q', preset.q || '');
+  }, [presetN]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const single = range.from === range.to;
   // A KPI card lists people who may have no check-in (Absent, On Leave…), so
@@ -349,7 +364,8 @@ function BiometricTab() {
 
   const isRange = !!data?.range;
   // In range mode the "≥ 1 day" cards pick PEOPLE; their day rows are listed.
-  const rangePeople = isRange && kpi ? new Set((data.summary?.rows || []).filter((p) => matchesKpi(p, kpi)).map((p) => p.employeeId)) : null;
+  // (a person-day tile 'pd:…' lists day rows, so it is not a people filter)
+  const rangePeople = isRange && kpi && !String(kpi).startsWith('pd:') ? new Set((data.summary?.rows || []).filter((p) => matchesKpi(p, kpi)).map((p) => p.employeeId)) : null;
   const rows = (data?.rows || []).filter((r) => (rangePeople ? rangePeople.has(r.employeeId) : matchesKpi(r, kpi)));
   const page = usePaged(rows, 100);
   const clearAll = () => { lf.clear(); setKpi(''); };
@@ -377,13 +393,14 @@ function BiometricTab() {
             <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={everyone} onChange={(e) => setEveryone(e.target.checked)} />
             Show people without a check-in
           </label>
-          {kpi && <button type="button" className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {KPI_NAME[kpi] || kpi}</button>}
+          {kpi && <button type="button" className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {kpiName(kpi)}</button>}
         </ListFilterBar>
         {error && <div className="notice red">{error}</div>}
         <NoDataNotice data={data} to={range.to} />
-        {data && !isRange && <DayKpis kpis={data.totals} date={data.date} headcount={data.headcount} active={kpi} onPick={setKpi} />}
+        {data && !isRange && <DayKpis kpis={data.totals} date={data.date} headcount={data.headcount} active={kpi} onPick={setKpi} lateAfter={data.lateAfter} />}
         {data && isRange && (
           <>
+            <PersonDayTiles tiles={data.summary?.tiles} equation={data.summary?.equation} from={data.from} to={data.to} active={kpi} onPick={setKpi} onOpenSummary={goSummary ? () => goSummary(data.from, data.to) : null} />
             <RangeKpis summary={data.summary} from={data.from} to={data.to} active={kpi} onPick={setKpi} />
             <div className="att-kpi-sep">Date-wise totals — click a date to open that day</div>
             <DateTotalsTable days={data.days} onPickDay={(d) => { setRange({ from: d, to: d }); setKpi(''); }} />
@@ -414,7 +431,8 @@ function BiometricTab() {
                 <td className="cell-muted">{r.department || ''}</td>
                 <td className="cell-muted">{r.designation || ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.dateLabel}</td>
-                <td>{r.status ? <DayStatus status={r.bucket === 'noRecord' ? 'No device data' : r.status} earlyLogout={r.earlyLogout} /> : ''}</td>
+                <td>{r.status ? <DayStatus status={r.bucket === 'noRecord' ? 'No device data' : r.status} earlyLogout={r.earlyLogout} /> : ''}{r.halfLeave ? <div><HalfLeaveChip state={r.halfLeave} half={r.halfLeaveHalf} by={r.halfLeaveBy} /></div> : null}</td>
+                <td className="cell-muted">{r.methodText || '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.firstCheckIn || ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.lastCheckOut || ''}</td>
                 <td className="cell-muted">{r.workLocation || ''}</td>
@@ -424,18 +442,18 @@ function BiometricTab() {
               </tr>
             ))}
             {data && rows.length === 0 && (
-              <tr><td colSpan="13">
+              <tr><td colSpan="14">
                 <ListEmpty lf={{ activeCount: lf.activeCount || kpi ? 1 : 0, clear: clearAll }} noun="rows" title="No check-ins in this period." />
               </td></tr>
             )}
-            {!data && !error && <tr><td colSpan="13" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+            {!data && !error && <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
           </tbody>
         </table>
       </ScrollTable>
       <div style={{ padding: '4px 18px 10px' }}>
         {rows.length > 0 && <Pager page={page} noun="rows" />}
         <div className="small-muted" style={{ fontSize: 12 }}>
-          {data && rows.length !== data.rows.length ? `${data.rows.length} row(s) before the card filter` : ''}{kpi ? ` · ${KPI_NAME[kpi] || kpi}` : ''}
+          {data && rows.length !== data.rows.length ? `${data.rows.length} row(s) before the card filter` : ''}{kpi ? ` · ${kpiName(kpi)}` : ''}
           {data && rows.length > page.size ? ' · the export has every matching row' : ''}
         </div>
       </div>
@@ -464,8 +482,7 @@ const punchFields = (seen, roles) => [
   { key: 'punchStatus', label: 'Punch status', allLabel: 'Checked In & Checked Out', primary: true, options: PUNCH_STATUS_CHOICES },
   { key: 'dayStatus', label: 'Day status', allLabel: 'All day statuses', primary: true, options: seen.dayStatuses || [] },
   { key: 'role', label: 'Role', options: roles },
-  { key: 'method', label: 'Method', options: seen.methods || [] },
-  { key: 'source', label: 'Source', options: seen.sources || [] },
+  { key: 'method', label: 'Check-in method', allLabel: 'Any method', primary: true, options: seen.methods || [] },
 ];
 
 function PunchLogTab() {
@@ -755,8 +772,11 @@ function MethodsTab({ canEdit, canAssign, canAlerts }) {
         <PanelPad>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Attendance Policies</h3>
           <div className="field">
-            <label>Grace time (late after)</label>
-            <input type="text" disabled={!canEdit} defaultValue={policy.graceTime} onBlur={(e) => save({ graceTime: e.target.value })} />
+            <label>Late coming: a check-in after this time is Late</label>
+            <input type="time" disabled={!canEdit} defaultValue={policy.graceTime} onBlur={(e) => save({ graceTime: e.target.value })} />
+            <div className="small-muted" style={{ fontSize: 11.5, marginTop: 3 }}>
+              Right now: {(() => { const [hh, mm] = String(policy.graceTime || '09:15').split(':').map(Number); return `${hh % 12 === 0 ? 12 : hh % 12}:${String(mm).padStart(2, '0')} ${hh >= 12 ? 'PM' : 'AM'}`; })()}. Someone who checks in at this exact minute is on time; one minute later is Late.
+            </div>
           </div>
           <div className="field">
             <label>Free late arrivals per month</label>
@@ -965,7 +985,11 @@ export default function Attendance() {
   const canEditPolicy = isAdmin(user);
   const canImportHistory = can(user, 'hrms', 'hrms', 'Attendance & Time', 'configure');
   const canAssignMethods = isSuperAdmin(user);
-  const [tab, setTab] = useState('dashboard');
+  // Count -> list: the Monthly Summary opens the Biometric list for the same dates / count / person, and back.
+  const [bioPreset, setBioPreset] = useState(null);
+  const [summaryPreset, setSummaryPreset] = useState(null);
+  // ?tab=late opens the Late coming tab (the bell and the Late alert link here).
+  const [tab, setTab] = useState(() => { try { return new URLSearchParams(window.location.search).get('tab') || 'dashboard'; } catch { return 'dashboard'; } });
 
   return (
     <TabsPage
@@ -979,16 +1003,18 @@ export default function Attendance() {
         // …but Super Admin is a system account, not an employee: no self-service tab.
         ...(isHR && !user?.systemAccount ? [{ key: 'mine', label: 'My Attendance', element: <MyAttendance /> }] : []),
         ...(isHR ? [
-          { key: 'biometric', label: 'Biometric Attendance List', element: <BiometricTab /> },
+          { key: 'biometric', label: 'Biometric Attendance List', element: <BiometricTab preset={bioPreset} goSummary={(from, to) => { setSummaryPreset({ from, to, n: Date.now() }); setTab('summary'); }} /> },
           { key: 'punchlog', label: 'Punch Log (Detailed)', element: <PunchLogTab /> },
           // HRMS-24 §11 — the monthly summary, in scope. It now carries the old
           // "Reports (Monthly)" figures too; "Team Attendance" is gone — the
           // Biometric list above is the date-wise, in-scope view of every person.
-          { key: 'summary', label: 'Monthly Summary', element: <MonthlySummaryTab /> },
+          { key: 'summary', label: 'Monthly Summary', element: <MonthlySummaryTab preset={summaryPreset} goList={(from, to, kpi, q) => { setBioPreset({ from, to, kpi: kpi || '', q: q || '', n: Date.now() }); setTab('biometric'); }} /> },
         ] : []),
         ...(canImportHistory ? [{ key: 'history', label: 'Import History', element: <HistoryImport /> }] : []),
         { key: 'methods', label: 'Check-in Methods', element: <MethodsTab canEdit={canEditPolicy} canAssign={canAssignMethods} canAlerts={canImportHistory} /> },
         { key: 'regularization', label: 'Regularization', element: <RegularizationTab isHR={isHR} canDecide={canDecide} /> },
+        // LATE COMING: everyone with an employee record can tell why they were late; approvers see the requests waiting on them.
+        { key: 'late', label: 'Late coming', element: <LateComing isHR={isHR} canDecide={canDecide} /> },
       ]}
     />
   );

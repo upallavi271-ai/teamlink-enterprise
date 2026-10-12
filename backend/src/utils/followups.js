@@ -109,11 +109,18 @@ function decorate(row, today = todayStr()) {
 // still ours to chase, so it falls back to the BDE and then the recruiter —
 // somebody in this company owes that call.
 // ---------------------------------------------------------------------------
+function bdeOfRequirement(r) {
+  if (r.bdeId) return { id: r.bdeId, name: (r.bde && r.bde.name) || null };
+  const co = r.client && !r.internal ? require('./nextAction').clientOwnerUserId(r.client) : null; // eslint-disable-line global-require
+  return co ? { id: co, name: r.client.bdeOwner || null } : { id: null, name: null };
+}
 function ownerOf(application, requirement) {
   const rule = STAGE_OWNER_ACTION[application.stage] || {};
   const r = requirement || {};
   const recruiter = { id: r.recruiterId || null, name: (r.recruiter && r.recruiter.name) || null, role: 'Recruiter' };
-  const bde = { id: r.bdeId || null, name: (r.bde && r.bde.name) || null, role: 'BDE' };
+  // The BDE of a client job: the job's own BDE, else the client's Owner BDE (user, 2026-10-10: everything
+  // about a client reaches its BDE even when the job names none), else the recruiter takes it.
+  const bde = { ...bdeOfRequirement(r), role: 'BDE' };
   if (rule.ownerRole === 'BDE') return bde.id ? bde : recruiter;
   if (rule.ownerRole === 'Client') {
     // The client is being waited on; chasing them is the BDE's job, or the
@@ -135,8 +142,8 @@ function chainSnapshot(application, requirement, names = null) {
     ownerRole: owner.role,
     tlUserId: r.tlId || null,
     tlName: (names && r.tlId && names.get(r.tlId)) || r.tlName || r.tl || null,
-    bdeUserId: r.bdeId || null,
-    bdeName: (r.bde && r.bde.name) || null,
+    bdeUserId: bdeOfRequirement(r).id,
+    bdeName: bdeOfRequirement(r).name,
     // Rung 2 of the escalation ladder needs a name on the row, the same way
     // the TL does. stlId is a plain scalar on Requirement, so the name comes
     // from the `names` map resolved alongside the TL's.

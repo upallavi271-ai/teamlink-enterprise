@@ -14,12 +14,16 @@
  * This walks the whole path with a real file and checks the database, not
  * the page's own memory.
  *
+ * Since 0118 Easy Apply is one click: no review step, no question - the
+ * application is submitted at once and the resume on file goes with it.
+ *
  *   node tools/verify-easy-apply.mjs      (needs npm run dev on :4323)
  */
 import { chromium } from 'playwright';
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { fillRegistration } from './lib/registration-form.mjs';
 
 const BASE = process.env.TL_URL || 'http://localhost:4323/';
 const DIR = resolve('var/test-resumes');
@@ -44,49 +48,40 @@ async function session() {
   return { ctx, page };
 }
 
-/** Registers through the real form, with a real resume file. */
+/**
+ * Registers through the real form, with a real resume file.
+ *
+ * 0109: the form is seven steps and a resume is REQUIRED on it, so it can
+ * no longer make an account without one. With a file this goes through
+ * the form (tools/lib/registration-form.mjs: the resume first, then only
+ * the fields it left empty). Without one - the "no resume" and "another
+ * candidate" checks - the account is made the way the API still allows,
+ * POST /auth/register, and the page signed in as it.
+ */
 async function registerWithResume(page, email, file) {
   await page.evaluate(() => { location.hash = '#/register/candidate'; });
   await page.waitForTimeout(800);
 
-  if (file) {
-    const [chooser] = await Promise.all([
-      page.waitForEvent('filechooser'),
-      page.evaluate(() => {
-        const b = [...document.querySelectorAll('button')].find((x) => /upload resume/i.test(x.textContent));
-        b.click();
-      }),
-    ]);
-    await chooser.setFiles(resolve(DIR, file));
-    await page.waitForTimeout(5000);          // extraction is a server round trip
+  if (!file) {
+    const ok = await page.evaluate((em) => window.TL.api.post('/auth/register', {
+      name: 'Easy Apply Tester', email: em, password: 'EasyApply@2026',
+      phone: '9' + String(Math.floor(1e8 + Math.random() * 9e8)),
+      preferredLocation: 'Hyderabad', expectedCtc: 4, noticePeriod: 'Immediate', preferredWorkModes: ['Hybrid'],
+      consent: { terms: true, communication: true, resumeProcessing: true },
+    }).then(() => window.TL.refresh()).then(() => true, () => false), email);
+    if (!ok) return null;
+    await page.waitForTimeout(1500);
+    return page.evaluate(() => (STATE.session ? STATE.session.id : null));
   }
 
-  await page.evaluate((em) => {
-    const set = (id, v) => {
-      const e = document.getElementById(id);
-      if (!e) return;
-      e.value = v; e.dataset.userSet = '1';
-      e.dispatchEvent(new Event('input', { bubbles: true }));
-      e.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-    const fill = (id, v) => { const e = document.getElementById(id); if (e && !e.value) set(id, v); };
-    set('regEmail', em); set('regPassword', 'EasyApply@2026');
-    fill('regName', 'Easy Apply Tester'); fill('regMobile', '9876500321');
-    fill('regLocation', 'Hyderabad'); fill('regSkills', 'Java, SQL');
-    fill('regPrefLocation', 'Hyderabad');
-    const q = document.getElementById('regQualification');
-    if (q && !q.value && q.options.length > 1) { q.selectedIndex = 1; q.dispatchEvent(new Event('change', { bubbles: true })); }
-    const tick = (id) => { const e = document.getElementById(id); if (e && !e.checked) e.click(); };
-    tick('regConsentTerms'); tick('regConsentResume');
-    const t = document.querySelector('input[name="regCandidateType"]');
-    if (t && !document.querySelector('input[name="regCandidateType"]:checked')) t.click();
-    if (typeof validateRegisterForm === 'function') validateRegisterForm();
-  }, email);
-
-  await page.evaluate(() => {
-    const b = [...document.querySelectorAll('button')].find((x) => /create account/i.test(x.textContent));
-    if (b && !b.disabled) b.click();
+  const left = await fillRegistration(page, {
+    resume: resolve(DIR, file), resumeFirst: true, onlyEmpty: true,
+    email, password: 'EasyApply@2026', name: 'Easy Apply Tester',
+    skills: 'Java, SQL', prefLocation: 'Hyderabad',
   });
+  if (left.length) throw new Error('the registration form did not validate: ' + JSON.stringify(left));
+  await page.click('#regSubmitBtn');
+  await page.waitForFunction(() => STATE.session && STATE.session.role === 'candidate', null, { timeout: 20000 }).catch(() => {});
   await page.waitForTimeout(6000);            // registration + profile + resume upload
   return page.evaluate(() => (STATE.session ? STATE.session.id : null));
 }
@@ -142,29 +137,18 @@ await check('Easy Apply does NOT ask for a resume', async () => {
   const expected = await withResume.page.evaluate(() =>
     window.TL.api.get('/auth/me').then((r) => r.profile.resumeFile));
 
-  const seen = await withResume.page.evaluate(([id, name]) => {
-    window.__expectResume = name;
+  must(expected, 'the candidate has no resume on file');
+  const seen = await withResume.page.evaluate((id) => {
     if (typeof window.cpEasyApply === 'function') window.cpEasyApply(id);
     return new Promise((r) => setTimeout(() => r({
       askedForResume: document.body.innerText.includes('You have no resume on file'),
-      review: document.body.innerText.includes('Resume on file'),
-      resumeShown: document.body.innerText.includes(window.__expectResume || ''),
-      canSubmit: [...document.querySelectorAll('button')].some((b) => /submit application/i.test(b.textContent)),
-    }), 1500));
-  }, [jobId, expected]);
+      submitted: !!document.getElementById('tl1cDone'),
+    }), 3000));
+  }, jobId);
 
   must(!seen.askedForResume, 'the "Resume required" modal appeared for a candidate who has one');
-  must(seen.review, 'no review step appeared before submitting');
-  must(seen.resumeShown, `the review does not name the resume on file (${expected})`);
-  must(seen.canSubmit, 'the review has no Submit application button');
-});
-
-await check('confirming the review submits the application', async () => {
-  await withResume.page.evaluate(() => {
-    const b = [...document.querySelectorAll('button')].find((x) => /submit application/i.test(x.textContent));
-    if (b) b.click();
-  });
-  await withResume.page.waitForTimeout(3000);
+  must(seen.submitted, 'Easy Apply did not submit at once (0118: one click)');
+  await withResume.page.evaluate(() => fcrCloseModal());
 });
 
 await check('the application is saved with the candidate, the job and the resume', async () => {
@@ -269,12 +253,14 @@ await check('the next Easy Apply uses the updated resume', async () => {
 
   await withResume.page.evaluate((id) => { location.hash = '#/job/' + id; }, nextJob);
   await withResume.page.waitForTimeout(1200);
-  const shown = await withResume.page.evaluate(([id, name]) => {
-    window.__expect = name;
+  const shown = await withResume.page.evaluate((id) => {
     if (typeof window.cpEasyApply === 'function') window.cpEasyApply(id);
-    return new Promise((r) => setTimeout(() => r(document.body.innerText.includes(window.__expect)), 1500));
-  }, [nextJob, current]);
-  must(shown, `the review does not show the updated resume (${current})`);
+    return new Promise((r) => setTimeout(() => r(!!document.getElementById('tl1cDone')), 3000));
+  }, nextJob);
+  must(shown, 'the next Easy Apply did not submit at once');
+  await withResume.page.evaluate(() => fcrCloseModal());
+  const used = await withResume.page.evaluate(() => window.TL.api.get('/auth/me').then((r) => r.profile.resumeFile));
+  must(used === current, `the profile's resume changed by applying (${used})`);
 });
 
 await check('a browser refresh keeps the resume and the applications', async () => {
@@ -296,7 +282,7 @@ await check('a browser refresh keeps the resume and the applications', async () 
 /* ------------------------------------------------------------------ *
  * without one
  * ------------------------------------------------------------------ */
-await check('a candidate with NO resume is still asked for one', async () => {
+await check('a candidate with NO resume is asked to complete the profile - no form (0118)', async () => {
   const s = await session();
   try {
     const id = await registerWithResume(s.page, `noresume.${Date.now()}@example.test`, null);
@@ -311,10 +297,10 @@ await check('a candidate with NO resume is still asked for one', async () => {
     const shown = await s.page.evaluate((j) => {
       if (typeof window.cpEasyApply === 'function') window.cpEasyApply(j);
       return new Promise((r) => setTimeout(() => {
-        r(document.body.innerText.includes('You have no resume on file'));
-      }, 1500));
+        r(!!document.getElementById('tl1cProfile') && !document.getElementById('tlafForm') && /Please complete your profile to apply/.test(document.body.innerText));
+      }, 3000));
     }, job);
-    must(shown, 'a candidate with no resume was not prompted to upload one');
+    must(shown, 'a candidate with no resume was not asked to complete the profile');
   } finally { await s.ctx.close(); }
 });
 

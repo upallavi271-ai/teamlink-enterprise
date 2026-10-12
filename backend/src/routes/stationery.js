@@ -5,6 +5,7 @@ const { scopeOf, hrmsGlobal, employeeWhere } = require('../utils/scope');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const { toXlsx } = require('../utils/tabularExport');
+const KIT = require('../utils/stationeryKit');
 
 // ---------------------------------------------------------------------------
 // STATIONERY / CONSUMABLES — Employee Services -> Stationery (user 2026-10-05):
@@ -151,6 +152,8 @@ async function itemsWithBalance() {
     const left = a - g + b;
     return {
       ...it, added: a, given: g - b, issued: g, returned: b, left,
+      // Given out (e.g. the default kit) but the stock was never entered: the user adds the real quantity.
+      stockNotEntered: left < 0 ? -left : 0,
       low: it.reorderLevel !== null && it.reorderLevel !== undefined && left <= it.reorderLevel,
     };
   });
@@ -462,6 +465,40 @@ router.post('/issue-many', h(async (req, res) => {
   });
 }));
 
+// ---- THE DEFAULT KIT (utils/stationeryKit.js) -------------------------------------------
+// Everyone may read the setting's wording; only HR / Admin change it or give it.
+router.get('/default-kit', h(async (req, res) => {
+  const r = roleOf(req.user);
+  const kit = await KIT.getKit();
+  const lines = await KIT.resolvedLines(kit);
+  const out = { on: kit.on, autoFrom: kit.autoFrom, canManage: r.manage, lines: lines.map((l) => ({ itemId: l.item ? l.item.id : null, name: l.name, quantity: l.quantity, missing: !l.item })) };
+  if (r.manage) {
+    out.items = (await prisma.stationeryItem.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }));
+    out.preview = await KIT.previewAll();
+  }
+  res.json(out);
+}));
+router.put('/default-kit', h(async (req, res) => {
+  needManage(req);
+  const b = req.body || {};
+  const kit = await KIT.saveKit({ on: b.on, lines: b.lines }, actor(req));
+  res.json({ ok: true, on: kit.on, lines: kit.lines, message: kit.on ? 'Saved. New employees get this kit automatically.' : 'Saved. The default kit is switched off.' });
+}));
+router.get('/default-kit/preview', h(async (req, res) => {
+  needManage(req);
+  res.json(await KIT.previewAll());
+}));
+router.post('/default-kit/apply', h(async (req, res) => {
+  needManage(req);
+  const r = await KIT.applyAll(actor(req));
+  res.status(201).json({ ok: true, ...r, message: r.people ? `Gave ${r.what} to ${r.people} ${r.people === 1 ? 'person' : 'people'}.` : 'Everybody already has the default kit.' });
+}));
+router.post('/default-kit/undo-last', h(async (req, res) => {
+  needManage(req);
+  const r = await KIT.undoLast(actor(req));
+  res.json({ ok: true, ...r, message: `Undone: ${r.removed} kit entr${r.removed === 1 ? 'y' : 'ies'} removed.` });
+}));
+
 // ---- take back (a wrong issue) -----------------------------------------------------------
 router.post('/return', h(async (req, res) => {
   needManage(req);
@@ -502,7 +539,7 @@ async function buildTable(user, q) {
   const people = await peopleInScope(user);
   const issues = await prisma.stationeryIssue.findMany({
     where: { ...issueScope(user, people), ...dateRange(q) },
-    select: { employeeId: true, itemId: true, quantity: true, kind: true, date: true },
+    select: { employeeId: true, itemId: true, quantity: true, kind: true, date: true, batchId: true },
   });
   const allItems = await prisma.stationeryItem.findMany({ orderBy: [{ createdAt: 'asc' }, { name: 'asc' }], select: { id: true, name: true, active: true } });
   const usedItems = new Set(issues.map((i) => i.itemId));
@@ -511,8 +548,10 @@ async function buildTable(user, q) {
   issues.forEach((i) => { (byPerson[i.employeeId] = byPerson[i.employeeId] || []).push(i); });
   const f = {
     department: str(q.department), employeeId: str(q.employeeId), itemId: str(q.itemId),
-    q: str(q.q).toLowerCase(), all: str(q.all) === '1',
+    q: str(q.q).toLowerCase(), all: str(q.all) === '1', kit: str(q.kit),
   };
+  // Who has the default kit (any default-kit row), and who is ACTIVE and lacks it.
+  const hasKit = new Set(issues.filter((i) => i.batchId === KIT.BATCH && i.kind !== 'RETURN').map((i) => i.employeeId));
   const NO_DEPT = '(No department)';
   const deptOf = (p) => p.department || NO_DEPT;
 
@@ -534,10 +573,12 @@ async function buildTable(user, q) {
     if (skip !== 'department' && f.department && deptOf(p) !== f.department) return null;
     if (skip !== 'employeeId' && f.employeeId && p.id !== f.employeeId) return null;
     if (f.q && !`${p.name} ${p.employeeCode || ''}`.toLowerCase().includes(f.q)) return null;
+    if (skip !== 'kit' && f.kit === '1' && !hasKit.has(p.id)) return null;
+    if (skip !== 'kit' && f.kit === '0' && (hasKit.has(p.id) || !active(p))) return null;
     const r = rowOf(p, skip === 'itemId' ? null : f.itemId || null);
     if (r.total > 0) return r;
-    // "Also people who got nothing" — active people only.
-    return f.all && active(p) ? r : null;
+    // "Also people who got nothing" — active people only (and anybody asked for as "missing the kit").
+    return (f.all || (skip !== 'kit' && f.kit === '0')) && active(p) ? r : null;
   }
   const rows = [];
   const deptCount = {};
@@ -545,7 +586,7 @@ async function buildTable(user, q) {
   const itemCount = {};
   people.forEach((p) => {
     const r = shows(p);
-    if (r) rows.push({ id: p.id, name: p.name, employeeCode: p.employeeCode, department: p.department, designation: p.designation, employmentStatus: p.employmentStatus, ...r });
+    if (r) rows.push({ id: p.id, name: p.name, employeeCode: p.employeeCode, department: p.department, designation: p.designation, employmentStatus: p.employmentStatus, kit: hasKit.has(p.id), ...r });
     if (shows(p, 'department')) deptCount[deptOf(p)] = (deptCount[deptOf(p)] || 0) + 1;
     const rp = shows(p, 'employeeId');
     if (rp) personCount[p.id] = { p, total: rp.total };
@@ -557,7 +598,22 @@ async function buildTable(user, q) {
   const totals = {};
   rows.forEach((r) => Object.entries(r.counts).forEach(([id, n]) => { totals[id] = (totals[id] || 0) + n; }));
   const keep = (v, n) => n > 0 || v === f.department || v === f.employeeId || v === f.itemId;
+  // The kit filter's counts: ACTIVE people who have it / are missing it, with the other filters applied.
+  const kitFacet = [];
+  {
+    let have = 0; let miss = 0;
+    people.forEach((p) => {
+      if (!active(p)) return;
+      if (f.department && deptOf(p) !== f.department) return;
+      if (f.employeeId && p.id !== f.employeeId) return;
+      if (f.q && !`${p.name} ${p.employeeCode || ''}`.toLowerCase().includes(f.q)) return;
+      if (hasKit.has(p.id)) have += 1; else miss += 1;
+    });
+    if (have) kitFacet.push({ value: '1', label: 'Has the default kit', count: have });
+    if (miss) kitFacet.push({ value: '0', label: 'Missing the default kit', count: miss });
+  }
   const facets = {
+    kit: kitFacet,
     department: Object.entries(deptCount).filter(([d, n]) => keep(d, n)).map(([value, count]) => ({ value, label: value, count }))
       .sort((a, b) => a.label.localeCompare(b.label)),
     // The count beside a person = how many things they got (a zero shows only with 'all').
@@ -586,12 +642,12 @@ router.get('/employees', h(async (req, res) => {
 
 router.get('/employees/export.xlsx', h(async (req, res) => {
   const t = await buildTable(req.user, req.query);
-  const headers = ['Employee', 'Employee ID', 'Department', 'Seat', ...t.items.map((i) => { const w = plural(i.name, 2); return `${w.charAt(0).toUpperCase()}${w.slice(1)} given`; }), 'Total', 'Last given'];
+  const headers = ['Employee', 'Employee ID', 'Department', 'Seat', 'Default kit', ...t.items.map((i) => { const w = plural(i.name, 2); return `${w.charAt(0).toUpperCase()}${w.slice(1)} given`; }), 'Total', 'Last given'];
   const body = t.rows.map((r) => [
-    r.name, r.employeeCode || '', r.department || '', (r.seats || []).join(', '),
+    r.name, r.employeeCode || '', r.department || '', (r.seats || []).join(', '), r.kit ? 'Yes' : 'No',
     ...t.items.map((i) => r.counts[i.id] || 0), r.total, r.lastGiven || '',
   ]);
-  body.push(['Total', '', '', `${t.rows.length} ${t.rows.length === 1 ? 'person' : 'people'}`, ...t.items.map((i) => t.totals[i.id] || 0), t.items.reduce((s, i) => s + (t.totals[i.id] || 0), 0), '']);
+  body.push(['Total', '', '', `${t.rows.length} ${t.rows.length === 1 ? 'person' : 'people'}`, `${t.rows.filter((r) => r.kit).length} with the kit`, ...t.items.map((i) => t.totals[i.id] || 0), t.items.reduce((s, i) => s + (t.totals[i.id] || 0), 0), '']);
   const buf = toXlsx(headers, body, 'Stationery');
   await logAudit({ userId: req.user.id, actorName: actor(req).name, action: 'Stationery report exported (XLSX)', entity: 'StationeryIssue', toValue: `${t.rows.length} employee row(s)` });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -635,7 +691,7 @@ async function historyOf(employeeId) {
     t.net += r.kind === 'RETURN' ? -r.quantity : r.quantity;
   });
   return {
-    rows: rows.map((r) => ({ id: r.id, date: r.date, item: r.item.name, itemId: r.itemId, quantity: r.quantity, kind: r.kind, note: r.note, by: r.issuedByName, batch: !!r.batchId })),
+    rows: rows.map((r) => ({ id: r.id, date: r.date, item: r.item.name, itemId: r.itemId, quantity: r.quantity, kind: r.kind, note: r.note, by: r.issuedByName, batch: !!r.batchId, kit: r.batchId === KIT.BATCH })),
     totals: Object.values(totals).filter((t) => t.net !== 0),
   };
 }

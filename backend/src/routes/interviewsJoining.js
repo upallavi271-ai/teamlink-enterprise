@@ -30,6 +30,7 @@ const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth
 const { applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
+const { withClientBdes } = require('../utils/clientBdes');
 const {
   interviewStatusLabel, stageLabel, INTERVIEW_RECOMMENDATIONS, normalizeRecommendation,
 } = require('../utils/atsVocab');
@@ -115,7 +116,16 @@ function shapeFeedback(f) {
   };
 }
 
-function shapeRow(app) {
+// P2 (user, 2026-10-09): the BDE team never receives the internal panel's score,
+// feedback or panel, nor the AI score. Outcome, status and CLIENT feedback stay.
+function shapeRow(app, bdeView = false) {
+  const row = shapeRowFull(app);
+  if (bdeView) { delete row.score; delete row.internalFeedback; delete row.aiScore; delete row.panel; }
+  return row;
+}
+const bdeViewOf = (user) => { const f = require('../utils/clientRedact').privacyFlagsFor(user); return !!(f && f.bde); }; // eslint-disable-line global-require
+
+function shapeRowFull(app) {
   const req = app.requirement || {};
   return {
     id: app.id,
@@ -178,6 +188,7 @@ function filterOptionsFor(rows) {
 }
 
 async function listScoped(req, where) {
+  const bdeView = bdeViewOf(req.user);
   const rows = await prisma.application.findMany({
     // AND, never a spread: a scope that is itself an OR (a seat-scoped lead)
     // must not be overwritten by a list's own OR.
@@ -185,7 +196,31 @@ async function listScoped(req, where) {
     include: FULL_INCLUDE,
     orderBy: { updatedAt: 'desc' },
   });
-  return rows.map(shapeRow);
+  return rows.map((a) => shapeRow(a, bdeView));
+}
+
+// SERVER PAGING (utils/intJoinList.js). The rows of ONE page, shaped exactly as
+// listScoped() shapes them, in the order the list asked for. Scope is applied
+// again, so an id outside the caller's area can never come back.
+const IJ = require('../utils/intJoinList'); // eslint-disable-line import/order
+async function rowsByIds(req, ids) {
+  if (!ids.length) return [];
+  const bdeView = bdeViewOf(req.user);
+  const apps = await prisma.application.findMany({
+    where: { AND: [applicationWhere(req.user), { id: { in: ids } }] },
+    include: FULL_INCLUDE,
+  });
+  const byId = new Map(apps.map((a) => [a.id, a]));
+  return ids.map((id) => byId.get(id)).filter(Boolean).map((a) => shapeRow(a, bdeView));
+}
+// The list's rows: the whole array (no `page` in the query: the old answer, which
+// the Excel export still uses), or one page + its counts. `done` = already answered.
+async function listOrPage(req, res, where, kind) {
+  const a = IJ.ask(req.query);
+  if (!a) return { rows: await listScoped(req, where), paging: null, done: false };
+  const pg = await IJ.pageOf(req, where, kind, a);
+  if (a.idsOnly) { res.json({ ids: pg.ids }); return { done: true }; }
+  return { rows: await rowsByIds(req, pg.ids), paging: pg.meta, done: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +230,7 @@ async function listScoped(req, where) {
 // submitted by the client, separately, and sits beside it.
 // ---------------------------------------------------------------------------
 router.get('/feedback', requirePerm('ats', 'interviews', 'Interview Feedback', 'view'), async (req, res) => {
-  const rows = await listScoped(req, {
+  const got = await listOrPage(req, res, {
     OR: [
       { interviewStatus: { in: ['COMPLETED', 'PENDING_FEEDBACK', 'FEEDBACK_SUBMITTED'] } },
       // A booked slot whose time has passed is owed feedback too, even when
@@ -203,11 +238,14 @@ router.get('/feedback', requirePerm('ats', 'interviews', 'Interview Feedback', '
       // interview").
       { interviewStatus: { in: ['SCHEDULED', 'CONFIRMED', 'STARTED', 'RESCHEDULED'] }, interviewAt: { lt: new Date() } },
     ],
-  });
+  }, 'feedback');
+  if (got.done) return;
+  const { rows, paging } = got;
   // B4: each row's panel (current round) with every person's own scorecard.
   // eslint-disable-next-line global-require
   const panels = await require('../utils/interviewPanel').panelsFor(rows.map((r) => ({ id: r.id, interviewRound: r.round, interviewer: r.interviewer, interviewFeedbacks: r.internalFeedback ? [{ ...r.internalFeedback, updatedAt: r.internalFeedback.createdAt }] : [] })));
-  rows.forEach((r) => { r.panel = panels.get(r.id) || []; });
+  rows.forEach((r) => { r.panel = bdeViewOf(req.user) ? [] : (panels.get(r.id) || []); });
+  if (paging) return res.json({ rows, ...paging, recommendations: INTERVIEW_RECOMMENDATIONS });
   res.json({ rows, filterOptions: filterOptionsFor(rows), recommendations: INTERVIEW_RECOMMENDATIONS });
 });
 
@@ -263,8 +301,17 @@ router.post('/interviews/:id/client-feedback', requirePerm('ats', 'interviews', 
     userId: req.user.id, action: `Client interview feedback submitted — ${recommendation}`,
     entity: 'Application', entityId: app.id, toValue: recommendation,
   });
+  // The client's answer reaches everyone on the job, and the client's own BDE even when the job names none.
+  try {
+    const rq = app.requirement || {};
+    await notifyUsers(await withClientBdes([rq.recruiterId, ...String(rq.recruiterIds || '').split(',').map((x) => x.trim()), rq.tlId, rq.bdeId], rq), {
+      title: `Client feedback: ${app.candidate ? app.candidate.name : 'Candidate'} — ${recommendation}`,
+      message: `${rq.title || 'Job'}${rq.client ? ` — ${rq.client.name}` : ''}. Open Interviews to see it and decide.`,
+      exceptUserId: req.user.id,
+    });
+  } catch (err) { console.error('[client-feedback] could not notify:', err.message); } // eslint-disable-line no-console
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
-  res.json(shapeRow(fresh));
+  res.json(shapeRow(fresh, bdeViewOf(req.user)));
 });
 
 // The decision that closes the feedback loop. It moves the PIPELINE; it does
@@ -400,12 +447,15 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
   // eslint-disable-next-line global-require
   const OL = require('../utils/offerLink');
   await OL.expireDue().catch(() => 0);
-  const rows = await listScoped(req, { stage: { in: OFFER_STAGES } });
+  const got = await listOrPage(req, res, { stage: { in: OFFER_STAGES } }, 'offers');
+  if (got.done) return;
+  const { rows, paging } = got;
   // The current letter version per row (v2, expires, opened, signed).
   // Only rows that ever had a letter sent can have a version.
   const offered = rows.filter((r) => r.offerStatus && r.offerStatus !== 'Not Issued').map((r) => r.id);
-  if (OL.ready() && offered.length) {
-    const vs = await prisma.offerVersion.findMany({
+  // (A page whose rows were never offered still carries offerVersion: null, as in the full list.)
+  if (OL.ready() && (offered.length || paging)) {
+    const vs = !offered.length ? [] : await prisma.offerVersion.findMany({
       where: { applicationId: { in: offered } },
       select: { applicationId: true, version: true, status: true, expiresAt: true, viewedAt: true, signedAt: true, pdfFile: true },
       orderBy: { version: 'desc' },
@@ -420,6 +470,7 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
   const offerSettings = await OL.loadSettings();
   // eslint-disable-next-line global-require
   const candidateEmailsOn = await require('../utils/interviewNotices').candidateEmailsOn();
+  if (paging) return res.json({ rows, ...paging, offerStatuses: [...OFFER_STATUSES, OL.OFFER_EXPIRED], documentStatuses: DOCUMENT_STATUSES, offerSettings, candidateEmailsOn });
   res.json({ rows, filterOptions: filterOptionsFor(rows), offerStatuses: [...OFFER_STATUSES, OL.OFFER_EXPIRED], documentStatuses: DOCUMENT_STATUSES, offerSettings, candidateEmailsOn });
 });
 
@@ -537,8 +588,10 @@ router.post('/offers/:id/prepare', requirePerm('ats', 'interviews', 'Offers', 'e
   }
   const wrongBranch = stageAllowedForHiringType('OFFER', app, app.requirement);
   if (wrongBranch) return res.status(409).json({ error: wrongBranch });
+  // CTC sanity (utils/ctcCheck.js): blocks a nonsense figure, asks "is this right?" for an odd one.
   const ctc = Number(req.body.offeredCtc);
-  if (!(ctc > 0)) return res.status(400).json({ error: 'Write the yearly CTC in rupees, e.g. 450000.' });
+  const ctcProblem = await require('../utils/ctcCheck').check(req.body.offeredCtc, req.body.confirmCtc); // eslint-disable-line global-require
+  if (ctcProblem) return res.status(ctcProblem.status).json(ctcProblem.body);
   const offerDate = String(req.body.offerDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
   const joiningDate = req.body.joiningDate ? String(req.body.joiningDate).slice(0, 10) : null;
   if (joiningDate && Number.isNaN(new Date(joiningDate).getTime())) return res.status(400).json({ error: 'The joining date is not a date.' });
@@ -612,6 +665,11 @@ async function approveAndSend(req, res) {
   if (wrongBranch) return res.status(409).json({ error: wrongBranch });
   const ctc = Number(req.body.offeredCtc != null && req.body.offeredCtc !== '' ? req.body.offeredCtc : app.offeredCtc);
   if (!(ctc > 0)) return res.status(400).json({ error: 'An offered CTC is required' });
+  // A CTC typed here (not the one already saved on the offer) gets the same sanity check as "Prepare offer".
+  if (!require('../utils/ctcCheck').isBlank(req.body.offeredCtc)) { // eslint-disable-line global-require
+    const ctcProblem = await require('../utils/ctcCheck').check(req.body.offeredCtc, req.body.confirmCtc); // eslint-disable-line global-require
+    if (ctcProblem) return res.status(ctcProblem.status).json(ctcProblem.body);
+  }
   const offerDate = req.body.offerDate || app.offerDate || new Date().toISOString().slice(0, 10);
   const offerNotes = req.body.offerNotes != null ? (String(req.body.offerNotes).trim() || null) : (app.offerNotes || null);
   const hiringType = hiringTypeOf(app, app.requirement);
@@ -767,7 +825,9 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
   // Both kinds of hire reach Joining from Offer Accepted (the actual
   // workflow). A client placement then runs its guarantee period and hands
   // over to Accounts; an internal hire goes on to HRMS.
-  const rows = await listScoped(req, { stage: { in: ['OFFER_ACCEPTED', 'JOINED', 'HIRED'] } });
+  const got = await listOrPage(req, res, { stage: { in: ['OFFER_ACCEPTED', 'JOINED', 'HIRED'] } }, 'joining');
+  if (got.done) return;
+  const { rows, paging } = got;
   const clientIds = [...new Set(rows.map((r) => r.requirement.client && r.requirement.client.id).filter(Boolean))];
   const terms = clientIds.length
     ? await prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, guaranteePeriod: true } })
@@ -834,6 +894,7 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
         : null,
     };
   });
+  if (paging) return res.json({ rows: withInvoice, ...paging });
   res.json({ rows: withInvoice, filterOptions: filterOptionsFor(rows) });
 });
 
@@ -861,6 +922,11 @@ router.post('/joining/:id/schedule', requirePerm('ats', 'interviews', 'Joining',
   // B9.10: a year like 2203 or 1954 is a slip, not a plan.
   const joinYearNo = dateYearProblem(joiningDate, 'joining date');
   if (joinYearNo) return res.status(400).json({ error: joinYearNo });
+  // The CTC the placement fee is worked out on (client placement, optional): same sanity check as the offer.
+  if (!internal && !require('../utils/ctcCheck').isBlank(req.body.offeredCtc) && Number(req.body.offeredCtc) !== 0) { // eslint-disable-line global-require
+    const ctcProblem = await require('../utils/ctcCheck').check(req.body.offeredCtc, req.body.confirmCtc); // eslint-disable-line global-require
+    if (ctcProblem) return res.status(ctcProblem.status).json(ctcProblem.body);
+  }
   await prisma.application.update({
     where: { id: app.id },
     data: {
@@ -900,7 +966,13 @@ router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', '
     // eslint-disable-next-line global-require
     feeOverride = require('../utils/joining').feeOverrideFor(req.user, n);
   }
-  const finalCtc = req.body && Number(req.body.offeredCtc) > 0 && Number(req.body.offeredCtc) <= 100000000 ? Number(req.body.offeredCtc) : null;
+  // The final CTC (optional here): written -> checked like the offer's (utils/ctcCheck.js) BEFORE anything is saved.
+  let finalCtc = null;
+  if (req.body && !require('../utils/ctcCheck').isBlank(req.body.offeredCtc) && Number(req.body.offeredCtc) !== 0) { // eslint-disable-line global-require
+    const ctcProblem = await require('../utils/ctcCheck').check(req.body.offeredCtc, req.body.confirmCtc); // eslint-disable-line global-require
+    if (ctcProblem) return res.status(ctcProblem.status).json(ctcProblem.body);
+    finalCtc = Number(req.body.offeredCtc);
+  }
   const application = await prisma.application.update({
     where: { id: app.id },
     data: { stage: 'JOINED', joinedAt: new Date(), ...(finalCtc ? { offeredCtc: finalCtc } : {}) },
@@ -959,7 +1031,7 @@ router.post('/joining/:id/call', requirePerm('ats', 'interviews', 'Joining', 'ed
   await logAudit({ userId: req.user.id, action: `Joining confirmation call — ${outcome}`, entity: 'Application', entityId: app.id, toValue: outcome, reason: note || undefined });
   if (outcome !== 'Will join') {
     const r = app.requirement || {};
-    await notifyUsers([r.tlId, r.bdeId, r.recruiterId], {
+    await notifyUsers(await withClientBdes([r.tlId, r.bdeId, r.recruiterId], r), {
       title: `🟠 Joining at risk: ${app.candidate.name}`,
       message: `${r.title} — confirmation call says "${outcome}"${note ? `: ${note}` : ''}.`,
       exceptUserId: req.user.id,
@@ -986,7 +1058,7 @@ router.post('/joining/:id/not-joined', requirePerm('ats', 'interviews', 'Joining
   try { const PT = require('../utils/partners'); await PT.onLeft({ applicationId: app.id, inside: true, reason, user: req.user }); await PT.syncSubmission(app.id, { userId: req.user.id, note: reason }); } catch { /* optional */ } // eslint-disable-line global-require
   await logAudit({ userId: req.user.id, action: 'Did not join', entity: 'Application', entityId: app.id, fromValue: app.joiningStatus || 'Not Scheduled', toValue: 'Dropped', reason });
   const r = app.requirement || {};
-  await notifyUsers([r.tlId, r.bdeId, r.recruiterId], {
+  await notifyUsers(await withClientBdes([r.tlId, r.bdeId, r.recruiterId], r), {
     title: `🔴 Did not join: ${app.candidate.name}`,
     message: `${r.title} — ${r.internal ? 'TeamLink' : (r.client && r.client.name) || ''}. ${reason}`,
     exceptUserId: req.user.id,
@@ -1060,7 +1132,7 @@ router.post('/joining/:id/left', requirePerm('ats', 'interviews', 'Joining', 'ed
   // clawback drafted when already paid); the partner is told either way.
   try { const PT = require('../utils/partners'); await PT.onLeft({ applicationId: app.id, inside, leftOn, reason, user: req.user }); await PT.syncSubmission(app.id, { userId: req.user.id, note: `Left on ${leftOn}: ${reason}` }); } catch { /* optional */ } // eslint-disable-line global-require
   if (inside) {
-    await notifyUsers([app.requirement.recruiterId, app.requirement.bdeId, app.requirement.tlId], {
+    await notifyUsers(await withClientBdes([app.requirement.recruiterId, app.requirement.bdeId, app.requirement.tlId], app.requirement), {
       title: `Replacement due: ${app.candidate.name}`,
       message: `${app.requirement.title} — ${app.requirement.client.name}. Left ${leftOn}, inside the ${app.requirement.client.guaranteePeriod} guarantee.`,
       exceptUserId: req.user.id,
@@ -1235,7 +1307,7 @@ function suggestedRoundOf(a) {
   return (a.interviewRound || 1) + (a.interviewStatus === 'FEEDBACK_SUBMITTED' ? 1 : 0);
 }
 router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule Interview', 'create'), async (req, res) => {
-  if (!req.user.caps || !req.user.caps.atsAct) return res.status(403).json({ error: "Booking interviews isn't part of your role." });
+  // (the route's own requirePerm asks Schedule Interview / create: P5, 2026-10-09)
   const app = await loadScoped(req, res);
   if (!app) return;
   const b = req.body || {};
@@ -1282,9 +1354,12 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
     const { applyStageMove } = require('./applications');
     // skipNotice: announceInterview below tells the recruiter / TL / BDE with
     // the full slot, so the plain "moved to Interview" notice is not sent too.
+    // viaPopup: the booking window ("Booked - now tell them") tells the candidate itself, on every channel, so the
+    // automatic step message is not sent too (silent). If nobody tells the candidate, the reminder job sends the
+    // booked message by itself after a few minutes (utils/interviewEngine.js, "safety net").
     const out = await applyStageMove(req.user, app.id, {
       stage: 'INTERVIEW_SCHEDULED', interviewAt: interviewAt.toISOString(), interviewer, interviewMode: mode, interviewMeetingLink: meetingLink || undefined,
-    }, { skipNotice: true });
+    }, { skipNotice: true, silent: b.viaPopup === true });
     if (out.status !== 200) return res.status(out.status).json(out.body);
     movedStage = true;
   } else if (LIVE_SLOT.includes(app.interviewStatus)) {
@@ -1323,7 +1398,7 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
   // EMAIL stays behind the Admin switch (announceInterview + candidateComms);
   // while it is off nothing is emailed. WhatsApp is never sent from here: the
   // reply carries ready wa.me links the user opens on their own device.
-  const told = await IN.announceInterview(app.id, 'scheduled', { actor: req.user, candidateEmail: !movedStage });
+  const told = await IN.announceInterview(app.id, 'scheduled', { actor: req.user, candidateEmail: b.viaPopup === true ? false : !movedStage });
   const whatsapp = await IN.whatsappLinks(app.id, req.user).catch(() => []);
   const parts = [`Booked: Round ${round}, ${IN.when(interviewAt)}.`];
   if (told.people.length) parts.push(`App notice sent to ${told.people.join(', ')}.`);
@@ -1334,6 +1409,7 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
     applicationId: app.id,
     interviewAt,
     round,
+    kind: 'scheduled',
     told,
     emailsOff: !!told.emailsOff,
     whatsapp,
@@ -1349,7 +1425,7 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
 // also lands on Candidate 360 → Communications as "opened on device".
 //   body: { to: 'candidate' | 'bde' }
 router.post('/interviews/:id/whatsapp-log', requirePerm('ats', 'interviews', 'Schedule Interview', 'create'), async (req, res) => {
-  if (!req.user.caps || !req.user.caps.atsAct) return res.status(403).json({ error: "Messaging about interviews isn't part of your role." });
+  // (the route's own requirePerm asks Schedule Interview / create: P5, 2026-10-09)
   const app = await loadScoped(req, res);
   if (!app) return;
   const to = String((req.body && req.body.to) || '').trim();

@@ -89,6 +89,8 @@ export default function DataIoBar({
   ioKey, exportUrl, params = {}, employeeId, employeeName, onImported, showEmployeePicker = true, size = 'sm', exportLabel,
   // false for an export-only module (no import makes sense for it)
   showImport = true,
+  // a plain-words name for the import button, e.g. "Import resignations"
+  importLabel,
 }) {
   const caps = useIoCaps(ioKey);
   const [pickOpen, setPickOpen] = useState(false);
@@ -147,7 +149,7 @@ export default function DataIoBar({
             disabled={!caps.canImport && !caps.allowRequest}
             onClick={() => setImportOpen(true)}
           >
-            {caps.canImport || !caps.allowRequest ? 'Import' : 'Request import'}
+            {caps.canImport || !caps.allowRequest ? (importLabel || 'Import') : 'Request import'}
           </button>
         </span>
       )}
@@ -299,9 +301,11 @@ export function ImportDialog({ ioKey, caps, onClose, onDone }) {
               <span className="c-upd"><b>{preview.willUpdate}</b> update</span>
               <span><b>{preview.unchanged}</b> unchanged</span>
               <span className="c-err"><b>{preview.invalidCount}</b> with errors</span>
+              {preview.unmatched > 0 && <span className="c-err"><b>{preview.unmatched}</b> Employee ID not found (listed below, nothing created)</span>}
               {preview.exampleRowsSkipped ? <span className="small-muted">{preview.exampleRowsSkipped} example row(s) skipped</span> : null}
             </div>
             {preview.ignoredReadOnly?.length ? <div className="small-muted">Ignored read-only columns: {preview.ignoredReadOnly.join(', ')}</div> : null}
+            {preview.ignoredPaused?.length ? <div className="small-muted">Left out because the field is paused (Manage Fields): {preview.ignoredPaused.join(', ')}. Nothing was changed for them.</div> : null}
             {preview.errors?.length > 0 && (
               <div className="dio-errors">
                 <b>Errors (these rows will not be imported):</b>
@@ -321,6 +325,7 @@ export function ImportDialog({ ioKey, caps, onClose, onDone }) {
                         <td className="small-muted">
                           {r.action === 'error' ? r.errors.join(' | ')
                             : (r.changes || []).map((c) => `${c.field}: ${c.from === '' || c.from == null ? '∅' : c.from} → ${c.to}`).join(' · ')}
+                          {r.action !== 'error' && (r.notes || []).length > 0 && <div style={{ marginTop: 2 }}>{r.notes.join(' · ')}</div>}
                         </td>
                       </tr>
                     ))}

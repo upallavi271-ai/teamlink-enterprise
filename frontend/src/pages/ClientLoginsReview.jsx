@@ -85,12 +85,13 @@ export default function ClientLoginsReview() {
           {requests.map((r) => (
             <div className="tlpa-row" key={r.id}>
               <div className="tlpa-who">
-                <b>{r.kind === 'CLIENT_DISABLE' ? `Switch off: ${r.name}` : `New login: ${r.name}`}</b>
+                <b>{r.kind === 'CLIENT_DISABLE' ? `Switch off: ${r.name}` : (r.kind === 'CLIENT_PERMS' ? `Change what ${r.name} can do` : `New login: ${r.name}`)}</b>
                 <span className="small-muted"><Link to={`/clients/${r.client.id}?tab=portal`}>{r.client.name}</Link> · {r.email}{r.typeWords ? ` · ${r.typeWords}` : ''}</span>
+                {r.chips?.length > 0 && <span className="tlpa-chips">{r.chips.map((c) => <StatusChip key={c} status={c} tone="blue" />)}</span>}
                 <span className="small-muted">Asked by {r.requestedBy} on {when(r.createdAt)}{r.reason ? ` — "${r.reason}"` : ''}</span>
               </div>
               <div className="tlpa-actions">
-                <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => act('post', `/requests/${r.id}/approve`)}>{r.kind === 'CLIENT_DISABLE' ? 'Switch off' : 'Approve'}</button>
+                <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => act('post', `/requests/${r.id}/approve`)}>{r.kind === 'CLIENT_DISABLE' ? 'Switch off' : (r.kind === 'CLIENT_PERMS' ? 'Approve change' : 'Approve')}</button>
                 <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setClosing({ kind: 'decline', r }); setNote(''); }}>Decline</button>
               </div>
             </div>
@@ -124,6 +125,7 @@ export default function ClientLoginsReview() {
                     <span className="small-muted">{l.lastLoginAt ? `Last signed in ${when(l.lastLoginAt)}` : 'Never signed in'} · checked {l.reviewedAt ? when(l.reviewedAt) : 'never'}</span>
                     <span className="tlpa-chips">
                       <StatusChip status={l.typeWords} tone="blue" />
+                      {(l.chips || []).map((c) => <StatusChip key={c} status={c} tone="blue" />)}
                       <StatusChip status={l.state.label} tone={TONE[l.state.tone]} />
                       {l.flags.map((f) => <StatusChip key={f.key} status={f.label} tone={TONE[f.tone]} />)}
                     </span>

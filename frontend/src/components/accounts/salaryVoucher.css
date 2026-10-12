@@ -1,0 +1,60 @@
+/* Accounts -> Journal & Ledger: employee-wise salary (user spec 2026-10-09). Scoped under .sv-* */
+.sv-wrap { padding: 12px 14px 16px; background: #fbfcfe; border-top: 1px solid var(--line-soft); }
+.sv-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; }
+.sv-head h4 { margin: 0; font-size: 14px; }
+.sv-head .sv-grow { flex: 1; }
+.sv-tabs { display: flex; gap: 6px; margin: 6px 0 10px; flex-wrap: wrap; }
+.sv-tabs button { border-radius: 999px; }
+.sv-tabs button.on { background: var(--navy, #1f3864); color: #fff; border-color: var(--navy, #1f3864); }
+.sv-mini { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.sv-mini > div { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: #fff; }
+.sv-mini .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sv-mini .l { font-size: 11px; color: var(--ink-soft); }
+.sv-search { min-width: 220px; max-width: 320px; }
+.sv-tbl { width: 100%; }
+.sv-tbl th { cursor: pointer; user-select: none; white-space: nowrap; }
+.sv-tbl th.sv-nosort { cursor: default; }
+.sv-tbl th .sv-arrow { font-size: 10px; margin-left: 3px; color: var(--ink-soft); }
+.sv-tbl td, .sv-tbl th { white-space: nowrap; }
+.sv-tbl td.sv-wrap-cell { white-space: normal; min-width: 160px; }
+.sv-tbl tr.sv-total td { font-weight: 700; border-top: 2px solid var(--line); background: #f3f6fa; }
+.sv-st { display: inline-flex; font-size: 11.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.sv-st.paid { background: #e3f4ea; color: #1e7a46; }
+.sv-st.partial { background: #e6eefb; color: #1f4fa8; }
+.sv-st.unpaid { background: #fdf0dc; color: #a35f00; }
+.sv-st.red { background: #fde8e8; color: #b42318; }
+.sv-note { overflow-wrap: anywhere; font-size: 12px; color: var(--ink-soft); line-height: 1.5; margin-top: 6px; }
+.sv-adj { margin-top: 12px; }
+.sv-adj h5 { margin: 0 0 4px; font-size: 12.5px; }
+.sv-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 12px; }
+.sv-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; }
+.sv-form input, .sv-form select, .sv-form textarea { width: 100%; }
+.sv-form .sv-full { grid-column: 1 / -1; }
+.sv-modes { display: flex; gap: 6px; flex-wrap: wrap; }
+.sv-modes button { border-radius: 999px; }
+.sv-modes button.on { background: var(--navy, #1f3864); color: #fff; border-color: var(--navy, #1f3864); }
+.sv-pay-tbl input[type="number"], .sv-pay-tbl input[type="text"] { width: 100px; min-width: 0; }
+.sv-diff { font-weight: 700; margin: 8px 0; }
+.sv-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; padding: 4px 18px 10px; }
+.sv-cards .c { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.sv-cards .c .v { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sv-cards .c .l { font-size: 11.5px; color: var(--ink-soft); }
+.sv-cards .c.green { border-color: #bfe3cc; }
+.sv-cards .c.orange { border-color: #f1d8a8; }
+
+/* searchable dropdown */
+.ss { position: relative; min-width: 210px; }
+.ss > input { width: 100%; }
+.ss-list { position: absolute; z-index: 60; left: 0; right: 0; top: 100%; margin-top: 2px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(20, 30, 60, .14); max-height: 260px; overflow: auto; min-width: 240px; }
+.ss-list button { display: flex; width: 100%; justify-content: space-between; gap: 10px; text-align: left; padding: 7px 10px; background: none; border: 0; cursor: pointer; font: inherit; font-size: 13px; }
+.ss-list button:hover, .ss-list button.act { background: #eef3fb; }
+.ss-list .ss-sub { color: var(--ink-soft); font-size: 11.5px; }
+.ss-empty { padding: 10px; font-size: 12.5px; color: var(--ink-soft); }
+.ss-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: 0; cursor: pointer; font-size: 16px; color: var(--ink-soft); line-height: 1; }
+
+@media (max-width: 720px) {
+  .sv-wrap { padding: 10px 8px 14px; }
+  .sv-search { min-width: 0; width: 100%; max-width: none; }
+  .ss { min-width: 0; width: 100%; }
+  .sv-cards { padding: 4px 10px 10px; }
+}

@@ -118,7 +118,8 @@ export default function Users() {
   const masters = useMasters();
   useEffect(() => {
     load();
-    api.get('/clients').then((res) => setClients(res.data)).catch(() => setClients([]));
+    // Only id and name are used here: the light pick list, not the 1.7 MB client table.
+    api.get('/clients/picker', { params: { limit: 1000 } }).then((res) => setClients(res.data.rows || [])).catch(() => setClients([]));
   }, []);
   useEffect(() => {
     api.get('/admin/departments').then((res) => setDepartments(res.data)).catch(() => setDepartments([]));

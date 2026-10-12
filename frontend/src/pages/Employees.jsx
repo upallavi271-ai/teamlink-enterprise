@@ -7,12 +7,15 @@ import { Link } from 'react-router-dom';
 import EmployeePhoto from '../components/EmployeePhoto.jsx';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
+import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the employees shown (templates, preview, confirm)
 import Modal from '../components/Modal.jsx';
 import { atsRoleLabel, registerRoleLabels } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
 import EmployeeBulkImport from '../components/employees/EmployeeBulkImport.jsx';
 import ManageFieldsModal from '../components/employees/ManageFieldsModal.jsx';
+// Manage Fields: HR's labels and Pause for the built-in fields.
+import { useFieldLayout } from '../utils/employeeFieldLayout';
 import GlobalExportPanel from '../components/employees/GlobalExportPanel.jsx';
 // Template export / import (every form field), for everyone who can open this
 // screen — scoped; view-only roles send an import REQUEST (Super Admin approves).
@@ -24,6 +27,9 @@ import TlWiseView from '../components/employees/TlWiseView.jsx';
 import EmployeeAvatar from '../components/employees/EmployeeAvatar.jsx';
 import TransferHistory from '../components/employees/TransferHistory.jsx';
 import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
+// Seat wording for the Position picker (free / held by / leaving) and the "after someone leaves" worklist.
+import { seatOptionLabel, seatSummary } from '../components/seatLabel.js';
+import AfterExit from '../components/employees/AfterExit.jsx';
 import '../components/employees/EmpMgmtExtras.css';
 // "12 Oct 2026" for a YYYY-MM-DD last working date.
 const lwdLabel = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
@@ -99,7 +105,9 @@ function ScopeChecklist({ label, hint, options, value, onChange, empty }) {
 }
 
 export default function Employees() {
+  const FL = useFieldLayout();
   const [rows, setRows] = useState([]);
+  const [msgOpen, setMsgOpen] = useState(false);
   const [caps, setCaps] = useState({});
   const [scopeText, setScopeText] = useState('');
   const [hr, setHr] = useState([]); // the HR record side: profile stage, lock, completion
@@ -113,6 +121,15 @@ export default function Employees() {
   const [adding, setAdding] = useState(null);
   const [otp, setOtp] = useState(EMPTY_OTP);
   const [roleTarget, setRoleTarget] = useState(null);
+  // Assign Roles: the TL / STL pickers list the leads of THIS person's department (server-side).
+  const [roleMgr, setRoleMgr] = useState(null);
+  useEffect(() => {
+    if (!roleTarget || !roleTarget.id) { setRoleMgr(null); return undefined; }
+    let alive = true;
+    api.get('/employees/management/manager-options', { params: { employeeId: roleTarget.id } })
+      .then((r) => { if (alive) setRoleMgr(r.data); }).catch(() => { if (alive) setRoleMgr(null); });
+    return () => { alive = false; };
+  }, [roleTarget && roleTarget.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // EDIT SCOPE — which records a login may reach. MOVED here from
   // Administration -> Users; this is the only implementation.
   const [scopeFor, setScopeFor] = useState(null);
@@ -136,8 +153,7 @@ export default function Employees() {
   // a decision, both scoped by the server to what this caller may see.
   const [queue, setQueue] = useState(null);
   const [credentials, setCredentials] = useState(null);
-  // The employee just created — Add Employee makes the record and the login;
-  // their documents are attached on the record itself, so say where.
+  // The employee just created — Add Employee makes the record and the login (no documents asked).
   const [justCreated, setJustCreated] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
   const [transferForm, setTransferForm] = useState({ department: '', team: '', reason: '' });
@@ -424,10 +440,9 @@ export default function Employees() {
     }
   }
 
-  // `keepOpen` — the Add form has documents waiting: it stays open after the
-  // employee is created so it can upload them and show each file's result.
-  // Returns the created employee (or null when the create was refused).
-  async function saveNew({ keepOpen = false } = {}) {
+  // Returns the created employee (or null when the create was refused). Add Employee never asks
+  // for documents (user, 2026-10-10): they are added later on the employee's profile.
+  async function saveNew() {
     setError(''); setNotice(''); setCredentials(null);
     try {
       // The untouched suggestion goes as blank, so the SERVER allocates the
@@ -444,7 +459,7 @@ export default function Employees() {
       // it never implies the employee has been told.
       setCredentials(res.data.credentials ? { ...res.data.credentials, name: res.data.name } : null);
       setJustCreated({ id: res.data.id, name: res.data.name });
-      if (!keepOpen) { setAdding(null); setOtp(EMPTY_OTP); }
+      setAdding(null); setOtp(EMPTY_OTP);
       load(); loadOptions();
       return res.data;
     } catch (err) {
@@ -543,6 +558,11 @@ export default function Employees() {
               {exporting === 'list' ? 'Exporting…' : `Export Excel (${filtered.length})`}
             </button>
           )}
+          {/* MESSAGE — Email / SMS / WhatsApp to the employees the filters show (the server holds it to your scope and to HR's edit right). */}
+          {caps.create && filtered.length > 0 && filtered.length <= 500 && (
+            <button className="btn" onClick={() => setMsgOpen(true)} title="Send an Email, SMS or WhatsApp to the employees shown below">Message these {filtered.length}</button>
+          )}
+          {msgOpen && <SendManyDialog audience="employees" ids={filtered.map((e) => e.id)} note="Only employees with an email or phone on record can be reached. You see who is left out, and why, before anything is sent." onClose={() => setMsgOpen(false)} />}
           {/* GLOBAL EXPORT — pick the fields; same scope and filters as the list. */}
           {caps.export && (
             <button className="btn btn-primary" onClick={() => setShowGlobalExport(true)} title="Choose the fields and export everyone the current filters show, within your scope">
@@ -560,7 +580,7 @@ export default function Employees() {
             onImported={() => load()}
           />
           {caps.create && <button className="btn" title="Create new employees with logins from the short sample (sign-in links, no passwords)" onClick={() => setShowImport((s) => !s)}>Bulk create + logins</button>}
-          {caps.configure && <button className="btn" title="Add your own fields to the employee form" onClick={() => setShowFields(true)}>Manage Fields</button>}
+          {caps.manageFields && <button className="btn" title="See every field of the employee form, rename it, pause it or add your own" onClick={() => setShowFields(true)}>Manage Fields</button>}
           {caps.create && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
         </div>
       </div>
@@ -575,10 +595,13 @@ export default function Employees() {
       )}
       {justCreated && (
         <div className="notice" style={{ marginBottom: 12 }}>
-          Next: <Link to={`/employees/${justCreated.id}`}>attach {justCreated.name}&apos;s documents</Link> — Aadhaar, PAN,
-          certificates and joining paperwork go on their employee record.
+          <Link to={`/employees/${justCreated.id}`}>Open {justCreated.name}&apos;s profile</Link> — documents (Aadhaar, PAN,
+          certificates) can be added there whenever you have them.
         </div>
       )}
+
+      {/* Someone left: what still points at them (clients, jobs, team members). Shows nothing when all is handed over. */}
+      <AfterExit canEdit={!!caps.edit} onChanged={load} />
 
       {credentials && (
         <div className="card section" style={{ borderColor: credentials.sent ? undefined : 'var(--warn)' }}>
@@ -777,11 +800,11 @@ export default function Employees() {
                 administration (roles, scope, password, sign-in link) moved to
                 Administration -> Users, which is the screen that owns logins. */}
             <tr>
-              <th style={{ width: 110 }}>Emp ID</th>
-              <th>Name</th>
+              <th style={{ width: 110 }}>{FL.label('employeeCode', 'Emp ID')}</th>
+              <th>{FL.label('name', 'Name')}</th>
               <th style={{ width: 70 }}>Docs</th>
-              <th>Designation · Team</th>
-              <th style={{ width: 150 }}>Status</th>
+              <th>{FL.label('designation', 'Designation')} · {FL.label('team', 'Team')}</th>
+              <th style={{ width: 150 }}>{FL.label('employmentStatus', 'Status')}</th>
               <th style={{ width: 150 }}>Profile Status</th>
               <th>Position · Handover</th>
               <th style={{ width: 130 }}>Completion</th>
@@ -1115,7 +1138,7 @@ export default function Employees() {
           form={adding} setForm={setAdding} options={options} employees={employeeIds}
           otp={otp} setOtp={setOtp} emailReady={emailReady} sendOtp={sendOtp} verifyOtp={verifyOtp}
           onClose={() => { setAdding(null); setOtp(EMPTY_OTP); }} onSave={saveNew}
-          canDocs={!!caps.edit} error={error}
+          error={error}
         />
       )}
 
@@ -1217,14 +1240,17 @@ export default function Employees() {
             <div className="field"><label>STL</label>
               <Combo value={roleTarget.stl || ''} onChange={(e) => setRoleTarget({ ...roleTarget, stl: e.target.value })}>
                 <option value="">—</option>
-                {options.managerNames.map((n) => <option key={n}>{n}</option>)}
+                {[...new Set(((roleMgr && roleMgr.options) || []).filter((o) => o.role === 'STL').map((o) => o.name))].map((n) => <option key={n}>{n}</option>)}
+                {roleTarget.stl && !((roleMgr && roleMgr.options) || []).some((o) => o.name === roleTarget.stl) && <option>{roleTarget.stl}</option>}
               </Combo></div>
             <div className="field"><label>TL</label>
               <Combo value={roleTarget.tl || ''} onChange={(e) => setRoleTarget({ ...roleTarget, tl: e.target.value })}>
                 <option value="">—</option>
-                {options.managerNames.map((n) => <option key={n}>{n}</option>)}
+                {[...new Set(((roleMgr && roleMgr.options) || []).filter((o) => o.role !== 'STL').map((o) => o.name))].map((n) => <option key={n}>{n}</option>)}
+                {roleTarget.tl && !((roleMgr && roleMgr.options) || []).some((o) => o.name === roleTarget.tl) && <option>{roleTarget.tl}</option>}
               </Combo></div>
           </div>
+          {roleMgr && <div className="small-muted" style={{ marginTop: 4 }}>{(roleMgr.options || []).length ? roleMgr.title : (roleMgr.empty || '')}</div>}
           <div className="small-muted" style={{ marginTop: 8 }}>
             The data scope stays where it is — change it with <b>Edit scope</b> on the Scope column.
           </div>
@@ -1242,19 +1268,27 @@ export default function Employees() {
           </>}
         >
           <EmployeePhoto employeeId={detail.id} name={detail.name} canChange={false} />
-          <div className="kv"><span className="k">Email</span><span>{detail.email || '—'}{detail.email && detail.emailVerification && (
+          <div className="kv"><span className="k">{FL.label('email', 'Email')}</span><span>{detail.email || '—'}{detail.email && detail.emailVerification && (
             <span className={`status ${detail.emailVerification.verified ? 'approved' : 'priority-high'}`} style={{ marginLeft: 6 }}>
               {detail.emailVerification.verified ? '✓ Verified' : 'Not verified'}
             </span>
           )}</span></div>
-          <div className="kv"><span className="k">Mobile</span><span>{detail.phone || '—'}</span></div>
-          <div className="kv"><span className="k">Department</span><span>{detail.department || '—'}</span></div>
-          <div className="kv"><span className="k">Designation</span><span>{detail.designation || '—'}</span></div>
+          {!FL.paused('phone') && <div className="kv"><span className="k">{FL.label('phone', 'Mobile')}</span><span>{detail.phone || '—'}</span></div>}
+          <div className="kv"><span className="k">{FL.label('department', 'Department')}</span><span>{detail.department || '—'}</span></div>
+          <div className="kv"><span className="k">{FL.label('designation', 'Designation')}</span><span>{detail.designation || '—'}</span></div>
           <div className="kv"><span className="k">Role</span><span>{detail.role ? atsRoleLabel(detail.role) : '—'}</span></div>
-          <div className="kv"><span className="k">Reporting Manager</span><span>{detail.reportingManager || '—'}</span></div>
-          <div className="kv"><span className="k">Location</span><span>{detail.location || '—'}</span></div>
-          <div className="kv"><span className="k">Joining Date</span><span>{detail.joiningDate || '—'}</span></div>
-          <div className="kv"><span className="k">Employment Status</span><span>{detail.employmentStatus}</span></div>
+          <div className="kv"><span className="k">{FL.label('reportingManagerId', 'Reporting Manager')}</span><span>{detail.reportingManager || '—'}</span></div>
+          {!FL.paused('location') && <div className="kv"><span className="k">{FL.label('location', 'Location')}</span><span>{detail.location || '—'}</span></div>}
+          <div className="kv"><span className="k">{FL.label('dateOfJoining', 'Joining Date')}</span><span>{detail.joiningDate || '—'}</span></div>
+          <div className="kv"><span className="k">{FL.label('employmentStatus', 'Employment Status')}</span><span>{detail.employmentStatus}</span></div>
+          {/* RESIGNATION — when (date AND time) and why, from the resignation record. */}
+          {detail.resignation && (
+            <>
+              <div className="kv"><span className="k">Resigned on</span><span>{detail.resignation.resignedOn ? <b>{detail.resignation.resignedOn}</b> : <span className="small-muted">Not recorded</span>}</span></div>
+              <div className="kv"><span className="k">Reason for resigning</span><span>{detail.resignation.reason || <span className="small-muted">Not recorded</span>}</span></div>
+              {detail.resignation.noticeDays != null && <div className="kv"><span className="k">Notice days</span><span>{detail.resignation.noticeDays}</span></div>}
+            </>
+          )}
           {/* NOTICE PERIOD — the last working date off the resignation record. */}
           {(ON_NOTICE.includes(detail.employmentStatus) || detail.lastWorkingDate) && (
             <div className="kv">
@@ -1367,36 +1401,19 @@ function DepartmentChecklist({ all, value, onChange }) {
 
 function AddEmployeeModal({
   form, setForm, options, employees, otp, setOtp, emailReady, sendOtp, verifyOtp, onClose, onSave,
-  canDocs = false, error = '',
+  error = '',
 }) {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const FL = useFieldLayout();
   const [showPassword, setShowPassword] = useState(false);
-  // DOCUMENTS ARE PART OF THIS FORM (user, 2026-09-29). The files wait in the
-  // browser; Create employee makes the employee FIRST, then uploads each file
-  // to them through the ordinary documents API (its rules, its audit). A file
-  // that fails is listed with a Retry — the employee exists either way.
-  const docsRef = useRef(null);
-  const [pendingDocs, setPendingDocs] = useState(0);
-  const [docErr, setDocErr] = useState('');
+  // NO DOCUMENTS IN THIS FORM (user, 2026-10-10). Add Employee only creates the record and the
+  // login; Aadhaar, PAN and certificates are added afterwards on the employee's profile.
   const [saving, setSaving] = useState(false);
   const [tried, setTried] = useState(false);
-  const [created, setCreated] = useState(null);
-  const [docResult, setDocResult] = useState(null);
-  const showDocs = canDocs && !!options.documents;
 
   async function create() {
-    setDocErr('');
-    const waiting = showDocs && docsRef.current ? docsRef.current.pendingCount() : 0;
-    if (waiting) {
-      const bad = docsRef.current.validate();
-      if (bad) { setDocErr(bad); return; }
-    }
     setSaving(true); setTried(true);
-    const made = await onSave({ keepOpen: waiting > 0 });
-    if (made && waiting) {
-      setCreated({ id: made.id, name: made.name, code: made.employeeCode });
-      setDocResult(await docsRef.current.uploadAll(made.id));
-    }
+    await onSave();
     setSaving(false);
   }
   // The seats of the chosen department, free ones first so the common case
@@ -1404,7 +1421,6 @@ function AddEmployeeModal({
   const deptPositions = (options.positions || [])
     .filter((r) => r.department === form.department)
     .sort((a, b) => (a.holder ? 1 : 0) - (b.holder ? 1 : 0) || a.code.localeCompare(b.code, undefined, { numeric: true }));
-  const vacantCount = deptPositions.filter((r) => !r.holder).length;
   // TEAMS ARE AN EDUCATION THING. Rather than naming Education in the code,
   // this asks the department master which departments actually have teams —
   // so the field appears for exactly those, and adding or removing a team in
@@ -1432,28 +1448,15 @@ function AddEmployeeModal({
       size="xwide"
       bodyStyle={{ padding: '20px 26px' }}
       onClose={onClose}
-      foot={created ? (
-        <button className="btn btn-primary" disabled={saving} onClick={onClose}>{saving ? 'Uploading documents…' : 'Done'}</button>
-      ) : <>
+      foot={<>
         <button className="btn btn-primary" disabled={!canSave || saving} onClick={create}>
-          {saving ? 'Creating…' : `Create employee${pendingDocs ? ` + ${pendingDocs} document${pendingDocs === 1 ? '' : 's'}` : ''}`}
+          {saving ? 'Creating…' : 'Create employee'}
         </button>
         <button className="btn" onClick={onClose}>Cancel</button>
       </>}
     >
-      {created && (
-        <div className={`notice${docResult && docResult.failed ? ' amber' : ''}`}>
-          <span>
-            <b>{created.name}{created.code ? ` (${created.code})` : ''}</b> created — employee record and login.{' '}
-            {!docResult ? 'Uploading their documents…'
-              : docResult.failed
-                ? `${docResult.ok} of ${docResult.total} documents uploaded; ${docResult.failed} failed — the reason is on each file below. Retry it, or add it later on their Edit form.`
-                : `All ${docResult.total} document${docResult.total === 1 ? '' : 's'} uploaded.`}
-          </span>
-        </div>
-      )}
-      {!created && tried && error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
-      {!created && (<>
+      {tried && error && <div className="error-text" style={{ marginBottom: 10 }}>{error}</div>}
+      <>
       {/* SIX FIELDS, AND NO MORE.
           "oka emp create cheyyadaniki start just small fields ey enter cheyyali
           HR" — HR opens the account, the credentials go out, and the employee
@@ -1465,7 +1468,7 @@ function AddEmployeeModal({
           three columns and fall back to one on a phone. */}
       <div className="grid-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '14px 20px' }}>
         <div className="field">
-          <label>Employee ID <i style={{ fontWeight: 400 }}>(next in series — auto if blank)</i></label>
+          <label>{FL.label('employeeCode', 'Employee ID')} <i style={{ fontWeight: 400 }}>(next in series — auto if blank)</i></label>
           <input
             value={form.employeeId}
             onChange={(e) => set({ employeeId: e.target.value })}
@@ -1482,7 +1485,7 @@ function AddEmployeeModal({
           )}
         </div>
         <div className="field">
-          <label>Full name</label>
+          <label>{FL.label('name', 'Full name')}</label>
           <input
             type="text"
             value={form.name}
@@ -1517,7 +1520,7 @@ function AddEmployeeModal({
             hidden — a missing MED-3 reads as "no such seat", which is a
             different fact from "taken". The server refuses it either way. */}
         <div className="field">
-          <label>Position <i style={{ fontWeight: 400 }}>(optional — the seat, not the person)</i></label>
+          <label>{FL.label('position', 'Position')} <i style={{ fontWeight: 400 }}>(optional — the seat, not the person)</i></label>
           <Combo
             creatable
             disabled={!form.department}
@@ -1528,17 +1531,13 @@ function AddEmployeeModal({
               {form.department ? 'No seat' : 'Choose a department first'}
             </option>
             {deptPositions.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.code}
-                {r.name ? ` · ${r.name}` : ''}
-                {r.holder ? ` · held by ${r.holder}` : ''}
-              </option>
+              <option key={r.code} value={r.code}>{seatOptionLabel(r)}</option>
             ))}
           </Combo>
           {form.department && (
             <span className="small-muted">
               {deptPositions.length
-                ? `${vacantCount} of ${deptPositions.length} free in ${form.department}. Type a new code to add one.`
+                ? `${seatSummary(deptPositions, form.department)} A seat frees the day its holder leaves. Type a new code to add one.`
                 : `No seats set up for ${form.department} yet — type one (e.g. MED-1) to create it.`}
             </span>
           )}
@@ -1552,7 +1551,7 @@ function AddEmployeeModal({
             what a team lead is then held to. */}
         {deptTeams.length > 0 && (
           <div className="field">
-            <label>Team</label>
+            <label>{FL.label('team', 'Team')}</label>
             <Combo value={form.team} onChange={(e) => set({ team: e.target.value })}>
               <option value="">No team</option>
               {deptTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
@@ -1594,7 +1593,7 @@ function AddEmployeeModal({
             it is NOT proved by a code any more, so a typo means a mail that
             lands nowhere — which the result panel reports. */}
         <div className="field">
-          <label>Email</label>
+          <label>{FL.label('email', 'Email')}</label>
           <input
             type="email"
             /* Not the signing-in user's address — see the note on the
@@ -1652,21 +1651,7 @@ function AddEmployeeModal({
           </span>
         </div>
       )}
-      </>)}
-
-      {/* DOCUMENTS — inside the form, below the fields; the same section as
-          the Edit form and My Profile. Only for a caller who may upload to an
-          employee (Employee Management edit); the server re-checks each file. */}
-      {showDocs && (
-        <EmployeeDocuments
-          ref={docsRef}
-          embedded
-          meta={options.documents}
-          onChange={(n) => { setPendingDocs(n); setDocErr(''); }}
-          intro={created ? null : 'Attach what you have now — several files per type is fine. They upload to the new employee when you press Create employee; more can be added later.'}
-        />
-      )}
-      {docErr && <div className="error-text" style={{ marginTop: 8 }}>{docErr}</div>}
+      </>
     </Modal>
   );
 }

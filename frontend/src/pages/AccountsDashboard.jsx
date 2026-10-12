@@ -12,7 +12,9 @@ import Summary from './accounts/dash/Summary.jsx';
 import OfficeSpends from './accounts/dash/OfficeSpends.jsx';
 import GstPosition from './accounts/dash/GstPosition.jsx';
 import ClientTable from './accounts/dash/ClientTable.jsx';
+import { flatInvoices } from './accounts/dash/Drill.jsx';
 import MoreTools from './accounts/dash/MoreTools.jsx';
+import DashboardExport from '../components/dashboard/DashboardExport.jsx';
 import './accounts/dash/accDash.css';
 
 // ---------------------------------------------------------------------------
@@ -92,7 +94,10 @@ export default function AccountsDashboard() {
           <h1>Accounts Dashboard</h1>
           <div className="acd-sub">Track invoices, collections, expenses, GST, TDS, pending payments and profit in one place.</div>
         </div>
-        {canImport && <button type="button" className="btn btn-sm" onClick={() => setImporting(true)}>⬆ Import</button>}
+        <div className="acd-head-btns">
+          {canImport && <button type="button" className="btn btn-sm" onClick={() => setImporting(true)}>⬆ Import</button>}
+          {allowed && data && data.mayExport && <DashboardExport url="/dashboard/accounts/control/export" params={serverFilters} />}
+        </div>
       </div>
       {importing && <AccountsImport onClose={() => setImporting(false)} onDone={() => load(true)} />}
 
@@ -107,9 +112,9 @@ export default function AccountsDashboard() {
           {data && (
             <div style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .15s' }}>
               <ProofReminder proof={data.proof} filters={serverFilters} onChanged={() => changed(false)} flash={flash} />
-              <Summary s={data.summary} peopleFilter={data.peopleFilter} />
+              <Summary s={data.summary} peopleFilter={data.peopleFilter} invoices={flatInvoices(data.clients)} bills={data.office.rows} />
               <OfficeSpends office={data.office} canManage={canOffice} onChanged={() => changed(false)} flash={flash} />
-              <GstPosition g={data.gst} peopleFilter={data.peopleFilter} />
+              <GstPosition g={data.gst} peopleFilter={data.peopleFilter} invoices={flatInvoices(data.clients)} bills={data.office.rows} />
               <ClientTable clients={data.clients} canPay={canPay} canAttach={canAttach} onChanged={changed} flash={flash} />
               {data.checks && data.checks.some((c) => !c.ok) && (
                 <div className="notice red">

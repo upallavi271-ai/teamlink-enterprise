@@ -7,7 +7,7 @@ import PeriodPicker, { ALL_TIME, isAllTime, periodText } from '../../../componen
 // facets): each list is counted over the invoices matching every OTHER
 // filter, so picking a Department narrows Section, Role and Employee (and
 // Client) to it. A choice the list no longer offers is cleared.
-export const PRESETS = ['all', 'today', 'thisWeek', 'thisMonth', 'thisQuarter', 'cfy', 'custom'];
+export const PRESETS = ['all', 'today', 'thisWeek', 'thisMonth', 'lastMonth', 'thisQuarter', 'cfy', 'custom'];
 export const BLANK = {
   period: ALL_TIME, client: '', dept: '', section: '', role: '', emp: '', q: '',
 };

@@ -29,7 +29,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 // A seat whose open tenure belongs to somebody who has LEFT is not really
 // held (user, 2026-09-29: seats stayed "held" by Exited people, so a new
 // person could never be given MED-1). These statuses mean the person is gone.
-const LEFT_STATUSES = ['relieved', 'exited', 'terminated', 'resigned', 'absconded', 'dropout'];
+// 'Exit Process' counts as gone, like everywhere else in the app (attendance, LMS, ATS
+// pickers): the person has finished working. 'Notice Period' does NOT — they still
+// hold the seat until the last working day (utils/seatRelease.js).
+const LEFT_STATUSES = ['relieved', 'exited', 'exit process', 'terminated', 'resigned', 'absconded', 'dropout'];
 const hasLeft = (status) => LEFT_STATUSES.includes(String(status || '').trim().toLowerCase());
 
 // The day a departed holder's tenure should end: their approved (else
@@ -120,7 +123,7 @@ async function tenuresOf(positionId) {
   const rows = await prisma.positionAssignment.findMany({
     where: { positionId },
     orderBy: [{ fromDate: 'desc' }],
-    include: { employee: { select: { id: true, name: true, employeeCode: true, department: true } } },
+    include: { employee: { select: { id: true, name: true, employeeCode: true, department: true, employmentStatus: true } } },
   });
   const out = [];
   rows.forEach((a, i) => {
@@ -133,6 +136,9 @@ async function tenuresOf(positionId) {
       toDate: a.toDate,
       current: !a.toDate,
       note: a.note,
+      // 'Exited' when the tenure ended because the person left (utils/seatRelease.js).
+      endedBecause: a.toDate && /^(Exited|Notice ended)/.test(a.note || '') ? 'Exited' : null,
+      employeeStatus: a.employee ? a.employee.employmentStatus : null,
       days: daysBetween(a.fromDate, a.toDate || today()),
     });
     // A gap between this tenure's start and the previous one's end.

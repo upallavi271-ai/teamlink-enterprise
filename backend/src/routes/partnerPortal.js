@@ -246,6 +246,10 @@ router.post('/jobs/:id/submit', partnerOnly, async (req, res) => {
   const currentCtc = num(f.currentCtc);
   const expectedCtc = num(f.expectedCtc);
   if (currentCtc != null && !(currentCtc >= 0)) return res.status(400).json({ error: 'Current CTC must be a number, like 650000.', field: 'currentCtc' });
+  // Current + expected pay are required on every submission (user note 2026-10-10): yearly rupees here, e.g. 650000 (0 if fresher).
+  if (currentCtc == null) return res.status(400).json({ error: 'Please enter current salary (0 if fresher).', field: 'currentCtc', code: 'SALARY_REQUIRED' });
+  if (expectedCtc == null) return res.status(400).json({ error: 'Please enter expected salary.', field: 'expectedCtc', code: 'SALARY_REQUIRED' });
+  if (!(expectedCtc > 0)) return res.status(400).json({ error: 'Expected salary cannot be 0. Please enter the amount the person wants.', field: 'expectedCtc', code: 'SALARY_REQUIRED' });
   const meta = PC.requestMeta(req);
   const by = `Partner: ${partner.name} (${req.partner.name})`;
   const base = {
@@ -287,7 +291,9 @@ router.post('/jobs/:id/submit', partnerOnly, async (req, res) => {
     candidate = await prisma.candidate.create({
       data: {
         name, phone, email, location: base.location, skills: base.skills,
-        currentSalary: currentCtc != null ? String(currentCtc) : null, expectedSalary: expectedCtc != null ? String(expectedCtc) : null,
+        // stored as a clean "6.5 LPA" (the partner types yearly rupees)
+        currentSalary: currentCtc != null ? require('../utils/salaryFit').fmtLpa(currentCtc / 100000) : null, // eslint-disable-line global-require
+        expectedSalary: expectedCtc != null ? require('../utils/salaryFit').fmtLpa(expectedCtc / 100000) : null, // eslint-disable-line global-require
         noticePeriod: base.noticePeriod || '30 Days', source: P.PARTNER_SOURCE, firstSource: P.PARTNER_SOURCE, sourceCampaign: partner.name,
         ownerPartnerId: partner.id, ownerUntil: new Date(now.getTime() + ownershipDays * 86400000),
       },

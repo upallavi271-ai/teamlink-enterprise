@@ -310,7 +310,7 @@ async function buildControl(user, q = {}) {
       gstin: r.effGstin || null,
       gstinOnFile: !!r.gstinOnFile,
       taxInvoiceOnFile: !!r.proofFile,
-      paidOn: r.paidAt ? new Date(new Date(r.paidAt).getTime() + IST).toISOString().slice(0, 10) : (paidLike ? r.expenseDate : null),
+      paidOn: r.paymentDate || (r.paidAt && !r.bankTxnId ? new Date(new Date(r.paidAt).getTime() + IST).toISOString().slice(0, 10) : null), // spec 7: never the bill date / the sync time
       hay: lc([r.vendor, r.billNumber, r.expenseCode, r.description, r.category, r.effGstin, r.remarks, r.paymentMode].filter(Boolean).join(' ')),
     };
   }).filter((e) => hit(e.hay));

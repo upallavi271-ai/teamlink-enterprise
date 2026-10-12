@@ -731,4 +731,6 @@ function forget(user) { if (user) WORLD.delete(user.id); else WORLD.clear(); }
 
 module.exports = {
   METRICS, COLUMN_KEYS, WHAT, access, monthReport, dayReport, pendingWork, forget, todayIst, addDays,
+  // The pieces utils/reportPack.js (team / individual reports + exports) reads: the SAME people, scope and events.
+  worldFor, eventsIn, istDay, istStart, isTestPerson, isLeadKey,
 };

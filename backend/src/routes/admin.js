@@ -415,6 +415,17 @@ router.get('/role-catalog', requirePerm(null, 'administration', 'Role Catalog', 
   const countFor = (role) => counts.find((c) => c.role === role)?._count._all || 0;
   // ROLES ARE DATA: the system roles and every custom role (utils/roleRegistry.js).
   const registry = await listRoles();
+  // P12 (user, 2026-10-09): a person holds a role in a PRODUCT too. A BDE or a
+  // Recruiter is an Employee at account level (role = EMPLOYEE) and a BDE / Recruiter
+  // in ATS, so counting the account role alone showed BDE = 0. Users per role =
+  // the logins that hold it at account level OR in any product.
+  const productCounts = {};
+  for (const reg of registry.filter((x) => x.isSystem)) {
+    // eslint-disable-next-line no-await-in-loop
+    productCounts[reg.code] = await prisma.user.count({
+      where: { OR: [{ role: reg.code }, { atsRole: reg.code }, { hrmsRole: reg.code }, { accountsRole: reg.code }] },
+    });
+  }
   const customCounts = {};
   for (const r of registry.filter((x) => !x.isSystem)) {
     // eslint-disable-next-line no-await-in-loop
@@ -446,7 +457,7 @@ router.get('/role-catalog', requirePerm(null, 'administration', 'Role Catalog', 
       behavesLike: reg.behavesLike,
       permissions: reg.permissions,
       grants: reg.products,
-      users: reg.isSystem ? countFor(role) : (customCounts[role] || 0),
+      users: reg.isSystem ? Math.max(countFor(role), productCounts[role] || 0) : (customCounts[role] || 0),
       scope: ROLE_SCOPE_DESC[role] || reg.scopeDesc || '—',
       // Which products this role reaches at all — the top level of
       // Product → Module → Feature → Action.
@@ -659,6 +670,8 @@ router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Ro
       label: m.label,
       product: productOf(m.id),
       featureNames: m.features,
+      // Plain tick-line groups shown above the grid (Clients / Requirements / Business activities / Reports) - utils/roleAccess.js.
+      groups: require('../utils/roleAccess').PERMISSION_GROUPS[m.id] || null, // eslint-disable-line global-require
       // HRMS / Accounts modules: what each feature drives and whether an
       // endpoint checks it by name (utils/roleAccess.js SPLIT_MODULES).
       featureInfo: featureInfoOf(m.id),
@@ -943,6 +956,44 @@ router.get('/notifications', async (req, res) => {
     channel: n.channel || 'In-App',
     status: n.status || (n.read ? 'Read' : 'Delivered'),
   })));
+});
+
+// THE JOB-REQUEST POP-UP (user, 2026-10-09). The few notifications that must be
+// seen on screen at once - a client's new job request, sent to the client's BDE
+// and the BDE TL (utils/requirementRequest.js) - come back here, newest first,
+// for the pop-up in the app shell (components/JobRequestPopup.jsx) to poll. A
+// row stays here until ITS OWNER acknowledges it (PATCH /notifications/:id/read),
+// so each person's pop-up is theirs alone, shows on their next login if they
+// were away, and never doubles (one row per person per request).
+router.get('/notifications/popups', async (req, res) => {
+  const { POPUP_TITLE } = require('../utils/requirementRequest'); // eslint-disable-line global-require
+  const rows = await prisma.notification.findMany({
+    where: {
+      userId: req.user.id, read: false, title: { startsWith: POPUP_TITLE },
+      createdAt: { gt: new Date(Date.now() - 30 * 86400000) },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
+  const idOf = (n) => (String(n.message || '').match(/\nOpen: \/requirements\/([^\s]+)\s*$/) || [])[1] || null;
+  const reqs = await prisma.requirement.findMany({
+    where: { id: { in: rows.map(idOf).filter(Boolean) } },
+    select: { id: true, reqCode: true, title: true, openings: true, status: true, client: { select: { name: true } } },
+  });
+  const byId = new Map(reqs.map((r) => [r.id, r]));
+  const seen = new Set();
+  const out = [];
+  rows.forEach((n) => {
+    const rid = idOf(n);
+    const r = rid ? byId.get(rid) : null;
+    if (!r || seen.has(r.id)) return;
+    seen.add(r.id);
+    out.push({
+      id: n.id, requirementId: r.id, reqCode: r.reqCode, client: (r.client && r.client.name) || n.title.slice(POPUP_TITLE.length),
+      jobTitle: r.title, openings: r.openings || 1, status: r.status, createdAt: n.createdAt, path: `/requirements/${r.id}`,
+    });
+  });
+  res.json(out);
 });
 
 router.patch('/notifications/:id/read', async (req, res) => {
@@ -1844,6 +1895,17 @@ router.get('/integrations/:id/board-status', requirePerm(null, 'administration',
   const out = await require('../utils/jobConnectors').boardStatus(req.params.id); // eslint-disable-line global-require
   if (!out) return res.status(404).json({ error: 'Not a job board' });
   return res.json(out);
+});
+
+// "I have applied — waiting for the board's approval": a note by a person (never a fact about the
+// board). Shows the board as "Waiting for approval" until its details are pasted in.
+router.post('/integrations/:id/applied', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  if (!JOB_BOARD_CHANNELS.includes(req.params.id)) return res.status(404).json({ error: 'Not a job board' });
+  const on = !(req.body && req.body.applied === false);
+  const jc = require('../utils/jobConnectors'); // eslint-disable-line global-require
+  await jc.setApplied(req.params.id, on, req.user.name, req.body && req.body.note);
+  await logAudit({ userId: req.user.id, action: on ? 'Job board: applied, waiting for approval' : 'Job board: applied flag cleared', entity: 'Integration', entityId: req.params.id, toValue: String((req.body && req.body.note) || '').slice(0, 200) || null });
+  return res.json(await jc.boardStatus(req.params.id));
 });
 
 router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {

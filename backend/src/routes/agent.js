@@ -56,6 +56,12 @@ router.get('/status', aiAccess.requireAi('ask'), async (req, res) => {
 
 router.use(aiAccess.requireAi('agent'));
 
+// THE TOOL-BASED AGENT (src/ai): /do, /confirm, /cancel, /tools, /pending.
+// A registry of tools + an 11-step pipeline + a one-time Confirm store. The
+// older /plan + /execute pair below stays for the actions not yet in the
+// registry (leave decisions, regularizations, tickets, tasks ...).
+router.use(require('../ai/routes').agentRouter);
+
 router.get('/context', async (req, res) => {
   const ctx = await buildContext(req.user, req.headers.authorization);
   const actions = usableActions(ctx);

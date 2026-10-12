@@ -36,6 +36,7 @@ import {
   RejectFields, rejectReady, rejectPayload, EMPTY_REJECT,
 } from '../rejections/rejectionUi.jsx';
 import StillFits, { forgetStillFits } from '../rejections/StillFits.jsx';
+import { ctcAsk, CtcAsk, CtcAskButtons } from '../CtcConfirm.jsx';
 import './StepPopups.css';
 
 const SOURCED = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'];
@@ -359,7 +360,8 @@ function JoinedDialog({ app, onClose, onDone }) {
   // "Did not join" people are not marked joined from here.
   const dropped = !!(terms && terms.joiningStatus === 'Dropped');
   const notYet = !!(terms && terms.stage && terms.stage !== 'OFFER_ACCEPTED');
-  async function save() {
+  const [ask, setAsk] = useState(null); // the server asked "is this CTC right?"
+  async function save(confirmCtc = false) {
     setBusy(true); setError('');
     try {
       // Through the Joining checklist (e2e gap 2, 2026-10-03): the joining
@@ -369,12 +371,14 @@ function JoinedDialog({ app, onClose, onDone }) {
       const extra = {};
       if (Number(form.offeredCtc) > 0) extra.offeredCtc = Number(form.offeredCtc);
       if (terms && terms.canSetFee && form.feePercent !== '' && Number(form.feePercent) !== Number(terms.feePercent)) extra.feePercent = Number(form.feePercent);
-      await api.post(`/ats/joining/${app.id}/schedule`, { joiningDate: form.joiningDate, ...(extra.offeredCtc ? { offeredCtc: extra.offeredCtc } : {}) });
+      if (confirmCtc) extra.confirmCtc = true;
+      await api.post(`/ats/joining/${app.id}/schedule`, { joiningDate: form.joiningDate, ...(extra.offeredCtc ? { offeredCtc: extra.offeredCtc, ...(confirmCtc ? { confirmCtc: true } : {}) } : {}) });
       await api.post(`/ats/joining/${app.id}/joined`, extra);
       onDone({ text: internal ? `Saved. ${app.name} joined — added as an employee in HRMS.` : `Saved. ${app.name} joined. The invoice is now with Accounts.` });
       onClose();
     } catch (err) {
-      setError(errText(err, 'Could not save the joining. Please try again.'));
+      const a = ctcAsk(err);
+      if (a) setAsk(a); else setError(errText(err, 'Could not save the joining. Please try again.'));
       setBusy(false);
     }
   }
@@ -382,10 +386,10 @@ function JoinedDialog({ app, onClose, onDone }) {
     <Modal
       title={`Joined — ${app.name}`}
       onClose={onClose}
-      footer={(
+      footer={ask ? <CtcAskButtons busy={busy} onNo={() => setAsk(null)} onYes={() => save(true)} /> : (
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !terms || dropped || notYet || !form.joiningDate || !ctcOk || !feeOk} onClick={save}>
+          <button type="button" className="btn btn-primary" disabled={busy || !terms || dropped || notYet || !form.joiningDate || !ctcOk || !feeOk} onClick={() => save(false)}>
             {busy ? 'Saving…' : 'Save'}
           </button>
         </>
@@ -403,7 +407,7 @@ function JoinedDialog({ app, onClose, onDone }) {
           {!internal && (
             <label className="field">
               <span>Final CTC (₹ per year) *</span>
-              <input type="number" min="1" step="1000" inputMode="numeric" placeholder="e.g. 850000" value={form.offeredCtc} onChange={(e) => setForm({ ...form, offeredCtc: e.target.value })} />
+              <input type="number" min="1" step="1000" inputMode="numeric" placeholder="e.g. 850000" value={form.offeredCtc} onChange={(e) => { setForm({ ...form, offeredCtc: e.target.value }); setAsk(null); }} />
               <span className="small-muted">{rupees(form.offeredCtc) || (terms.expectedSalary ? `They asked for ${terms.expectedSalary}` : 'The yearly CTC in the offer letter')}</span>
             </label>
           )}
@@ -425,6 +429,7 @@ function JoinedDialog({ app, onClose, onDone }) {
           </div>
         </>
       )}
+      {ask && <CtcAsk ask={ask} />}
       {error && <div className="error-text" style={{ marginTop: 6 }}>{error}</div>}
     </Modal>
   );

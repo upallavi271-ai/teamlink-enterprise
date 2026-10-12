@@ -276,8 +276,12 @@ async function decide(req, res, to) {
         tdsAmount: ROUND(b.tds),
         gstRatePct: rate(b.gst),
         tdsRatePct: rate(b.tds),
-        vendor: vendor ? vendor.name : null,
-        vendorGstin: vendor && vendor.gstin ? vendor.gstin : null,
+        // The vendor as it was when the bill was SENT (snapshot), tied to the master by id.
+        vendor: b.vendorNameSnap || (vendor ? vendor.name : null),
+        vendorGstin: b.vendorGstinSnap || (vendor && vendor.gstin ? vendor.gstin : null),
+        vendorId: b.vendorId,
+        vendorAddress: b.vendorAddressSnap || (vendor && vendor.address ? vendor.address : null),
+        vendorPan: vendor && vendor.pan ? vendor.pan : null,
         expenseDate: b.billDate,
         dueDate,
         billNumber: b.billNumber,
@@ -299,6 +303,8 @@ async function decide(req, res, to) {
       throw err;
     }
     await prisma.vendorBillSubmission.update({ where: { id: b.id }, data: { expenseId: expense.id } });
+    // Journal (only when Admin switched vendor posting ON; never blocks the approval).
+    require('../utils/vendorPosting').syncExpense(expense.id, { id: req.user.id, name: actor }).catch((e) => console.error('[vendor-post]', e && e.message)); // eslint-disable-line global-require, no-console
     await logAudit({
       userId: req.user.id,
       actorName: actor,

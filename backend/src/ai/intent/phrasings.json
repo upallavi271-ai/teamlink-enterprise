@@ -1,0 +1,1748 @@
+{
+  "_about": "THE SYNONYM / INTENT DATA FILE. Add a phrasing, a synonym or a Telugu / Hindi word here and the Agent understands it - no code change, no restart (the file is re-read when it changes). 'lexicon.verbs' and 'lexicon.objects' are word groups; 'lexicon.stages' maps the words people use to a pipeline stage code; 'tools.<name>' says which groups a tool is made of and lists example phrasings (the closer a message is to an example, the higher that tool scores). Words are matched after a light stemming (moved/moving -> move).",
+  "version": 1,
+  "lexicon": {
+    "stop": [
+      "the",
+      "a",
+      "an",
+      "of",
+      "for",
+      "to",
+      "in",
+      "on",
+      "at",
+      "by",
+      "with",
+      "from",
+      "as",
+      "is",
+      "are",
+      "was",
+      "were",
+      "be",
+      "please",
+      "pls",
+      "plz",
+      "kindly",
+      "can",
+      "could",
+      "would",
+      "will",
+      "you",
+      "me",
+      "my",
+      "mine",
+      "i",
+      "we",
+      "us",
+      "our",
+      "it",
+      "its",
+      "this",
+      "that",
+      "these",
+      "those",
+      "do",
+      "does",
+      "did",
+      "just",
+      "now",
+      "then",
+      "and",
+      "or",
+      "also",
+      "so",
+      "ok",
+      "okay",
+      "hey",
+      "hi",
+      "hello",
+      "thanks",
+      "thank",
+      "s",
+      "his",
+      "her",
+      "their",
+      "them",
+      "him",
+      "she",
+      "he",
+      "they",
+      "into",
+      "onto",
+      "up",
+      "out",
+      "over",
+      "about",
+      "new",
+      "again",
+      "one",
+      "some",
+      "any",
+      "all",
+      "have",
+      "has",
+      "had",
+      "get",
+      "let",
+      "lets",
+      "go",
+      "going",
+      "want",
+      "wants",
+      "wanted",
+      "like",
+      "would",
+      "should",
+      "shall",
+      "may",
+      "might",
+      "must",
+      "there",
+      "here",
+      "what",
+      "which",
+      "who",
+      "whom",
+      "when",
+      "where",
+      "why",
+      "how",
+      "name",
+      "named",
+      "called",
+      "titled",
+      "title",
+      "details",
+      "detail",
+      "info",
+      "information"
+    ],
+    "particles": {
+      "ni": "",
+      "nu": "",
+      "ki": "to",
+      "ku": "to",
+      "ko": "to",
+      "lo": "in",
+      "loki": "to",
+      "nunchi": "from",
+      "tho": "with",
+      "toh": "",
+      "ka": "",
+      "ke": "",
+      "se": "from",
+      "mein": "in",
+      "me": "in",
+      "cheyyi": "do",
+      "cheyyandi": "do",
+      "cheyandi": "do",
+      "cheyi": "do",
+      "chey": "do",
+      "cheyali": "do",
+      "cheyyali": "do",
+      "cheyyamu": "do",
+      "cheyyara": "do",
+      "cheyyava": "do",
+      "chesey": "do",
+      "chesei": "do",
+      "cheyyagalava": "do",
+      "karo": "do",
+      "kar": "do",
+      "kardo": "do",
+      "karna": "do",
+      "kariye": "do",
+      "kijiye": "do",
+      "kar do": "do",
+      "cheppu": "tell",
+      "cheppandi": "tell",
+      "batao": "tell",
+      "pampu": "send",
+      "pampandi": "send",
+      "pampinchu": "send",
+      "bhejo": "send",
+      "bhej": "send",
+      "bhejna": "send",
+      "bhej do": "send",
+      "ivvu": "assign",
+      "ivvandi": "assign",
+      "ichey": "assign",
+      "dena": "assign",
+      "dedo": "assign",
+      "pettu": "put",
+      "pettandi": "put",
+      "pettali": "put",
+      "rakho": "put",
+      "laga": "put",
+      "teeyyi": "delete",
+      "teeseyyi": "delete",
+      "teesey": "delete",
+      "tholagimchu": "delete",
+      "hatao": "delete",
+      "hata": "delete",
+      "mitao": "delete",
+      "marchu": "change",
+      "maarchu": "change",
+      "maarchandi": "change",
+      "marchandi": "change",
+      "badlo": "change",
+      "badal": "change",
+      "kavali": "need",
+      "kaavali": "need",
+      "kavalani": "need",
+      "chahiye": "need",
+      "teesukovali": "need",
+      "raddu": "cancel",
+      "cancel": "cancel",
+      "radhu": "cancel",
+      "selavu": "leave",
+      "sela": "leave",
+      "chhutti": "leave",
+      "chutti": "leave",
+      "chuti": "leave",
+      "naaku": "me",
+      "naa": "my",
+      "nenu": "i",
+      "mera": "my",
+      "mujhe": "me",
+      "mujhko": "me",
+      "ante": "",
+      "mari": "",
+      "kada": "",
+      "andi": "",
+      "anna": "",
+      "garu": "",
+      "ji": "",
+      "bhai": "",
+      "sir": "",
+      "madam": "",
+      "ippudu": "now",
+      "ippude": "now",
+      "abhi": "now",
+      "udayam": "morning",
+      "sayantram": "evening",
+      "madhyahnam": "afternoon",
+      "subah": "morning",
+      "shaam": "evening",
+      "ee": "this",
+      "oka": "one",
+      "rendu": "two",
+      "moodu": "three"
+    },
+    "verbs": {
+      "MOVE": [
+        "move",
+        "moved",
+        "put",
+        "shift",
+        "push",
+        "advance",
+        "forward",
+        "transfer",
+        "promote",
+        "mark",
+        "progress",
+        "take",
+        "set",
+        "change",
+        "send to",
+        "sent to",
+        "taken"
+      ],
+      "SCHEDULE": [
+        "schedule",
+        "book",
+        "arrange",
+        "fix",
+        "plan",
+        "organise",
+        "organize",
+        "set up",
+        "setup",
+        "line up",
+        "call for",
+        "slot"
+      ],
+      "RESCHEDULE": [
+        "reschedule",
+        "re-schedule",
+        "postpone",
+        "prepone",
+        "delay",
+        "advance the",
+        "move the",
+        "change the",
+        "shift the",
+        "push the"
+      ],
+      "CREATE": [
+        "create",
+        "add",
+        "register",
+        "make",
+        "enter",
+        "raise",
+        "start",
+        "onboard",
+        "open",
+        "insert",
+        "new",
+        "kotta"
+      ],
+      "UPDATE": [
+        "update",
+        "edit",
+        "change",
+        "modify",
+        "correct",
+        "revise",
+        "amend",
+        "rename",
+        "fix",
+        "replace"
+      ],
+      "ASSIGN": [
+        "assign",
+        "allocate",
+        "allot",
+        "give",
+        "hand over",
+        "handover",
+        "attach",
+        "appoint",
+        "issue",
+        "provide",
+        "put on",
+        "allotted",
+        "put",
+        "make"
+      ],
+      "RETURN": [
+        "return",
+        "collect",
+        "take back",
+        "receive back",
+        "handed back",
+        "give back",
+        "deposit",
+        "submit back",
+        "recover",
+        "got back",
+        "returned"
+      ],
+      "SEND": [
+        "send",
+        "notify",
+        "inform",
+        "ping",
+        "reach out",
+        "share",
+        "intimate",
+        "drop a mail",
+        "write to",
+        "tell"
+      ],
+      "APPLY": [
+        "apply",
+        "request",
+        "avail",
+        "take",
+        "need",
+        "want",
+        "file",
+        "put in",
+        "taking",
+        "required",
+        "require",
+        "applying"
+      ],
+      "CANCEL": [
+        "cancel",
+        "withdraw",
+        "revoke",
+        "void",
+        "abort",
+        "call off",
+        "drop",
+        "undo"
+      ],
+      "DELETE": [
+        "delete",
+        "remove",
+        "erase",
+        "destroy",
+        "trash",
+        "get rid of",
+        "wipe",
+        "purge",
+        "scrap"
+      ],
+      "RECORD": [
+        "record",
+        "log",
+        "receive",
+        "received",
+        "got",
+        "collected",
+        "post",
+        "paid",
+        "pay",
+        "settle",
+        "settled",
+        "clear",
+        "mark paid",
+        "credited"
+      ],
+      "SHORTLIST": [
+        "shortlist",
+        "short list",
+        "shortlisted",
+        "shortlisting",
+        "short-list"
+      ],
+      "ANNOUNCE": [
+        "announce",
+        "announcement",
+        "broadcast",
+        "circular",
+        "notice",
+        "publish",
+        "announcements"
+      ],
+      "REJECT": [
+        "reject",
+        "rejected",
+        "rejection",
+        "decline",
+        "turn down",
+        "not selected",
+        "disqualify"
+      ],
+      "SELECT": [
+        "select",
+        "selected",
+        "finalise",
+        "finalize",
+        "hire",
+        "hired",
+        "confirm hiring"
+      ],
+      "PREPARE": [
+        "prepare",
+        "process",
+        "calculate",
+        "work out",
+        "decide",
+        "approve",
+        "grant",
+        "sanction"
+      ],
+      "RETRIEVE": [
+        "show",
+        "list",
+        "find",
+        "search",
+        "get",
+        "tell",
+        "give me",
+        "display",
+        "see",
+        "view",
+        "check",
+        "open"
+      ]
+    },
+    "objects": {
+      "CANDIDATE": [
+        "candidate",
+        "candidates",
+        "applicant",
+        "profile",
+        "resume",
+        "cv",
+        "jobseeker"
+      ],
+      "STAGE": [
+        "stage",
+        "step",
+        "status",
+        "pipeline",
+        "phase"
+      ],
+      "INTERVIEW": [
+        "interview",
+        "interviews",
+        "round",
+        "f2f",
+        "face to face",
+        "discussion",
+        "meeting",
+        "call slot"
+      ],
+      "RECRUITER": [
+        "recruiter",
+        "recruiters",
+        "recruiting executive",
+        "recruitment executive",
+        "talent partner",
+        "sourcer"
+      ],
+      "CLIENT": [
+        "client",
+        "clients",
+        "customer",
+        "customers",
+        "company",
+        "party",
+        "account",
+        "contact person",
+        "poc",
+        "spoc"
+      ],
+      "REQUIREMENT": [
+        "requirement",
+        "requirements",
+        "job",
+        "jobs",
+        "opening",
+        "openings",
+        "vacancy",
+        "vacancies",
+        "position",
+        "req",
+        "jd",
+        "mandate"
+      ],
+      "LEAVE": [
+        "leave",
+        "leaves",
+        "vacation",
+        "day off",
+        "days off",
+        "time off",
+        "sick leave",
+        "casual leave",
+        "earned leave",
+        "comp off",
+        "half day",
+        "off",
+        "pto",
+        "cl",
+        "sl",
+        "el"
+      ],
+      "ATTENDANCE": [
+        "attendance",
+        "present",
+        "absent",
+        "punch",
+        "check in",
+        "check out",
+        "checkin",
+        "checkout",
+        "late",
+        "half day",
+        "regularize",
+        "regularise"
+      ],
+      "ANNOUNCEMENT": [
+        "announcement",
+        "announcements",
+        "announce",
+        "circular",
+        "notice",
+        "broadcast"
+      ],
+      "ASSET": [
+        "asset",
+        "assets",
+        "laptop",
+        "laptops",
+        "mobile",
+        "charger",
+        "mouse",
+        "keyboard",
+        "monitor",
+        "desktop",
+        "sim",
+        "id card",
+        "headset",
+        "tablet",
+        "device",
+        "pendrive",
+        "ups",
+        "printer",
+        "equipment"
+      ],
+      "EMPLOYEE": [
+        "employee",
+        "employees",
+        "staff",
+        "joiner",
+        "member",
+        "team member",
+        "colleague",
+        "teammate",
+        "user",
+        "reporting manager",
+        "joining date",
+        "employee code",
+        "designation"
+      ],
+      "EXPENSE": [
+        "expense",
+        "expenses",
+        "reimbursement",
+        "spent",
+        "spend",
+        "claim",
+        "cab",
+        "fuel",
+        "petrol",
+        "taxi"
+      ],
+      "PAYMENT": [
+        "payment",
+        "payments",
+        "paid",
+        "received",
+        "receipt",
+        "receive",
+        "utr",
+        "cheque",
+        "neft",
+        "imps",
+        "rtgs",
+        "upi",
+        "amount received",
+        "money received"
+      ],
+      "INVOICE": [
+        "invoice",
+        "invoices",
+        "inv",
+        "tax invoice",
+        "proforma"
+      ],
+      "INCENTIVE": [
+        "incentive",
+        "incentives",
+        "bonus",
+        "joining bonus",
+        "target bonus"
+      ],
+      "SALARY": [
+        "salary",
+        "payroll",
+        "ctc",
+        "pay",
+        "wage",
+        "wages",
+        "increment",
+        "raise"
+      ],
+      "MESSAGE": [
+        "message",
+        "mail",
+        "email",
+        "whatsapp",
+        "sms",
+        "text",
+        "note",
+        "reminder",
+        "intimation"
+      ],
+      "TEMPLATE": [
+        "template",
+        "templates",
+        "script"
+      ],
+      "FIELD": [
+        "phone",
+        "mobile",
+        "number",
+        "contact",
+        "location",
+        "city",
+        "industry",
+        "address",
+        "website",
+        "gst",
+        "gstin",
+        "pan",
+        "department",
+        "dept",
+        "team",
+        "skills",
+        "skill",
+        "experience",
+        "notice period",
+        "openings",
+        "opening count",
+        "priority",
+        "closing date",
+        "salary",
+        "designation",
+        "billing",
+        "payment terms",
+        "terms",
+        "company name",
+        "current company",
+        "reason",
+        "amount",
+        "tds",
+        "date",
+        "time"
+      ]
+    },
+    "stages": {
+      "NEW": [
+        "new stage",
+        "new candidates"
+      ],
+      "RECRUITER_REVIEW": [
+        "screening",
+        "screen",
+        "recruiter review",
+        "check by recruiter",
+        "recruiter check",
+        "screening round"
+      ],
+      "RECRUITER_APPROVED": [
+        "approved by recruiter",
+        "recruiter approved"
+      ],
+      "TL_REVIEW": [
+        "tl review",
+        "team lead review",
+        "check by team lead",
+        "tl check",
+        "tl approval",
+        "team leader review"
+      ],
+      "WITH_BDE": [
+        "bde review",
+        "check by client manager",
+        "with bde",
+        "client manager review",
+        "bde check"
+      ],
+      "BDE_APPROVED": [
+        "bde approved",
+        "ready to send to client",
+        "ready for client"
+      ],
+      "SHARED_WITH_CLIENT": [
+        "sent to client",
+        "send to client",
+        "share with client",
+        "shared with client",
+        "submit to client",
+        "submitted to client",
+        "client submission",
+        "forward to client",
+        "submission"
+      ],
+      "CLIENT_REVIEW": [
+        "client review",
+        "client checking",
+        "with client",
+        "client reviewing"
+      ],
+      "CLIENT_SHORTLISTED": [
+        "client shortlisted",
+        "shortlisted by client"
+      ],
+      "INTERVIEW_SCHEDULED": [
+        "interview",
+        "interview scheduled",
+        "interview booked",
+        "interview round",
+        "first interview",
+        "interview stage",
+        "l1",
+        "l2"
+      ],
+      "INTERVIEW_COMPLETED": [
+        "interview completed",
+        "interview done",
+        "interview finished",
+        "after interview"
+      ],
+      "SELECTED": [
+        "selected",
+        "select",
+        "selection",
+        "finalised",
+        "finalized"
+      ],
+      "OFFER": [
+        "offer",
+        "offered",
+        "offer letter",
+        "offer stage",
+        "offer released"
+      ],
+      "OFFER_ACCEPTED": [
+        "offer accepted",
+        "accepted offer",
+        "accepted the offer"
+      ],
+      "JOINED": [
+        "joined",
+        "joining done",
+        "has joined",
+        "joined the company"
+      ],
+      "HIRED": [
+        "hired"
+      ],
+      "REJECTED": [
+        "reject",
+        "rejected",
+        "rejection",
+        "not selected",
+        "disqualified",
+        "turned down"
+      ],
+      "HOLD": [
+        "hold",
+        "on hold",
+        "put on hold",
+        "park",
+        "parked"
+      ]
+    },
+    "channels": {
+      "WhatsApp": [
+        "whatsapp",
+        "whats app",
+        "wa"
+      ],
+      "SMS": [
+        "sms",
+        "text message",
+        "text"
+      ],
+      "Email": [
+        "email",
+        "e-mail",
+        "mail"
+      ]
+    },
+    "leadVerbs": {
+      "SEND": [
+        "email",
+        "mail",
+        "message",
+        "whatsapp",
+        "sms",
+        "text",
+        "ping"
+      ]
+    },
+    "codePrefixes": {
+      "INV": "INVOICE",
+      "REQ": "REQUIREMENT",
+      "AST": "ASSET",
+      "LT": "ASSET",
+      "MN": "ASSET",
+      "CH": "ASSET",
+      "CLI": "CLIENT"
+    }
+  },
+  "tools": {
+    "move_candidate_stage": {
+      "verbs": [
+        "MOVE",
+        "UPDATE"
+      ],
+      "objects": [
+        "CANDIDATE",
+        "STAGE"
+      ],
+      "stage": true,
+      "forbid": [
+        "SCHEDULE",
+        "RESCHEDULE",
+        "SHORTLIST",
+        "LEAVE",
+        "INVOICE",
+        "PAYMENT",
+        "SEND_ONLY"
+      ],
+      "examples": [
+        "Move Rahul to Interview",
+        "Put Rahul in Interview",
+        "Change Rahul's stage to Interview",
+        "Move candidate Rahul to hold",
+        "Mark Rahul as rejected",
+        "Shift Priya to offer",
+        "Push Anil to the next stage",
+        "Update Kiran's status to selected",
+        "Rahul ni interview ki move cheyyi",
+        "Rahul ni hold lo pettu",
+        "Rahul ko interview mein daalo",
+        "Take Rahul to screening",
+        "Advance Meena to TL review",
+        "Send Rahul to the client",
+        "Reject Rahul",
+        "Move Rahul from screening to interview"
+      ]
+    },
+    "shortlist_candidate": {
+      "verbs": [
+        "SHORTLIST"
+      ],
+      "objects": [
+        "CANDIDATE"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "RESCHEDULE"
+      ],
+      "examples": [
+        "Shortlist Rahul",
+        "Shortlist candidate Priya for the Java job",
+        "Please shortlist Anil",
+        "Rahul ni shortlist cheyyi",
+        "Add Rahul to the shortlist",
+        "Mark Meena as shortlisted",
+        "Short list Kiran",
+        "Shortlist Rahul for Acme"
+      ],
+      "needsVerb": true
+    },
+    "schedule_interview": {
+      "verbs": [
+        "SCHEDULE"
+      ],
+      "objects": [
+        "INTERVIEW",
+        "CANDIDATE"
+      ],
+      "wants": [
+        "when"
+      ],
+      "forbid": [
+        "RESCHEDULE",
+        "LEAVE",
+        "INVOICE"
+      ],
+      "examples": [
+        "Schedule Rahul's interview tomorrow at 3pm",
+        "Book an interview for Priya on Friday at 11",
+        "Arrange an interview with Anil on 15 Oct at 4:30 pm",
+        "Set up an interview for Kiran next Monday at 10am",
+        "Fix Rahul interview tomorrow 3 pm",
+        "Rahul ki repu 3 gantalaku interview pettu",
+        "Rahul ki interview schedule cheyyi",
+        "Plan interview for Meena day after tomorrow",
+        "Interview for Rahul on Monday at 2:30 pm online"
+      ],
+      "altVerbs": {
+        "MOVE": "when"
+      }
+    },
+    "reschedule_interview": {
+      "verbs": [
+        "RESCHEDULE",
+        "MOVE",
+        "UPDATE"
+      ],
+      "objects": [
+        "INTERVIEW"
+      ],
+      "wants": [
+        "when"
+      ],
+      "requireAny": [
+        "RESCHEDULE",
+        "INTERVIEW"
+      ],
+      "needsReschedule": true,
+      "forbid": [
+        "LEAVE",
+        "INVOICE"
+      ],
+      "examples": [
+        "Reschedule Rahul's interview to Friday 4pm",
+        "Postpone Priya's interview to tomorrow",
+        "Move Anil's interview to next Monday at 11am",
+        "Change Kiran's interview time to 5 pm",
+        "Prepone Rahul interview to today 3pm",
+        "Shift the interview of Meena to 20 Oct",
+        "Rahul interview ni repu 4 gantalaku marchu",
+        "Rahul interview ni reschedule cheyyi",
+        "Reschedule the interview for Rahul"
+      ]
+    },
+    "assign_recruiter": {
+      "verbs": [
+        "ASSIGN"
+      ],
+      "objects": [
+        "RECRUITER",
+        "REQUIREMENT"
+      ],
+      "forbid": [
+        "LEAVE",
+        "ASSET",
+        "INVOICE",
+        "SCHEDULE"
+      ],
+      "examples": [
+        "Assign Priya to the Java Developer job",
+        "Assign recruiter Priya to Acme requirement",
+        "Give the Java Developer opening to Anil",
+        "Allocate Meena as recruiter for the QA job",
+        "Put Kiran on the Sales Manager requirement",
+        "Assign Rahul as the recruiter for REQ-0012",
+        "Java Developer job ni Priya ki assign cheyyi",
+        "Make Priya the recruiter on Acme job",
+        "Assign a recruiter to the Java Developer requirement"
+      ],
+      "needsVerb": true
+    },
+    "create_client": {
+      "verbs": [
+        "CREATE"
+      ],
+      "objects": [
+        "CLIENT"
+      ],
+      "requireAny": [
+        "CLIENT"
+      ],
+      "forbid": [
+        "INVOICE",
+        "PAYMENT",
+        "UPDATE_ONLY",
+        "DELETE",
+        "LEAVE"
+      ],
+      "examples": [
+        "Create a client Sunrise Pharma",
+        "Add new client Acme Industries",
+        "Register client Greenfield Schools",
+        "Create client named Orbit Tech with contact Ravi 9876543210",
+        "Add a new customer Zenith Hospitals",
+        "Onboard client Bluewave Foods",
+        "Kotta client Sunrise Pharma create cheyyi",
+        "New client Acme Industries in Hyderabad",
+        "Open a client record for Metro Labs"
+      ]
+    },
+    "update_client": {
+      "verbs": [
+        "UPDATE"
+      ],
+      "objects": [
+        "CLIENT"
+      ],
+      "requireAny": [
+        "CLIENT"
+      ],
+      "forbid": [
+        "INVOICE",
+        "PAYMENT",
+        "CREATE_ONLY",
+        "DELETE",
+        "LEAVE",
+        "BILLING"
+      ],
+      "examples": [
+        "Update client Acme contact phone to 9876543210",
+        "Change Acme's contact person to Suresh",
+        "Edit client Sunrise Pharma email to hr@sunrise.in",
+        "Update the location of client Orbit Tech to Pune",
+        "Correct Acme client industry to Manufacturing",
+        "Change client Greenfield contact email to info@greenfield.in",
+        "Acme client phone number marchu 9876543210",
+        "Modify client Zenith details"
+      ],
+      "ignoreStage": true
+    },
+    "create_requirement": {
+      "verbs": [
+        "CREATE"
+      ],
+      "objects": [
+        "REQUIREMENT"
+      ],
+      "requireAny": [
+        "REQUIREMENT"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "PAYMENT",
+        "DELETE",
+        "ASSIGN",
+        "UPDATE_ONLY"
+      ],
+      "examples": [
+        "Create a requirement for Java Developer at Acme",
+        "Add a new job Sales Manager for Sunrise Pharma",
+        "Raise a requirement QA Engineer for Orbit Tech 3 openings",
+        "New opening Accountant for Greenfield Schools in Hyderabad",
+        "Create job Staff Nurse for Zenith Hospitals 5 openings",
+        "Open a vacancy for Plant Manager at Acme",
+        "Acme ki Java Developer requirement create cheyyi",
+        "Add requirement Telecaller for Metro Labs"
+      ]
+    },
+    "update_requirement": {
+      "verbs": [
+        "UPDATE"
+      ],
+      "objects": [
+        "REQUIREMENT"
+      ],
+      "requireAny": [
+        "REQUIREMENT"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "PAYMENT",
+        "DELETE",
+        "ASSIGN",
+        "CREATE_ONLY"
+      ],
+      "examples": [
+        "Update the Java Developer requirement openings to 5",
+        "Change location of the Sales Manager job to Pune",
+        "Edit requirement REQ-0012 priority to High",
+        "Set openings to 3 on the QA Engineer job",
+        "Update closing date of the Accountant job to 30 Oct",
+        "Change the Java Developer job location to Chennai",
+        "Java Developer requirement openings 4 ki marchu",
+        "Modify requirement Staff Nurse experience to 2 years"
+      ]
+    },
+    "delete_requirement": {
+      "verbs": [
+        "DELETE"
+      ],
+      "objects": [
+        "REQUIREMENT"
+      ],
+      "requireAny": [
+        "REQUIREMENT"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "CLIENT",
+        "CANDIDATE"
+      ],
+      "examples": [
+        "Delete the Java Developer requirement",
+        "Remove job REQ-0012",
+        "Delete requirement Sales Manager at Acme",
+        "Erase the QA Engineer opening",
+        "Java Developer requirement delete cheyyi",
+        "Get rid of the Accountant vacancy"
+      ],
+      "needsVerb": true
+    },
+    "delete_client": {
+      "verbs": [
+        "DELETE"
+      ],
+      "objects": [
+        "CLIENT"
+      ],
+      "requireAny": [
+        "CLIENT"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "REQUIREMENT"
+      ],
+      "examples": [
+        "Delete client Acme",
+        "Remove the client Sunrise Pharma",
+        "Erase client Orbit Tech",
+        "Delete the customer Zenith Hospitals",
+        "Acme client ni delete cheyyi",
+        "Get rid of client Metro Labs"
+      ],
+      "needsVerb": true
+    },
+    "create_candidate": {
+      "verbs": [
+        "CREATE"
+      ],
+      "objects": [
+        "CANDIDATE"
+      ],
+      "requireAny": [
+        "CANDIDATE"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "PAYMENT",
+        "DELETE",
+        "SHORTLIST",
+        "UPDATE_ONLY"
+      ],
+      "examples": [
+        "Add candidate Rahul Sharma phone 9876543210 email rahul@example.com",
+        "Create a new candidate Priya skills Java and SQL",
+        "Register candidate Anil Kumar mobile 9123456780",
+        "Add a candidate named Meena with email meena@mail.com phone 9988776655",
+        "New applicant Kiran Reddy 9000011111 kiran@mail.com",
+        "Rahul Sharma ni candidate ga add cheyyi 9876543210",
+        "Enter a new candidate profile for Suresh"
+      ]
+    },
+    "update_candidate": {
+      "verbs": [
+        "UPDATE"
+      ],
+      "objects": [
+        "CANDIDATE"
+      ],
+      "requireAny": [
+        "CANDIDATE"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "PAYMENT",
+        "DELETE",
+        "STAGE_ONLY",
+        "CREATE_ONLY"
+      ],
+      "examples": [
+        "Update candidate Rahul phone to 9876543210",
+        "Change Priya's email to priya@mail.com",
+        "Edit candidate Anil location to Pune",
+        "Update Kiran's skills to Java, Spring",
+        "Correct the mobile number of candidate Meena to 9123456780",
+        "Change candidate Rahul current company to Infosys",
+        "Rahul candidate phone number marchu 9876543210",
+        "Modify Suresh's notice period to 30 days"
+      ]
+    },
+    "send_candidate_communication": {
+      "verbs": [
+        "SEND"
+      ],
+      "objects": [
+        "CANDIDATE",
+        "MESSAGE"
+      ],
+      "wantsChannel": true,
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "PAYMENT",
+        "ANNOUNCEMENT",
+        "SALARY",
+        "EMPLOYEE"
+      ],
+      "examples": [
+        "Send Rahul a WhatsApp about the interview",
+        "Email Priya the interview details",
+        "Send an SMS to Anil about his offer",
+        "WhatsApp Kiran to confirm availability",
+        "Message Meena the job details",
+        "Send candidate Rahul an email about the documents needed",
+        "Rahul ki whatsapp pampu interview gurinchi",
+        "Mail Suresh the joining instructions",
+        "Notify Rahul about the interview by SMS"
+      ],
+      "needsVerb": true
+    },
+    "apply_leave": {
+      "verbs": [
+        "APPLY",
+        "CREATE",
+        "RECORD"
+      ],
+      "objects": [
+        "LEAVE"
+      ],
+      "requireAny": [
+        "LEAVE"
+      ],
+      "wants": [
+        "when"
+      ],
+      "forbid": [
+        "CANCEL",
+        "ATTENDANCE_ONLY",
+        "BALANCE",
+        "RETRIEVE_ONLY",
+        "INVOICE",
+        "ANNOUNCEMENT",
+        "ANNOUNCE",
+        "ASSET"
+      ],
+      "examples": [
+        "Apply casual leave tomorrow",
+        "I need sick leave on Monday",
+        "Apply for leave from 12 Oct to 14 Oct",
+        "Take a day off on Friday",
+        "Apply half day leave tomorrow morning",
+        "Naaku repu casual leave kavali",
+        "Selavu kavali repu",
+        "Put in leave for next Tuesday reason family function",
+        "Request earned leave from 20 Oct to 22 Oct",
+        "Mujhe kal chhutti chahiye"
+      ],
+      "needsVerb": true
+    },
+    "cancel_leave": {
+      "verbs": [
+        "CANCEL",
+        "DELETE"
+      ],
+      "objects": [
+        "LEAVE"
+      ],
+      "requireAny": [
+        "LEAVE",
+        "CANCEL"
+      ],
+      "needsCancel": true,
+      "forbid": [
+        "INVOICE",
+        "INTERVIEW"
+      ],
+      "examples": [
+        "Cancel my leave",
+        "Cancel my leave request for tomorrow",
+        "Withdraw my pending leave",
+        "Cancel leave on Friday",
+        "Revoke my casual leave request",
+        "Naa leave cancel cheyyi",
+        "Remove my leave application",
+        "I do not need the leave anymore, cancel it"
+      ],
+      "needsVerb": true
+    },
+    "update_attendance": {
+      "verbs": [
+        "UPDATE",
+        "RECORD",
+        "MOVE",
+        "CREATE"
+      ],
+      "objects": [
+        "ATTENDANCE"
+      ],
+      "requireAny": [
+        "ATTENDANCE"
+      ],
+      "wants": [
+        "when"
+      ],
+      "forbid": [
+        "LEAVE_ONLY",
+        "INVOICE",
+        "CANDIDATE",
+        "RETRIEVE_ONLY",
+        "COUNT"
+      ],
+      "examples": [
+        "Mark Ravi present for today",
+        "Update Priya's attendance to absent on Monday",
+        "Mark Anil as half day yesterday",
+        "Change Kiran's attendance on 5 Oct to present",
+        "Set Meena as present today check in 9:30 check out 6:30",
+        "Mark attendance present for Suresh yesterday",
+        "Ravi ni ee roju present ga mark cheyyi",
+        "Correct attendance of Priya to late for Friday"
+      ]
+    },
+    "create_announcement": {
+      "verbs": [
+        "ANNOUNCE",
+        "CREATE",
+        "SEND",
+        "RECORD"
+      ],
+      "objects": [
+        "ANNOUNCEMENT"
+      ],
+      "requireAny": [
+        "ANNOUNCEMENT",
+        "ANNOUNCE"
+      ],
+      "forbid": [
+        "INVOICE",
+        "CANDIDATE",
+        "REQUIREMENT"
+      ],
+      "examples": [
+        "Announce that office is closed on Friday",
+        "Post an announcement: Diwali holiday on 20 Oct",
+        "Create announcement Office closed tomorrow due to rain",
+        "Send a circular: new attendance policy from Monday",
+        "Broadcast to all employees that the meeting is at 4 pm today",
+        "Make an announcement about the team outing on Saturday",
+        "Announcement pettu: repu office holiday",
+        "Publish a notice for the HR team about the training"
+      ],
+      "needsVerb": true
+    },
+    "assign_asset": {
+      "verbs": [
+        "ASSIGN"
+      ],
+      "objects": [
+        "ASSET",
+        "EMPLOYEE"
+      ],
+      "requireAny": [
+        "ASSET"
+      ],
+      "forbid": [
+        "RETURN",
+        "RECRUITER",
+        "REQUIREMENT",
+        "INVOICE"
+      ],
+      "examples": [
+        "Assign laptop AST-0012 to Ravi",
+        "Give Priya a laptop",
+        "Allocate the charger AST-004 to Anil",
+        "Issue monitor AST-021 to Kiran",
+        "Hand over a mobile to Meena",
+        "Assign asset AST-0045 to Suresh",
+        "Ravi ki laptop assign cheyyi",
+        "Ravi ki laptop AST-0012 ivvandi",
+        "Allot a keyboard to Priya"
+      ],
+      "needsVerb": true
+    },
+    "return_asset": {
+      "verbs": [
+        "RETURN"
+      ],
+      "objects": [
+        "ASSET"
+      ],
+      "requireAny": [
+        "ASSET"
+      ],
+      "forbid": [
+        "ASSIGN_ONLY",
+        "INVOICE"
+      ],
+      "examples": [
+        "Return laptop AST-0012",
+        "Ravi returned the laptop",
+        "Take back the charger AST-004 from Anil",
+        "Collect the monitor AST-021 from Kiran",
+        "Mark asset AST-0045 as returned",
+        "Priya has given back her laptop",
+        "Laptop AST-0012 return cheyyi",
+        "Receive back the mobile from Meena",
+        "Ravi laptop thirigi ichesadu return cheyyi"
+      ],
+      "needsVerb": true
+    },
+    "create_employee": {
+      "verbs": [
+        "CREATE",
+        "ASSIGN"
+      ],
+      "objects": [
+        "EMPLOYEE"
+      ],
+      "requireAny": [
+        "EMPLOYEE"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "ASSET",
+        "ATTENDANCE",
+        "UPDATE_ONLY",
+        "DELETE"
+      ],
+      "examples": [
+        "Add employee Suresh Kumar email suresh@company.com department Medical",
+        "Create a new employee Anita Rao anita@company.in Education department",
+        "Onboard employee Vikram email vikram@company.in department IT",
+        "Register a new joiner Deepa Nair deepa@company.in department Manufacturing",
+        "Add a staff member Mohan phone 9876543210 email mohan@company.in dept HR",
+        "Kotta employee Suresh create cheyyi suresh@company.in Medical",
+        "Create employee record for Lakshmi lakshmi@company.in"
+      ]
+    },
+    "update_employee": {
+      "verbs": [
+        "UPDATE",
+        "MOVE"
+      ],
+      "objects": [
+        "EMPLOYEE"
+      ],
+      "requireAny": [
+        "EMPLOYEE"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "ASSET",
+        "ATTENDANCE",
+        "CREATE_ONLY"
+      ],
+      "examples": [
+        "Update employee Suresh phone to 9876543210",
+        "Change Anita's designation to Senior Recruiter",
+        "Move employee Vikram to Education department",
+        "Edit employee Deepa location to Hyderabad",
+        "Update Mohan's team to Section A",
+        "Deactivate employee Lakshmi",
+        "Set employee Suresh status to Notice Period",
+        "Suresh employee phone number marchu 9876543210"
+      ]
+    },
+    "create_expense": {
+      "verbs": [
+        "CREATE",
+        "RECORD",
+        "SEND"
+      ],
+      "objects": [
+        "EXPENSE"
+      ],
+      "requireAny": [
+        "EXPENSE"
+      ],
+      "wants": [
+        "amount"
+      ],
+      "forbid": [
+        "INVOICE",
+        "LEAVE",
+        "CANDIDATE"
+      ],
+      "examples": [
+        "Add an expense of 1500 for cab fare",
+        "Record office expense 2500 for stationery from Staples",
+        "Create expense 800 travel yesterday",
+        "Log an expense of 3200 for internet bill",
+        "Claim 450 for lunch with client today",
+        "Add expense fuel 1200 on 5 Oct",
+        "Spent 600 on courier add expense",
+        "Naa cab expense 1500 add cheyyi",
+        "Office expense 5000 for repairs"
+      ]
+    },
+    "record_payment": {
+      "verbs": [
+        "RECORD"
+      ],
+      "objects": [
+        "PAYMENT",
+        "INVOICE"
+      ],
+      "requireAny": [
+        "PAYMENT",
+        "INVOICE"
+      ],
+      "wants": [
+        "amount"
+      ],
+      "needsPayment": true,
+      "forbid": [
+        "EXPENSE",
+        "LEAVE",
+        "CANDIDATE"
+      ],
+      "examples": [
+        "Record a payment of 50000 on invoice INV-0012",
+        "Received 25000 against INV-0034 today",
+        "Mark invoice INV-0012 as paid",
+        "Log payment 100000 for invoice INV-0045 by NEFT",
+        "Add a receipt of 30000 from Acme for INV-0012",
+        "Acme paid 40000 on invoice INV-0021 yesterday",
+        "Payment received 75000 INV-0050 via UPI",
+        "INV-0012 ki 50000 payment record cheyyi"
+      ],
+      "needsVerb": true
+    },
+    "create_invoice": {
+      "verbs": [
+        "CREATE"
+      ],
+      "objects": [
+        "INVOICE"
+      ],
+      "requireAny": [
+        "INVOICE"
+      ],
+      "wants": [
+        "amount"
+      ],
+      "forbid": [
+        "PAYMENT",
+        "CANCEL",
+        "UPDATE_ONLY",
+        "LEAVE",
+        "EXPENSE"
+      ],
+      "examples": [
+        "Create an invoice for Acme of 100000",
+        "Raise invoice for Sunrise Pharma amount 50000",
+        "Generate a new invoice to Orbit Tech 75000",
+        "Make an invoice for Greenfield Schools 120000 dated today",
+        "Add invoice Zenith Hospitals 90000 GST 18",
+        "New invoice for Acme 60000 due in 30 days",
+        "Acme ki 100000 invoice create cheyyi"
+      ]
+    },
+    "update_invoice": {
+      "verbs": [
+        "UPDATE"
+      ],
+      "objects": [
+        "INVOICE"
+      ],
+      "requireAny": [
+        "INVOICE"
+      ],
+      "forbid": [
+        "PAYMENT",
+        "CANCEL",
+        "CREATE_ONLY",
+        "LEAVE",
+        "EXPENSE"
+      ],
+      "examples": [
+        "Update invoice INV-0012 amount to 55000",
+        "Change INV-0034 GST to 12 percent",
+        "Edit invoice INV-0045 amount to 80000",
+        "Correct INV-0012 TDS to 10 percent",
+        "Modify invoice INV-0021 amount 62000",
+        "Set the amount of INV-0050 to 99000",
+        "INV-0012 amount 55000 ki marchu",
+        "Revise invoice INV-0034 amount before GST to 48000"
+      ]
+    },
+    "cancel_invoice": {
+      "verbs": [
+        "CANCEL",
+        "DELETE"
+      ],
+      "objects": [
+        "INVOICE"
+      ],
+      "requireAny": [
+        "INVOICE"
+      ],
+      "needsCancel": true,
+      "forbid": [
+        "PAYMENT_ONLY",
+        "LEAVE"
+      ],
+      "examples": [
+        "Cancel invoice INV-0012",
+        "Void INV-0034",
+        "Cancel the invoice INV-0045",
+        "Delete invoice INV-0021",
+        "INV-0050 ni cancel cheyyi",
+        "Withdraw invoice INV-0012",
+        "Revoke invoice INV-0034"
+      ],
+      "needsVerb": true
+    },
+    "update_customer": {
+      "verbs": [
+        "UPDATE"
+      ],
+      "objects": [
+        "CLIENT"
+      ],
+      "billing": true,
+      "requireAny": [
+        "CLIENT"
+      ],
+      "forbid": [
+        "LEAVE",
+        "CREATE_ONLY"
+      ],
+      "examples": [
+        "Update customer Acme billing email to accounts@acme.in",
+        "Change customer Sunrise Pharma GSTIN to 36ABCDE1234F1Z5",
+        "Edit customer Orbit Tech billing address to Plot 5 Madhapur",
+        "Update Acme payment terms to Net 45",
+        "Change the invoice email of customer Greenfield to bills@greenfield.in",
+        "Update customer Zenith accounts contact to Suresh 9876543210",
+        "Customer Acme billing email marchu accounts@acme.in",
+        "Correct the GST number of customer Metro Labs"
+      ]
+    },
+    "prepare_incentive_action": {
+      "verbs": [
+        "PREPARE",
+        "ASSIGN",
+        "RECORD",
+        "CREATE"
+      ],
+      "objects": [
+        "INCENTIVE",
+        "SALARY"
+      ],
+      "requireAny": [
+        "INCENTIVE"
+      ],
+      "wants": [
+        "amount"
+      ],
+      "forbid": [
+        "LEAVE",
+        "INVOICE",
+        "CANDIDATE"
+      ],
+      "examples": [
+        "Give Ravi an incentive of 5000 for September",
+        "Prepare incentive 8000 for Priya for last month",
+        "Approve incentive of 10000 to Anil for September",
+        "Record a joining incentive of 6000 for Kiran",
+        "Incentive 7500 for Meena for September joinings",
+        "Ravi ki 5000 incentive ivvandi September ki",
+        "Decide no incentive for Suresh for September",
+        "Pay Priya an incentive of 12000 with next salary"
+      ],
+      "needsVerb": true
+    }
+  },
+  "tieBreakers": [
+    {
+      "when": "when",
+      "prefer": "schedule_interview",
+      "over": "move_candidate_stage",
+      "within": 2.5
+    },
+    {
+      "when": "noWhen",
+      "prefer": "move_candidate_stage",
+      "over": "schedule_interview",
+      "within": 2.5
+    },
+    {
+      "prefer": "reschedule_interview",
+      "over": "schedule_interview",
+      "unless": "SCHEDULE",
+      "within": 3
+    },
+    {
+      "prefer": "update_customer",
+      "over": "update_client",
+      "within": 0.5
+    }
+  ]
+}

@@ -103,13 +103,44 @@ function parseDate(v) {
   if (mt) [, y, m, d] = mt;
   else {
     mt = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(s);
-    if (!mt) return { error: true };
-    [, d, m, y] = mt;
+    if (!mt) {
+      // The way the old HRMS wrote dates: 18-SEP-2026, 18 Sep 2026, 18/Sep/2026.
+      const mn = /^(\d{1,2})[-/. ]([A-Za-z]{3,9})[-/. ,]+(\d{4})$/.exec(s);
+      const mi = mn ? MONTH_NAMES.findIndex((n) => n === mn[2].slice(0, 3).toLowerCase()) : -1;
+      if (!mn || mi < 0) return { error: true };
+      d = mn[1]; m = String(mi + 1); y = mn[3];
+    } else [, d, m, y] = mt;
   }
   const dt = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
   if (Number.isNaN(dt.getTime()) || dt.getUTCMonth() !== Number(m) - 1 || dt.getUTCDate() !== Number(d)) return { error: true };
   if (Number(y) < 1950 || Number(y) > 2100) return { error: true };
   return { value: dt.toISOString().slice(0, 10) };
+}
+
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// A clock time -> { value: 'HH:MM' (24-hour) } | { empty } | { error }.
+// Accepts 10:30, 10.30, 9:05 AM, 6 pm, 1830, 10:30:15 and an Excel time (0.4375).
+function parseTime(v) {
+  const s = str(v);
+  if (!s) return { empty: true };
+  let h; let min;
+  if (/^0?\.\d+$|^1(\.0+)?$/.test(s) && Number(s) < 1) {
+    const total = Math.round(Number(s) * 1440);
+    h = Math.floor(total / 60) % 24; min = total % 60;
+  } else {
+    const mt = /^(\d{1,2})(?:[:.](\d{2}))?(?::\d{2})?\s*([AaPp])\.?[Mm]?\.?$/.exec(s) || /^(\d{1,2})[:.](\d{2})(?::\d{2})?$/.exec(s) || /^(\d{2})(\d{2})$/.exec(s);
+    if (!mt) return { error: true };
+    h = Number(mt[1]); min = mt[2] === undefined ? 0 : Number(mt[2]);
+    const ap = (mt[3] || '').toLowerCase();
+    if (ap) {
+      if (h < 1 || h > 12) return { error: true };
+      if (ap === 'p' && h !== 12) h += 12;
+      if (ap === 'a' && h === 12) h = 0;
+    }
+  }
+  if (!(h >= 0 && h <= 23 && min >= 0 && min <= 59)) return { error: true };
+  return { value: `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}` };
 }
 
 function parseNumber(v) {
@@ -286,7 +317,11 @@ function parseFile(spec, buffer, fileName = '') {
   const headerIdx = aoa.findIndex((r) => r.some((c) => str(c) !== ''));
   if (headerIdx < 0) return { error: 'That file has no header row. Download the sample file and fill it in.' };
   const headers = aoa[headerIdx].map((h) => str(h));
-  const byNorm = new Map(spec.columns.map((c) => [normHeader(c.label), c]));
+  // A PAUSED column (Manage Fields) is still recognised, so an older file keeps
+  // working — its values are simply not read.
+  const pausedList = Array.isArray(spec.pausedColumns) ? spec.pausedColumns : [];
+  const pausedKeys = new Set(pausedList.map((c) => c.key));
+  const byNorm = new Map([...spec.columns, ...pausedList].map((c) => [normHeader(c.label), c]));
   const mapped = headers.map((h) => (h ? byNorm.get(normHeader(h)) || null : null));
   const unknown = headers.filter((h, i) => h && !mapped[i]);
   const seen = new Map();
@@ -310,7 +345,7 @@ function parseFile(spec, buffer, fileName = '') {
     const row = { line: i + 1 };
     let any = false;
     mapped.forEach((c, j) => {
-      if (!c) return;
+      if (!c || pausedKeys.has(c.key)) return;
       let v = cells[j];
       if (typeof v === 'number' && c.type === 'date') v = dateFromSerial(v) || String(v);
       row[c.key] = v === undefined || v === null ? '' : (typeof v === 'number' && c.type === 'number' ? v : str(v));
@@ -323,7 +358,11 @@ function parseFile(spec, buffer, fileName = '') {
   }
   if (!rows.length) return { error: examples ? 'Only the sample\'s EXAMPLE rows are in this file — add your own rows below them (or replace them).' : 'That file has no data rows.' };
   if (rows.length > MAX_ROWS) return { error: `Import at most ${MAX_ROWS} rows at a time (this file has ${rows.length}).` };
-  return { rows, examples, sheetName, ignoredReadOnly: spec.columns.filter((c) => c.readOnly && seen.has(c.key)).map((c) => c.label) };
+  return {
+    rows, examples, sheetName,
+    ignoredReadOnly: spec.columns.filter((c) => c.readOnly && seen.has(c.key)).map((c) => c.label),
+    ignoredPaused: pausedList.filter((c) => seen.has(c.key)).map((c) => c.label),
+  };
 }
 
 // Required-column check every spec gets for free (specs add their own).
@@ -343,6 +382,9 @@ function previewOf(spec, validated, parsed) {
     exampleRowsSkipped: parsed.examples || 0,
     validCount: good.length,
     invalidCount: bad.length,
+    // Rows naming an employee the file's Employee ID does not match (or outside
+    // the caller's scope): listed, never created as a new person.
+    unmatched: bad.filter((v) => (v.errors || []).some((e) => e.field === 'Employee ID' && /not in your scope|does not exist/i.test(e.message))).length,
     willCreate: count('create'),
     willUpdate: count('update'),
     unchanged: count('nochange') + count('skip'),
@@ -350,8 +392,10 @@ function previewOf(spec, validated, parsed) {
     rows: validated.slice(0, 500).map((v) => ({
       line: v.line, label: v.label || '', action: v.errors && v.errors.length ? 'error' : v.action,
       changes: (v.changes || []).slice(0, 40), errors: (v.errors || []).map((e) => `${e.field}: ${e.message}`),
+      notes: (v.notes || []).slice(0, 20),
     })),
     ignoredReadOnly: parsed.ignoredReadOnly || [],
+    ignoredPaused: parsed.ignoredPaused || [],
   };
 }
 
@@ -374,6 +418,7 @@ module.exports = {
   loose,
   pick,
   parseDate,
+  parseTime,
   parseNumber,
   dateFromSerial,
 };

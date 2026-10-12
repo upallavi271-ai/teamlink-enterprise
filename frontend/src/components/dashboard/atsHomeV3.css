@@ -79,3 +79,13 @@
   .ahv3-list li{flex-wrap:wrap}
   .ahv3-time{min-width:auto}
 }
+
+/* department overview: headers name their basis, a real zero is a quiet grey 0, a total row (2026-10-10) */
+.ahv3-tbl .ahv3-th{vertical-align:bottom}
+.ahv3-tbl .ahv3-th .ahv3-th-l{display:block}
+.ahv3-tbl .ahv3-th .ahv3-th-b{display:block;font-size:10px;font-weight:500;color:var(--ink-faint,#9aa3ad);white-space:nowrap;margin-top:1px}
+.ahv3-tbl .ahv3-th.is-total .ahv3-th-b{color:#14804A;font-weight:600}
+.ahv3-tbl .ahv3-zero{opacity:.8}
+.ahv3-tbl tfoot td{font-weight:700;border-top:2px solid var(--line);padding:7px 8px}
+.ahv3-joinnote{margin-top:8px}
+.ahv3-joinnote .link-btn{font-weight:600}

@@ -10,6 +10,8 @@ const {
 } = require('../utils/accounts');
 // P4 — the invoice's GST / TDS breakdown for the matching panel.
 const TAX = require('../utils/invoiceTax');
+// Statement import rules shared with the "Import any file" screen.
+const BIC = require('../utils/bankImportCore');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -184,13 +186,14 @@ function readClient(description, clients, df) {
 // Spread one credit across a client's open invoices, oldest invoice first.
 function allocationPlan(invoices, amount) {
   const open = invoices.filter(isOpenInvoice).sort(
-    (a, b) => String(a.invoiceDate || '9999').localeCompare(String(b.invoiceDate || '9999'))
+    (a, b) => String(a.dueDate || a.invoiceDate || '9999').localeCompare(String(b.dueDate || b.invoiceDate || '9999'))
+      || String(a.invoiceDate || '9999').localeCompare(String(b.invoiceDate || '9999'))
       || String(a.invoiceNumber || '').localeCompare(String(b.invoiceNumber || '')),
   );
   let left = ROUND(amount);
   const parts = [];
   open.forEach((inv) => {
-    if (left <= 0.5) return;
+    if (left <= 0.004) return;
     const pending = invoiceOutstanding(inv);
     const take = Math.min(left, pending);
     parts.push({
@@ -587,9 +590,11 @@ function readDebitLine(txn, ctx) {
   return { kind: 'none', why: 'No office expense matches this amount' };
 }
 
-const expenseNet = (e) => ROUND(
-  Number(e.monthlyAmount || 0) + Number(e.gstAmount || 0) - Number(e.tdsAmount || 0),
-);
+// What leaves the bank for a bill. OfficeExpense.monthlyAmount is the GROSS
+// (amount before GST + GST - see routes/office.js decorate()), so the cash is
+// gross - TDS. (This used to add gstAmount again, which made every bill with
+// GST differ from its own bank debit by the GST.)
+const expenseNet = (e) => ROUND(Number(e.monthlyAmount || 0) - Number(e.tdsAmount || 0));
 
 // The whole read, with the tag the screen prints.
 function readLine(txn, ctx) {
@@ -660,9 +665,12 @@ function statementBreaks(rows) {
   return out;
 }
 
-// Duplicate lines: same day, same amount, same reference.
+// Duplicate lines: same day, same amount, same reference. When the statement
+// prints a running balance it is part of the identity: two real transactions
+// of the same amount on one day end on different balances, so they are never
+// offered for removal as "duplicates".
 function duplicateGroups(rows) {
-  const key = (t) => [t.date, t.type, ROUND(t.amount), String(t.reference || '').trim() || normName(t.description).slice(0, 40)].join('|');
+  const key = (t) => [t.date, t.type, BIC.toPaise(t.amount), String(t.reference || '').trim() || normName(t.description).slice(0, 40), t.balance == null ? '' : BIC.toPaise(t.balance)].join('|');
   const m = new Map();
   oldestFirst(rows).forEach((t) => {
     const k = key(t);
@@ -707,7 +715,7 @@ function decorate(txn, invoiceById, suggestion, read) {
 
 function accountStat(account, rows) {
   const live = rows.filter((t) => !t.excluded);
-  const un = live.filter((t) => txnState(t) !== 'Reconciled' && !t.category && !t.categoryKind);
+  const un = live.filter((t) => txnState(t) !== 'Reconciled' && txnState(t) !== 'Reversed' && !t.category && !t.categoryKind);
   const inBank = statedBalance(rows);
   const inBooks = booksBalance(account, rows);
   const implied = impliedOpening(rows);
@@ -716,7 +724,7 @@ function accountStat(account, rows) {
     lines: live.length,
     unmatched: un.length,
     excluded: rows.filter((t) => t.excluded).length,
-    matched: live.filter((t) => txnState(t) === 'Reconciled' || !!t.category || !!t.categoryKind).length,
+    matched: live.filter((t) => txnState(t) === 'Reconciled' || txnState(t) === 'Reversed' || !!t.category || !!t.categoryKind).length,
     last: ordered.length ? ordered[ordered.length - 1].date : null,
     inBank,
     inBooks,
@@ -851,14 +859,46 @@ router.get('/', async (req, res) => {
 
   const breaks = new Map(statementBreaks(scoped).map((b) => [b.at.id, b]));
 
-  const filtered = req.query.state && req.query.state !== 'All'
-    ? scoped.filter((t) => txnState(t) === req.query.state)
-    : scoped;
+  const filtered = req.query.state === 'Needs Review'
+    ? scoped.filter((t) => txnState(t) === 'Unmatched' && t.reviewReason && !t.excluded)
+    : (req.query.state && req.query.state !== 'All'
+      ? scoped.filter((t) => txnState(t) === req.query.state)
+      : scoped);
+  // What each line has been allocated to (receipts) or settled (bills), for the Linked / Difference columns.
+  const idsHere = filtered.map((t) => t.id);
+  const [allocRows, billRows] = await Promise.all([
+    prisma.invoicePayment.findMany({ where: { bankTxnId: { in: idsHere } }, select: { bankTxnId: true, amount: true, invoiceId: true } }),
+    prisma.officeExpense.findMany({ where: { bankTxnId: { in: idsHere } }, select: { bankTxnId: true, monthlyAmount: true, tdsAmount: true, expenseCode: true, vendor: true, category: true } }),
+  ]);
+  const allocBy = new Map();
+  allocRows.forEach((p) => { const a = allocBy.get(p.bankTxnId) || { p: 0, invoiceIds: new Set() }; a.p += BIC.toPaise(p.amount); a.invoiceIds.add(p.invoiceId); allocBy.set(p.bankTxnId, a); });
+  const billBy = new Map();
+  billRows.forEach((b) => { const a = billBy.get(b.bankTxnId) || { p: 0, labels: [] }; a.p += BIC.toPaise(b.monthlyAmount) - BIC.toPaise(b.tdsAmount); a.labels.push(b.expenseCode || b.vendor || b.category); billBy.set(b.bankTxnId, a); });
   res.json(filtered.map((t) => {
     const needsMatch = txnState(t) === 'Unmatched';
     const read = readLine(t, ctx);
     const row = decorate(t, invoiceById, needsMatch ? suggestInvoiceFor(t, ctx.invoices) : null, read);
     row.runningBalance = runAt.get(t.id) ?? null;
+    {
+      const al = allocBy.get(t.id);
+      const bl = billBy.get(t.id);
+      const amtP = BIC.toPaise(t.amount);
+      row.needsReview = txnState(t) === 'Unmatched' && !!t.reviewReason && !t.excluded;
+      row.displayState = row.needsReview ? 'Needs Review' : txnState(t);
+      if (t.type === 'Credit') {
+        row.allocated = al ? al.p / 100 : 0;
+        row.unallocated = ['Ignored', 'Reversed'].includes(txnState(t)) ? 0 : (amtP - (al ? al.p : 0)) / 100;
+        row.difference = row.unallocated;
+        row.linkedTo = al ? { kind: 'invoice', count: al.invoiceIds.size } : null;
+      } else if (bl) {
+        row.allocated = bl.p / 100;
+        row.unallocated = null;
+        row.difference = (amtP - bl.p) / 100;
+        row.linkedTo = { kind: 'expense', label: bl.labels.join(', ') };
+      } else {
+        row.difference = null;
+      }
+    }
     row.breakHere = breaks.get(t.id) || null;
     // S5: what the app would do with a line nobody has filed yet.
     if (lineOpen(t, loanLinked)) {
@@ -1036,22 +1076,39 @@ router.get('/summary', async (req, res) => {
 // Import
 // ---------------------------------------------------------------------------
 
-// Read the rows without writing anything — what the Preview button shows.
+// Read the rows without writing anything - what the Preview button shows.
+// Same validation, duplicate and balance rules as the import itself.
 router.post('/preview', async (req, res) => {
-  const parsed = parseCsv(String(req.body?.csv || ''));
-  if (parsed.error) return res.status(400).json({ error: parsed.error });
-  const rows = parsed.rows;
+  const text = String(req.body?.csv || '');
+  const parsed = parseCsv(text);
+  if (parsed.error) return res.status(400).json({ error: parsed.error, failed: (parsed.failed || []).slice(0, 100) });
+  const accounts = await ensureAccounts();
+  const firstId = accounts[0].id;
+  const account = accounts.find((a) => a.id === req.body?.bankAccountId) || accounts[0];
+  const v = BIC.validateRows(parsed.rows);
+  const failed = [...(parsed.failed || []), ...v.failed];
+  const existing = onAccount(await prisma.bankTransaction.findMany(), account.id, firstId);
+  const plan = BIC.planDuplicates(v.ok, existing);
+  const rows = v.ok;
   const credits = rows.filter((r) => r.type === 'Credit');
   const debits = rows.filter((r) => r.type === 'Debit');
+  const dates = rows.map((r) => r.date).sort();
+  const prior = await prisma.bankImport.findFirst({ where: { sourceHash: BIC.sha256(text), bankAccountId: account.id }, orderBy: { createdAt: 'desc' } });
   return res.json({
     lines: rows.length,
     credits: credits.length,
     creditValue: ROUND(credits.reduce((s, r) => s + r.amount, 0)),
     debits: debits.length,
     debitValue: ROUND(debits.reduce((s, r) => s + r.amount, 0)),
-    from: rows[0]?.date || null,
-    to: rows[rows.length - 1]?.date || null,
-    skipped: parsed.bad || 0,
+    from: dates[0] || null,
+    to: dates[dates.length - 1] || null,
+    skipped: failed.length,
+    failed: failed.slice(0, 100),
+    newLines: plan.fresh.length,
+    duplicates: plan.duplicates.length,
+    needsReview: plan.fresh.filter((r) => r.reviewReason).length,
+    balanceCheck: BIC.checkBalances(rows, parsed.stated || {}),
+    fileAlreadyImported: prior ? { batch: prior.id, on: prior.date } : null,
     sample: rows.slice(0, 8),
   });
 });
@@ -1059,95 +1116,144 @@ router.post('/preview', async (req, res) => {
 // Import statement lines. Accepts either a parsed array of rows or raw CSV text
 // with a date / description / amount(or debit+credit) header. Lines already on
 // file are skipped rather than duplicated, so re-importing an overlapping
-// statement is safe.
+// statement is safe, and a failed import writes nothing so it can simply be
+// run again.
 router.post('/import', async (req, res) => {
   let rows = Array.isArray(req.body?.transactions) ? req.body.transactions : null;
+  let failedRows = [];
+  let stated = {};
+  let sourceHash = null;
   if (!rows && typeof req.body?.csv === 'string') {
     const parsed = parseCsv(req.body.csv);
-    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (parsed.error) return res.status(400).json({ error: parsed.error, failed: (parsed.failed || []).slice(0, 100) });
     rows = parsed.rows;
+    failedRows = parsed.failed || [];
+    stated = parsed.stated || {};
+    sourceHash = BIC.sha256(req.body.csv);
   }
   if (!rows || !rows.length) return res.status(400).json({ error: 'Provide transactions[] or csv text to import' });
-  const out = await importStatement(req, {
-    rows,
-    bankAccountId: req.body?.bankAccountId,
-    dedup: req.body?.dedup !== 'No' && req.body?.dedup !== false,
-    file: req.body?.file,
-    autoPost: req.body?.autoPost !== 'no' && req.body?.autoPost !== false,
-  });
+  let out;
+  try {
+    out = await importStatement(req, {
+      rows,
+      bankAccountId: req.body?.bankAccountId,
+      dedup: req.body?.dedup !== 'No' && req.body?.dedup !== false,
+      file: req.body?.file,
+      autoPost: req.body?.autoPost !== 'no' && req.body?.autoPost !== false,
+      failedRows,
+      stated: { ...stated, ...(req.body?.statedOpening != null ? { opening: Number(req.body.statedOpening) } : {}), ...(req.body?.statedClosing != null ? { closing: Number(req.body.statedClosing) } : {}) },
+      sourceHash,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'The import did not finish and nothing was saved. Run it again - lines already saved are never duplicated.', detail: err.message });
+  }
   res.status(201).json(out);
 });
 
 // The write half of a statement import, shared with the Accounts "Import any
 // file" screen (routes/accountsImport.js) so a spreadsheet upload gets exactly
-// the same de-duplication, batch record, opening balance and auto-posting as
-// this screen's own import.
+// the same validation, de-duplication, batch record, balance check, opening
+// balance and auto-matching as this screen's own import.
+//
+// ALL-OR-NOTHING: the lines and the batch record are written in ONE database
+// transaction. A crash half way leaves nothing behind, and running the same
+// import again is safe (the duplicate rules recognise whatever did get saved).
 async function importStatement(req, {
-  rows, bankAccountId, dedup = true, file, autoPost = true,
+  rows, bankAccountId, dedup = true, file, autoPost = true, failedRows = [], stated = {}, sourceHash = null,
 }) {
   const accounts = await ensureAccounts();
   const firstId = accounts[0].id;
   const accountId = bankAccountId || firstId;
   const account = accounts.find((a) => a.id === accountId) || accounts[0];
-
-  const existing = await prisma.bankTransaction.findMany();
-  const key = (t) => [t.date, t.type, ROUND(t.amount), String(t.reference || '').trim().toLowerCase() || String(t.description || '').trim().toLowerCase()].join('|');
-  const seen = new Set(onAccount(existing, account.id, firstId).map(key));
-
-  const batch = `IMP-${Date.now()}`;
   file = String(file || 'pasted text');
-  const created = [];
-  const skipped = [];
-  let creditValue = 0;
-  let debitValue = 0;
-  let from = null;
-  let to = null;
-  for (const raw of rows) {
-    const date = String(raw.date || '').slice(0, 10);
-    const amount = ROUND(raw.amount);
-    const type = raw.type || (Number(raw.credit) > 0 ? 'Credit' : 'Debit');
-    if (!date || !(amount > 0)) { skipped.push({ row: raw, reason: 'A date and a non-zero amount are required' }); continue; }
-    const row = {
-      date,
-      description: String(raw.description || raw.narration || '—'),
-      type: type === 'Credit' ? 'Credit' : 'Debit',
-      amount,
-      reference: raw.reference ? String(raw.reference) : null,
-      balance: raw.balance == null || raw.balance === '' ? null : Number(raw.balance),
-      importBatch: batch,
-      importFile: file,
-      bankAccountId: account.id,
-    };
-    const k = key(row);
-    if (dedup && seen.has(k)) { skipped.push({ row, reason: 'Already on file' }); continue; }
-    seen.add(k);
-    created.push(await prisma.bankTransaction.create({ data: row }));
-    if (row.type === 'Credit') creditValue = ROUND(creditValue + amount); else debitValue = ROUND(debitValue + amount);
-    if (!from || date < from) from = date;
-    if (!to || date > to) to = date;
+
+  const v = BIC.validateRows(rows);
+  const failed = [...failedRows, ...v.failed];
+  const balanceCheck = BIC.checkBalances(v.ok, stated);
+
+  let created = [];
+  let duplicates = [];
+  let batch = null;
+  let priorImport = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const existing = onAccount(await prisma.bankTransaction.findMany(), account.id, firstId);
+    const plan = dedup ? BIC.planDuplicates(v.ok, existing) : { fresh: v.ok.map((r) => ({ ...r, externalId: null })), duplicates: [] };
+    duplicates = plan.duplicates;
+    priorImport = sourceHash ? await prisma.bankImport.findFirst({ where: { sourceHash, bankAccountId: account.id }, orderBy: { createdAt: 'desc' } }) : null;
+    batch = `IMP-${Date.now()}`;
+    const dates = plan.fresh.map((r) => r.date).sort();
+    const credits = plan.fresh.filter((r) => r.type === 'Credit');
+    const debits = plan.fresh.filter((r) => r.type === 'Debit');
+    try {
+      created = await prisma.$transaction(async (tx) => {
+        const made = [];
+        for (const r of plan.fresh) {
+          made.push(await tx.bankTransaction.create({
+            data: {
+              date: r.date,
+              valueDate: r.valueDate,
+              description: r.description,
+              type: r.type,
+              amount: r.amount,
+              reference: r.reference,
+              externalId: r.externalId,
+              balance: r.balance,
+              importBatch: batch,
+              importFile: file,
+              bankAccountId: account.id,
+              sourceLine: r.line,
+              sourceRow: JSON.stringify(r.raw || {
+                date: r.date, valueDate: r.valueDate, description: r.description, reference: r.reference, externalId: r.externalId, type: r.type, amount: r.amount, balance: r.balance,
+              }),
+              reviewReason: r.reviewReason || null,
+            },
+          }));
+        }
+        // A batch record is kept when lines were saved, or when a first look at a file found unreadable rows.
+        // Uploading the very same file again adds no second record.
+        if (made.length || (failed.length && !priorImport)) {
+          await tx.bankImport.create({
+            data: {
+              id: batch,
+              bankAccountId: account.id,
+              date: BIC.istToday(),
+              file,
+              recordedBy: actor(req),
+              lines: made.length,
+              skipped: duplicates.length + failed.length,
+              credits: ROUND(credits.reduce((s, r) => s + r.amount, 0)),
+              debits: ROUND(debits.reduce((s, r) => s + r.amount, 0)),
+              fromDate: dates[0] || null,
+              toDate: dates[dates.length - 1] || null,
+              sourceHash,
+              openingBalance: balanceCheck.opening ? balanceCheck.opening.value : null,
+              closingBalance: balanceCheck.closing ? balanceCheck.closing.value : null,
+              balanceCheck: JSON.stringify(balanceCheck),
+              failedRows: failed.length ? JSON.stringify(failed.slice(0, 500)) : null,
+              status: failed.length ? (made.length ? 'Partial' : (duplicates.length ? 'Done' : 'Failed')) : 'Done',
+            },
+          });
+        }
+        return made;
+      }, { timeout: 120000, maxWait: 20000 });
+      break;
+    } catch (err) {
+      // Someone saved the same bank transaction id a moment ago: look again, once.
+      if (err && err.code === 'P2002' && attempt === 0) continue;
+      throw err;
+    }
   }
 
-  if (created.length) {
-    await prisma.bankImport.create({
-      data: {
-        id: batch,
-        bankAccountId: account.id,
-        date: toIsoDate(new Date()),
-        file,
-        recordedBy: actor(req),
-        lines: created.length,
-        skipped: skipped.length,
-        credits: creditValue,
-        debits: debitValue,
-        fromDate: from,
-        toDate: to,
-      },
-    });
-  }
-  await logAudit({ userId: req.user.id, action: 'Bank statement imported', entity: 'BankTransaction', entityId: batch, toValue: `${created.length} imported, ${skipped.length} skipped` });
+  await logAudit({
+    userId: req.user.id,
+    action: 'Bank statement imported',
+    entity: 'BankTransaction',
+    entityId: batch,
+    toValue: `${created.length} imported, ${duplicates.length} duplicate, ${failed.length} failed - ${file}${balanceCheck.checked ? (balanceCheck.ok ? ' - balances tie' : ' - BALANCES DO NOT TIE') : ''}`,
+  });
 
   // The statement carries its own running balance, so the opening balance can
-  // be worked out instead of asked for — set it the first time, on its own.
+  // be worked out instead of asked for - set it the first time, on its own.
   let openingSetTo = null;
   if (created.length && !Number(account.openBal || 0)) {
     const mine = onAccount(await prisma.bankTransaction.findMany(), account.id, firstId);
@@ -1160,42 +1266,58 @@ async function importStatement(req, {
     }
   }
 
-  // Post the credits automatically: only where the narration names a client who
-  // still owes money. The oldest invoice is settled first, anything extra is
-  // left alone, and every posting can be undone.
-  let autoPosted = 0;
-  let loansLinked = 0;
-  let billsFiled = 0;
-  let chargesFiled = 0;
-  if (created.length && autoPost) {
-    const result = await postAllNamed(account.id, firstId, req, { clearOnly: true });
-    autoPosted = result.posted;
-    // Hand loans: a line that clearly names a loan is linked as its proof.
-    loansLinked = (await autoLinkLoans(req)).linked;
-    // S5: office bills and the bank's own charges, filed with the line as proof.
-    const debits = await autoFileDebits(account.id, firstId, req);
-    billsFiled = debits.filed - debits.charges;
-    chargesFiled = debits.charges;
-  }
-
-  // "N lines imported · X matched and proof attached · Y need your review".
-  let autoMatched = 0;
-  let needsReview = 0;
-  if (created.length) {
-    const ids = created.map((t) => t.id);
-    const [fresh, links] = await Promise.all([
-      prisma.bankTransaction.findMany({ where: { id: { in: ids } } }),
-      prisma.handLoanLink.findMany({ where: { bankTxnId: { in: ids } }, select: { bankTxnId: true } }),
-    ]);
-    const linkedSet = new Set(links.map((l) => l.bankTxnId));
-    autoMatched = fresh.filter((t) => !lineOpen(t, linkedSet) && !t.excluded && txnState(t) !== 'Ignored').length;
-    needsReview = fresh.filter((t) => lineOpen(t, linkedSet)).length;
+  // Automatic matching of the new lines (see autoMatchNewLines).
+  // A retry of an import that already saved its lines (the first run died before matching) saves nothing new
+  // but still gets the matching pass over the lines it recognised as already on file - so retrying is how a
+  // half-finished import is completed, and it can never duplicate anything.
+  const healIds = created.length ? [] : [...new Set(duplicates.map((d) => d.of).filter(Boolean))];
+  const auto = created.length || healIds.length
+    ? await autoMatchNewLines({ ids: created.length ? created.map((t) => t.id) : healIds, account, firstId, req, autoPost })
+    : {
+      autoPosted: 0, loansLinked: 0, billsFiled: 0, chargesFiled: 0, autoMatched: 0, needsReview: 0, unmatched: 0,
+    };
+  const reviewFlagged = created.filter((t) => t.reviewReason).length;
+  const summary = {
+    imported: created.length,
+    matched: auto.autoMatched,
+    unmatched: auto.unmatched,
+    duplicate: duplicates.length,
+    failed: failed.length,
+    needsReview: Math.max(auto.needsReview, reviewFlagged),
+  };
+  const batchSaved = created.length > 0 || (failed.length > 0 && !priorImport);
+  if (batch && batchSaved) {
+    await prisma.bankImport.update({ where: { id: batch }, data: { summary: JSON.stringify(summary) } }).catch(() => {});
   }
 
   return {
-    batch, account: account.name || account.id, imported: created.length, duplicates: skipped.length, skipped, openingSetTo, autoPosted, loansLinked, billsFiled, chargesFiled, autoMatched, needsReview, transactions: created,
+    batch: batchSaved ? batch : null,
+    account: account.name || account.id,
+    imported: created.length,
+    duplicates: duplicates.length,
+    duplicateRows: duplicates.slice(0, 50).map((d) => ({ line: d.row.line, date: d.row.date, amount: d.row.amount, type: d.row.type, description: d.row.description, why: d.why })),
+    // Older callers read `skipped` as the lines not imported.
+    skipped: [...duplicates.map((d) => ({ row: d.row, reason: d.why })), ...failed.map((f) => ({ row: f.row, reason: f.reason, line: f.line }))],
+    failed: failed.length,
+    failedRows: failed.slice(0, 100),
+    summary,
+    balanceCheck,
+    fileAlreadyImported: priorImport ? { batch: priorImport.id, on: priorImport.date } : null,
+    openingSetTo,
+    ...auto,
+    transactions: created,
   };
 }
+
+// What happens to the lines a statement has just brought in. (Replaced by the
+// reconMatch ladder - see the bottom of this file; kept as one function so the
+// import has a single place to ask.)
+// The ladder lives in utils/reconMatch.js (decisions) and routes/bankRecon.js (applying them).
+function autoMatchNewLines(args) { return recon.autoMatchNewLines(args); }
+
+// Looks again at lines still waiting (after a manual entry, an edited expense,
+// a new vendor or a saved mapping). Filled in by the Phase 2 matcher below.
+function reconsiderOpenLines(args) { return recon.reconsiderOpenLines(args || {}); }
 
 // ---------------------------------------------------------------------------
 // Posting a matched credit into the accounts
@@ -1204,39 +1326,54 @@ async function importStatement(req, {
 // One credit, across one client's open invoices, oldest first. Returns the
 // parts posted and whatever was more than the client owed.
 async function postAcrossInvoices(txn, invoices, req, { allowOverpay = true } = {}) {
-  const plan = allocationPlan(invoices, ROUND(txn.amount));
-  if (!plan.parts.length) return { error: 'Nothing is outstanding for that client.' };
-  if (plan.unallocated > 0.5 && !allowOverpay) {
-    return { error: `${fmtMoney(plan.unallocated)} of this credit is more than is owed — confirm to post the rest` };
+  // One DB transaction: the receipts, the invoice balances and the line move
+  // together or not at all, and what is already allocated from this line is
+  // read INSIDE it, so the same money can never be allocated twice.
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const done = await tx.invoicePayment.findMany({ where: { bankTxnId: txn.id }, select: { amount: true } });
+      const doneP = done.reduce((sum, p) => sum + BIC.toPaise(p.amount), 0);
+      const leftAmount = (BIC.toPaise(txn.amount) - doneP) / 100;
+      if (leftAmount <= 0.004) return { error: 'This line is already fully allocated.' };
+      const fresh = await tx.invoice.findMany({ where: { id: { in: invoices.map((i) => i.id) } } });
+      const plan = allocationPlan(fresh, leftAmount);
+      if (!plan.parts.length) return { error: 'Nothing is outstanding for that client.' };
+      if (plan.unallocated > 0.004 && !allowOverpay) {
+        return { error: `${fmtMoney(plan.unallocated)} of this credit is more than is owed — confirm to post the rest` };
+      }
+      for (let i = 0; i < plan.parts.length; i += 1) {
+        const part = plan.parts[i];
+        const invoice = fresh.find((x) => x.id === part.invoiceId);
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: part.invoiceId,
+            date: txn.date,
+            dateSource: 'bank',
+            amount: part.amount,
+            method: 'Bank Transfer',
+            reference: txn.reference || null,
+            notes: `Bank statement · ${txn.description}${plan.parts.length > 1 ? ` · part ${i + 1} of ${plan.parts.length} of ${fmtMoney(txn.amount)}` : ''}`,
+            bankTxnId: txn.id,
+            recordedBy: actor(req),
+          },
+        });
+        const received = ROUND(Number(invoice.receivedAmount || 0) + part.amount);
+        const status = deriveInvoiceStatus({ ...invoice, receivedAmount: received });
+        await tx.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            receivedAmount: received,
+            status,
+            paidDate: status === 'Paid' ? txn.date : invoice.paidDate,
+            bankTxnId: txn.id,
+          },
+        });
+      }
+      return { plan };
+    }, { timeout: 60000, maxWait: 15000 });
+  } catch (err) {
+    return { error: err && err.message ? err.message : 'Could not post the receipt.' };
   }
-  for (let i = 0; i < plan.parts.length; i += 1) {
-    const part = plan.parts[i];
-    const invoice = invoices.find((x) => x.id === part.invoiceId);
-    await prisma.invoicePayment.create({
-      data: {
-        invoiceId: part.invoiceId,
-        date: txn.date,
-        amount: part.amount,
-        method: 'Bank Transfer',
-        reference: txn.reference || null,
-        notes: `Bank statement · ${txn.description}${plan.parts.length > 1 ? ` · part ${i + 1} of ${plan.parts.length} of ${fmtMoney(txn.amount)}` : ''}`,
-        bankTxnId: txn.id,
-        recordedBy: actor(req),
-      },
-    });
-    const received = ROUND(Number(invoice.receivedAmount || 0) + part.amount);
-    const status = deriveInvoiceStatus({ ...invoice, receivedAmount: received });
-    await prisma.invoice.update({
-      where: { id: invoice.id },
-      data: {
-        receivedAmount: received,
-        status,
-        paidDate: status === 'Paid' ? txn.date : invoice.paidDate,
-        bankTxnId: txn.id,
-      },
-    });
-  }
-  return { plan };
 }
 
 // A receipt already recorded by hand gets this bank line as its proof. No
@@ -1311,7 +1448,7 @@ async function postAllNamed(accountId, firstId, req, { clearOnly = false } = {})
         matchedBy: actor(req),
         matchedDate: toIsoDate(new Date()),
         clientName: read.client,
-        excess: out.plan.unallocated > 0.5 ? out.plan.unallocated : null,
+        excess: out.plan.unallocated > 0.004 ? out.plan.unallocated : null,
       },
     });
     posted += 1;
@@ -1366,7 +1503,7 @@ router.post('/:id/post-to-client', async (req, res) => {
       matchedBy: actor(req),
       matchedDate: toIsoDate(new Date()),
       clientName: client.name,
-      excess: out.plan.unallocated > 0.5 ? out.plan.unallocated : null,
+      excess: out.plan.unallocated > 0.004 ? out.plan.unallocated : null,
     },
   });
   await logAudit({
@@ -1521,6 +1658,7 @@ router.post('/:id/reconcile', async (req, res) => {
       date: txn.date,
       amount: applied,
       method: 'Bank Transfer',
+      dateSource: 'bank',
       reference: txn.reference || null,
       notes: `Bank statement · ${txn.description}${unallocated > 0.5 ? ` · ₹${unallocated} left unallocated` : ''}`,
       bankTxnId: txn.id,
@@ -1797,7 +1935,7 @@ router.post('/:id/settle-invoices', async (req, res) => {
       matchedBy: actor(req),
       matchedDate: toIsoDate(new Date()),
       clientName: clients.length === 1 ? clients[0] : (clients.length ? `${clients[0]} +${clients.length - 1}` : null),
-      excess: out.plan.unallocated > 0.5 ? out.plan.unallocated : null,
+      excess: out.plan.unallocated > 0.004 ? out.plan.unallocated : null,
     },
   });
   if (clients.length === 1) await learnRule(txn, { kind: 'client', category: clients[0] });
@@ -1847,7 +1985,8 @@ router.post('/:id/match-bills', async (req, res) => {
   for (const b of bills) {
     const net = expenseNet(b);
     if (net > left + BANK_TOL) break;
-    const data = { bankTxnId: txn.id };
+    // The payment date is the date on the statement line, not the day this ran.
+    const data = { bankTxnId: txn.id, paymentDate: b.paymentDate || String(txn.date).slice(0, 10) };
     if (b.approvalStatus === 'APPROVED') {
       Object.assign(data, { approvalStatus: 'PAID', paidStatus: 'Paid', paidAt: new Date(), paidById: req.user.id });
     } else if (['PAID', 'REIMBURSED'].includes(b.approvalStatus)) {
@@ -1855,7 +1994,7 @@ router.post('/:id/match-bills', async (req, res) => {
     }
     await prisma.officeExpense.update({ where: { id: b.id }, data });
     links.push({
-      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, net,
+      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, paymentDate: b.paymentDate || null, net,
     });
     left = ROUND(Math.max(0, left - net));
   }
@@ -1984,7 +2123,7 @@ router.post('/:id/categorise', async (req, res) => {
         expenseAccount: account,
         vendor: String(body.vendor || '').trim() || null,
         expenseDate: String(body.date).slice(0, 10),
-        monthlyAmount: money.base,
+        monthlyAmount: ROUND(money.base + money.gst), // stored gross, as routes/office.js does
         gstAmount: money.gst,
         tdsAmount: money.tds,
         gstRatePct: body.gst === 'Yes' ? Number(body.gstRate) : null,
@@ -2013,6 +2152,7 @@ router.post('/:id/categorise', async (req, res) => {
         createdById: req.user.id,
         paidById: req.user.id,
         paidAt: new Date(),
+        paymentDate: String(txn.date).slice(0, 10),
         bankTxnId: txn.id,
         ...(stored ? {
           proofFile: stored.billFile, proofName: stored.billName, proofMime: stored.billMime, proofSize: stored.billSize, proofAt: today, proofBy: actor(req),
@@ -2078,6 +2218,7 @@ router.post('/:id/uncategorise', async (req, res) => {
   if (!txn.category && !txn.categoryKind && !txn.createdBillId && !txn.billLinks && !loanLink) {
     return res.status(400).json({ error: 'This line is not categorised' });
   }
+  if (txn.categoryKind === 'refund') return res.status(400).json({ error: 'This line pays a client refund - use "Undo refund link" so the credit note goes back to refund due.' });
   let removedBill = null;
   if (txn.createdBillId) {
     const bill = await prisma.officeExpense.findUnique({ where: { id: txn.createdBillId } });
@@ -2102,6 +2243,7 @@ router.post('/:id/uncategorise', async (req, res) => {
           paidStatus: l.paidStatus || bill.paidStatus,
           paidAt: l.paidAt ? new Date(l.paidAt) : null,
           paidById: l.paidById || null,
+          paymentDate: l.paymentDate || null,
         },
       });
       restored += 1;
@@ -2556,7 +2698,7 @@ async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) 
         matchedBy: actor(req),
         matchedDate: toIsoDate(new Date()),
         clientName: clients.length === 1 ? clients[0] : (clients.length ? `${clients[0]} +${clients.length - 1}` : null),
-        excess: out.plan.unallocated > 0.5 ? out.plan.unallocated : null,
+        excess: out.plan.unallocated > 0.004 ? out.plan.unallocated : null,
       },
     });
     return { record: out.plan.parts.map((p) => p.invoiceNumber).join(', ') };
@@ -2576,12 +2718,12 @@ async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) 
   if (a.type === 'linkBill') {
     const b = await prisma.officeExpense.findUnique({ where: { id: a.billId } });
     if (!b || !billFree(b, txn.id) || (b.bankTxnId && b.bankTxnId !== txn.id)) return { error: 'That bill is no longer free.' };
-    const data = { bankTxnId: txn.id };
+    const data = { bankTxnId: txn.id, paymentDate: b.paymentDate || String(txn.date).slice(0, 10) };
     if (b.approvalStatus === 'APPROVED') Object.assign(data, { approvalStatus: 'PAID', paidStatus: 'Paid', paidAt: new Date(), paidById: req.user.id });
     else if (['PAID', 'REIMBURSED'].includes(b.approvalStatus)) data.paidStatus = 'Paid';
     await prisma.officeExpense.update({ where: { id: b.id }, data });
     const links = [{
-      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, net: expenseNet(b),
+      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, paymentDate: b.paymentDate || null, net: expenseNet(b),
     }];
     const left = ROUND(Math.max(0, ROUND(txn.amount) - expenseNet(b)));
     await prisma.bankTransaction.update({
@@ -2601,7 +2743,7 @@ async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) 
         expenseAccount: a.category,
         vendor: a.vendor || null,
         expenseDate: String(txn.date).slice(0, 10),
-        monthlyAmount: money.base,
+        monthlyAmount: ROUND(money.base + money.gst), // stored gross, as routes/office.js does
         gstAmount: money.gst,
         tdsAmount: money.tds,
         gstRatePct: g > 0 ? g : null,
@@ -2617,6 +2759,7 @@ async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) 
         createdById: req.user.id,
         paidById: req.user.id,
         paidAt: new Date(),
+        paymentDate: String(txn.date).slice(0, 10),
         destState: OUR_STATE,
         bankTxnId: txn.id,
       },
@@ -2706,6 +2849,14 @@ async function autoFileDebits(accountId, firstId, req) {
   for (const txn of mine) {
     const plan = linePlan(txn, ctx, loans);
     if (!plan || plan.confidence !== 'high' || plan.module === 'loan') continue; // loans: autoLinkLoans
+    // Linking an existing bill is decided by the exact-match ladder (routes/bankRecon.js), not by this looser reading.
+    if (plan.action && plan.action.type === 'linkBill') continue;
+    // Never write a NEW bill for a payment an existing, still-unlinked bill of the same cash amount could explain.
+    if (plan.action && plan.action.type === 'newBill') {
+      const cashP = BIC.toPaise(txn.amount);
+      const rivals = ctx.expenses.filter((e) => !e.bankTxnId && e.entryKind !== 'hand' && e.approvalStatus !== 'REJECTED' && BIC.toPaise(expenseNet(e)) === cashP);
+      if (rivals.length) { await prisma.bankTransaction.update({ where: { id: txn.id }, data: { reviewReason: `A bill of exactly ${fmtMoney(txn.amount)} is already on file (${rivals[0].expenseCode || rivals[0].vendor || rivals[0].category}) - link it instead of creating another` } }).catch(() => {}); continue; }
+    }
     const out = await applyPlan(txn, plan, ctx, loans, req);
     if (out.error) continue;
     done.push({ txnId: txn.id, module: plan.module });
@@ -3092,9 +3243,9 @@ router.get('/workbook', requirePerm('accounts', 'accounts', 'Bank & Reconciliati
     if (txnState(t) === 'Ignored') return 'Ignored';
     return t.excluded ? 'Excluded' : 'Uncategorised';
   };
-  sheet('Statement lines', [['Account', 'account', 22], ['Date', 'date', 12], ['Narration', 'description', 60], ['Reference', 'reference', 20], ['Money in', 'credit', 14, INR], ['Money out', 'debit', 14, INR], ['Balance after', 'balance', 16, INR], ['State', 'state', 12], ['Filed as', 'filed', 40]],
+  sheet('Statement lines', [['Account', 'account', 22], ['Transaction date', 'date', 14], ['Value date', 'valueDate', 12], ['Imported on', 'importedOn', 12], ['Narration', 'description', 60], ['Reference / UTR', 'reference', 20], ['Bank txn id', 'externalId', 18], ['Money in', 'credit', 14, INR], ['Money out', 'debit', 14, INR], ['Balance after', 'balance', 16, INR], ['State', 'state', 12], ['Filed as', 'filed', 40]],
     txns.map((t) => ({
-      account: accountLabel(accounts, t.bankAccountId), date: t.date, description: t.description, reference: t.reference || '', credit: t.type === 'Credit' ? ROUND(t.amount) : null, debit: t.type === 'Debit' ? ROUND(t.amount) : null, balance: t.balance == null ? null : ROUND(t.balance), state: txnState(t), filed: filedAs(t),
+      account: accountLabel(accounts, t.bankAccountId), date: t.date, valueDate: t.valueDate || '', importedOn: t.createdAt ? new Date(new Date(t.createdAt).getTime() + 330 * 60000).toISOString().slice(0, 10) : '', externalId: t.externalId || '', description: t.description, reference: t.reference || '', credit: t.type === 'Credit' ? ROUND(t.amount) : null, debit: t.type === 'Debit' ? ROUND(t.amount) : null, balance: t.balance == null ? null : ROUND(t.balance), state: txnState(t), filed: filedAs(t),
     })));
   sheet('Hand loans', [['Person', 'person', 26], ['Date', 'date', 12], ['What happened', 'kind', 22], ['Amount', 'amount', 14, INR], ['Account', 'account', 22], ['Narration', 'description', 60], ['Picked up on its own', 'auto', 10]],
     loans.flatMap((l) => l.links.map((x) => {
@@ -3324,17 +3475,36 @@ router.post('/entry', async (req, res) => {
   const credit = Number(req.body?.credit || 0);
   const debit = Number(req.body?.debit || 0);
   if (!credit && !debit) return res.status(400).json({ error: 'Enter a credit or a debit amount.' });
+  if (credit && debit) return res.status(400).json({ error: 'Enter either money in or money out, not both.' });
+  // Spec 7: a line by hand carries the date the bank shows - never silently "today".
+  const date = String(req.body?.date || '').slice(0, 10);
+  if (!BIC.isRealDate(date)) return res.status(400).json({ error: 'Enter the transaction date as shown on the bank statement.' });
+  if (date > BIC.istToday()) return res.status(400).json({ error: 'A bank line cannot be dated in the future.' });
+  const bankAccountId = req.body?.bankAccountId || accounts[0].id;
+  const type = credit ? 'Credit' : 'Debit';
+  const amount = ROUND(credit || debit);
+  const reference = req.body?.reference ? String(req.body.reference).trim() : null;
+  const valueDate = BIC.isRealDate(String(req.body?.valueDate || '').slice(0, 10)) ? String(req.body.valueDate).slice(0, 10) : null;
+  // The same duplicate rules as an import: a line already on file is not added twice.
+  const onFile = onAccount(await prisma.bankTransaction.findMany(), bankAccountId, accounts[0].id);
+  const probe = BIC.validateRows([{ date, valueDate, description: String(req.body?.description || '—'), reference, type, amount, balance: null }]).ok;
+  if (probe.length && !req.body?.allowDuplicate) {
+    const plan = BIC.planDuplicates(probe, onFile);
+    if (plan.duplicates.length) return res.status(409).json({ error: 'This looks like a line already on file (same date, amount and ' + (BIC.strongRef(reference) ? 'reference' : 'narration') + '). Add it anyway only if it is a genuine second transaction.', duplicateOf: plan.duplicates[0].of, code: 'DUPLICATE' });
+  }
   const created = await prisma.bankTransaction.create({
     data: {
-      bankAccountId: req.body?.bankAccountId || accounts[0].id,
-      date: String(req.body?.date || toIsoDate(new Date())).slice(0, 10),
+      bankAccountId,
+      date,
+      valueDate,
       description: String(req.body?.description || '—'),
-      reference: req.body?.reference || null,
-      type: credit ? 'Credit' : 'Debit',
-      amount: ROUND(credit || debit),
+      reference,
+      type,
+      amount,
       balance: null,
     },
   });
+  await reconsiderOpenLines({ req, bankAccountId, accounts }).catch(() => {});
   await logAudit({ userId: req.user.id, action: 'Entry added by hand', entity: 'BankTransaction', entityId: created.id, toValue: `${credit ? 'credit ' : 'debit '}${fmtMoney(credit || debit)}` });
   res.status(201).json(created);
 });
@@ -3369,11 +3539,13 @@ router.post('/duplicates/remove', async (req, res) => {
 
 // ---------------------------------------------------------------------------
 
-// A forgiving statement parser: finds the header row, then maps date /
-// description / reference / debit / credit / balance columns by name.
+// A forgiving statement parser: finds the header row, then maps date / value
+// date / bank transaction id / description / reference / debit / credit /
+// balance columns by name. Every row it cannot use is returned in `failed`
+// with its line number and the reason; nothing is dropped silently.
 function parseCsv(text) {
-  const lines = String(text).split(/\r?\n/).filter((l) => l.trim());
-  if (!lines.length) return { error: 'The file is empty' };
+  const allLines = String(text).split(/\r?\n/);
+  if (!allLines.some((l) => l.trim())) return { error: 'The file is empty' };
   const split = (l) => {
     const out = [];
     let cur = '';
@@ -3400,49 +3572,78 @@ function parseCsv(text) {
 
   let hi = -1;
   let head = null;
-  for (let i = 0; i < Math.min(lines.length, 25); i += 1) {
-    const c = split(lines[i]).map((x) => x.toLowerCase());
-    if (c.some((x) => /date/.test(x)) && c.some((x) => /credit|deposit|withdraw|debit|amount/.test(x))) { hi = i; head = c; break; }
+  for (let i = 0; i < Math.min(allLines.length, 25); i += 1) {
+    if (!allLines[i].trim()) continue;
+    const c = split(allLines[i]).map((x) => x.toLowerCase());
+    if (c.some((x) => /date|\bdt\b/.test(x)) && c.some((x) => /credit|deposit|withdraw|debit|amount/.test(x))) { hi = i; head = c; break; }
   }
   if (hi < 0) return { error: 'No header row with a date and an amount column was found' };
 
   const find = (...pats) => { for (const p of pats) { const i = head.findIndex((h) => p.test(h)); if (i >= 0) return i; } return -1; };
-  const iDate = find(/date/);
+  const { date: iDate, valueDate: iVal } = BIC.pickDateColumns(head);
+  if (iDate < 0) return { error: 'No date column was found in the header row' };
+  const iExt = find(/^((bank|unique)\W+)?(txn|transaction|tran|trans)\W*(id|no|number)\b/, /^bank\W*(id|number)\b|\bunique\b.*(id|ref)|^serial|^s\.? ?no\.?$|^sr\W*no/);
   const iDesc = find(/narration|description|particular|remark|details/);
-  const iRef = find(/ref|utr|cheque|chq/);
+  const iRef = find(/ref|utr|cheque|chq|instrument/);
   const iCr = find(/deposit|credit|money in/);
   const iDr = find(/withdraw|debit|money out/);
   const iAmt = find(/^amount$/, /amount/);
   const iBal = find(/balance|closing/);
 
   const rows = [];
+  const failed = [];
+  const stated = {};
   let bad = 0;
-  for (const line of lines.slice(hi + 1)) {
+  for (let li = hi + 1; li < allLines.length; li += 1) {
+    const line = allLines[li];
+    if (!line.trim()) continue;
     const c = split(line);
+    const raw = {};
+    head.forEach((h, k) => { raw[h || `column ${k + 1}`] = c[k] == null ? '' : c[k]; });
+    const first = c.find((x) => /^(opening|closing)\s+balance/i.test(x));
+    if (first) {
+      const v = c.map(num).filter((n) => n != null).pop();
+      if (v != null) stated[/^opening/i.test(first) ? 'opening' : 'closing'] = v;
+      continue;
+    }
     const date = iso(c[iDate]);
-    if (!date) { bad += 1; continue; }
+    if (!date) { bad += 1; failed.push({ line: li + 1, reason: `No usable date in "${c[iDate] || ''}"`, row: raw }); continue; }
     const cr = iCr >= 0 ? num(c[iCr]) : null;
     const dr = iDr >= 0 ? num(c[iDr]) : null;
     let amount = null;
     let type = null;
+    if (cr && dr) { bad += 1; failed.push({ line: li + 1, reason: 'Both a debit and a credit amount on one line', row: raw }); continue; }
     if (cr) { amount = Math.abs(cr); type = 'Credit'; } else if (dr) { amount = Math.abs(dr); type = 'Debit'; } else if (iAmt >= 0) {
       const a = num(c[iAmt]);
       if (a != null && a !== 0) { amount = Math.abs(a); type = a > 0 ? 'Credit' : 'Debit'; }
     }
-    if (amount == null) { bad += 1; continue; }
+    if (amount == null) { bad += 1; failed.push({ line: li + 1, reason: 'No amount', row: raw }); continue; }
     rows.push({
+      line: li + 1,
       date,
+      valueDate: iVal >= 0 ? iso(c[iVal]) : null,
       description: iDesc >= 0 ? c[iDesc] : '—',
       reference: iRef >= 0 ? c[iRef] : null,
+      externalId: iExt >= 0 ? c[iExt] : null,
       amount,
       type,
       balance: iBal >= 0 ? num(c[iBal]) : null,
+      raw,
     });
   }
-  if (!rows.length) return { error: 'No usable transaction rows were found below the header' };
-  return { rows, bad };
+  if (!rows.length) return { error: 'No usable transaction rows were found below the header', failed };
+  return { rows, bad, failed, stated };
 }
 
+// Matching, allocation, Unallocated queue, reversals, mappings (routes/bankRecon.js).
+const recon = require('./bankRecon')({
+  prisma, logAudit, actor, ROUND, toIsoDate, deriveInvoiceStatus, invoiceOutstanding, ensureAccounts, onAccount, lineOpen, txnState,
+  linkPayment, applyPlan, fmtMoney, loadTxn, autoLinkLoans, autoFileDebits,
+});
+recon.install(router);
+
 router.importStatement = importStatement;
+router.reconsiderOpenLines = reconsiderOpenLines;
+router.lineDetail = recon.lineDetail;
 router.releaseLineForBill = releaseLineForBill;
 module.exports = router;

@@ -12,7 +12,7 @@ import { config } from '../config.js';
 import { withUser } from '../db.js';
 import { wrap, badRequest, ApiError, CODES } from '../errors.js';
 import {
-  login, logout, registerCandidate,
+  login, logout, registerCandidate, startPortalSession,
   startPasswordReset, finishPasswordReset, checkPasswordReset,
   setSessionCookie, clearSessionCookie, issueCsrfToken, requireAuth,
 } from '../auth.js';
@@ -23,6 +23,8 @@ import {
   registrationSettings, windowCounter, originOf, validIndianMobile,
 } from '../registration/settings.js';
 import { queueWelcome } from '../notify/registration-messages.js';
+/* 0117: resume-first registration - the draft the resume was read into. */
+import { draftForRegistration, finishDraft, otpRequired } from './registration-draft.js';
 
 /*
  * AN ADDRESS OR A MOBILE NUMBER.
@@ -85,25 +87,33 @@ const registerSchema = z.object({
    * keyed by field, so the form can put each one under the input it
    * belongs to instead of showing one sentence for all four.
    */
-  preferredLocation: z.string({ required_error: 'Preferred Job Location is required' })
-    .trim().min(1, 'Preferred Job Location is required').max(160),
-  expectedCtc: z.coerce.number({
-      required_error: 'Expected Salary is required',
+  /* Required on the seven-step form (checked in registerOne, where draftId is known). The simplified,
+     resume-optional registration (draftId present) does not ask for these three: the profile step does. */
+  preferredLocation: z.string().trim().max(160).optional(),
+  expectedCtc: z.preprocess((v) => (v === '' || v === null ? undefined : v), z.coerce.number({
       invalid_type_error: 'Expected Salary is required',
     })
     .positive('Expected Salary must be more than 0')
-    .max(1000, 'Please enter the salary in lakh per annum'),
-  noticePeriod: z.string({ required_error: 'Please select a notice period' })
-    .trim().min(1, 'Please select a notice period').max(40),
+    .max(1000, 'Please enter the salary in lakh per annum').optional()),
+  /* Required on the seven-step form; NOT asked on the resume-first form (draftId
+     present), where it is the first thing the profile step asks for. The check
+     is in registerOne, because it depends on draftId. */
+  noticePeriod: z.string().trim().max(40).optional(),
   preferredWorkModes: z.array(z.string().trim().max(40),
-      { required_error: 'Select at least one work mode',
-        invalid_type_error: 'Select at least one work mode' })
-    .min(1, 'Select at least one work mode').max(10),
+      { invalid_type_error: 'Select at least one work mode' }).max(10).optional(),
   /* 0092: are you looking? Asked on the form; Actively looking when the
      form (or an older client) does not say. */
   availability: z.enum(['actively_looking', 'open_to_offers', 'not_looking']).optional(),
   /* 0102: the language TeamLink talks to them in. English when not said. */
   preferredLanguage: z.enum(['en', 'te', 'hi']).optional(),
+  /* 0117: the resume-first flow. The draft the resume was read into, its
+     token, and the candidate's current location (asked beside the four
+     preferences, because a resume's address is not where someone lives). */
+  draftId: z.string().trim().regex(/^rd_[a-f0-9]{18}$/).optional(),
+  draftToken: z.string().trim().max(64).optional(),
+  currentLocation: z.string().trim().max(160).optional(),
+  /* "Send me relevant job notifications on WhatsApp" - optional, never pre-ticked. */
+  whatsappOptIn: z.boolean().optional(),
 });
 
 const parse = (schema, body) => {
@@ -242,6 +252,9 @@ export default function authRoutes() {
         `Those credentials are for the ${session.role} portal.`);
     }
 
+    /* 0125: a recruiter's sign-in opens their portal session (Audit Log). */
+    await startPortalSession(token, 'password');
+
     setSessionCookie(res, token, expires);
     issueCsrfToken(res);
 
@@ -293,9 +306,39 @@ export default function authRoutes() {
     const { name, email, password, phone,
             preferredLocation, expectedCtc, noticePeriod,
             preferredWorkModes, availability, preferredLanguage,
-            confirmPassword, consent, website } = parse(registerSchema, req.body);
+            confirmPassword, consent, website,
+            draftId, draftToken, currentLocation, whatsappOptIn } = parse(registerSchema, req.body);
 
     if (website) throw badRequest('Please check the highlighted fields and try again.');
+    /* The registration page asks for these and they are mandatory there (the owner's rule): checked here too,
+       so a request that skips the page is held to it. */
+    if (draftId) {
+      const need = {};
+      if (!preferredLocation) need.preferredLocation = 'Preferred Job Location is required';
+      if (!noticePeriod || !String(noticePeriod).trim()) need.noticePeriod = 'Notice Period is required';
+      if (expectedCtc === undefined) need.expectedCtc = 'Expected Salary is required';
+      if (Object.keys(need).length) throw badRequest('Please check the highlighted fields and try again.', need);
+    }
+    if (!draftId) {
+      const missingPrefs = {};
+      if (!preferredLocation) missingPrefs.preferredLocation = 'Preferred Job Location is required';
+      if (expectedCtc === undefined) missingPrefs.expectedCtc = 'Expected Salary is required';
+      if (!noticePeriod || !String(noticePeriod).trim()) missingPrefs.noticePeriod = 'Please select a notice period';
+      if (!preferredWorkModes || !preferredWorkModes.length) missingPrefs.preferredWorkModes = 'Select at least one work mode';
+      if (Object.keys(missingPrefs).length) {
+        throw badRequest('Please check the highlighted fields and try again.', missingPrefs);
+      }
+    }
+
+    /* Where OTP is required (production, or REGISTRATION_OTP_REQUIRED=true) an account is created ONLY through the
+       registration page's draft, whose email and mobile number answered their codes. */
+    if (!draftId && otpRequired()) {
+      throw badRequest('Please verify your email address to register.',
+        { email: 'Please verify your email address first.' });
+    }
+    /* 0117 / 0123: from the draft, the email AND the mobile number must have answered their codes.
+       Checked before anything is written. */
+    const draft = draftId ? await draftForRegistration({ draftId, draftToken, email, phone }) : null;
 
     /* 0109: the checks the form makes, made again here. */
     const problems = {};
@@ -307,9 +350,8 @@ export default function authRoutes() {
     if (declined('terms') || missing('terms')) {
       problems['consent.terms'] = 'Please accept the Terms & Conditions and Privacy Policy.';
     }
-    if (declined('communication') || missing('communication')) {
-      problems['consent.communication'] = 'Please agree to receive recruitment communication from TeamLink.';
-    }
+    /* Recruitment / marketing communication is OPTIONAL: it is never required and never pre-ticked. Declining it is
+       recorded after the account exists (below). Only the Terms & Privacy consent is mandatory. */
     if (Object.keys(problems).length) {
       throw badRequest('Please check the highlighted fields and try again.', problems);
     }
@@ -343,10 +385,12 @@ export default function authRoutes() {
      * required to get this far, so they are written here rather than
      * left to a second request that might not arrive.
      */
-    await withUser(null, (c) => c.query(
-      `select auth_register_preferences($1,$2,$3,$4,$5)`,
-      [candidateId, preferredLocation, expectedCtc, noticePeriod,
-       preferredWorkModes]));
+    if (preferredLocation || expectedCtc !== undefined || noticePeriod || (preferredWorkModes && preferredWorkModes.length)) {
+      await withUser(null, (c) => c.query(
+        `select auth_register_preferences($1,$2,$3,$4,$5)`,
+        [candidateId, preferredLocation || null, expectedCtc === undefined ? null : expectedCtc, noticePeriod || null,
+         preferredWorkModes || []]));
+    }
     /* 0092: their availability, onto the same just-created record. */
     await withUser(null, (c) => c.query(`select availability_register($1,$2)`,
       [candidateId, availability || 'actively_looking']));
@@ -368,6 +412,36 @@ export default function authRoutes() {
         [candidateId, reg.consentVersion, reg.privacyPolicyUrl || null,
          !!consent.terms, !!consent.communication, !!consent.resumeProcessing]));
     }
+    /* They were asked and said no to recruitment communication: that is recorded as a withdrawal, so nothing
+       optional is sent to them. */
+    if (consent && consent.communication === false) {
+      await withUser(session, (c) => c.query(`select candidate_consent_set('communication','withdrawn',$1)`, [reg.consentVersion]))
+        .catch(() => {});
+    }
+    /* 0117: the current location they gave, and then the draft becomes the
+       profile: the resume, what was read from it, where each value came
+       from, and how complete the profile now is. */
+    if (currentLocation) {
+      await withUser(session, (c) => c.query(
+        `update candidates set location = $1 where id = app_candidate_id()`, [currentLocation]));
+    }
+    if (whatsappOptIn === true) {
+      await withUser(session, (c) => c.query(
+        `update candidates set whatsapp_opt_in = true where id = app_candidate_id()`));
+    }
+    let completeness = null;
+    let profileWarning = null;
+    if (draft) {
+      try {
+        completeness = await finishDraft({
+          draftId, draftToken, draft, candidateId, session,
+          provided: { name, email, phone, fresher: !!req.body.fresher },
+        });
+      } catch (err) {
+        console.error('[register] draft conversion failed:', err.message);
+        profileWarning = 'Your account was created, but your resume could not be attached. Please upload it from your profile.';
+      }
+    }
     /* The Candidate ID the trigger gave them, read as themselves. */
     const candidateCode = await withUser(session, async (c) => {
       const { rows } = await c.query(`select candidate_code from candidates where id = $1`, [candidateId]);
@@ -384,6 +458,7 @@ export default function authRoutes() {
       session: { role: session.role, id: session.profileId, email: session.email },
       candidateId,
       candidateCode,
+      ...(draft ? { completeness, profileWarning } : {}),
     });
   }
 
@@ -427,7 +502,9 @@ export default function authRoutes() {
     res.json({
       session: {
         role: req.session.role, id: req.session.profileId,
-        mustChangePassword: !!(temp && temp.must_change_password),
+        /* Not for a session opened from HRMS (0127): no portal password is
+           ever asked for there, temporary or otherwise. */
+        mustChangePassword: !!(temp && temp.must_change_password) && !req.session.hrmsSid,
       },
       profile,
     });

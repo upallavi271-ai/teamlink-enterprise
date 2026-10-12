@@ -199,6 +199,7 @@ const DECIDERS = {
   leave: (id, decision, remarks, reason) => api.patch(`/leave/${id}/decision`, decision === 'Approved'
     ? { status: 'Approved', approvalReason: reason || undefined, comment: remarks || undefined }
     : { status: 'Rejected', rejectReason: remarks }),
+  latePermission: (id, decision, remarks) => api.patch(`/late-permissions/${id}/decision`, { status: decision, reason: remarks || undefined }),
   regularization: (id, decision, remarks) => api.patch(`/attendance/regularizations/${id}/decision`, { status: decision, reason: remarks || undefined }),
   resignation: (id, decision, remarks) => api.patch(`/resignations/${id}/status`, { status: decision === 'Approved' ? 'Accepted' : 'Rejected', reason: remarks || undefined }),
   reward: (id, decision, remarks) => api.patch(`/performance/${id}/decision`, { status: decision, reason: remarks || undefined }),

@@ -13,9 +13,12 @@ import FirstTour from './FirstTour.jsx';
 import { taskLine } from './TaskPopup.jsx';
 import { FunnelChart } from '../charts';
 import PageFilterBar, { usePageFilters, filterParams } from '../ui/PageFilterBar.jsx';
+import { FacetSelect } from '../ui/ListPageHeader.jsx';
+import DashboardExport from './DashboardExport.jsx';
 import { V3_WIDGETS, Cards } from './AtsHomeV3.jsx';
 import AtsV4 from './ats-v4/AtsV4.jsx';
 import { Icon } from '../atskit/AtsKit.jsx';
+import PendingOnTeam from './PendingOnTeam.jsx';
 import './atsHome.css';
 
 // ---------------------------------------------------------------------------
@@ -323,6 +326,8 @@ function Cleanup({ w, onDrill }) {
       <div className="ah-kv">
         <div className="ah-kv-r"><span className="ah-kv-l">Not moving ({w.days}+ days)</span><span className="ah-kv-n">{w.stale ? fmt(w.stale) : 'None'}</span></div>
         <div className="ah-kv-r"><span className="ah-kv-l">Old jobs, no recruiter</span><span className="ah-kv-n">{w.oldUnassigned ? fmt(w.oldUnassigned) : 'None'}</span></div>
+        {w.joinedNoDate > 0 && <div className="ah-kv-r"><span className="ah-kv-l">Joined, no joining date</span><Num value={w.joinedNoDate} drill="joined-nodate" onDrill={onDrill} className="ah-kv-n ah-cell" /></div>}
+        {w.joinedWrongDate > 0 && <div className="ah-kv-r t-red"><span className="ah-kv-l">Joining date looks wrong</span><Num value={w.joinedWrongDate} drill="joined-wrongdate" onDrill={onDrill} className="ah-kv-n ah-cell" /></div>}
         {w.health && (
           <div className={`ah-kv-r${w.health.problems ? ' t-red' : ''}`}>
             <span className="ah-kv-l">System problems</span>
@@ -348,6 +353,7 @@ const WIDGETS = {
   kpis: Kpis, lines: Lines, money: Money, funnel: Funnel, line: LineChart, depts: Departments, people: People,
   list: List, tasks: Tasks, review: Review, jobs: Jobs, target: Target, clients: Clients, cleanup: Cleanup, banner: Banner,
   ...V3_WIDGETS,
+  chain: PendingOnTeam,
   today: TodayStrip, tls: TeamLeads, openjobs: OpenJobs,
 };
 
@@ -364,6 +370,12 @@ const EXTRA_FILTERS = [
   ['hiring', 'Hiring type'],
   ['priority', 'Priority'],
   ['source', 'Source'],
+];
+// The Date range choices of THIS dashboard (the server also reads last_month and
+// this_quarter; every number, the lists and the Export follow the one picked).
+const RANGES = [
+  ['', 'Any time'], ['today', 'Today'], ['week', 'This week'], ['month', 'This month'],
+  ['last_month', 'Last month'], ['this_quarter', 'This quarter'], ['30d', 'Last 30 days'], ['custom', 'Custom'],
 ];
 // Old date words → the filter bar's.
 const OLD_RANGE = { this_week: 'week', this_month: 'month' };
@@ -419,6 +431,12 @@ export default function AtsHome() {
   }, [legacy, !!data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dropExtra = (k) => { const p = new URLSearchParams(sp); p.delete(k); setSp(p, { replace: true }); };
+  // "Clear filters": every filter on the bar AND the Team lead / old-link ones, back to This month.
+  const clearAll = () => setSp((prev) => {
+    const p = new URLSearchParams(prev);
+    ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId', ...EXTRA_FILTERS.map(([k]) => k)].forEach((k) => p.delete(k));
+    return p;
+  }, { replace: true });
   const opts = (data && data.filterOptions) || {};
   const labelOf = (k, v) => ((opts[k] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
   const barOptions = {
@@ -434,6 +452,11 @@ export default function AtsHome() {
     client: !(data && (data.filtersHidden || []).includes('clientId')),
     people: !!(opts.recruiter || opts.bde),
   };
+  // TEAM LEAD filter (cascading, with counts): only for logins that may pick a team
+  // (a TL, a recruiter and HR never get it — the server leaves it out of their options).
+  const tlOptions = (opts.tl && (opts.tl.length > 0 || extra.tl))
+    ? <FacetSelect label="Team lead" value={extra.tl || ''} onChange={(v) => { const p = new URLSearchParams(sp); if (v) p.set('tl', v); else p.delete('tl'); setSp(p, { replace: true }); }} options={opts.tl} allLabel="All team leads" />
+    : null;
   const pickDept = (d) => setF({ ...f, department: f.department === d ? '' : d });
   // THE DEPARTMENT CHOOSER (user, 2026-10-05): only when the login has 2+
   // departments (or one is already picked, so it can be cleared).
@@ -449,11 +472,24 @@ export default function AtsHome() {
   useEffect(() => {
     if (!wantTls) { setTls(null); return undefined; }
     let alive = true;
-    setTls({ loading: true });
-    api.get(LIST_URL, { params: { ...params, set: '__tls' } })
-      .then((r) => { if (alive) setTls({ data: r.data }); })
-      .catch((e) => { if (alive) setTls({ error: e.response?.data?.error || 'The team leads could not be loaded. Refresh the page to try again.' }); });
-    return () => { alive = false; };
+    let timer = null;
+    // The first read of a big team can take 10+ s, and the server may restart
+    // meanwhile (the request is then cut off and api.js gives up after ~6 s). So a
+    // cut-off request is tried again by itself twice (after 4 s, then 8 s) before
+    // the person sees a message, and the message has its own "Try again" button.
+    const load = (attempt) => {
+      setTls({ loading: true });
+      api.get(LIST_URL, { params: { ...params, set: '__tls' } })
+        .then((r) => { if (alive) setTls({ data: r.data }); })
+        .catch((e) => {
+          if (!alive) return;
+          const said = e.response?.data?.error;
+          if (!said && attempt < 2) { timer = setTimeout(() => load(attempt + 1), attempt === 0 ? 4000 : 8000); return; }
+          setTls({ error: said || 'The team leads did not load. Press Try again.', retry: () => load(0) });
+        });
+    };
+    load(0);
+    return () => { alive = false; clearTimeout(timer); };
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tasks = taskLine(alerts);
@@ -469,7 +505,7 @@ export default function AtsHome() {
   const moreNames = moreW.map((w) => w.title || MORE_NAMES[w.type]).filter(Boolean);
   const g = data && data.greeting;
   const prevWord = data && data.period && !data.period.noPrev ? data.period.prevWord : null;
-  const cleanupLink = !!(data && data.cleanup && data.cleanup.to && (data.cleanup.stale > 0 || data.cleanup.oldUnassigned > 0)
+  const cleanupLink = !!(data && data.cleanup && data.cleanup.to && (data.cleanup.stale > 0 || data.cleanup.oldUnassigned > 0 || data.cleanup.joinedNoDate > 0 || data.cleanup.joinedWrongDate > 0)
     && ['superadmin', 'admin'].includes(data.layout));
 
   // "Good morning, Aarti — 2 late, 3 client feedback pending." Every number opens its list.
@@ -493,11 +529,11 @@ export default function AtsHome() {
       ) : g ? (
         <>
           {greeting(user && user.name)} —{' '}
-          {!g.late && !g.feedback ? 'nothing is late and no feedback is pending.' : (
+          {!g.late && !g.feedback ? 'nothing is late and every client has replied.' : (
             <>
               {g.late ? <button type="button" className="ahv3-hello-n t-red" onClick={() => setDrill(g.lateDrill)}>{fmt(g.late)} late</button> : 'nothing late'}
               {', '}
-              {g.feedback ? <button type="button" className="ahv3-hello-n t-yellow" onClick={() => setDrill(g.feedbackDrill)}>{fmt(g.feedback)} feedback pending</button> : 'no feedback pending'}
+              {g.feedback ? <button type="button" className="ahv3-hello-n t-yellow" onClick={() => setDrill(g.feedbackDrill)}>{fmt(g.feedback)} waiting for a client reply</button> : 'every client has replied'}
               .
             </>
           )}
@@ -507,7 +543,7 @@ export default function AtsHome() {
       )}
     </div>
   );
-  const extraChips = EXTRA_FILTERS.filter(([k]) => extra[k]).map(([k, l]) => (
+  const extraChips = EXTRA_FILTERS.filter(([k]) => extra[k] && !(k === 'tl' && tlOptions)).map(([k, l]) => (
     <StatusChip key={k} tone="blue">
       {l}: {labelOf(k, extra[k])}{' '}
       <button type="button" className="link-btn" aria-label={`Remove ${l}`} onClick={() => dropExtra(k)}>✕</button>
@@ -548,7 +584,10 @@ export default function AtsHome() {
                 </select>
               </label>
             )}
-            <PageFilterBar className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} />
+            <PageFilterBar className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} ranges={RANGES} extraSet={Object.keys(extra).length > 0} onClear={clearAll}>
+              {tlOptions}
+            </PageFilterBar>
+            {data && data.mayExport && <DashboardExport url="/dashboard/ats/home/export" params={params} />}
             <button type="button" className="btn btn-primary av4-refresh" onClick={() => setReload((n) => n + 1)} disabled={loading} title="Load the numbers again">
               <Icon name="refresh" size={15} /> {loading && data ? 'Refreshing…' : 'Refresh'}
             </button>

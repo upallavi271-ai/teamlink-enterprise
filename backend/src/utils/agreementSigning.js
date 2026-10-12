@@ -264,13 +264,21 @@ async function agreementAccess(user, client) {
   const scope = require('./scope');
   const s = scope.atsScopeOf(user);
   if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') {
-    const own = !!user.clientId && user.clientId === client.id;
+    const own = !!user.clientId && user.clientId === client.id && require('./clientPortalTypes').hasCap(user, 'AGREEMENT'); // the "See our agreement" tick (2026-10-09)
     return { view: own, edit: false, as: own ? 'client' : null };
   }
   if (user.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return { view: false, edit: false, as: null };
   if (s.global) return { view: true, edit: true, as: 'admin' };
-  const held = [user.role, s.atsRole, s.hrmsRole, s.accountsRole].filter(Boolean);
-  if (held.some((r) => ['MANAGER', 'ASSISTANT_MANAGER'].includes(r))) return { view: true, edit: false, as: 'manager' };
+  // 2026-10-09 (visibility matrix): the ATS role decides which agreements a
+  // Manager / Assistant Manager VIEW — a Manager all, an Assistant Manager
+  // their assigned departments' (same clientWhere as the Clients list). An
+  // HRMS-only Manager is NOT an agreement reader. Accounts stays read-only.
+  if (s.atsRole === 'MANAGER') return { view: true, edit: false, as: 'manager' };
+  if (s.atsRole === 'ASSISTANT_MANAGER') {
+    const inScope = !!(await prisma.client.findFirst({ where: { AND: [{ id: client.id }, scope.clientWhere(user)] }, select: { id: true } }));
+    return { view: inScope, edit: false, as: inScope ? 'manager' : null };
+  }
+  const held = [user.role, s.atsRole, s.accountsRole].filter(Boolean);
   if (held.includes('ACCOUNTANT')) return { view: true, edit: false, as: 'accounts' };
   // A TL / STL VIEWS the agreements of the clients in their own team's scope
   // (clients rule, 2026-10-05 — read only, like Accounts).
@@ -291,11 +299,13 @@ async function visibleClientWhere(user) {
   // eslint-disable-next-line global-require
   const scope = require('./scope');
   const s = scope.atsScopeOf(user);
-  if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') return user.clientId ? { id: user.clientId } : null;
+  if (user.role === 'CLIENT' || s.atsRole === 'CLIENT') return user.clientId && require('./clientPortalTypes').hasCap(user, 'AGREEMENT') ? { id: user.clientId } : null;
   if (user.role === 'CANDIDATE' || s.atsRole === 'CANDIDATE') return null;
   if (s.global) return {};
-  const held = [user.role, s.atsRole, s.hrmsRole, s.accountsRole].filter(Boolean);
-  if (held.some((r) => ['MANAGER', 'ASSISTANT_MANAGER', 'ACCOUNTANT'].includes(r))) return {};
+  if (s.atsRole === 'MANAGER') return {};
+  if (s.atsRole === 'ASSISTANT_MANAGER') return scope.clientWhere(user);
+  const held = [user.role, s.atsRole, s.accountsRole].filter(Boolean);
+  if (held.includes('ACCOUNTANT')) return {};
   if (s.atsRole === 'BDE') return { OR: [scope.clientWhere(user), ...(user.name ? [{ bdeOwner: user.name }] : [])] };
   if (['TL', 'STL'].includes(s.atsRole)) return scope.clientWhere(user);
   return null;
@@ -362,17 +372,29 @@ async function publicView(client) {
   const { consultantParty, keyTermsOf } = require('./agreement');
   // eslint-disable-next-line global-require
   const emudhraReady = await require('./emudhra').isAvailable().catch(() => false);
+  const open = OUT_FOR_SIGNATURE.includes(st);
+  // The thank-you screen's "who to contact": the client's own BDE and the company
+  // email / phone from Company Setup (nothing private).
+  const company = open ? null : await prisma.company.findFirst({ select: { email: true, phone: true } }).catch(() => null);
   return {
     // The 4th signing choice: Aadhaar eSign at eMudhra (only when set up).
     emudhra: { available: emudhraReady, signed: client.agreementEsignProvider === 'eMudhra' && !!client.agreementEsignTxnId },
-    keyTerms: keyTermsOf(client, await consultantParty()),
+    // The key terms and the agreement TEXT are only for a link that is still open
+    // for signing: once signed, the page is the thank-you screen and the text is
+    // never sent to the browser again (user, 2026-10-10).
+    keyTerms: open ? keyTermsOf(client, await consultantParty()) : null,
     // Where the email code goes: the contact email on the client record, masked.
     contactEmail: core.maskEmail(String(client.contactEmail || client.recruitmentContactEmail || '').trim()) || null,
     clientName: client.name,
     agreementId: client.agreementId,
-    document: client.agreementDocument,
+    document: open ? client.agreementDocument : null,
     status: st,
-    open: OUT_FOR_SIGNATURE.includes(st),
+    open,
+    contact: open ? null : {
+      name: String(client.bdeOwner || '').trim() || null,
+      email: (company && company.email) || null,
+      phone: (company && company.phone) || null,
+    },
     linkExpiresAt: linkExpiresAt(client),
     consultant: { countersigned: !!client.agreementCompanySealedAt, sealedAt: client.agreementCompanySealedAt || null, signedBy: client.agreementCompanySignedBy || null, hasSignature: !!client.agreementCompanySignFile, hasStamp: !!client.agreementCompanyStampFile },
     proceededAt: steps.proceededAt,

@@ -775,8 +775,8 @@
    * ------------------------------------------------------------------ */
   var APP_TABS = [
     ['all', 'All'],
-    ['clicked', 'Apply Clicked'],
-    ['applied_unconfirmed', 'Applied'],
+    ['clicked', 'Applied (External)'],
+    ['applied_unconfirmed', 'Confirmed by you'],
     ['not_applied', 'Not Applied'],
   ];
 
@@ -990,7 +990,7 @@
   function labelFor(status) {
     var map = {
       ready: 'Ready', applying: 'Applying', applied: 'Applied',
-      clicked: 'Apply Clicked', dismissed: 'Dismissed', not_applied: 'Not Applied',
+      clicked: 'Applied (External)', dismissed: 'Dismissed', not_applied: 'Not Applied',
       /* Says where it was applied, on its face. A bare "Applied" reads as
          something this system established, and it is not. */
       applied_unconfirmed: 'Applied on External Site (your own report)',
@@ -1288,6 +1288,17 @@
       toast('Could not apply: ' + ((e && e.message) || 'the server did not answer'),
         '⚠️');
     });
+  };
+
+  /* 0130: Apply Now on an external job (teamlink-portal-external.js opens
+     the original page itself, from the click) still ends in "Did you
+     apply?" when the candidate comes back - the same return listeners,
+     queue and once-only rule as the External Jobs page's own button. */
+  window.xjArmAsk = function (out) {
+    if (!out) return;
+    if (out.applicationId) rememberPending(out.applicationId);
+    armReturnListeners();
+    if (out.application) queueAsk(out.application);
   };
 
   /* Whatever is still unanswered, asked for on arrival - so closing the

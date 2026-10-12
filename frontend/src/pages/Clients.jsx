@@ -38,6 +38,8 @@ import { agreementIsSigned } from '../atsVocab';
 import '../components/clients/ccr.css';
 import PageFilterBar, { usePageFilters, rangeDates } from '../components/ui/PageFilterBar.jsx';
 import { Help } from '../components/ui/Guide.jsx';
+import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the ticked clients' contact people
+import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message clients
 
 // One-line ? tips on the headings a new person may not know (2026-10-05).
 const COL_TIPS = {
@@ -99,7 +101,7 @@ function statusOf(c) {
 const VIEWS = {
   admin: [['active', 'All Active'], ['all', 'All Clients']],
   mgmt: [['active', 'All Active'], ['all', 'All Clients']],
-  bde: [['mine', 'My Clients'], ['active', 'Active only']],
+  bde: [['mine', 'Clients in my area'], ['active', 'Active only']],
   tl: [['team', "My Team's Clients"]],
   accounts: [['billing', 'Billing / Outstanding'], ['outstanding', 'Outstanding only']],
   client: [['all', 'My Company']],
@@ -166,6 +168,10 @@ export default function Clients() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
+  // Tick clients -> "Message these N" (only for logins the server lets message clients).
+  const mayMessage = useMayMessage('clients', true);
+  const [ticked, setTicked] = useState([]);
+  const [msgMany, setMsgMany] = useState(false);
 
   // Archived clients come too (?archived=1) — hidden below unless the
   // Status filter asks for them.
@@ -222,7 +228,7 @@ export default function Clients() {
     const in30 = ymd(new Date(Date.now() + 30 * 86400000));
     return [
       { key: 'industry', get: (c) => c.industry },
-      { key: 'owner', get: (c) => c.bdeOwner || c.bdeName },
+      { key: 'owner', get: (c) => c.bdeOwner || c.bdeName, label: (v) => (v ? (clients.find((c) => (c.bdeOwner || c.bdeName) === v)?.bdeLabel || v) : v) },
       { key: 'unassigned', get: (c) => (String(c.bdeOwner || '').trim() ? null : '1') },
       { key: 'department', get: (c) => c.ownerDepartment || NO_DEPT, label: (v) => (v === NO_DEPT ? 'No department' : v) },
       { key: 'clientId', get: (c) => c.id, label: (v, c) => c.name },
@@ -328,10 +334,13 @@ export default function Clients() {
       case 'bde':
         return (
           <td key={key} className="cell-muted">
-            {c.bdeOwner || (c.bdeName ? <span title="From its jobs. No client manager set.">{c.bdeName}</span> : null)}
-            {!String(c.bdeOwner || '').trim() && (role === 'admin' || role === 'mgmt')
+            {/* "Name · Position", e.g. Vasavi V · BDE MED (user, 2026-10-09). */}
+            {c.bdeOwner
+              ? <span title={c.bdeLabel || c.bdeOwner}>{c.bdeLabel || c.bdeOwner}</span>
+              : (c.bdeName ? <span title="From its jobs. No client manager is set on the client.">{c.bdeLabel || c.bdeName}</span> : null)}
+            {!String(c.bdeOwner || '').trim() && (role === 'admin' || role === 'mgmt' || role === 'bde')
               ? <span className="clrel-sub"><span className="clrel-pill warn">Nobody yet</span></span> : null}
-            {!c.bdeOwner && !c.bdeName && !(role === 'admin' || role === 'mgmt') ? '—' : null}
+            {!c.bdeOwner && !c.bdeName && !(role === 'admin' || role === 'mgmt' || role === 'bde') ? '—' : null}
           </td>
         );
       case 'activeReqs': return <td key={key} className="clrel-num"><RelNum value={c.activeRequirements} to={to('requirements')} title={`${c.totalRequirements || 0} jobs in total`} /></td>;
@@ -415,6 +424,7 @@ export default function Clients() {
   // Counts leave the archived clients out unless Status = Archived is chosen.
   const listedCount = filters.status === 'Archived' ? clients.length : clients.filter((c) => statusOf(c) !== 'Archived').length;
   const narrowed = filtered.length !== listedCount;
+  const tickedNow = ticked.filter((id) => filtered.some((c) => c.id === id)); // ticks that are still in the list
 
   // v4 overview — counted over the rows the list shows (filtered), as the cards were.
   const seeAgreement = allowedCols.includes('agreement');
@@ -467,7 +477,7 @@ export default function Clients() {
           only those of its own scoped GET /clients. */}
       <CrqHead
         sub="Every company we find people for, and how their jobs are going."
-        scope={loaded ? <ScopeLine user={user} count={listedCount} noun="client" inline /> : 'Loading…'}
+          scope={loaded ? <ScopeLine user={user} count={listedCount} noun="client" inline label={meta?.areaLabel} /> : 'Loading…'}
         tools={(
           <>
             {a.merge ? <span className="crq4-extra"><ClientDuplicatesButton /></span> : null}
@@ -599,11 +609,27 @@ export default function Clients() {
           />
         </div>
 
+      {mayMessage && tickedNow.length > 0 && (
+        <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>{`${tickedNow.length} ${tickedNow.length === 1 ? 'client' : 'clients'} ticked`}</span>
+          <button type="button" className="btn btn-sm btn-primary" title="Send an Email, SMS or WhatsApp to the contact person of each ticked client" onClick={() => setMsgMany(true)}>{`Message these ${tickedNow.length}`}</button>
+          <button type="button" className="btn btn-sm" onClick={() => setTicked([])}>Clear ticks</button>
+        </div>
+      )}
       <div id="ccr-client-table" className="ccr-section" />
       <ScrollTable maxHeight={null} bodyClassName="tbl-fit">
         <table className="clrel-table">
           <thead>
             <tr>
+              {mayMessage && (
+                <th style={{ width: 28 }}>
+                  <input
+                    type="checkbox" style={{ width: 'auto' }} aria-label="Tick every client on this page" title="Tick every client on this page"
+                    checked={paged.slice.length > 0 && paged.slice.every((c) => ticked.includes(c.id))}
+                    onChange={(e) => setTicked((t) => (e.target.checked ? [...new Set([...t, ...paged.slice.map((c) => c.id)])] : t.filter((id) => !paged.slice.some((c) => c.id === id))))}
+                  />
+                </th>
+              )}
               {/* Click a heading to sort; click again to reverse. */}
               <th className="clrel-sticky jobsws-sort" onClick={() => sortByCol('name')} title="Sort by name">
                 Client
@@ -626,6 +652,15 @@ export default function Clients() {
           <tbody>
             {paged.slice.map((c) => (
               <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
+                {mayMessage && (
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox" style={{ width: 'auto' }} aria-label={`Tick ${c.name}`}
+                      checked={ticked.includes(c.id)}
+                      onChange={(e) => setTicked((t) => (e.target.checked ? [...t, c.id] : t.filter((id) => id !== c.id)))}
+                    />
+                  </td>
+                )}
                 <td className="clrel-sticky">
                   <b>{c.name}</b>
                   {statusOf(c) === 'Paused' || statusOf(c) === 'Archived' ? <> <LifecycleChip lifecycle={statusOf(c)} /></> : null}
@@ -654,12 +689,12 @@ export default function Clients() {
             ))}
             {!loaded && !loadError && (
               <tr>
-                <td colSpan={visibleCols.length + 2} className="small-muted" style={{ padding: 16 }}>Loading clients…</td>
+                <td colSpan={visibleCols.length + 2 + (mayMessage ? 1 : 0)} className="small-muted" style={{ padding: 16 }}>Loading clients…</td>
               </tr>
             )}
             {loaded && filtered.length === 0 && (
               <tr>
-                <td colSpan={visibleCols.length + 2}>
+                <td colSpan={visibleCols.length + 2 + (mayMessage ? 1 : 0)}>
                   {clients.length
                     ? <EmptyState compact title="No clients match these filters." hint="Remove a filter, or press Show all." action={<button type="button" className="btn btn-sm" onClick={() => { clearFilters(); setView(views[views.length > 1 ? 1 : 0][0]); }}>Show all</button>} />
                     : <EmptyState compact title="No clients yet." hint={role === 'tl' ? 'Clients show here when your team works on their jobs.' : role === 'accounts' ? 'Clients show here once they have a joining or an invoice.' : a.add ? 'Press + Add client to add your first client.' : 'Clients you look after show here.'} />}
@@ -674,6 +709,14 @@ export default function Clients() {
       </ListFooter>
       </Panel>
 
+      {msgMany && (
+        <SendManyDialog
+          audience="clients"
+          ids={tickedNow}
+          note="The message goes to each client's contact person. You see who is left out, and why, before anything is sent."
+          onClose={() => setMsgMany(false)}
+        />
+      )}
       {adding && (
         <AddClientWizard
           user={user}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import TabsPage from '../../components/TabsPage.jsx';
 import Targets from './Targets.jsx';
@@ -12,6 +12,7 @@ import Projects from './Projects.jsx';
 import RecruiterJoinings from './RecruiterJoinings.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, isSuperAdmin } from '../../permissions';
+import './performance-merged.css';
 
 // Who the Recruiter joinings tab is for: Super Admin, the HR / Admin desk,
 // TLs (their team) and recruiters (their own). The server scopes the rows.
@@ -25,9 +26,27 @@ export default function PerformanceDevelopment() {
   const { user } = useAuth();
   const [params] = useSearchParams();
   const joinings = seesJoinings(user);
+  // ONE tab (user, 2026-10-09): Monthly Targets, with the recruiter joinings on the
+  // same screen as their own section (counts only; who joined is in ATS).
   const tabs = [
-    { key: 'targets', label: 'Monthly Targets', element: <Targets /> },
-    ...(joinings ? [{ key: 'joinings', label: 'Recruiter joinings', element: <RecruiterJoinings /> }] : []),
+    {
+      key: 'targets',
+      label: 'Monthly Targets',
+      element: (
+        <div className="pd-merged">
+          <section className="pd-section" id="pd-targets">
+            <h2 className="pd-h2">Monthly targets</h2>
+            <Targets />
+          </section>
+          {joinings && (
+            <section className="pd-section" id="pd-joinings">
+              <h2 className="pd-h2">Recruiter joinings</h2>
+              <RecruiterJoinings />
+            </section>
+          )}
+        </div>
+      ),
+    },
     { key: 'recognition', label: 'Reward & Recognition', element: <Recognition /> },
     { key: 'kt', label: 'Knowledge Transfer', element: <KT /> },
     { key: 'disciplinary', label: 'Disciplinary Actions', element: <Disciplinary /> },
@@ -35,9 +54,16 @@ export default function PerformanceDevelopment() {
     { key: 'projects', label: 'Projects', element: <Projects /> },
     { key: 'reports', label: 'Reports', element: <Performance /> },
   ];
-  // ?tab=joinings opens a tab directly (the HRMS popup's "Open full screen").
-  const want = params.get('tab');
+  // The old ?tab=joinings address (the HRMS popup's "Open full screen", "See my
+  // joinings") opens the merged tab and scrolls to the joinings section.
+  const raw = params.get('tab');
+  const want = raw === 'joinings' ? 'targets' : raw;
   const [active, setActive] = useState(tabs.some((t) => t.key === want) ? want : tabs[0].key);
+  useEffect(() => {
+    if (raw !== 'joinings') return undefined;
+    const t = setTimeout(() => { const el = document.getElementById('pd-joinings'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 600);
+    return () => clearTimeout(t);
+  }, [raw]);
   return (
     <TabsPage
       title="Performance & Development"

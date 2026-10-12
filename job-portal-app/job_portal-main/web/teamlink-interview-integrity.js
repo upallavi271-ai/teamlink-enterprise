@@ -336,23 +336,31 @@
   function report(type, confidence, evidence) {
     var api = API();
     if (!api || !S.interviewId || S.busy || S.suspended) return;
+    /* 0136: only while the questions are running - never while the last answer is being
+       submitted and scored, on the "completed" screen, or before the first question */
+    if (!window.AIIV || window.AIIV.phase !== 'interview' || window.AIIV.ending) return;
     var now = Date.now();
     if (now - S.lastReportAt < T.cooldownMs()) return;
     S.lastReportAt = now;
     S.busy = true;
 
+    evidence = evidence || {};
+    if (typeof window.tlCurrentQuestionNo === 'function') evidence.questionSeq = window.tlCurrentQuestionNo();
     api.post('/ai-interviews/' + encodeURIComponent(S.interviewId) + '/integrity', {
-      type: type, confidence: Number(confidence.toFixed(3)), evidence: evidence || {},
+      type: type, confidence: Number(confidence.toFixed(3)), evidence: evidence,
     }).then(function (r) {
       S.busy = false;
       S.strikes = r.strike;
       if (r.action === 'warn') {
         showWarning(r.strike, r.message);
-      } else {
+      } else if (r.action === 'suspend' || r.action === 'suspended') {
         S.suspended = true;
         stop();
-        suspend(r.message);
+        suspend(r.message, r.retakeAvailableAt);
       }
+      /* 'noted' (the same moment as the last warning) and 'ignored' (every question already
+         answered, or the interview finished) change nothing on screen. Treating them as a
+         suspension is what put "Interview suspended" up after a final Submit. */
     }).catch(function () {
       S.busy = false;
       /* A failed report must not invent a strike locally: the count only
@@ -395,10 +403,10 @@
    * it rather than building a second stopped screen beside it. The
    * SERVER has already set the status to suspended; this is the display.
    */
-  function suspend(message) {
+  function suspend(message, retakeAt) {
     dismissBanner();
     if (typeof window.tlProctorStop === 'function') {
-      window.tlProctorStop('integrity_violation', message);
+      window.tlProctorStop('integrity_violation', message, retakeAt);
       return;
     }
     /* The hook is installed below, so this is only reached if the
@@ -423,6 +431,12 @@
       if (!det || !S.running) return;
       S.face.timer = setInterval(faceTick, T.faceEveryMs());
     });
+  };
+
+  /* The page's own detections (tab, camera, noise) warn through the same banner. */
+  window.tlIntegrityWarn = function (strike, message) {
+    S.strikes = strike;
+    showWarning(strike, message);
   };
 
   window.tlIntegrityStop = stop;
@@ -458,13 +472,15 @@
   /* 1. proctorStop is a private function of the interview module, so the
         module exposes nothing to call. The session's own stop path is
         reached instead through AIIV's phase, which IS global. */
-  window.tlProctorStop = function (kind, message) {
+  window.tlProctorStop = function (kind, message, retakeAt) {
     try {
       var A = window.AIIV;
       if (!A || !A.started) return;
+      /* a stop only ends a RUNNING interview - never the submitting or completed screen */
+      if (A.phase !== 'interview') return;
       if (!A.integrity) A.integrity = { events: [], noiseMs: 0, camLostMs: 0 };
       A.integrity.events.push({ kind: kind, detail: message, at: new Date().toISOString() });
-      A.integrity.ended = { kind: kind, message: message, at: new Date().toISOString() };
+      A.integrity.ended = { kind: kind, message: message, retakeAt: retakeAt || null, at: new Date().toISOString() };
       A.listening = false;
       A.phase = 'stopped';
       try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
@@ -493,6 +509,14 @@
           if (A.phase !== 'interview' && A.phase !== 'briefing') return;
           var now = performance.now();
           var dt = now - last; last = now;
+          /* The interviewer's own voice, the gap after Submit and the tail of
+             the candidate's last words are not "another voice". Judged only
+             in a stretch the page itself says is quiet (or while the
+             candidate is answering, which only teaches their baseline). */
+          if (!A.listening && typeof window.tlRoomShouldBeQuiet === 'function' && !window.tlRoomShouldBeQuiet()) {
+            S.voice.sustainedMs = 0; S.voice.samples = 0;
+            return;
+          }
           voiceTick(dt, !!A.listening);
         }, 120);
       }
@@ -551,6 +575,94 @@
     return '<span class="tlig-pill ' + cls + '">' + txt + '</span>';
   }
 
+  /* The reason, where it happened, how often, and what the candidate can
+     do next - the same sentence the candidate and the email carry. */
+  function suspensionBlock(interviewId, r) {
+    if (!r.suspensionMessage && !(r.attempts && r.attempts.length > 1)) return '';
+    var id = esc(interviewId);
+    var retake = r.retakeBlocked ? 'Blocked by a recruiter'
+      : (r.retakeAvailableAt ? (r.retakeOpen ? 'Open now' : 'Opens ' + when(r.retakeAvailableAt))
+        : (r.status === 'suspended' ? 'No retake scheduled — with the recruiter' : '—'));
+    var attempts = (r.attempts || []).length > 1 || (r.attempts || []).some(function (a) { return a.status === 'suspended'; })
+      ? '<table class="tlig-tbl" style="margin-top:8px"><thead><tr><th>Attempt</th><th>Status</th><th>Started</th>'
+        + '<th>Reason</th><th>Score</th></tr></thead><tbody>'
+        + r.attempts.map(function (a) {
+          return '<tr><td>' + a.attemptNumber + '</td>'
+            + '<td>' + (a.status === 'suspended' ? 'Suspended' : esc(a.status)) + '</td>'
+            + '<td>' + when(a.startedAt) + '</td>'
+            + '<td>' + esc(a.suspensionMessage || '—') + '</td>'
+            + '<td>' + (a.score == null ? '—' : Math.round(a.score) + '%') + '</td></tr>';
+        }).join('') + '</tbody></table>'
+        + '<div class="tlig-ev" style="margin-top:4px">Current score: <b>'
+        + (r.currentScore == null ? 'none yet' : Math.round(r.currentScore) + '%')
+        + '</b> — the latest completed attempt. A suspended attempt has no score.</div>'
+      : '';
+    var controls = r.status === 'suspended'
+      ? '<div style="margin-top:10px"><input class="tlig-note" id="tligRetakeWhy" placeholder="Reason (recorded)">'
+        + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'
+        + (r.retakeBlocked
+          ? '<button class="btn btn-ghost btn-sm" onclick="tlRetakeControl(\'' + id + '\',\'unblock\')">Allow retake</button>'
+          : '<button class="btn btn-ghost btn-sm" onclick="tlRetakeControl(\'' + id + '\',\'block\')">Block retake</button>')
+        + '<button class="btn btn-ghost btn-sm" onclick="tlRetakeControl(\'' + id + '\',\'extra_attempt\')">Grant another attempt now</button>'
+        + '</div></div>'
+      : '';
+    return '<div class="tlig-sec"><h4>' + (r.status === 'suspended' ? 'Suspended — under recruiter review' : 'Attempts') + '</h4>'
+      + (r.suspensionMessage
+        ? '<div style="font-size:13px;margin:4px 0 6px">' + esc(r.suspensionMessage) + '</div>'
+          + '<div class="tlig-ev">' + (r.suspensionQuestionNo ? 'Question ' + r.suspensionQuestionNo + ' · ' : '')
+          + (r.suspendedAt ? 'Suspended ' + when(r.suspendedAt) + ' · ' : '')
+          + 'Detections: ' + (r.detectionCount || 0)
+          + (r.lastDetectionAt ? ' · last ' + when(r.lastDetectionAt) : '')
+          + ' · Attempt ' + (r.attemptNumber || 1)
+          + (r.suspensionEmailSentAt ? ' · email sent ' + when(r.suspensionEmailSentAt) : '')
+          + '</div>'
+          + '<div class="tlig-st" style="margin-top:6px">Retake: <b>' + esc(retake) + '</b></div>'
+        : '')
+      + attempts + controls + '</div>';
+  }
+
+  /* What was asked, what was said, how relevant it was and why it scored what it did. */
+  var CLS = { RELEVANT: 'Relevant', PARTIALLY_RELEVANT: 'Partially relevant', IRRELEVANT: 'Irrelevant', NO_ANSWER: 'No answer' };
+  function answersBlock(r) {
+    var qs = r.questions || [];
+    if (!qs.length || !qs.some(function (q) { return q.answered || q.relevanceClass; })) return '';
+    return '<div class="tlig-sec"><h4>Answers</h4>'
+      + '<table class="tlig-tbl"><thead><tr><th>#</th><th>Question and what was said</th><th>Relevance</th><th>Score</th></tr></thead><tbody>'
+      + qs.map(function (q) {
+        return '<tr><td>' + q.seq + '</td>'
+          + '<td><div>' + esc(q.question) + '</div>'
+          + '<div class="tlig-ev" style="margin-top:3px">' + (q.transcript ? esc(q.transcript) : '<i>No spoken answer</i>')
+            + (q.timedOut ? ' <b>· time ran out</b>' : '') + '</div>'
+          + (q.reason ? '<div class="tlig-ev" style="margin-top:3px">' + esc(q.reason) + '</div>' : '')
+          + (q.needsReview ? '<div class="tlig-ev" style="color:#8a5a12;margin-top:3px">Please review: ' + esc(q.reviewReason || 'flagged') + '</div>' : '')
+          + (q.lowTranscriptConfidence && !q.needsReview ? '<div class="tlig-ev" style="color:#8a5a12;margin-top:3px">Low transcription confidence — please listen to the recording.</div>' : '')
+          + '</td>'
+          + '<td>' + esc(CLS[q.relevanceClass] || '—') + '</td>'
+          + '<td>' + (q.score == null ? '—' : Math.round(q.score) + '/' + q.maxScore) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  window.tlRetakeControl = function (interviewId, action) {
+    var api = API();
+    var why = ((document.getElementById('tligRetakeWhy') || {}).value || '').trim();
+    if (!api) return;
+    if (why.length < 3) {
+      if (typeof window.toast === 'function') window.toast('Please give a reason — it is recorded', '⚠️');
+      return;
+    }
+    api.post('/ai-interviews/' + encodeURIComponent(interviewId) + '/retake', { action: action, reason: why })
+      .then(function () {
+        if (typeof window.toast === 'function') {
+          window.toast(action === 'block' ? 'Retake blocked' : action === 'unblock' ? 'Retake allowed' : 'Another attempt granted', '✅');
+        }
+        window.tlIntegrityOpen(interviewId);
+        paintList();
+      })
+      .catch(function (e) {
+        if (typeof window.toast === 'function') window.toast((e && e.message) || 'That could not be saved', '⚠️');
+      });
+  };
+
   window.tlIntegrityOpen = function (interviewId) {
     var api = API();
     if (!api || typeof window.fcrModal !== 'function') return;
@@ -590,6 +702,8 @@
           '<div class="fcr-jd-head"><h3>Interview Integrity</h3>'
           + '<button class="fcr-jd-x" onclick="fcrCloseModal()">✕</button></div>'
           + '<div class="fcr-jd-body" style="padding-bottom:20px">'
+          + suspensionBlock(interviewId, r)
+          + answersBlock(r)
           + '<div class="tlig-st">Status: ' + statusPill(r.integrityStatus)
             + ' &nbsp;·&nbsp; Strikes: <b>' + r.strikes + ' of 2</b>'
             + (r.suspendedAt ? ' &nbsp;·&nbsp; Suspended ' + when(r.suspendedAt) : '')
@@ -665,19 +779,25 @@
       var list = r.interviews || [];
       if (!list.length) {
         host.innerHTML = '<p class="empty-note" style="padding:10px 0">'
-          + 'No interview has raised an integrity violation.</p>';
+          + 'No AI interview has been completed or flagged yet.</p>';
         return;
       }
       host.innerHTML = '<table class="tlig-tbl"><thead><tr><th>Candidate</th><th>Role</th>'
-        + '<th>Status</th><th>Strikes</th><th>When</th><th></th></tr></thead><tbody>'
+        + '<th>Status</th><th>Reason</th><th>Attempt</th><th>Score</th><th>Retake</th><th>When</th><th></th></tr></thead><tbody>'
         + list.map(function (x) {
           return '<tr><td>' + esc(x.candidateName) + '</td>'
             + '<td>' + esc(x.jobTitle || '—') + '</td>'
             + '<td>' + statusPill(x.integrityStatus)
               + (x.openFlags ? ' <span class="tlig-ev">' + x.openFlags + ' to review</span>' : '')
               + '</td>'
-            + '<td>' + x.strikes + '/2</td>'
-            + '<td>' + when(x.suspendedAt) + '</td>'
+            + '<td style="max-width:260px">' + esc(x.suspensionMessage || '—')
+              + (x.suspensionQuestionNo ? ' <span class="tlig-ev">Q' + x.suspensionQuestionNo + ' · ' + (x.detectionCount || 0) + '×</span>' : '')
+              + '</td>'
+            + '<td>' + (x.attemptNumber || 1) + '</td>'
+            + '<td>' + (x.overallPercentage == null ? '—' : Math.round(x.overallPercentage) + '%')
+              + (x.answersToReview ? ' <span class="tlig-ev">' + x.answersToReview + ' to review</span>' : '') + '</td>'
+            + '<td>' + (x.retakeBlocked ? 'Blocked' : x.retakeAvailableAt ? when(x.retakeAvailableAt) : (x.status === 'suspended' ? 'With recruiter' : '—')) + '</td>'
+            + '<td>' + when(x.suspendedAt || x.completedAt) + '</td>'
             + '<td><button class="btn btn-ghost btn-sm" onclick="tlIntegrityOpen(\''
               + esc(x.id) + '\')">Review</button></td></tr>';
         }).join('') + '</tbody></table>';
@@ -696,8 +816,8 @@
     panel.id = 'tligPanel';
     panel.style.marginTop = '14px';
     panel.innerHTML = '<div class="panel-head"><div><h2>Interview Integrity</h2>'
-      + '<div class="desc">AI interviews where another person or another voice was '
-      + 'detected during the session. A flag is evidence, not a decision — nothing '
+      + '<div class="desc">AI interviews: what each candidate said and how it was marked, and any session where an '
+      + 'integrity detection was raised. A flag is evidence, not a decision — nothing '
       + 'here rejects anybody.</div></div></div>'
       + '<div class="panel-body"><div id="tligListHost"></div></div>';
     body.appendChild(panel);

@@ -17,3 +17,6 @@
 @media (max-width:700px){
   .cpt-btns{align-items:stretch;flex-basis:100%}
 }
+/* Where from (the clean source of the person) */
+.cpt-src b{font-weight:700}
+.cpt-src.is-unknown b{font-weight:500;color:var(--ink-soft,#5b6478)}

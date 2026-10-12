@@ -39,6 +39,8 @@ export default function AgreementSettingsDialog({ onClose }) {
           templateNote: r.data.placeholder ? '' : (r.data.templateNote || ''),
           signatoryName: /^\[.*\]$/.test(String(r.data.signatoryName || '').trim()) ? '' : (r.data.signatoryName || ''),
           signatoryTitle: /^\[.*\]$/.test(String(r.data.signatoryTitle || '').trim()) ? '' : (r.data.signatoryTitle || ''),
+          executionPlace: r.data.executionPlace || 'Hyderabad',
+          stampPaperNo: r.data.stampPaperNo || '',
           linkDays: r.data.linkDays || 14,
           activeReminderTime: r.data.activeReminderTime || '10:00',
           activeReminderEveryDays: r.data.activeReminderEveryDays || 1,
@@ -109,6 +111,16 @@ export default function AgreementSettingsDialog({ onClose }) {
             <label className="field"><span>Designation</span><input disabled={!edit} value={form.signatoryTitle} placeholder="e.g. Director" onChange={(e) => set({ signatoryTitle: e.target.value })} /></label>
           </div>
           {edit && <TeamLinkSeal mode="settings" signerName={form.signatoryName} signerTitle={form.signatoryTitle} />}
+
+          <div className="section-label">Printed on the last page of the PDF</div>
+          <div className="small-muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            Every page of the PDF already carries the TeamLink logo, the agreement number, "Page X of Y" and both sides' stamp and initials.
+            The last page also says where the agreement was signed. The stamp paper number is optional: leave it empty and nothing is printed.
+          </div>
+          <div className="grid-2">
+            <label className="field"><span>Place of signing</span><input disabled={!edit} value={form.executionPlace} placeholder="Hyderabad" onChange={(e) => set({ executionPlace: e.target.value })} /></label>
+            <label className="field"><span>Stamp paper / e-stamp certificate no. (optional)</span><input disabled={!edit} value={form.stampPaperNo} placeholder="Leave empty if there is none" onChange={(e) => set({ stampPaperNo: e.target.value })} /></label>
+          </div>
 
           <div className="section-label">Agreement link</div>
           <label className="field"><span>A new link works for (days)</span><input type="number" step="1" min="1" max="90" disabled={!edit} value={form.linkDays} onChange={(e) => set({ linkDays: e.target.value })} /></label>

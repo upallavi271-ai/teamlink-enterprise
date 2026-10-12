@@ -130,6 +130,26 @@ router.post('/ask', async (req, res) => {
     });
   }
 
+  // ASK MODE, deterministic first (src/ai/assistant/ask.js): counts, lists,
+  // comparisons and recommendations read straight from the app's own data, with
+  // the numbers and their source shown - no model or key needed. A request to
+  // CHANGE something is not done here; the answer points to Do mode. Anything it
+  // does not recognise falls through to the language model below, as before.
+  try {
+    const quick = await require('../ai/assistant/ask').tryAnswer(req.user, req.headers.authorization, message); // eslint-disable-line global-require
+    if (quick) {
+      return res.json({
+        ...quick,
+        options: (quick.options || []).map((o) => (typeof o === 'string' ? o : o.label)),
+        clarify: false,
+        ...(voice ? { heard: { text: message, confidence: voice.confidence, lang: voice.lang, low: aiAccess.isLowConfidence(voice) } } : {}),
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[ai-ask] deterministic answer failed, using the model:', err && err.message);
+  }
+
   const limit = await limitFor(req.user);
   if (!limit.ok) return res.status(429).json({ error: limit.message, retryAfter: limit.retryAfter });
 

@@ -132,7 +132,7 @@ function useWeekInterviews(enabled, today, reloadKey) {
 
 export default function TeamOverview({
   rows = [], loading, selfMode, isAdmin, period, today, user, onOpen, goView,
-  canAdd, canReports, canLeave, reportTo, dailyTo, reloadKey = 0,
+  canAdd, canReports, canLeave, reportTo, dailyTo, reloadKey = 0, bdeTl = false,
 }) {
   const navigate = useNavigate();
   const daily = useDaily(true, today, reloadKey);
@@ -358,10 +358,10 @@ export default function TeamOverview({
       <KpiRow className="tv4-kpis">
         <KpiTile icon="users" tone="blue" label="Total team members" value={total} loading={loading}
           sub={left > 0 ? `incl. ${fmtNum(left)} who left` : 'in your area'} onClick={() => goView('people')} />
-        <KpiTile icon="user" tone="violet" label="Recruiters" value={recruiters.length} loading={loading}
-          sub={`${pct(recruiters.length, active.length)} of active`} onClick={() => goView('people', { role: 'RECRUITER' })} />
-        <KpiTile icon="team" tone="teal" label="Team leads" value={tls.length} loading={loading}
-          sub={`${pct(tls.length, active.length)} of active`} onClick={tls.length ? () => goView('people', { role: 'TL' }) : undefined} />
+        {!bdeTl && <KpiTile icon="user" tone="violet" label="Recruiters" value={recruiters.length} loading={loading}
+          sub={`${pct(recruiters.length, active.length)} of active`} onClick={() => goView('people', { role: 'RECRUITER' })} />}
+        {!bdeTl && <KpiTile icon="team" tone="teal" label="Team leads" value={tls.length} loading={loading}
+          sub={`${pct(tls.length, active.length)} of active`} onClick={tls.length ? () => goView('people', { role: 'TL' }) : undefined} />}
         <KpiTile icon="check" tone="green" label="Active" value={active.length} loading={loading}
           sub={bdes.length ? `${fmtNum(bdes.length)} client manager${bdes.length === 1 ? '' : 's'}` : 'working now'} />
         <KpiTile icon="leave" tone="amber" label="On leave" value={onLeave ? onLeave.size : null}

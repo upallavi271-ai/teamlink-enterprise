@@ -7,8 +7,11 @@ import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx
 import Combo from '../components/Combo.jsx';
 import EmployeeProfileForm from '../components/EmployeeProfileForm.jsx';
 import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
+import { seatOptionLabel } from '../components/seatLabel.js'; // free / held / leaving wording for the Position picker
 import ExtraFields from '../components/employees/ExtraFields.jsx';
 import ExportMenu from '../components/ExportMenu.jsx';
+// Manage Fields: HR's labels, order and Pause for the built-in fields.
+import { useFieldLayout } from '../utils/employeeFieldLayout';
 
 
 const EDIT_FIELDS = [
@@ -34,6 +37,7 @@ export default function EmployeeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const FL = useFieldLayout();
   // isHR draws WRITE controls here — granting edit access, ticking an
   // onboarding task, starting offboarding — so it asks Employee Management
   // EDIT and not only VIEW. A Manager and an Assistant Manager are view-only
@@ -125,6 +129,9 @@ export default function EmployeeDetail() {
     // required one is said in words and nothing half-saves.
     const extraWhy = extraRef.current ? extraRef.current.validate() : '';
     if (extraWhy) { setError(extraWhy); return; }
+    // A field HR made required in Manage Fields cannot be left empty.
+    const missing = EDIT_FIELDS.find((k) => FL.enforced(k) && Object.prototype.hasOwnProperty.call(form, k) && !String(form[k] ?? '').trim());
+    if (missing) { setError(`"${FL.label(missing, missing)}" is required.`); return; }
     setSaving(true);
     try {
       const { roleCode, employeeCode, ...body } = form;
@@ -493,7 +500,7 @@ export default function EmployeeDetail() {
                     reorganisation: it takes a REASON and records it. This is for
                     a correction. */}
                 <label className="field">
-                  <span>Department</span>
+                  <span>{FL.label('department', 'Department')}</span>
                   <Combo
                     creatable
                     value={form.department}
@@ -525,7 +532,7 @@ export default function EmployeeDetail() {
                     server refuses a taken one either way. Creatable — typing a new
                     code makes the seat on save. */}
                 <label className="field">
-                  <span>Position <i style={{ fontWeight: 400 }}>(the seat, not the person)</i></span>
+                  <span>{FL.label('position', 'Position')} <i style={{ fontWeight: 400 }}>(the seat, not the person)</i></span>
                   <Combo
                     creatable
                     // The seats listed came from the SAVED department. Once the
@@ -538,11 +545,7 @@ export default function EmployeeDetail() {
                   >
                     <option value="">No seat</option>
                     {(employee.positionOptions || []).map((r) => (
-                      <option key={r.code} value={r.code}>
-                        {r.code}
-                        {r.name ? ` · ${r.name}` : ''}
-                        {r.holder ? ` · held by ${r.holder}` : ''}
-                      </option>
+                      <option key={r.code} value={r.code}>{seatOptionLabel(r)}</option>
                     ))}
                   </Combo>
                   {form.department !== employee.department && (
@@ -553,7 +556,7 @@ export default function EmployeeDetail() {
                 </label>
                 {formTeams.length > 0 && (
                   <label className="field">
-                    <span>Team</span>
+                    <span>{FL.label('team', 'Team')}</span>
                     <Combo creatable value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })}>
                       <option value="">No team</option>
                       {formTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
@@ -579,39 +582,54 @@ export default function EmployeeDetail() {
         <div className="two-col" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div className="card">
             <h3 style={{ fontSize: 13, marginBottom: 8 }}>Profile — {employee.profileCompletionPct}% complete</h3>
-            <div className="kv"><span className="k">Employee Code</span><span>{employee.employeeCode}</span></div>
-            <div className="kv"><span className="k">Email</span><span>{employee.email || '—'}</span></div>
-            <div className="kv"><span className="k">Phone</span><span>{employee.phone || '—'}</span></div>
-            <div className="kv"><span className="k">Department</span><span>{employee.department || '—'}</span></div>
-            <div className="kv"><span className="k">Team</span><span>{employee.team || '—'}</span></div>
-            <div className="kv"><span className="k">Branch</span><span>{employee.branch || '—'}</span></div>
-            <div className="kv"><span className="k">Designation</span><span>{employee.designation || '—'}</span></div>
-            <div className="kv"><span className="k">Shift</span><span>{employee.shift || '—'}</span></div>
-            <div className="kv"><span className="k">Employee Type</span><span>{employee.employeeType || '—'}</span></div>
-            <div className="kv"><span className="k">Gender</span><span>{employee.gender || '—'}</span></div>
-            <div className="kv"><span className="k">Blood Group</span><span>{employee.bloodGroup || '—'}</span></div>
-            <div className="kv"><span className="k">Date of Joining</span><span>{employee.dateOfJoining ? new Date(employee.dateOfJoining).toLocaleDateString() : '—'}</span></div>
-            <div className="kv"><span className="k">Reporting Manager</span><span>{employee.reportingManager?.name || '—'}</span></div>
+            {/* Manage Fields: HR's label, order and Pause apply here too. */}
+            {FL.sort([
+              ['employeeCode', 'Employee Code', employee.employeeCode],
+              ['email', 'Email', employee.email],
+              ['phone', 'Phone', employee.phone],
+              ['department', 'Department', employee.department],
+              ['team', 'Team', employee.team],
+              ['branch', 'Branch', employee.branch],
+              ['designation', 'Designation', employee.designation],
+              ['shift', 'Shift', employee.shift],
+              ['employeeType', 'Employee Type', employee.employeeType],
+              ['gender', 'Gender', employee.gender],
+              ['bloodGroup', 'Blood Group', employee.bloodGroup],
+              ['dateOfJoining', 'Date of Joining', employee.dateOfJoining ? new Date(employee.dateOfJoining).toLocaleDateString() : ''],
+              ['reportingManagerId', 'Reporting Manager', employee.reportingManager?.name],
+            ]).map(([col, label, v]) => (
+              <div className="kv" key={col}><span className="k">{FL.label(col, label)}</span><span>{v || '—'}</span></div>
+            ))}
           </div>
 
           <div className="card">
             <h3 style={{ fontSize: 13, marginBottom: 8 }}>Address & Emergency Contact</h3>
-            <div className="kv"><span className="k">Address</span><span>{[employee.addressLine1, employee.city, employee.state, employee.postalCode].filter(Boolean).join(', ') || employee.address || '—'}</span></div>
-            <div className="kv"><span className="k">Emergency Contact</span><span>{employee.emergencyContactName || '—'} {employee.emergencyContactRelation ? `(${employee.emergencyContactRelation})` : ''} {employee.emergencyContactPhone ? `— ${employee.emergencyContactPhone}` : ''}</span></div>
+            {!FL.paused('addressLine1') && (
+              <div className="kv"><span className="k">{FL.label('addressLine1', 'Address')}</span><span>{[employee.addressLine1, !FL.paused('city') && employee.city, !FL.paused('state') && employee.state, !FL.paused('postalCode') && employee.postalCode].filter(Boolean).join(', ') || employee.address || '—'}</span></div>
+            )}
+            {!FL.paused('emergencyContactName') && (
+              <div className="kv"><span className="k">{FL.label('emergencyContactName', 'Emergency Contact')}</span><span>{employee.emergencyContactName || '—'} {employee.emergencyContactRelation && !FL.paused('emergencyContactRelation') ? `(${employee.emergencyContactRelation})` : ''} {employee.emergencyContactPhone && !FL.paused('emergencyContactPhone') ? `— ${employee.emergencyContactPhone}` : ''}</span></div>
+            )}
             <div className="kv"><span className="k">Login Account</span><span>{employee.user ? `${employee.user.name} · ${employee.user.role}` : 'Not linked'}</span></div>
             <div className="kv"><span className="k">Sign-in details</span>
               <span>{employee.credentialsSentStatus || 'Not issued yet'}
                 {employee.credentialsSentAt ? ` · ${new Date(employee.credentialsSentAt).toLocaleString('en-GB')}` : ''}</span></div>
 
             <h3 style={{ fontSize: 13, margin: '14px 0 8px' }}>Bank & Statutory <span className="small-muted">(restricted)</span></h3>
-            <div className="kv"><span className="k">Bank</span><span>{employee.bankName ? `${employee.bankName} · ${employee.bankAccountNumber || '—'}` : '—'}</span></div>
-            <div className="kv"><span className="k">PAN</span><span>{employee.panNumber || '—'}</span></div>
-            <div className="kv"><span className="k">UAN / PF / ESI</span><span>{employee.uanNumber || '—'} / {employee.pfNumber || '—'} / {employee.esiNumber || '—'}</span></div>
+            {!FL.paused('bankName') && <div className="kv"><span className="k">{FL.label('bankName', 'Bank')}</span><span>{employee.bankName ? `${employee.bankName} · ${employee.bankAccountNumber || '—'}` : '—'}</span></div>}
+            {!FL.paused('panNumber') && <div className="kv"><span className="k">{FL.label('panNumber', 'PAN')}</span><span>{employee.panNumber || '—'}</span></div>}
+            {!FL.paused('uanNumber') && <div className="kv"><span className="k">UAN / PF / ESI</span><span>{employee.uanNumber || '—'} / {employee.pfNumber || '—'} / {employee.esiNumber || '—'}</span></div>}
 
-            <h3 style={{ fontSize: 13, margin: '14px 0 8px' }}>Education & Experience</h3>
-            <div className="kv"><span className="k">Employment Type</span><span>{employee.employmentExperience || '—'}</span></div>
-            <div className="kv"><span className="k">Education</span><span>{employee.educationDetails || '—'}</span></div>
-            <div className="kv"><span className="k">Skills</span><span>{employee.skills || '—'}</span></div>
+            {(!FL.paused('employmentExperience') || !FL.paused('educationDetails') || !FL.paused('skills')) && (
+              <h3 style={{ fontSize: 13, margin: '14px 0 8px' }}>Education & Experience</h3>
+            )}
+            {FL.sort([
+              ['employmentExperience', 'Employment Type', employee.employmentExperience],
+              ['educationDetails', 'Education', employee.educationDetails],
+              ['skills', 'Skills', employee.skills],
+            ]).map(([col, label, v]) => (
+              <div className="kv" key={col}><span className="k">{FL.label(col, label)}</span><span>{v || '—'}</span></div>
+            ))}
           </div>
         </div>
       )}

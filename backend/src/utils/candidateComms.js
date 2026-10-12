@@ -142,8 +142,10 @@ const TEMPLATES = {
   },
 };
 
+// Fills {{tokens}} through the Message templates renderer; a detail nobody has stays "—" as before.
 function fill(text, tokens) {
-  return String(text || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (tokens[k] == null || tokens[k] === '' ? '—' : String(tokens[k])));
+  // eslint-disable-next-line global-require
+  return require('./messageTemplates').render(text, tokens, { blank: '—' }).text;
 }
 
 // Which address or number a channel is addressed to. No fallbacks invented: an
@@ -203,8 +205,23 @@ async function senderIdentity(user) {
 // it wrote (possibly none — most transitions are internal and the candidate is
 // not told about them).
 async function recordStageCommunications({
-  application, candidate, requirement, fromStage, toStage, user, comment,
+  application, candidate, requirement, fromStage, toStage, user, comment, stageEventId, silent,
 }) {
+  // silent: imports and historical loads never message anybody (no row, no log).
+  if (silent) return [];
+  // AUTOMATIC STAGE MESSAGES (utils/autoMessages.js): once an Admin / HR has saved the rules the
+  // scheduling engine owns this move (one scheduled row per move, rules, caps, quiet hours ...).
+  // Before that - and on any error - the code below runs exactly as it always did.
+  try {
+    // eslint-disable-next-line global-require
+    const handled = await require('./autoMessages').handleStageMove({
+      application, candidate, requirement, fromStage, toStage, user, comment, stageEventId,
+    });
+    if (handled && handled.handled) return handled.rows || [];
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[auto-messages] could not schedule, using the old path:', err && err.message);
+  }
   const template = TEMPLATES[toStage];
   if (!template || !candidate) return [];
   // EVERY PIPELINE MESSAGE FOLLOWS THE ONE "CANDIDATE EMAILS" SWITCH
@@ -220,7 +237,8 @@ async function recordStageCommunications({
   const tokens = {
     name: candidate.name,
     role: requirement ? requirement.title : '—',
-    client: requirement ? (requirement.internal ? 'TeamLink Internal' : (requirement.client && requirement.client.name) || '—') : '—',
+    // CANDIDATES NEVER SEE THE CLIENT'S NAME (the same rule as utils/autoMessages.js tokensFor).
+    client: requirement ? (requirement.internal ? 'TeamLink Internal' : 'our client') : '—',
     interviewAt: application && application.interviewAt
       ? new Date(application.interviewAt).toLocaleString('en-GB', {
         day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -256,6 +274,10 @@ async function recordStageCommunications({
   let queuedAnEmail = false;
   for (const channel of template.channels) {
     const recipient = recipientFor(channel, candidate);
+    // THE WORDING comes from Administration → Company Setup → Message templates (the
+    // built-in text above is the fallback, and what the templates start as).
+    // eslint-disable-next-line no-await-in-loop, global-require
+    const tpl = (await require('./messageTemplates').resolve({ purpose: template.key, channel })) || template;
     // SMS / WhatsApp are real channels too now (utils/messaging.js): a row is
     // QUEUED when ITS channel is configured, and the worker sends it.
     // eslint-disable-next-line no-await-in-loop
@@ -276,8 +298,8 @@ async function recordStageCommunications({
         templateLabel: template.label,
         trigger,
         recipient,
-        subject: channel === 'Email' ? fill(template.subject, tokens) : null,
-        body: fill(template.body, tokens),
+        subject: channel === 'Email' ? fill(tpl.subject, tokens) : null,
+        body: fill(tpl.body, tokens),
         // eslint-disable-next-line no-nested-ternary
         status: !switchedOn ? IN.SWITCHED_OFF : (live ? 'QUEUED' : NOT_SENT),
         statusDetail: detail,
@@ -327,9 +349,13 @@ async function commsNote() {
 const STATUS_LABELS = {
   NOT_SENT_NO_PROVIDER: 'Not sent — no provider',
   NOT_SENT_SWITCHED_OFF: 'Not sent — candidate emails are switched off',
+  NOT_SENT_BLOCKED: 'Not sent — blocked (see the reason)',
   QUEUED: 'Queued',
   RETRY: 'Retrying',
   SENT: 'Sent',
+  DELIVERED: 'Delivered',
+  READ: 'Read',
+  RECEIVED: 'Reply received',
   FAILED: 'Failed',
 };
 

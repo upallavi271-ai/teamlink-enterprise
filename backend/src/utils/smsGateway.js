@@ -64,6 +64,7 @@ async function smsConfig() {
       otp: String(v[F.otpTpl] || '').trim(),
       bulk: String(v[F.bulkTpl] || '').trim(),
     },
+    dlrSecret: String(v[F.dlrSecret] || '').trim(),
     base: provider ? core.providerBase(BASES[provider], v) : null,
     testMode: !!core.devOverride(v),
   };
@@ -95,8 +96,9 @@ function failure(res, provider) {
 }
 
 // --- The adapters -----------------------------------------------------------
-async function viaMsg91(cfg, { mobile, kind, vars }) {
-  const templateId = cfg.templates[kind];
+async function viaMsg91(cfg, { mobile, kind, vars, templateId: ownTemplate }) {
+  // ownTemplate: the DLT id of a Message templates entry (else the one per kind from Integrations).
+  const templateId = ownTemplate || cfg.templates[kind];
   if (!templateId) {
     return { ok: false, notConfigured: true, transient: false, provider: 'MSG91', error: `MSG91 sends only approved Flow templates — add the "${kind}" template id in Administration → Integrations → SMS Gateway.` };
   }
@@ -116,16 +118,16 @@ async function viaMsg91(cfg, { mobile, kind, vars }) {
   return f;
 }
 
-async function viaFast2sms(cfg, { mobile, kind, vars, text }) {
+async function viaFast2sms(cfg, { mobile, kind, vars, text, templateId: ownTemplate, senderId }) {
   if (mobile.cc !== '91') {
     return { ok: false, transient: false, provider: 'FAST2SMS', error: 'Fast2SMS delivers to Indian (+91) numbers only.' };
   }
-  const templateId = cfg.templates[kind];
+  const templateId = ownTemplate || cfg.templates[kind];
   let payload;
   if (templateId) {
-    if (!cfg.sender) return { ok: false, notConfigured: true, transient: false, provider: 'FAST2SMS', error: 'Fast2SMS DLT route needs the Sender ID.' };
+    if (!(senderId || cfg.sender)) return { ok: false, notConfigured: true, transient: false, provider: 'FAST2SMS', error: 'Fast2SMS DLT route needs the Sender ID.' };
     payload = {
-      route: 'dlt', sender_id: cfg.sender, message: templateId,
+      route: 'dlt', sender_id: senderId || cfg.sender, message: templateId,
       variables_values: (vars || []).map((x) => String(x == null ? '' : x).replace(/\|/g, '/')).join('|'),
       numbers: mobile.national, flash: '0',
     };
@@ -153,6 +155,8 @@ async function viaTwilio(cfg, { mobile, text }) {
   if (/^MG[0-9a-f]{32}$/i.test(cfg.sender)) form.set('MessagingServiceSid', cfg.sender);
   else form.set('From', cfg.sender);
   form.set('Body', text);
+  // Twilio tells us delivered / undelivered / failed here (signed; routes/webhooks.js).
+  if (process.env.APP_BASE_URL) form.set('StatusCallback', `${String(process.env.APP_BASE_URL).replace(/[/]+$/, '')}/api/webhooks/sms/twilio`);
   const res = await core.httpJson(`${cfg.base}/2010-04-01/Accounts/${encodeURIComponent(cfg.sid)}/Messages.json`, {
     method: 'POST',
     headers: {
@@ -168,17 +172,20 @@ async function viaTwilio(cfg, { mobile, text }) {
 
 // kind: 'link' | 'otp' | 'bulk'. `text` is the full message (used verbatim by
 // Twilio and the Fast2SMS quick route); `vars` feed the DLT template.
-async function sendSms({ to, kind = 'bulk', text, vars }) {
+async function sendSms({ to, kind = 'bulk', text, vars, templateId, senderId }) {
   const cfg = await smsConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, transient: false, error: cfg.reason };
   const mobile = core.normalizeMobile(to);
   if (!mobile.ok) return { ok: false, invalid: true, transient: false, error: mobile.reason };
+  if (kind === 'bulk' && await require('./messageDelivery').optedOut('SMS', to)) { // eslint-disable-line global-require
+    return { ok: false, invalid: true, transient: false, error: 'They replied STOP to our SMS, so nothing more is sent to them there.' };
+  }
   const body = String(text || (vars || []).join(' ')).slice(0, 1000);
   // TEST SANDBOX: reported as sent, never transmitted (utils/sandbox.js).
   if (require('./sandbox').isSandbox()) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-sms-${Date.now().toString(36)}`, sandbox: true };
   await core.acquire('SMS');
-  if (cfg.provider === 'MSG91') return viaMsg91(cfg, { mobile, kind, vars: vars || [body] });
-  if (cfg.provider === 'FAST2SMS') return viaFast2sms(cfg, { mobile, kind, vars: vars || [body], text: body });
+  if (cfg.provider === 'MSG91') return viaMsg91(cfg, { mobile, kind, vars: vars || [body], templateId });
+  if (cfg.provider === 'FAST2SMS') return viaFast2sms(cfg, { mobile, kind, vars: vars || [body], text: body, templateId, senderId });
   return viaTwilio(cfg, { mobile, text: body });
 }
 
@@ -196,7 +203,7 @@ async function testConnection() {
       : { ok: false, result: `Failed — ${failure(res, 'MSG91').error}` };
   }
   if (cfg.provider === 'FAST2SMS') {
-    res = await core.httpJson(`${cfg.base}/dev/wallet`, { headers: { authorization: cfg.key, accept: 'application/json' } });
+    res = await core.httpJson(`${cfg.base}/dev/wallet`, { method: 'POST', headers: { authorization: cfg.key, accept: 'application/json' } }); // POST per docs.fast2sms.com/reference/wallet-balance.md
     return res.ok && res.json && res.json.return === true
       ? { ok: true, result: `Connected to Fast2SMS — wallet ${res.json.wallet}${cfg.testMode ? ' (test server)' : ''}` }
       : { ok: false, result: `Failed — ${failure(res, 'FAST2SMS').error}` };

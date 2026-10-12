@@ -26,6 +26,12 @@ const prisma = require('../db');
 const { toMinutes } = require('./attendanceMath');
 
 const STORE_ID = 'attendance-policy-extra';
+// LATE COMING (user, 2026-10-09): a check-in AFTER 09:15 AM is Late. The live
+// value is HrConfig.graceTime (edited on Attendance & Time -> Check-in Methods
+// -> Attendance Policies); this is the value a brand-new HrConfig row gets.
+const LATE_AFTER = '09:15';
+// WEEK OFF = Sunday only (user, 2026-10-09): Saturday is a working day.
+const WEEKLY_OFF = '0';
 const DEFAULTS = Object.freeze({
   workStartTime: '09:00',
   workEndTime: '18:00',
@@ -111,4 +117,4 @@ async function saveExtras(patch = {}) {
   return { extras: next, changed };
 }
 
-module.exports = { STORE_ID, DEFAULTS, KEYS, readExtras, withExtras, saveExtras };
+module.exports = { LATE_AFTER, WEEKLY_OFF, STORE_ID, DEFAULTS, KEYS, readExtras, withExtras, saveExtras };

@@ -5,21 +5,24 @@
  * background sweeps and the tests read the same definition:
  *
  *   quick filter chips   what "Fresher" or "Walk-in" MEANS, as SQL
- *   match reasons        the screening score and its evidence
+ *   match reasons        the AI Match score (skills only) and its reasons
  *   one-click apply      which profile fields it needs
  *   last date            "end of that day in India", and days left
  *   sharing              the share code, the share text, the preview
  *
- * THE MATCH IS THE SCREENING MATCH. explainMatch() builds its inputs the
- * way screenApplication() does (toJob + company, toCandidate + resume
- * text) and scores them with scoreApplication() and the admin's AI
- * settings - so the percentage on a card is the one the application gets
- * when it is screened, and the one an alert quotes.
+ * THE MATCH IS THE AI MATCH (owner, 2026-10-05). explainMatch() builds its
+ * inputs the way screening does (toJob + company, toCandidate + resume
+ * text) and scores them with aiMatch() - JD skills matched / JD skills
+ * required, nothing else - so the percentage on a card is the one in
+ * "Why this match?" and the one an alert quotes. Recruiter screening
+ * (scoreApplication) is a separate, recruiter-only number.
  */
 import { randomBytes } from 'node:crypto';
 import { toJob, toCandidate } from '../shapes.js';
-import { matchCandidate, scoreSkills } from '../ai/match.js';
-import { scoreApplication, loadAiSettings } from '../ai/screening.js';
+import { scoreExperience, scoreLocation, scoreEducation } from '../ai/match.js';
+import { aiMatch } from '../ai/ai-match.js';
+import { loadAiSettings } from '../ai/screening.js';
+import { jobOpportunityMessages, cleanField, isWalkinJob, safeCompany } from '../notify/job-opportunity.js';
 
 /* ------------------------------------------------------------------ *
  * time in India
@@ -156,32 +159,53 @@ export function screeningInputs(jobRow, candRow) {
   };
 }
 
-/** How the job wrote a skill, for a canonical key the matcher returns. */
-function skillDisplay(jobSkills) {
-  const out = new Map();
-  for (const raw of jobSkills || []) {
-    const k = scoreSkills({ skills: [raw] }, { skills: [raw] }).matched[0];
-    if (k && !out.has(k)) out.set(k, raw);
+/** "Java, Python and SQL". */
+const listWords = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+
+function recommendationFor(ai, experience) {
+  const few = (a, n) => listWords(a.slice(0, n));
+  let out;
+  if (!ai.stated) {
+    out = 'This job does not list the skills it needs, so there is no AI Match yet - read the job description to judge the fit.';
+  } else if (!ai.missing.length) {
+    out = `You have all ${ai.required} skill${ai.required === 1 ? '' : 's'} this job lists`
+      + (experience.ok ? ', and your experience fits what it asks for' : '') + ' - a strong job to apply for.';
+  } else if (ai.matched.length * 2 >= ai.required) {
+    out = `You have ${ai.matched.length} of the ${ai.required} skills this job lists. If you also know ${few(ai.missing, 2)}, `
+      + `add ${Math.min(2, ai.missing.length) > 1 ? 'them' : 'it'} to your profile - that raises your AI Match.`;
+  } else if (ai.matched.length) {
+    out = `This job needs skills that are not on your profile yet, such as ${few(ai.missing, 3)}. `
+      + `Your ${few(ai.matched, 2)} ${ai.matched.length === 1 ? 'is' : 'are'} a start - build the rest, or add them if you already have them.`;
+  } else {
+    out = `None of the ${ai.required} skills this job lists (${few(ai.missing, 3)}) are on your profile yet. `
+      + 'Add them if you have them; otherwise this role is a target for later.';
   }
-  return (k) => out.get(k) || k;
+  if (experience.fit === 'unknown') out += ' Add your experience to your profile so recruiters can see it.';
+  else if (experience.fit === 'far' || experience.fit === 'outside') {
+    out += ` The job asks for ${experience.required}; your profile shows ${experience.profile || 'less'}.`;
+  }
+  return out;
 }
 
 /**
- * The score and the reasons behind it, for one candidate and one job.
- * `settings` is loadAiSettings(); pass it in when scoring many.
+ * The candidate's AI Match for one job, and the reasons behind it.
+ *
+ * `score` is aiMatch() - JD skills matched / JD skills required - and
+ * nothing else: it is the number on the card, in "Why this match?", in
+ * the career assistant and in every alert that uses a match threshold.
+ * null when the JD lists no skills (no percentage is shown, not 0%).
+ *
+ * Experience, location, salary, education and work mode are returned as
+ * QUALITATIVE facts and reasons only. They never move the score.
+ *
+ * `_settings` is accepted for older callers and ignored: the AI Match has
+ * no admin weights to read.
  */
-export function explainMatch(jobRow, candRow, settings) {
+export function explainMatch(jobRow, candRow, _settings) {
   const { job, candidate } = screeningInputs(jobRow, candRow);
-  const scored = scoreApplication({ job, candidate, settings });
-  const m = matchCandidate(job, candidate, { threshold: settings.autoShortlistThreshold });
-  const b = m.breakdown;
-  const show = skillDisplay(job.skills);
+  const ai = aiMatch(job, candidate);
 
-  const matched = (b.skills.matched || []).map(show);
-  const implied = (b.skills.implied || []).map(show);
-  const missing = (b.skills.missing || []).map(show);
-
-  const e = b.experience;
+  const e = scoreExperience(job, candidate);
   const yrs = Number.isFinite(e.years) ? e.years : null;
   const experience = {
     fit: e.fit,                                   // inside | near | outside | far | unknown | unstated
@@ -189,12 +213,13 @@ export function explainMatch(jobRow, candRow, settings) {
     years: yrs,
     band: e.band,
     required: job.exp || null,
+    profile: candidate.exp || (yrs != null ? `${yrs} yrs` : null),
   };
 
+  const loc = scoreLocation(job, candidate);
   const location = {
-    ok: !!b.location.matched,
-    reason: b.location.reason,
-    jobLocation: job.location || null,
+    ok: !!loc.matched, reason: loc.reason, jobLocation: job.location || null,
+    preferred: candidate.preferredLocation || candidate.location || null,
   };
 
   const want = Number(candidate.expectedCtc);
@@ -206,30 +231,73 @@ export function explainMatch(jobRow, candRow, settings) {
       : { ...salary, fit: 'above', ok: false };
   }
 
-  /* The one line on a card: "✓ Java, Spring · ✓ 3 yrs · ✗ AWS". */
+  const edu = scoreEducation(job, candidate);
+  const education = { ok: edu.score > 0, reason: edu.reason };
+
+  const modes = (candidate.preferredWorkModes || []).map((m) => String(m).toLowerCase());
+  const jm = String(job.mode || '').toLowerCase();
+  const modeOk = !!jm && modes.some((m) => m && (jm.includes(m) || m.includes(jm)));
+
+  /* "Why this match?" - one row per reason that holds, built from THIS
+     job and THIS profile. Skill gaps are not reasons (the card lists the
+     missing skills separately), and none of these rows feeds the score. */
+  const reasons = [];
+  if (ai.matched.length) {
+    reasons.push({ key: 'skills', text: `${ai.matched.length} of the ${ai.required} skills this job asks for `
+      + `${ai.matched.length === 1 ? 'is' : 'are'} on your ${ai.fromResume.length ? 'profile or resume' : 'profile'}: ${listWords(ai.matched)}` });
+  }
+  if (experience.ok && yrs != null && job.exp) {
+    reasons.push({ key: 'experience', text: `Your ${yrs} yr${yrs === 1 ? '' : 's'} of experience fits the ${job.exp} this job asks for` });
+  }
+  if (loc.matched && loc.reason === 'remote') {
+    reasons.push({ key: 'location', text: `The job is ${job.mode || 'remote'}, so your location does not limit you` });
+  } else if (loc.matched && job.location) {
+    const city = String(loc.city || '').toLowerCase();
+    const pref = !!city && String(candidate.preferredLocation || '').toLowerCase().includes(city);
+    reasons.push({ key: 'location', text: `The job is in ${job.location}, which matches your ${pref ? 'preferred' : 'current'} location` });
+  } else if (loc.reason === 'open to remote') {
+    reasons.push({ key: 'location', text: `The job is ${job.mode}, and you are open to remote work` });
+  }
+  if (salary.ok === true) {
+    reasons.push({ key: 'salary', text: `Offered ${job.pay || `up to ₹${max} LPA`} covers your expected ₹${want} LPA` });
+  }
+  if (edu.reason === 'qualification matches') {
+    reasons.push({ key: 'education', text: `Your education${candidate.education ? ` (${candidate.education})` : ''} matches the requirement (${job.education})` });
+  }
+  if (modeOk) reasons.push({ key: 'mode', text: `${job.mode} matches your preferred work mode` });
+
+  /* The AI Recommendation line: a sentence from THIS job and THIS profile.
+     It explains the AI Match; it never adds a second number. */
+  const recommendation = recommendationFor(ai, experience);
+
+  /* The card's one-line summary, "✓ Java, Spring · ✓ 3 yrs · ✗ AWS" - words,
+     never a percentage (the AI Match at the top is the card's only number). */
   const line = [];
-  if (matched.length) line.push({ ok: true, text: matched.slice(0, 3).join(', ') });
+  if (ai.matched.length) line.push({ ok: true, text: ai.matched.slice(0, 3).join(', ') });
   if (experience.fit !== 'unstated' && yrs != null) {
     line.push({ ok: experience.ok, text: `${yrs} yr${yrs === 1 ? '' : 's'}` });
   } else if (experience.fit === 'unknown') {
     line.push({ ok: false, text: 'experience not on profile' });
   }
-  if (missing.length) line.push({ ok: false, text: missing.slice(0, 2).join(', ') });
+  if (ai.missing.length) line.push({ ok: false, text: ai.missing.slice(0, 2).join(', ') });
 
   return {
     jobId: job.id,
-    score: scored.score,
-    verdict: scored.verdict,
-    matchedSkills: matched,
-    impliedSkills: implied,
-    missingSkills: missing,
-    skillsStated: b.skills.stated !== false,
+    score: ai.score,
+    basis: 'skills',
+    required: ai.required,
+    matchedCount: ai.matchedCount,
+    matchedSkills: ai.matched,
+    missingSkills: ai.missing,
+    resumeSkills: ai.fromResume,
+    skillsStated: ai.stated,
     experience,
     location,
     salary,
-    education: { ok: b.education.score > 0, reason: b.education.reason },
+    education,
+    reasons,
+    recommendation,
     line,
-    breakdown: scored.breakdown,
   };
 }
 
@@ -277,126 +345,36 @@ export function newShareCode() {
   return randomBytes(6).toString('base64url');
 }
 
-/** A field worth printing: never "undefined", "null" or "[object Object]". */
-export const cleanField = (v) => {
-  if (v === undefined || v === null) return '';
-  const s = String(v).trim();
-  return s && !['undefined', 'null', '[object Object]'].includes(s) ? s : '';
-};
-
 /*
- * Sharing a job, candidate to candidate.
+ * Sharing a job, candidate to candidate (owner, 2026-10-06: "when we share
+ * the job description it should be like this only").
  *
- * The message reads as one person passing an opportunity to another -
- * "👋 Hi! I found this job opportunity and thought it might be suitable for
- * you." - followed by THAT job's own public details. Every line comes from
- * the job record and is left out when the job has no value for it; nothing
- * about the person sharing (no name, phone, email, candidate ID) and
- * nothing internal (stages, scores, recruiter, client or database ids) is
- * ever read. The walk-in block appears only for a walk-in job.
+ * The share message IS the job-alert message: notify/job-opportunity.js,
+ * the same function every job alert uses, with the share link
+ * (/job/<id>?ref=<code>, on PUBLIC_SHARE_URL) as its apply URL. Every line
+ * comes from the job record and is left out when the job has no value for
+ * it; nothing about the person sharing (no name, phone, email, candidate
+ * ID) and nothing internal (stages, scores, recruiter, client or database
+ * ids) is ever read. A walk-in job keeps its walk-in block, before the
+ * apply CTA.
  *
  * The company is the name the job's own card shows to candidates (passed in
  * as `company`); a name containing "client" is never printed (0051).
  */
-const WALKIN_CARRY_DEFAULT = ['Updated Resume – Hard Copy', 'A copy of this Job Post'];
-const WALKIN_GATE_NOTE = 'The job post copy must be shown at the main gate entrance.';
-
-const pick = (job, keys) => {
-  for (const k of keys) { const v = cleanField(job && job[k]); if (v) return v; }
-  return '';
-};
-const listOf = (v) => (Array.isArray(v) ? v : String(v || '').split(/\r?\n|;/))
-  .map((x) => cleanField(String(x).replace(/^[\s•\-*]+/, ''))).filter(Boolean);
-
-/** "09:00" -> "9:00 AM"; anything else as written. */
-function clock(t) {
-  const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '').trim());
-  if (!m) return cleanField(t);
-  let hh = Number(m[1]); const ap = hh >= 12 ? 'PM' : 'AM';
-  hh = hh % 12 || 12;
-  return `${hh}:${m[2]} ${ap}`;
-}
-/** "2026-10-10" -> "10 October 2026"; anything else as written. */
-function longDate(d) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || '').trim());
-  if (!m) return cleanField(d);
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  return `${Number(m[3])} ${months[Number(m[2]) - 1]} ${m[1]}`;
-}
-export const isWalkinJob = (job) => !!job && (job.postingKind === 'walkin' || job.jobType === 'walk-in'
-  || /^walk.?in$/i.test(String(job.type || '')));
+export { cleanField, isWalkinJob };
 const freshersWelcome = (exp) => /fresher|^\s*0\s*(?:[-–—+]|to\b|$)/i.test(String(exp || ''));
-function homeWork(mode) {
-  const m = String(mode || '').toLowerCase();
-  if (!m) return '';
-  if (/remote|home|wfh/.test(m)) return 'Available';
-  if (/hybrid/.test(m)) return 'Hybrid';
-  return 'Not Available';
-}
-const safeCompany = (c) => { const v = cleanField(c); return v && !/\bclient\b/i.test(v) ? v : ''; };
-const mapLink = (u) => {
-  const v = cleanField(u);
-  return /^https:\/\/(www\.)?(google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(v) ? v : '';
-};
 
-/** The message without its closing link - the phone's own share sheet adds the URL itself. */
-export function shareLines(job, { company = '' } = {}) {
-  const j = job || {};
-  const title = cleanField(j.title) || 'Job Opportunity';
-  const out = ['👋 Hi! I found this job opportunity and thought it might be suitable for you.', ''];
-  out.push(`📢 ${j.urgent ? 'Urgent Hiring – ' : ''}${title}`);
-  const co = safeCompany(company);
-  if (co) out.push(`🏢 ${co}`);
-  const edu = pick(j, ['education', 'qualification']);
-  if (edu) out.push(`🎓 Qualification: ${edu}`);
-  const exp = pick(j, ['exp', 'experience']);
-  if (exp) out.push(`💼 Experience: ${exp}`);
-  if (freshersWelcome(exp)) out.push('🌟 Freshers Can Apply');
-  const pay = pick(j, ['pay', 'salary']) || (Number(j.stipend) > 0 ? `₹${j.stipend} stipend` : '');
-  if (pay) out.push(`💰 Salary: ${pay}`);
-  const loc = pick(j, ['location']);
-  if (loc) out.push(`📍 Location: ${loc}`);
-  const walk = isWalkinJob(j);
-  const type = pick(j, ['type', 'employmentType']);
-  if (type && !/^walk.?in$/i.test(type)) out.push(`💼 Job Type: ${type}`);
-  const wfh = homeWork(j.mode);
-  if (wfh) out.push(`🏢 Work From Home: ${wfh}`);
-  const reqs = listOf(j.requirements).slice(0, 6);
-  if (reqs.length) out.push('', '✅ Requirements', ...reqs.map((r) => `• ${r}`));
+const shareMessages = (job, link, { company = '' } = {}) =>
+  jobOpportunityMessages(job || {}, { kind: 'share', applyUrl: link || '', company });
 
-  if (walk) {
-    out.push('', '🚶 Walk-In Interview');
-    const date = longDate(pick(j, ['walkinDate']));
-    if (date) out.push(`📅 Walk-In Date: ${date}`);
-    const from = clock(pick(j, ['walkinStartTime', 'walkinFrom']));
-    const to = clock(pick(j, ['walkinEndTime', 'walkinTo']));
-    if (from || to) out.push(`⏰ Interview Time: ${[from, to].filter(Boolean).join(' – ')}`);
-    const carry = listOf(j.walkinDocumentsToCarry || j.walkinDocuments);
-    out.push('📄 Please carry:', ...(carry.length ? carry : WALKIN_CARRY_DEFAULT).map((d) => `• ${d}`));
-    out.push(`⚠️ Important: ${WALKIN_GATE_NOTE}`);
-    const notes = cleanField(j.walkinInstructions);
-    if (notes) out.push(`ℹ️ ${notes}`);
-    const venue = pick(j, ['walkinVenue']);
-    const address = pick(j, ['walkinAddress']);
-    if (venue || address) {
-      out.push('', '📍 Venue:');
-      if (venue) out.push(venue);
-      if (address && address !== venue) out.push(...String(address).split(/\r?\n/).map((x) => x.trim()).filter(Boolean));
-    }
-    const maps = mapLink(j.walkinMapLink);
-    if (maps) out.push(`📍 Get Directions: ${maps}`);
-    const phone = pick(j, ['walkinContactNumber', 'walkinPhone']);
-    const person = pick(j, ['walkinContactPerson', 'walkinContact']);
-    if (phone || person) out.push(`📞 Contact: ${[person, phone].filter(Boolean).join(' – ')}`);
-  }
-  return out;
+/** The message without its "🔗 <link>" line - the phone's own share sheet adds the URL itself. */
+export function shareLines(job, opts = {}) {
+  return shareMessages(job, '', opts).body.split('\n');
 }
 
-/** The whole message, the job's link last. */
+/** The whole message, WhatsApp *bold* and all, with the job's link in its CTA. */
 export function shareText(job, link, opts = {}) {
-  const lines = shareLines(job, opts);
-  lines.push('', `👉 View Job & Apply: ${link}`);
-  return lines.join('\n');
+  return shareMessages(job, link, opts).whatsapp;
 }
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', '::1'];

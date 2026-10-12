@@ -25,6 +25,7 @@ const attachments = require('../utils/attachments');
 const profile = require('../utils/clientProfile');
 const { clientLevelFor } = require('../utils/clientRedact');
 const { atsViewRole } = require('../utils/scope');
+const CL = require('../utils/clientLifecycle');
 
 const ALLOWED_EXT = /\.(pdf|png|jpg)$/i;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -50,8 +51,13 @@ module.exports = function mountClientDocuments(router) {
   }
   async function mayEdit(req, res) {
     if (!(await mayRead(req, res))) return false;
-    if (!(await can(req.user, 'ats', 'clients', 'Client Detail', 'edit'))) {
+    if (!(await can(req.user, 'ats', 'clients', 'Client Detail', 'edit')) || !(await can(req.user, 'ats', 'clients', 'Client Documents', 'create'))) {
       res.status(403).json({ error: 'Only an Admin or the client\'s BDE can change its documents.' });
+      return false;
+    }
+    // A BDE adds documents only to their OWN clients (2026-10-10).
+    if (!CL.ownsClient(req.user, req.client)) {
+      res.status(403).json({ error: 'This client is not yours. Ask the client\'s BDE, the BDE team lead or an Admin.' });
       return false;
     }
     return true;
@@ -122,6 +128,8 @@ module.exports = function mountClientDocuments(router) {
 
   router.delete('/:id/documents/:docId', async (req, res) => {
     if (!(await mayEdit(req, res))) return undefined;
+    // A BDE adds documents; taking one away for good is an Admin's (the BDE cannot erase a signed agreement or a GST paper).
+    if (CL.isDeskBde(req.user)) return res.status(403).json({ error: 'A BDE can add documents but not remove them. Ask an Admin.' });
     const d = await docOf(req, res);
     if (!d) return undefined;
     await prisma.clientDocument.delete({ where: { id: d.id } });
@@ -132,6 +140,8 @@ module.exports = function mountClientDocuments(router) {
 
   router.get('/:id/documents/:docId/file', async (req, res) => {
     if (!(await mayRead(req, res))) return undefined;
+    // The papers of a colleague's client (agreement, GST, PAN ...) are opened by that client's BDE, not the whole desk.
+    if (!CL.ownsClient(req.user, req.client)) return res.status(403).json({ error: 'The documents of this client are opened by its own BDE, the BDE team lead or an Admin.' });
     const d = await docOf(req, res);
     if (!d) return undefined;
     const file = attachments.resolveStored(d.fileStored);

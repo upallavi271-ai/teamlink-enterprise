@@ -118,7 +118,41 @@ export default function AccountsImport({
             {result.duplicates > 0 && <> {result.duplicates} already on file — skipped, nothing overwritten.</>}
           </span>
         </div>
-        {result.kind === 'bank' && result.autoMatched != null && result.imported > 0 && (
+        {result.kind === 'bank' && result.summary && (
+          <div className="notice" role="status" style={{ marginTop: 10 }}>
+            <span>
+              <b>Imported {result.summary.imported}</b> · Matched {result.summary.matched} · Not matched yet {result.summary.unmatched} · Already on file {result.summary.duplicate} · Could not read {result.summary.failed}
+              {result.summary.needsReview > 0 && <> · <b>Needs your review {result.summary.needsReview}</b></>}
+            </span>
+            {result.summary.needsReview > 0 && onReview && (
+              <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 10 }} onClick={() => { onReview(); }}>Review now →</button>
+            )}
+          </div>
+        )}
+        {result.fileAlreadyImported && (
+          <div className="notice amber" style={{ marginTop: 10 }}><span>This exact file was already imported on {d(result.fileAlreadyImported.on)}.</span></div>
+        )}
+        {result.balanceCheck && result.balanceCheck.checked && (
+          <div className={`notice ${result.balanceCheck.ok ? '' : 'red'}`} style={{ marginTop: 10 }}>
+            <span>
+              {result.balanceCheck.ok
+                ? <>Statement balances tie: opening {inr(result.balanceCheck.opening?.value)} + credits {inr(result.balanceCheck.credits)} − debits {inr(result.balanceCheck.debits)} = closing {inr(result.balanceCheck.closing?.value)}.</>
+                : <>Statement balances do <b>not</b> tie{result.balanceCheck.diff != null ? ` (out by ${inr(Math.abs(result.balanceCheck.diff))})` : ''}{result.balanceCheck.breaks?.length ? ` — ${result.balanceCheck.breaks.length} place(s) where a line seems to be missing, first on ${d(result.balanceCheck.breaks[0].date)}` : ''}. Amounts were not changed.</>}
+            </span>
+          </div>
+        )}
+        {result.balanceCheck && !result.balanceCheck.checked && result.balanceCheck.limitation && (
+          <div className="small-muted" style={{ marginTop: 8 }}>{result.balanceCheck.limitation}</div>
+        )}
+        {(result.failedRows?.length > 0) && (
+          <details open style={{ marginTop: 10 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>{result.failedRows.length} row(s) were NOT imported — here is why</summary>
+            <ul className="small-muted" style={{ margin: '6px 0 0 18px', lineHeight: 1.6 }}>
+              {result.failedRows.slice(0, 50).map((f, i) => <li key={i}>Row {f.line}: {f.reason}</li>)}
+            </ul>
+          </details>
+        )}
+        {result.kind === 'bank' && result.autoMatched != null && result.imported > 0 && !result.summary && (
           <div className="notice" role="status" style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ flex: 1 }}>
               <b>{result.imported} line(s) imported · {result.autoMatched} matched and proof attached · {result.needsReview} need your review</b>
@@ -223,6 +257,32 @@ export default function AccountsImport({
             </span>
           </div>
 
+          {preview.kind === 'bank' && s.balanceCheck && s.balanceCheck.checked && (
+            <div className={`notice ${s.balanceCheck.ok ? '' : 'red'}`} style={{ marginBottom: 8 }}>
+              <span>
+                {s.balanceCheck.ok
+                  ? <>Balances tie: opening {inr(s.balanceCheck.opening?.value)} + credits − debits = closing {inr(s.balanceCheck.closing?.value)}.</>
+                  : <>Balances do <b>not</b> tie{s.balanceCheck.diff != null ? ` — out by ${inr(Math.abs(s.balanceCheck.diff))}` : ''}. A line may be missing from this file. Nothing will be changed to force a match.</>}
+              </span>
+            </div>
+          )}
+          {preview.kind === 'bank' && s.balanceCheck && !s.balanceCheck.checked && s.balanceCheck.limitation && (
+            <div className="small-muted" style={{ marginBottom: 8 }}>{s.balanceCheck.limitation}</div>
+          )}
+          {preview.kind === 'bank' && (s.failed > 0 || s.duplicates > 0) && (
+            <div className="notice amber" style={{ marginBottom: 8 }}>
+              <span>
+                {s.newLines} new line(s) · {s.duplicates} already on file (skipped) · {s.failed} row(s) cannot be read
+                {s.needsReview > 0 ? ` · ${s.needsReview} will be marked Needs Review` : ''}
+              </span>
+              {s.failedRows?.length > 0 && (
+                <details style={{ marginTop: 6 }}>
+                  <summary style={{ cursor: 'pointer' }}>Show the rows that cannot be read</summary>
+                  <ul style={{ margin: '4px 0 0 16px' }}>{s.failedRows.slice(0, 30).map((f, i) => <li key={i}>Row {f.line}: {f.reason}</li>)}</ul>
+                </details>
+              )}
+            </div>
+          )}
           {preview.problems.length > 0 && (
             <div className="notice amber" style={{ marginBottom: 8 }}>
               <ul style={{ margin: '0 0 0 16px' }}>{preview.problems.map((p) => <li key={p}>{p}</li>)}</ul>

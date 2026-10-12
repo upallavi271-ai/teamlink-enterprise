@@ -15,11 +15,9 @@ let lastSweep = Date.now();
 // The caller: the socket peer, unless that peer is a local proxy (the Vite
 // dev proxy, nginx on the same box) — then the LAST X-Forwarded-For hop, the
 // one the proxy itself appended (a caller can fake the first hops, not that one).
+// One shared helper (utils/clientIp.js) so the rate limits and the audit / device logs agree.
 function ipOf(req) {
-  const peer = String((req.socket && req.socket.remoteAddress) || req.ip || '').replace(/^::ffff:/, '');
-  const local = /^(127\.|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(peer);
-  const hops = String(req.headers['x-forwarded-for'] || '').split(',').map((h) => h.trim()).filter(Boolean);
-  return ((local && hops.length ? hops[hops.length - 1] : peer) || 'unknown').slice(0, 60);
+  return require('./clientIp').ipOf(req); // eslint-disable-line global-require
 }
 
 function sweep(now) {

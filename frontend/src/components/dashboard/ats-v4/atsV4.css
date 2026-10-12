@@ -179,3 +179,24 @@
 /* legacy short lists in a narrow slot: wrap the chip + button under the name */
 .av4 .av4-slot .ah-list li{flex-wrap:wrap;gap:4px 10px}
 .av4 .av4-slot .ah-list-m{flex:1 1 150px}
+
+/* Department / team tables: each header says what it counts; a real zero is a quiet grey 0 (2026-10-10) */
+.av4 .av4-zero{color:var(--ink-faint);font-variant-numeric:tabular-nums;font-weight:500;opacity:.8}
+.av4 .av4-th{vertical-align:bottom}
+.av4 .av4-th .av4-th-l{display:block;font-weight:700}
+.av4 .av4-th .av4-th-b{display:block;font-size:9.5px;font-weight:500;color:var(--ink-faint);text-transform:none;letter-spacing:0;white-space:nowrap;margin-top:1px}
+.av4 .av4-th.is-total .av4-th-b{color:#14804A;font-weight:600}
+.av4 .av4-th.is-total,.av4 .av4-c-total{border-left:1px dashed var(--line,#dfe3ea)}
+.av4 .av4-dtbl tfoot td{font-weight:700;border-top:2px solid var(--line,#dfe3ea);background:var(--bg-soft,#f6f8fb)}
+.av4 .av4-dtbl tfoot .av4-n{font-weight:800}
+.av4 .av4-dnotes{padding:8px 16px 12px;display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line,#eef0f4)}
+.av4 .av4-dnotes .av4-note{padding:3px 0 0;line-height:1.35}
+.av4 .av4-dnotes .av4-note.is-warn{color:#8a5a00}
+.av4 .av4-dnotes .av4-note.is-bad{color:#C2362B}
+.av4 .av4-dnotes .link-btn{font-size:inherit;font-weight:600;white-space:normal;text-align:left}
+/* the department table has two more columns than before: give it more of the row, let the basis wrap under its label */
+.av4 .av4-row3 > .av4-dept{flex:1.7 1 560px}
+.av4 .av4-row3 > .av4-team{flex:1 1 380px}
+.av4 .av4-dtbl th,.av4 .av4-dtbl td{padding-left:5px;padding-right:5px}
+.av4 .av4-th .av4-th-b{white-space:normal;line-height:1.1;max-width:64px;margin-left:auto}
+.av4 .av4-th .av4-th-l{white-space:nowrap}

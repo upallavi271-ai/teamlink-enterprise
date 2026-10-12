@@ -7,9 +7,14 @@ const chain = require('../utils/chainRoute');
 const workflow = require('../utils/approvalWorkflow');
 const { systemRequesterError } = require('../utils/systemAccounts');
 const { CONSULTANT } = require('../utils/agreement');
+const resignationInfo = require('../utils/resignationInfo');
+
+// Marking a resignation Relieved ends the person's seat (utils/seatRelease.js); this names who did it.
+const seatRelease = require('../utils/seatRelease');
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(seatRelease.actorScope);
 
 
 // ---------------------------------------------------------------------------
@@ -212,6 +217,9 @@ function present(record, days, detail) {
     source: imported ? 'Imported' : 'TeamLink',
     type: record.category || null,
     resignationDate: (d && d.resignationDate) || null,
+    // The time of day it was given (HH:MM) and the pair in words, for every screen.
+    resignationTime: (d && d.resignationTime) || null,
+    resignedOn: resignationInfo.whenWords(d && d.resignationDate, d && d.resignationTime) || null,
     relievingDate: record.status === 'Relieved' ? lwd : null,
     reason: d ? (d.reason === OTHER && d.reasonOther ? `${OTHER}: ${d.reasonOther}` : d.reason) : record.title,
     notes: record.detail,
@@ -420,6 +428,10 @@ router.post('/', async (req, res, next) => {
 
     const resignationDate = clean(b.resignationDate, 10) || today;
     if (!ISO_DATE.test(resignationDate)) return res.status(400).json({ error: 'Resignation Date must be a date (YYYY-MM-DD).' });
+    // The TIME it was given: what the form says, else right now (office clock).
+    const nowClock = new Date();
+    const resignationTime = clean(b.resignationTime, 5) || `${String(nowClock.getHours()).padStart(2, '0')}:${String(nowClock.getMinutes()).padStart(2, '0')}`;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(resignationTime)) return res.status(400).json({ error: 'Resignation Time must be a time like 10:30.' });
 
     // REASON: one of the configured reasons, or Other with the reason in
     // words. `title` is the pre-form field name, still accepted.
@@ -477,6 +489,8 @@ router.post('/', async (req, res, next) => {
         designation: info.designation,
         reportingManager: info.reportingManager,
         resignationDate,
+        resignationTime,
+        source: 'Filed in TeamLink',
         requestedLastWorkingDate,
         reason,
         reasonOther: reason === OTHER ? reasonOther : null,

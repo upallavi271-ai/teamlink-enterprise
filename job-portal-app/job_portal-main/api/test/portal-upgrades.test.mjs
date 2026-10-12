@@ -195,24 +195,44 @@ test('chips filter the job board in SQL', async () => {
  * 2. match reasons
  * ------------------------------------------------------------------ */
 
-test('explain gives the same score as screening, with reasons; candidates only, 50 at most', async () => {
+test('explain is the AI Match - JD skills matched / required, nothing else - with reasons; candidates only, 50 at most', async () => {
   const j = await job({ title: 'Java Developer' });
   const c = await candidate('Explain Same', { skills: ['Java', 'Spring', 'SQL'] });
 
   const ex = await c.get(`/api/job-matches/explain?jobIds=${j}`);
   assert.equal(ex.status, 200, JSON.stringify(ex.body));
   const m = ex.body.matches[0];
+  assert.equal(m.score, 75, '3 of the 4 JD skills');
+  assert.equal(m.basis, 'skills');
+  assert.deepEqual([m.matchedCount, m.required], [3, 4]);
   assert.deepEqual(m.matchedSkills, ['Java', 'Spring', 'SQL']);
   assert.deepEqual(m.missingSkills, ['AWS']);
   assert.equal(m.experience.ok, true);
   assert.equal(m.location.ok, true);
   assert.deepEqual(m.line.map((x) => [x.ok, x.text]), [[true, 'Java, Spring, SQL'], [true, '3 yrs'], [false, 'AWS']]);
+  assert.ok(m.reasons.some((x) => x.key === 'skills') && m.reasons.some((x) => x.key === 'location'), JSON.stringify(m.reasons));
+  assert.equal(typeof m.recommendation, 'string');
+  assert.equal(/\d+%/.test(m.recommendation), false, 'the recommendation quotes no second number');
 
+  /* location, experience and salary do not move it */
+  await raw(`update candidates set location='Chennai', preferred_location='Chennai', exp='12 yrs', exp_years=12, expected_ctc=40 where id=$1`, [c.id]);
+  const moved = (await c.get(`/api/job-matches/explain?jobIds=${j}`)).body.matches[0];
+  assert.equal(moved.score, 75, 'location, experience and salary changed; the AI Match did not');
+  assert.equal(moved.location.ok, false);
+  await setProfile(c.id, { skills: ['Java', 'Spring', 'SQL'] });
+
+  /* a JD with no skills has no AI Match - not 0% */
+  const none = await job({ title: 'Staff Nurse', skills: [] });
+  const n = (await c.get(`/api/job-matches/explain?jobIds=${none}`)).body.matches[0];
+  assert.equal(n.score, null);
+  assert.equal(n.skillsStated, false);
+
+  /* recruiter screening keeps its own multi-factor score; it is not the candidate's AI Match */
   const applied = await c.post('/api/applications', { jobId: j });
   assert.equal(applied.status, 201, JSON.stringify(applied.body));
-  assert.equal(applied.body.screening.score, m.score, 'the card and screening agree');
+  assert.equal(typeof applied.body.screening.score, 'number');
   const row = (await raw(`select match_score from applications where id=$1`, [applied.body.application.id])).rows[0];
-  assert.equal(Number(row.match_score), m.score);
+  assert.equal(Number(row.match_score), applied.body.screening.score);
 
   assert.equal((await makeClient(base).get(`/api/job-matches/explain?jobIds=${j}`)).status, 401);
   assert.equal((await recruiter.get(`/api/job-matches/explain?jobIds=${j}`)).status, 403);
@@ -224,20 +244,18 @@ test('explain gives the same score as screening, with reasons; candidates only, 
  * 4. one-click apply + Undo
  * ------------------------------------------------------------------ */
 
-test('one-click: refused with the missing fields, idempotent, Undo within 10 s by the owner only', async () => {
+test('one-click: an incomplete profile still applies (missing listed, never required), idempotent, Undo within 10 s by the owner only', async () => {
   const j = await job({ title: 'One Click Role' });
   const c = await candidate('One Clicker', { resume_file: null, skills: [] });
   const other = await candidate('Someone Else');
 
   const check = await c.get('/api/applications/one-click/check');
   assert.deepEqual(check.body, { ready: false, missing: ['skills', 'resume'] });
-  const refused = await c.post('/api/applications/one-click', { jobId: j });
-  assert.equal(refused.status, 422);
-  assert.deepEqual(refused.body.error.details.missing, ['skills', 'resume']);
-  assert.match(refused.body.error.message, /Fill 2 things to apply/);
-
-  await setProfile(c.id, {});
+  /* 0118: applying never waits for the profile. */
   const first = await c.post('/api/applications/one-click', { jobId: j });
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  assert.deepEqual(first.body.profileMissing, ['skills', 'resume']);
+  assert.ok(first.body.application.reference, 'an Application ID to show');
   assert.equal(first.status, 201, JSON.stringify(first.body));
   const again = await c.post('/api/applications/one-click', { jobId: j });
   assert.equal(again.status, 200);
@@ -346,8 +364,11 @@ test('share: the link moves to PUBLIC_SHARE_URL (path and ?ref kept); blank fiel
   assert.equal(t.includes('Location'), false);
   assert.equal(t.includes('Job Type'), false);
   assert.equal(t.includes('undefined'), false);
-  assert.match(t, /📢 Staff Nurse/);
-  assert.equal(shareText({}, 'https://x.test/job/j2').includes('📢 Job Opportunity'), true);
+  assert.match(t, /🏥 \*Staff Nurse\*/);
+  /* no title: no title line, never a placeholder */
+  const empty = shareText({}, 'https://x.test/job/j2');
+  assert.equal(empty.includes('🏥'), false);
+  assert.ok(empty.includes('🔗 https://x.test/job/j2'));
 
   const j = await job({ title: 'Public Share Role', location: 'Guntur', pay: '₹3 LPA' });
   process.env.PUBLIC_SHARE_URL = 'https://jobs.example.in';
@@ -372,17 +393,23 @@ test('share: a walk-in job carries its walk-in block; a regular job never does; 
   const ws = await makeClient(base).post(`/api/jobs/${w}/share`, { channel: 'whatsapp' });
   assert.equal(ws.status, 201, JSON.stringify(ws.body));
   const t = ws.body.text;
-  for (const line of ['👋 Hi! I found this job opportunity and thought it might be suitable for you.',
-    '📢 Urgent Hiring – HR Recruiter', '🎓 Qualification: Any Degree', '💼 Experience: 0-Any', '🌟 Freshers Can Apply',
-    '💰 Salary: ₹3 LPA', '📍 Location: KPHB, Hyderabad', '✅ Requirements', '• Telugu & English are Mandatory',
-    '🚶 Walk-In Interview', '📅 Walk-In Date: 10 October 2026', '⏰ Interview Time: 10:00 AM – 4:00 PM',
+  /* the job-opportunity format (owner, 2026-10-06), with the walk-in block before the apply CTA */
+  for (const line of ['*🚀 NEW JOB OPPORTUNITY – KPHB, Hyderabad*',
+    'Hi! 👋 We found a job opportunity that could be a great match for your profile!',
+    '🏥 *HR Recruiter*', '🎓 Qualification: Any Degree', '💼 Experience: *0-Any*',
+    '💰 Salary: *₹3 LPA*', '📍 Location: *KPHB, Hyderabad*', "*⭐ What We're Looking For*", '✅ Telugu & English are Mandatory',
+    '*🚶 Walk-In Interview*', '📅 Walk-In Date: 10 October 2026', '⏰ Interview Time: 10:00 AM – 4:00 PM',
     '📄 Please carry:', '• Updated Resume – Hard Copy', '• A copy of this Job Post',
     '⚠️ Important: The job post copy must be shown at the main gate entrance.', '📍 Venue:',
     'TeamLink Consultants (OPC) Pvt. Ltd.', '📞 Contact: HR Desk – 9032321414',
-    `👉 View Job & Apply: ${base}/job/${w}?ref=${ws.body.code}`]) {
+    '*👉 Interested? Explore the complete job details and apply now:*',
+    `🔗 ${base}/job/${w}?ref=${ws.body.code}`, "📩 Don't miss this opportunity — apply today!"]) {
     assert.ok(t.split('\n').includes(line), `missing line: ${line}\n---\n${t}`);
   }
-  assert.equal(/💼 Job Type: Walk-in/.test(t), false, 'walk-in is not shown as a job type line');
+  const tl = t.split('\n');
+  assert.ok(tl.indexOf('*🚶 Walk-In Interview*') < tl.indexOf('*👉 Interested? Explore the complete job details and apply now:*'),
+    'the walk-in block comes before the apply CTA');
+  assert.equal(/Job Type: Walk-in/.test(t), false, 'walk-in is not shown as a job type line');
   /* the WhatsApp link decodes back to exactly the message: emojis, ₹, &, new lines survive */
   assert.equal(decodeURIComponent(ws.body.links.whatsapp.replace('https://wa.me/?text=', '')), t);
   assert.equal(/[\s]/.test(ws.body.links.whatsapp.slice('https://wa.me/?text='.length)), false, 'unencoded characters in the link');
@@ -390,9 +417,9 @@ test('share: a walk-in job carries its walk-in block; a regular job never does; 
   const r = await job({ title: 'Software Developer', location: 'Hyderabad', pay: '₹5-8 LPA', exp: '1-3 yrs', mode: 'Hybrid' });
   const rs = await makeClient(base).post(`/api/jobs/${r}/share`, { channel: 'copy' });
   const rt = rs.body.text;
-  assert.match(rt, /📢 Software Developer/);
-  assert.match(rt, /💼 Job Type: Full-time/);
-  assert.match(rt, /🏢 Work From Home: Hybrid/);
+  assert.match(rt, /🏥 \*Software Developer\*/);
+  assert.match(rt, /🕐 Job Type: Full-time/);
+  assert.match(rt, /🏠 Work From Home: Hybrid/);
   for (const word of ['Walk-In', 'Venue', 'main gate', 'Hard Copy', 'Please carry']) {
     assert.equal(rt.includes(word), false, `"${word}" in a regular job's share`);
   }
@@ -404,7 +431,7 @@ test('share: a walk-in job carries its walk-in block; a regular job never does; 
   for (const word of ['undefined', 'null', 'NaN', 'Salary', 'Location', 'Experience', 'Qualification', 'Job Type']) {
     assert.equal(mt.includes(word), false, `"${word}" in a share of a job without it:\n${mt}`);
   }
-  assert.match(mt, /📢 Field Assistant/);
+  assert.match(mt, /🏥 \*Field Assistant\*/);
 });
 
 test('share: code, text and link preview without the client name; clicks and applies counted', async () => {
@@ -415,11 +442,17 @@ test('share: code, text and link preview without the client name; clicks and app
   const link = `${base}/job/${j}?ref=${s.body.code}`;
   assert.equal(s.body.url, link);
   assert.equal(s.body.text, [
-    '👋 Hi! I found this job opportunity and thought it might be suitable for you.', '',
-    '📢 Share Role', `🏢 ${CLIENT_NAME}`, '💼 Experience: 2-4 yrs', '💰 Salary: ₹3-4 LPA',
-    '📍 Location: Nellore', '💼 Job Type: Full-time', '🏢 Work From Home: Not Available', '',
-    `👉 View Job & Apply: ${link}`].join('\n'));
-  assert.equal(s.body.body, s.body.text.split('\n').slice(0, -2).join('\n'), 'body = the message without its link');
+    '*🚀 NEW JOB OPPORTUNITY – Nellore*', '',
+    'Hi! 👋 We found a job opportunity that could be a great match for your profile!', '',
+    '🏥 *Share Role*', `🏢 *${CLIENT_NAME}*`, '',
+    '💼 Experience: *2-4 yrs*', '💰 Salary: *₹3-4 LPA*', '📍 Location: *Nellore*', '🕐 Job Type: Full-time',
+    '🏠 Work From Home: Not Available', '',
+    '*👉 Interested? Explore the complete job details and apply now:*',
+    `🔗 ${link}`,
+    "📩 Don't miss this opportunity — apply today!", '',
+    `*${CLIENT_NAME}*`].join('\n'));
+  assert.equal(s.body.body, s.body.text.split('\n').filter((l) => l !== `🔗 ${link}`).join('\n'),
+    'body = the message without its link line');
   assert.equal(decodeURIComponent(s.body.links.whatsapp.replace('https://wa.me/?text=', '')), s.body.text);
   assert.equal(s.body.publicLink, false, 'a 127.0.0.1 link is reported as not public');
   assert.ok(s.body.links.whatsapp.startsWith('https://wa.me/?text='));
@@ -473,11 +506,12 @@ test('urgent hiring alert: above 60% only, both channels, applied skipped, never
 
   /* only the four profiles below match anything from here on */
   await raw(`update candidates set skills='{}', technical_skills='{}'`);
-  AJ = await job({ title: 'Alert Java Developer' });
-  at60 = await candidate('Sixty Exactly', { skills: ['Java', 'Spring'] });
-  at80 = await candidate('Eighty Match', { skills: ['Java', 'Spring', 'AWS'] });
-  applied100 = await candidate('Already Applied', { skills: ['Java', 'Spring', 'AWS', 'SQL'] });
-  dnc = await candidate('Do Not Contact', { skills: ['Java', 'Spring', 'AWS'] });
+  /* five JD skills, so the AI Match lands on 60 / 80 / 100 exactly */
+  AJ = await job({ title: 'Alert Java Developer', skills: ['Java', 'Spring', 'AWS', 'SQL', 'Docker'] });
+  at60 = await candidate('Sixty Exactly', { skills: ['Java', 'Spring', 'AWS'] });
+  at80 = await candidate('Eighty Match', { skills: ['Java', 'Spring', 'AWS', 'SQL'] });
+  applied100 = await candidate('Already Applied', { skills: ['Java', 'Spring', 'AWS', 'SQL', 'Docker'] });
+  dnc = await candidate('Do Not Contact', { skills: ['Java', 'Spring', 'AWS', 'SQL'] });
   await raw(`update candidates set do_not_contact = true where id=$1`, [dnc.id]);
 
   const s60 = (await at60.get(`/api/job-matches/explain?jobIds=${AJ}`)).body.matches[0].score;
@@ -502,7 +536,12 @@ test('urgent hiring alert: above 60% only, both channels, applied skipped, never
   const inbox = (await raw(`select title, message, metadata from notifications where recipient_id=$1 and type='URGENT_HIRING'`, [at80.id])).rows;
   assert.equal(inbox.length, 1);
   assert.equal(inbox[0].title, 'Urgent hiring');
-  assert.match(inbox[0].message, /Alert Java Developer · Acme Hospitals · 80% match/);
+  /* the inbox entry is the full job-opportunity message (owner, 2026-10-06) */
+  assert.match(inbox[0].message, /^\*🚀 URGENT HIRING – Nellore\*\n\nHi! 👋 We found an urgent job opening that could be a great match for your profile \(80% match\)!/);
+  assert.ok(inbox[0].message.includes('🏥 *Alert Java Developer*'));
+  assert.ok(inbox[0].message.includes(`🏢 *${CLIENT_NAME}*`));
+  assert.ok(inbox[0].message.includes(`🔗 ${process.env.PUBLIC_ORIGIN.replace(/\/$/, '')}/#/job/${AJ}`), inbox[0].message);
+  assert.equal(inbox[0].metadata.format, 'job_opportunity');
   assert.equal(inbox[0].metadata.applyUrl, `#/job/${AJ}`);
   assert.equal(inbox[0].metadata.cta, 'Apply now');
   /* the candidate reads it through the API */
@@ -541,8 +580,8 @@ test('last-date alerts: two days before and on the day, match recomputed when se
   assert.equal((await log(AJ, at60.id)).length, 0);
 
   /* the profiles change before the last day: the 60 becomes 80 and the 80 becomes 60 */
-  await setProfile(at60.id, { skills: ['Java', 'Spring', 'AWS'] });
-  await setProfile(at80.id, { skills: ['Java', 'Spring'] });
+  await setProfile(at60.id, { skills: ['Java', 'Spring', 'AWS', 'SQL'] });
+  await setProfile(at80.id, { skills: ['Java', 'Spring', 'AWS'] });
   await raw(`update jobs set expires_at=$2 where id=$1`, [AJ, core.endOfIstDay(core.istDay(now))]);
   const c = await alerts.runDeadlineAlerts({ now });
   assert.ok(c.some((r) => r.jobId === AJ && r.event === 'deadline_today'));

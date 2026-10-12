@@ -31,11 +31,14 @@ class Cell {
   get n() { return this.ids.size; }
 }
 
-async function build(user, q) {
+// opts.rawScope: a Prisma invoice where used INSTEAD of the login's own invoiceWhere (utils/reportPack.js, the team-wise
+// cash report: a TL / STL / Manager reads the invoices of the people in THEIR team, narrowed by that module, not by the
+// Accounts desk scope). Everyone else calls it as before.
+async function build(user, q, opts = {}) {
   const s = (v) => (typeof v === 'string' ? v.trim() : '');
   const range = s(q.range) || 'all';
   const P = range === 'all' ? null : dateRange.resolve({ range, from: s(q.from), to: s(q.to) });
-  const and = [invoiceWhere(user)];
+  const and = [opts.rawScope || invoiceWhere(user)];
   if (s(q.clientId)) and.push({ clientId: s(q.clientId) });
   if (s(q.department)) and.push({ client: { is: { ownerDepartment: s(q.department) } } });
   const invs = await prisma.invoice.findMany({
@@ -92,7 +95,7 @@ async function build(user, q) {
   const tOut = cell('t:outstanding', 'inv'); live.filter((i) => outstandingOf(i) > 0.5).forEach((i) => tOut.add(i.id));
   tile('invoiced', 'Invoiced', rupees(inRange.reduce((n, i) => n + i.netAmount, 0)), tInv, inRange.length ? `${inRange.length} invoices · before GST, after credit notes` : 'no invoices in this period');
   tile('received', 'Received', rupees(pays.reduce((n, p) => n + Number(p.amount || 0), 0)), tRec, pays.length ? `${pays.length} payments` : 'no payments in this period');
-  tile('outstanding', 'Still to come', rupees(live.reduce((n, i) => n + outstandingOf(i), 0)), tOut, 'all open invoices, now');
+  tile('outstanding', 'Still to come', rupees(live.filter((i) => outstandingOf(i) > 0.5).reduce((n, i) => n + outstandingOf(i), 0)), tOut, 'all open invoices, now');
   tiles.push({ key: 'recruiters', label: 'Recruiters billed', value: new Set(inRange.map((i) => i.rec.key)).size, cell: null, sub: 'with an invoice in this period', type: 'num' });
 
   // One table builder: rows keyed by `keyOf`, the same four money columns.
@@ -114,7 +117,9 @@ async function build(user, q) {
     live.forEach((i) => { const o = outstandingOf(i); if (o <= 0.5) return; const r = rowOf(i); r.v.outstanding += o; r.cells.outstanding.add(i.id); });
     const list = [...rows.values()];
     const total = { [first.key]: 'Total', invoices: 0, invoiced: 0, received: 0, outstanding: 0 };
-    list.forEach((r) => { ['invoiced', 'received', 'outstanding'].forEach((k) => { r.v[k] = rupees(r.v[k]); total[k] += r.v[k]; }); total.invoices += r.v.invoices; });
+    // The total is worked out from the exact amounts and rounded once (rows rounded one by one can add up to a rupee more or less).
+    list.forEach((r) => { ['invoiced', 'received', 'outstanding'].forEach((k) => { total[k] += r.v[k]; r.v[k] = rupees(r.v[k]); }); total.invoices += r.v.invoices; });
+    ['invoiced', 'received', 'outstanding'].forEach((k) => { total[k] = rupees(total[k]); });
     const columns = [
       first,
       { key: 'invoices', label: 'Invoices', type: 'num', drill: true },
@@ -144,7 +149,7 @@ async function build(user, q) {
   if (un.length) notes.push(`${un.length} invoice(s) name no recruiter: the job has no recruiter and the candidate has no application at that client. They are in the "${UNATTRIBUTED}" row.`);
   if (!invs.length) notes.push('No invoices in your area for these filters.');
   return {
-    P, tiles, cells, sections: [byRec, byMonth, byClient], invById, pays, notes, options: { invs },
+    P, tiles, cells, sections: [byRec, byMonth, byClient], invById, pays, notes, options: { invs }, inRange, live, outstandingOf,
   };
 }
 

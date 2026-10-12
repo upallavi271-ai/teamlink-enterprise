@@ -48,6 +48,23 @@ router.use((req, res, next) => {
   return requireOfficeWrite(req, res, next);
 });
 
+// Recon spec 4.9: a new, edited or approved bill (or vendor) may let a bank line
+// that was waiting match - so after any successful write, look at the waiting
+// lines again, quietly, once things have settled. Failure here never touches
+// the response (the bank screen's "Check again" does the same on demand).
+let reconTimer = null;
+function reconsiderBankSoon() {
+  clearTimeout(reconTimer);
+  reconTimer = setTimeout(() => {
+    try { Promise.resolve(require('./bank').reconsiderOpenLines()).catch(() => {}); } catch { /* bank module not available */ }
+  }, 1500);
+  if (reconTimer.unref) reconTimer.unref();
+}
+router.use((req, res, next) => {
+  if (WRITE_METHODS.includes(req.method)) res.on('finish', () => { if (res.statusCode < 300) reconsiderBankSoon(); });
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // OFFICE EXPENDITURE
 // The accounting application's own vocabulary, kept literally:
@@ -1280,10 +1297,29 @@ const isoDateOf = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
 };
-const paymentDateOf = (r) => (r.approvalStatus === 'REIMBURSED' ? isoDateOf(r.reimbursedAt || r.paidAt)
-  : (r.approvalStatus === 'PAID' ? isoDateOf(r.paidAt) : null));
+// Spec 7: the ACTUAL payment date. In order: the date recorded on the bill, the
+// date printed on the bank statement line that paid it, and only then the day
+// someone pressed Mark paid (labelled as such). The day a statement was
+// imported or synced (paidAt on a bank-settled bill) is never the payment date.
+function paymentDateFacts(r, txnDates) {
+  const paid = r.approvalStatus === 'PAID' || r.approvalStatus === 'REIMBURSED';
+  if (!paid) return { date: null, source: null };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(r.paymentDate || ''))) return { date: r.paymentDate, source: 'entered' };
+  const viaBank = r.bankTxnId && txnDates ? txnDates.get(r.bankTxnId) : null;
+  if (viaBank) return { date: viaBank, source: 'bank' };
+  if (r.bankTxnId) return { date: null, source: null }; // linked line gone: show no date rather than the sync time
+  const marked = r.approvalStatus === 'REIMBURSED' ? isoDateOf(r.reimbursedAt || r.paidAt) : isoDateOf(r.paidAt);
+  return { date: marked, source: marked ? 'marked' : null };
+}
+async function txnDatesFor(rows) {
+  const ids = [...new Set(rows.map((r) => r.bankTxnId).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const t = await prisma.bankTransaction.findMany({ where: { id: { in: ids } }, select: { id: true, date: true } });
+  return new Map(t.map((x) => [x.id, x.date]));
+}
 
-function ledgerRow(r, names) {
+function ledgerRow(r, names, txnDates) {
+  const pay = paymentDateFacts(r, txnDates);
   return {
     id: r.id,
     expenseCode: r.expenseCode || null,
@@ -1311,7 +1347,8 @@ function ledgerRow(r, names) {
     statusText: LEDGER_STATUS_SHORT[r.approvalStatus] || r.approvalStatus,
     // When the money went out: marked paid, or reimbursed. Bills paid before
     // payment dates were recorded have none — nothing is guessed.
-    paymentDate: paymentDateOf(r),
+    paymentDate: pay.date,
+    paymentDateSource: pay.source,
     billNumber: r.billNumber || null,
     bill: r.proofName ? {
       name: r.proofName,
@@ -1337,9 +1374,10 @@ router.get('/ledger', async (req, res) => {
   const page = Math.min(pages, Math.max(1, Number.parseInt(req.query.page, 10) || 1));
   const slice = d.rows.slice((page - 1) * pageSize, page * pageSize);
   const names = await peopleOf(slice.map((r) => r.createdById));
+  const txnDates = await txnDatesFor(slice);
   const approver = await isApprover(req.user);
   res.json({
-    rows: slice.map((r) => ledgerRow(r, names)),
+    rows: slice.map((r) => ledgerRow(r, names, txnDates)),
     page,
     pageSize,
     pages,
@@ -1898,77 +1936,42 @@ router.put('/portal-balances', async (req, res) => {
   return res.json(await portalBalancesFor(range));
 });
 
-// The vendor master — the GSTIN a vendor has on every bill.
+// The vendor master — the GSTIN a vendor has on every bill. Switched-off
+// vendors are left out unless ?all=1 (the duplicate check in "Add Vendor" asks
+// for all of them, so a switched-off vendor's name is still taken).
 router.get('/vendors', async (req, res) => {
-  res.json(await prisma.officeVendor.findMany({ orderBy: { name: 'asc' } }));
+  const all = req.query.all === '1' || req.query.all === 'true';
+  res.json(await prisma.officeVendor.findMany({ where: all ? {} : { isActive: true }, orderBy: { name: 'asc' } }));
 });
 
 // "+ Add Vendor" (Office & Expenses → Expenses & Bills, and the expense forms).
 // Same guard as recording an expense: the router-level WRITE guard above
 // (accounts · Office & Expenses · edit) on top of the Accounts-desk role gate.
-// A vendor name is unique CASE-INSENSITIVELY — against the vendor master and
-// against the names already used on bills (both fill the Vendor dropdown), so
-// "AIRTEL" cannot be added next to "Airtel". The GST / Tax ID is the master's
-// `gstin` (it becomes every bill's fallback GSTIN), so it must pass the real
-// checksum when given.
-const VENDOR_TEXT = {
-  contactPerson: ['Contact person', 120],
-  phone: ['Phone', 30],
-  email: ['Email', 160],
-  address: ['Address', 500],
-  paymentTerms: ['Payment terms', 200],
-  notes: ['Notes', 1000],
-};
+// THE SAME VENDOR MASTER AS ADMIN → VENDORS: all rules live in
+// utils/vendorMaster.js (duplicate GSTIN / PAN / email / name = 409 naming the
+// existing vendor; same phone or near-same name = a warning the caller
+// confirms with confirmDuplicate:true; GSTIN must pass the real checksum).
+// A name already used on bills but not yet in the master is allowed: it is the
+// way the free-text vendors get into the master (the bills are linked after
+// Admin reviews them, never automatically).
 router.post('/vendors', async (req, res) => {
-  const b = req.body || {};
-  const name = String(b.name || '').trim().replace(/\s+/g, ' ');
-  if (!name) return res.status(400).json({ error: 'Vendor name is required', field: 'name' });
-  if (name.length > 120) return res.status(400).json({ error: 'Keep the vendor name under 120 characters', field: 'name' });
-  const data = { name };
-  for (const [k, [label, max]] of Object.entries(VENDOR_TEXT)) {
-    const v = String(b[k] ?? '').trim();
-    if (v.length > max) return res.status(400).json({ error: `${label} must be ${max} characters or fewer`, field: k });
-    data[k] = v || null;
-  }
-  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    return res.status(400).json({ error: 'Enter a valid email address', field: 'email' });
-  }
-  if (data.phone && !(/^[+()\d\s-]+$/.test(data.phone) && data.phone.replace(/\D/g, '').length >= 6 && data.phone.replace(/\D/g, '').length <= 15)) {
-    return res.status(400).json({ error: 'Enter a valid phone number (6 to 15 digits)', field: 'phone' });
-  }
-  const g = cleanId(b.gstin || '');
-  if (g) {
-    const c = checkGstin(g);
-    if (!c.ok) return res.status(400).json({ error: `GST / Tax ID: ${c.error}`, field: 'gstin' });
-  }
-  data.gstin = g || null;
-
-  const key = vendorNameKey(name);
-  const [masters, billVendors] = await Promise.all([
-    prisma.officeVendor.findMany({ select: { id: true, name: true } }),
-    prisma.officeExpense.findMany({ where: { vendor: { not: null } }, select: { vendor: true }, distinct: ['vendor'] }),
-  ]);
-  const hit = masters.find((v) => vendorNameKey(v.name) === key)
-    || billVendors.map((e) => ({ name: String(e.vendor).trim() })).find((v) => vendorNameKey(v.name) === key);
-  if (hit) {
-    return res.status(409).json({ error: `A vendor named "${hit.name}" already exists — pick it from the Vendor list`, field: 'name', vendor: { name: hit.name } });
-  }
-  let row;
-  try {
-    row = await prisma.officeVendor.create({ data });
-  } catch (e) {
-    if (e && e.code === 'P2002') return res.status(409).json({ error: `A vendor named "${name}" already exists — pick it from the Vendor list`, field: 'name' });
-    throw e;
-  }
+  const VM = require('../utils/vendorMaster'); // eslint-disable-line global-require
+  const actor = { id: req.user.id, name: req.user.name || req.user.email || null };
+  const out = await VM.createVendor(req.body || {}, { actor, source: 'Office' });
+  if (!out.row) return res.status(out.status).json(out.body);
+  const row = out.row;
   await logAudit({
     userId: req.user.id,
-    actorName: req.user.name || req.user.email || null,
+    actorName: actor.name,
     action: 'Vendor added',
     entity: 'OfficeVendor',
     entityId: row.id,
     fromValue: '— (new)',
-    toValue: [row.name, row.gstin && `GSTIN ${row.gstin}`, row.contactPerson, row.phone, row.email, row.paymentTerms && `terms: ${row.paymentTerms}`]
+    toValue: [row.vendorCode, row.name, row.gstin && `GSTIN ${row.gstin}`, row.pan && `PAN ${row.pan}`, row.contactPerson, row.phone, row.email, row.paymentTerms && `terms: ${row.paymentTerms}`]
       .filter(Boolean).join(' · ').slice(0, 500),
+  });
+  await require('../utils/vendorPortal').auditReq(req, { // eslint-disable-line global-require
+    vendorId: row.id, changedById: req.user.id, actorName: actor.name, role: 'Accounts', action: 'Vendor added', newValue: `${row.vendorCode} · ${row.name}`,
   });
   return res.status(201).json(row);
 });
@@ -2303,6 +2306,9 @@ router.post('/', async (req, res) => {
   const now = new Date();
   const actor = req.user.name || req.user.email || null;
   data.category = category;
+  // Vendor master link: an exact (case-insensitive) master name, or the vendorId
+  // the form sent, ties the bill to the vendor and snapshots its details.
+  await require('../utils/vendorMaster').attachVendor(data, { vendorId: req.body.vendorId || null }); // eslint-disable-line global-require
   data.approvalStatus = wanted;
   data.paidStatus = (wanted === 'PAID' || wanted === 'REIMBURSED') ? 'Paid' : 'Unpaid';
   data.createdById = req.user.id;
@@ -2414,6 +2420,12 @@ async function updateExpense(req, res) {
     data.monthlyAmount = ROUND(base + t.gst);
   }
 
+  // Vendor master link follows the vendor field: a new master name (or vendorId) re-links
+  // and re-snapshots; a name that is not in the master clears the link.
+  if (req.body.vendorId !== undefined || (data.vendor !== undefined && data.vendor !== existing.vendor)) {
+    data.vendorId = null; data.vendorPan = null; data.vendorAddress = null;
+    await require('../utils/vendorMaster').attachVendor(data, { vendorId: req.body.vendorId || null }); // eslint-disable-line global-require
+  }
   // Modified By (spec 13); Modified At is updatedAt, which Prisma stamps.
   data.updatedById = req.user.id;
   const expense = await prisma.officeExpense.update({ where: { id: existing.id }, data });
@@ -2499,6 +2511,9 @@ router.patch('/:id/status', async (req, res) => {
   if (to === 'REJECTED') Object.assign(data, { rejectedById: req.user.id, rejectedAt: now, rejectionReason: reason.slice(0, 500) });
   if (to === 'PAID') {
     Object.assign(data, { paidById: req.user.id, paidAt: now, paidStatus: 'Paid' });
+    // Optional: the day the money actually left (never later than today).
+    const pd = String(req.body.paymentDate || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(pd) && pd <= new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) data.paymentDate = pd;
     // Straight from Pending: marking it paid is the approval as well.
     if (from === 'PENDING') Object.assign(data, { approvedById: req.user.id, approvedAt: now, approvedBy: actor });
     if (req.body.paymentMode !== undefined && EXP_MODES.includes(req.body.paymentMode)) data.paymentMode = req.body.paymentMode;
@@ -2507,6 +2522,10 @@ router.patch('/:id/status', async (req, res) => {
   if (to === 'REIMBURSED') Object.assign(data, { reimbursedById: req.user.id, reimbursedAt: now, paidStatus: 'Paid' });
   const done = await prisma.officeExpense.updateMany({ where: { id: existing.id, approvalStatus: existing.approvalStatus }, data });
   if (done.count !== 1) return res.status(409).json({ error: 'Someone else changed this expense a moment ago — reload and try again' });
+  // Vendor-linked bills follow their payment into the journal (switch OFF by default).
+  if (existing.vendorId && ['PAID', 'REIMBURSED'].includes(to)) {
+    require('../utils/vendorPosting').syncExpense(existing.id, { id: req.user.id, name: actor }).catch((e) => console.error('[vendor-post]', e && e.message)); // eslint-disable-line global-require, no-console
+  }
   await logAudit({
     userId: req.user.id,
     actorName: actor,

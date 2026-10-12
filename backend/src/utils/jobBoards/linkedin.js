@@ -57,6 +57,13 @@ async function token(cfg) {
   return { ok: true, token: res.body.access_token };
 }
 
+// CHECK CONNECTION: ask LinkedIn for a fresh sign-in token (the real handshake; nothing is posted).
+async function handshake(cfg) {
+  http.forgetToken(`linkedin|${cfg.values[F.clientId]}`);
+  const t = await token(cfg);
+  return t.ok ? { ok: true, text: 'LinkedIn accepted the Client ID and secret (sign-in worked). Posting rights are only known when the first job is sent.' } : { ok: false, text: t.error };
+}
+
 const EMPLOYMENT = { 'full time': 'FULL_TIME', 'part time': 'PART_TIME', contract: 'CONTRACT', intern: 'INTERNSHIP', internship: 'INTERNSHIP', temporary: 'TEMPORARY' };
 const WORKPLACE = (m) => (/remote/i.test(m || '') ? 'Remote' : /hybrid/i.test(m || '') ? 'Hybrid' : 'On-site');
 
@@ -132,5 +139,5 @@ async function remove(r, row, cfg) {
 async function status(r, row, cfg) { return check(cfg, row && row.externalJobId); }
 
 module.exports = {
-  id: 'linkedin', label: LABEL, integrationId: 'linkedin', FIELDS, SETUP, config, publish, update: publish, remove, status, shownId: (x) => x,
+  id: 'linkedin', label: LABEL, integrationId: 'linkedin', FIELDS, SETUP, config, handshake, publish, update: publish, remove, status, shownId: (x) => x,
 };

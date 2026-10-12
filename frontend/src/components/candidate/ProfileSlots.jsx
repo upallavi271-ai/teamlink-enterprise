@@ -32,6 +32,7 @@ import RejectionHistory from '../rejections/RejectionHistory.jsx';
 import FollowUpTimeline from '../followups/FollowUpTimeline.jsx';
 import QuickContact from '../followups/QuickContact.jsx';
 import SpecialisationLine from './SpecialisationLine.jsx';
+import CandidateAutoMessages from '../automsg/CandidateAutoMessages.jsx'; // automatic stage messages for this person
 import { ResumeCard, AiScoresTab, ActivityTab } from '../Candidate360Tabs.jsx';
 
 // --- Resume (resume/fit agent) -------------------------------------------------
@@ -55,7 +56,9 @@ export function FitSlot({
       <AiMatchDetail c={c} />
       <div className="c360t-card">
         <div className="c360t-label">Jobs this person fits</div>
-        <EligibleRequirementsPanel candidateId={c.id} onAdd={onAddToJob} />
+        {c.profileThin
+          ? <div className="small-muted">Not enough details to score. Add skills, experience or a resume to see the jobs this person fits.</div>
+          : <EligibleRequirementsPanel candidateId={c.id} onAdd={onAddToJob} />}
       </div>
     </>
   );
@@ -66,6 +69,17 @@ export function FitSlot({
 function AiMatchDetail({ c }) {
   const m = c.aiMatch;
   if (!m) return null;
+  // A thin profile (no skills, no experience, no resume) has nothing to score: say so, never "Good match".
+  if (m.thin) {
+    return (
+      <div className="c360t-card">
+        <div className="c360t-label">{`Fit for: ${m.requirementTitle || 'the current job'}`}</div>
+        <div className="c360t-kv"><span>Fit</span><b>Not enough details to score</b></div>
+        <div className="small-muted" style={{ marginTop: 6 }}>{m.recommendation}</div>
+        <div className="small-muted" style={{ marginTop: 4 }}>The recruiter decides. Fit never moves a person by itself.</div>
+      </div>
+    );
+  }
   const line = (label, part, extra) => (part ? (
     <div className="c360t-kv"><span>{label}</span><b>{`${part[extra ? 'relevantPercent' : 'percent']}% — ${(extra ? part.relevantReason : part.reason) || '—'}`}</b></div>
   ) : null);
@@ -115,6 +129,7 @@ export function HistoryTimelineSlot({
 }) {
   return (
     <>
+      {internal && <CandidateAutoMessages candidateId={c.id} />}
       {internal && <FollowUpTimeline candidateId={c.id} refreshKey={refreshKey} />}
       {withActivity && <ActivityTab c={c} internal={internal} limit={60} />}
     </>

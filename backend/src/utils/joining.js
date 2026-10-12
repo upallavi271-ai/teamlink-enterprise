@@ -197,6 +197,7 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
     where: { id: application.id },
     data: { hrmsEmployeeId: employee.id },
   });
+  require('./stationeryKit').onActive(employee.id); // default stationery kit, once (utils/stationeryKit.js)
   await logAudit({
     userId,
     action: 'HRMS employee created from ATS (TeamLink Internal Hire)',

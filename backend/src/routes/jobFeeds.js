@@ -30,6 +30,9 @@ const cdata = (v) => `<![CDATA[${xmlSafe(v).split(']]>').join(']]]]><![CDATA[>')
 const csv = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
 const publicBase = (req) => (process.env.APP_BASE_URL ? String(process.env.APP_BASE_URL).replace(/\/+$/, '') : `${req.protocol}://${req.get('host')}`.replace(':4010', ':5183'));
 
+// INDEED's own-format feed lives in utils/jobBoards/indeedFeed.js
+router.get('/indeed.xml', require('../utils/jobBoards/indeedFeed').handler);
+
 router.get('/:board.xml', async (req, res) => {
   const board = BOARDS[String(req.params.board || '').toLowerCase()];
   if (!board) return res.status(404).type('text/plain').send('No such feed');

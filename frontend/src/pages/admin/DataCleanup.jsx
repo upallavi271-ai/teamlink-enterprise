@@ -156,6 +156,32 @@ export default function DataCleanup() {
               ) : <span>Every old job has a recruiter. 🎉</span>}
             </div>
           </div>
+          <div className="panel">
+            <div className="panel-head"><h3>Marked Joined, but no joining date</h3></div>
+            <div style={{ padding: '10px 18px 14px' }}>
+              {cu.joinedNoDate ? (
+                <>
+                  <button type="button" className="link-btn" style={{ fontSize: 22, fontWeight: 700 }} onClick={() => setDrill('joined-nodate')}>{fmt(cu.joinedNoDate)}</button>
+                  <span className="small-muted"> people are in the Joined total but in no month, because nobody typed a joining date. Open the list to see who. No date is guessed.</span>
+                </>
+              ) : <span>Every joined person has a joining date. 🎉</span>}
+              {cu.joinedFromHistory > 0 && (
+                <div className="small-muted" style={{ marginTop: 6 }}>
+                  {fmt(cu.joinedFromHistory)} more have no date typed and are counted in the month they were moved to Joined.{' '}
+                  <button type="button" className="link-btn" onClick={() => setDrill('joined-history')}>See who</button>
+                </div>
+              )}
+            </div>
+          </div>
+          {cu.joinedWrongDate > 0 && (
+            <div className="panel">
+              <div className="panel-head"><h3>Joining date looks wrong</h3></div>
+              <div style={{ padding: '10px 18px 14px' }}>
+                <button type="button" className="link-btn" style={{ fontSize: 22, fontWeight: 700 }} onClick={() => setDrill('joined-wrongdate')}>{fmt(cu.joinedWrongDate)}</button>
+                <span className="small-muted"> joining dates are not real dates (a year like 2203 or 1954). They are in no month until the date is corrected.</span>
+              </div>
+            </div>
+          )}
         </>
       )}
       {drill && <HomeDrill listUrl={LIST_URL} params={{}} setId={drill} onClose={() => setDrill(null)} />}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
+import EodReports from '../../components/reports/EodReports.jsx'; // "End of day": call report, team report, individual reports (2026-10-10)
 import { FacetSelect } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
@@ -188,7 +189,19 @@ function DayRows({ rows }) {
 
 export default function DailyReport() {
   const today = IST_TODAY();
-  const [view, setView] = useState('month');
+  // The end-of-day mail and bell link here: ?tab=daily&view=eod&day=YYYY-MM-DD.
+  const [sp] = useSearchParams();
+  const urlEod = sp.get('view') === 'eod';
+  const urlDay = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('day') || '') ? sp.get('day') : '';
+  const [view, setView] = useState(urlEod ? 'eod' : 'month');
+  useEffect(() => { if (urlEod) setView('eod'); }, [urlEod, urlDay]);
+  // Leads only: the server answers 403 to anyone else, and then the option is not drawn.
+  const [eodOk, setEodOk] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api.get('/pending-work/settings').then(() => { if (live) setEodOk(true); }).catch(() => { if (live) setEodOk(false); });
+    return () => { live = false; };
+  }, []);
   const [day, setDay] = useState(today);
   const [month, setMonth] = useState(today.slice(0, 7));
   const [f, setF] = useState({ department: '', team: '', person: '', people: '' });
@@ -206,6 +219,7 @@ export default function DailyReport() {
   }), [view, day, month, f]);
 
   useEffect(() => {
+    if (view === 'eod') { setLoading(false); return undefined; }
     let live = true;
     setLoading(true);
     api.get(`/ats-daily/${view}`, { params })
@@ -232,13 +246,26 @@ export default function DailyReport() {
   const selfOnly = data ? data.selfOnly : true;
   const shown = data && data.view === view ? data : null;
 
+  const seg = (
+    <div className="fux-seg" role="tablist" aria-label="View">
+      <button type="button" className={view === 'day' ? 'is-on' : ''} onClick={() => setView('day')}>Day</button>
+      <button type="button" className={view === 'month' ? 'is-on' : ''} onClick={() => setView('month')}>Month</button>
+      {eodOk && (view === 'eod' || !selfOnly) && <button type="button" className={view === 'eod' ? 'is-on' : ''} onClick={() => setView('eod')}>End of day</button>}
+    </div>
+  );
+  if (view === 'eod') {
+    return (
+      <div className="fux-dr">
+        <div className="fux-dr-bar">{seg}</div>
+        <EodReports initialDay={urlDay} />
+      </div>
+    );
+  }
+
   return (
     <div className="fux-dr">
       <div className="fux-dr-bar">
-        <div className="fux-seg" role="tablist" aria-label="View">
-          <button type="button" className={view === 'day' ? 'is-on' : ''} onClick={() => setView('day')}>Day</button>
-          <button type="button" className={view === 'month' ? 'is-on' : ''} onClick={() => setView('month')}>Month</button>
-        </div>
+        {seg}
         {view === 'day' ? (
           <div className="field">
             <label htmlFor="dr-day">Day</label>

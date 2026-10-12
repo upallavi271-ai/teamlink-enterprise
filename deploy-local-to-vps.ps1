@@ -3,10 +3,27 @@
 # ============================================================
 
 param(
-    [switch]$KeepVpsDatabase
+    # SAFE BY DEFAULT (security review, 2026-10-09): the VPS database is ALWAYS KEPT.
+    # Only the very first load of a brand-new VPS needs the local database, and that
+    # needs the explicit -FirstLoadDatabase switch plus a typed confirmation.
+    [switch]$FirstLoadDatabase,
+
+    # Old name of the default behaviour. Still accepted so old habits keep working;
+    # it changes nothing now because keeping the VPS database IS the default.
+    [switch]$KeepVpsDatabase,
+
+    # Put a previous release back, e.g.  -RollbackTo 2026-10-09-153000
+    # (the stamp is the end of the folder name  backend-old-<stamp>  on the VPS).
+    [string]$RollbackTo = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($FirstLoadDatabase -and $KeepVpsDatabase) {
+    throw "Choose one: -FirstLoadDatabase (replace the VPS database with the local one) or the default (keep the VPS database)."
+}
+# $KeepVps is what the rest of this script reads.
+$KeepVps = -not $FirstLoadDatabase
 
 # ------------------------------------------------------------
 # CONFIGURATION
@@ -29,6 +46,41 @@ $OldBackend = "$VpsRoot/backend-old-$Date"
 $OldFrontend = "$VpsRoot/frontend-old-$Date"
 
 # ------------------------------------------------------------
+# ROLLBACK (also used automatically when a deploy step fails)
+#
+# Every deploy keeps the PREVIOUS release on the VPS next to the new one:
+#   /opt/teamlink-enterprise/backend-old-<stamp>   (code + node_modules + the
+#   /opt/teamlink-enterprise/frontend-old-<stamp>   database as it was before)
+# Rolling back = swap those folders back and restart. The failed release is
+# kept as backend-failed-<stamp> / frontend-failed-<stamp> for inspection.
+# Anything written to the database AFTER the restart of the failed release is
+# not in the old folder - the health check runs seconds after the restart, so
+# that is normally nothing.
+# ------------------------------------------------------------
+
+function Invoke-VpsRollback {
+    param([string]$Stamp)
+
+    $RollbackCmd = "cd '$VpsRoot' && if [ ! -d 'backend-old-$Stamp' ]; then pm2 restart teamlink-enterprise --update-env; echo 'NOTHING HAD BEEN REPLACED YET - TeamLink restarted as it was'; exit 0; fi && pm2 stop teamlink-enterprise; if [ -d backend ]; then mv backend 'backend-failed-$Stamp'; fi && mv 'backend-old-$Stamp' backend && if [ -d 'frontend-old-$Stamp' ]; then if [ -d frontend ]; then mv frontend 'frontend-failed-$Stamp'; fi && mv 'frontend-old-$Stamp' frontend; fi && cd backend && pm2 restart teamlink-enterprise --update-env && pm2 save && echo 'ROLLED BACK TO THE RELEASE OF $Stamp'"
+
+    ssh $VpsHost $RollbackCmd
+
+    return ($LASTEXITCODE -eq 0)
+}
+
+if ($RollbackTo -ne "") {
+    if ($RollbackTo -notmatch '^\d{4}-\d{2}-\d{2}-\d{6}$') {
+        throw "-RollbackTo must look like 2026-10-09-153000 (the end of the backend-old-... folder name on the VPS)."
+    }
+    Write-Host "Rolling back TeamLink to the release kept as backend-old-$RollbackTo ..." -ForegroundColor Yellow
+    if (Invoke-VpsRollback -Stamp $RollbackTo) {
+        Write-Host "Rolled back. TeamLink is running the previous release again." -ForegroundColor Green
+        exit 0
+    }
+    throw "Rollback failed. Nothing more was changed - check the VPS by hand."
+}
+
+# ------------------------------------------------------------
 # START
 # ------------------------------------------------------------
 
@@ -40,10 +92,10 @@ Write-Host ""
 
 Write-Host "LOCAL CODE = MASTER" -ForegroundColor Green
 
-if ($KeepVpsDatabase) {
+if ($KeepVps) {
     Write-Host "DATABASE = KEEP VPS DATABASE" -ForegroundColor Green
 } else {
-    Write-Host "DATABASE = LOCAL DATABASE TO VPS" -ForegroundColor Green
+    Write-Host "DATABASE = FIRST LOAD: LOCAL DATABASE REPLACES THE VPS DATABASE (confirmation asked)" -ForegroundColor Red
 }
 
 Write-Host "VPS ENV = PRESERVED" -ForegroundColor Yellow
@@ -86,6 +138,32 @@ Write-Host "Local project OK" -ForegroundColor Green
 Write-Host "Local database size: $([math]::Round($DbInfo.Length / 1MB,2)) MB" -ForegroundColor Green
 
 # ------------------------------------------------------------
+# FIRST LOAD ONLY: the one way the VPS database gets replaced
+# ------------------------------------------------------------
+
+if ($FirstLoadDatabase) {
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Red
+    Write-Host " FIRST LOAD OF THE DATABASE REQUESTED (-FirstLoadDatabase)" -ForegroundColor Red
+    Write-Host "============================================================" -ForegroundColor Red
+    Write-Host "This REPLACES the live database on the VPS with your LOCAL database" -ForegroundColor Yellow
+    Write-Host "($([math]::Round($DbInfo.Length / 1MB,2)) MB, $LocalDb)." -ForegroundColor Yellow
+    Write-Host "Everything entered on the live site since the last load (people, candidates," -ForegroundColor Yellow
+    Write-Host "attendance, invoices, signed agreements ...) will be GONE from the live site." -ForegroundColor Yellow
+    Write-Host "A backup copy of the VPS database is made first: $RemoteBackup" -ForegroundColor Yellow
+    Write-Host "Use this ONLY for the very first load. For every normal deploy, run the" -ForegroundColor Yellow
+    Write-Host "script WITHOUT this switch: the live database is then kept." -ForegroundColor Yellow
+    Write-Host ""
+    ssh $VpsHost "ls -lh '$VpsRoot/backend/prisma/dev.db' 2>/dev/null || echo 'No database on the VPS yet.'"
+    Write-Host ""
+    $Answer = Read-Host "Type REPLACE VPS DATABASE to continue (anything else stops the deploy)"
+    if ($Answer -cne "REPLACE VPS DATABASE") {
+        throw "Stopped. The VPS database was not touched."
+    }
+    Write-Host "Confirmed. The local database will replace the VPS database." -ForegroundColor Red
+}
+
+# ------------------------------------------------------------
 # PREPARE TEMP PACKAGE
 # ------------------------------------------------------------
 
@@ -104,25 +182,35 @@ New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
 Write-Host "Copying backend..." -ForegroundColor Yellow
 
 robocopy "$LocalRoot\backend" "$TempRoot\backend" /E `
-    /XD node_modules backups `
+    /XD node_modules backups uploads .git `
     /XF .env `
-    dev.db-wal `
-    dev.db-shm `
-    integration-sync.json `
-    apply-integrations.js `
-    verify-vps-integrations.js `
-    check-vps-users.js `
-    check-vps-users2.js `
-    check-superadmin.js `
-    check-claude.js `
-    check-integrations.js `
-    check-employees.js `
-    check-vps-employees.js `
-    check-vps-codes.js `
-    export-vps-employees.js `
-    compare-employees.js `
-    compare-employee-codes.js `
-    compare-local-vps-json.js
+    ".env.*" `
+    "*.bak" `
+    "*.bak-*" `
+    "*.db.bak*" `
+    "*.tmp" `
+    "*.log" `
+    "*.orig" `
+    "sandbox*.db*" `
+    "sandbox.db.*" `
+    "vps-*" `
+    "integration-key*" `
+    "integration-sync*" `
+    "dev.db-wal" `
+    "dev.db-shm" `
+    "dev.db-journal" `
+    "apply-integrations.js" `
+    "verify-vps-*.js" `
+    "check-vps-*.js" `
+    "export-vps-*.js" `
+    "update-vps-*.js" `
+    "check-superadmin.js" `
+    "check-claude*.js" `
+    "check-integrations.*" `
+    "check-employees.js" `
+    "compare-*.js" `
+    "find-missing-employees.js" `
+    $(if ($KeepVps) { "dev.db" })
 
 if ($LASTEXITCODE -gt 7) {
     throw "Backend copy failed. Robocopy exit code: $LASTEXITCODE"
@@ -136,7 +224,7 @@ Write-Host "Backend copied" -ForegroundColor Green
 
 $PackageDb = "$TempRoot\backend\prisma\dev.db"
 
-if ($KeepVpsDatabase) {
+if ($KeepVps) {
 
     Write-Host "Removing local database from package..." -ForegroundColor Yellow
 
@@ -295,6 +383,13 @@ Write-Host "VPS backup successful" -ForegroundColor Green
 Write-Host "Backup: $RemoteBackup" -ForegroundColor Yellow
 
 # ------------------------------------------------------------
+# From here on the live site is DOWN until it is restarted, so any failure rolls
+# back to the previous release automatically (see Invoke-VpsRollback above).
+# ------------------------------------------------------------
+$DeployStep = "stopping TeamLink"
+try {
+
+# ------------------------------------------------------------
 # STOP TEAMLINK ONLY
 # ------------------------------------------------------------
 
@@ -316,6 +411,7 @@ Write-Host "HRMS was NOT stopped" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "[7/10] Deploying new code..." -ForegroundColor Cyan
+$DeployStep = "deploying the new code"
 
 $DeployCommand = "rm -rf '$RemoteDeployNew' && mkdir -p '$RemoteDeployNew' && tar -xzf '$RemotePackage' -C '$RemoteDeployNew' && mv '$VpsRoot/backend' '$OldBackend' && mv '$VpsRoot/frontend' '$OldFrontend' && mv '$RemoteDeployNew/backend' '$VpsRoot/backend' && mv '$RemoteDeployNew/frontend' '$VpsRoot/frontend' && cp '$OldBackend/.env' '$VpsRoot/backend/.env' && rm -f '$VpsRoot/backend/prisma/dev.db-wal' '$VpsRoot/backend/prisma/dev.db-shm' && echo 'LOCAL CODE DEPLOYED'"
 
@@ -331,7 +427,7 @@ Write-Host "New code deployed" -ForegroundColor Green
 # DATABASE SELECTION
 # ------------------------------------------------------------
 
-if ($KeepVpsDatabase) {
+if ($KeepVps) {
 
     Write-Host "Restoring VPS database..." -ForegroundColor Yellow
 
@@ -380,6 +476,7 @@ Write-Host "VPS .env preserved" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "[8/10] Installing backend dependencies..." -ForegroundColor Cyan
+$DeployStep = "installing backend dependencies"
 
 ssh $VpsHost "cd '$VpsRoot/backend' && npm install"
 
@@ -395,6 +492,7 @@ Write-Host "Backend dependencies installed" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "[9/10] Applying Prisma migrations..." -ForegroundColor Cyan
+$DeployStep = "applying Prisma migrations"
 
 ssh $VpsHost "cd '$VpsRoot/backend' && npx prisma migrate deploy"
 
@@ -430,6 +528,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Frontend dependencies installed" -ForegroundColor Green
 
 Write-Host "Building frontend..." -ForegroundColor Yellow
+$DeployStep = "building the frontend"
 
 ssh $VpsHost "cd '$VpsRoot/frontend' && npm run build"
 
@@ -442,7 +541,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host ""
 
     Write-Host "VPS BACKUP: $RemoteBackup" -ForegroundColor Yellow
-    Write-Host "TeamLink has NOT been restarted." -ForegroundColor Yellow
+    Write-Host "The previous version will be put back automatically." -ForegroundColor Yellow
 
     throw "Frontend build failed."
 }
@@ -455,6 +554,7 @@ Write-Host "FRONTEND BUILD SUCCESSFUL" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "[10/10] Restarting TeamLink..." -ForegroundColor Cyan
+$DeployStep = "restarting TeamLink"
 
 ssh $VpsHost "cd '$VpsRoot/backend' && pm2 restart teamlink-enterprise --update-env && pm2 save"
 
@@ -463,6 +563,37 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Start-Sleep -Seconds 5
+
+# ------------------------------------------------------------
+# HEALTH CHECK AFTER THE RESTART (automatic rollback if it fails)
+# ------------------------------------------------------------
+
+$DeployStep = "health check"
+Write-Host ""
+Write-Host "Health check (up to 60 seconds)..." -ForegroundColor Cyan
+
+$HealthCmd = "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do if curl -s -m 4 http://127.0.0.1:4010/api/health | grep -q 'ok.*true'; then echo HEALTH OK; exit 0; fi; sleep 5; done; echo HEALTH FAILED; pm2 logs teamlink-enterprise --lines 25 --nostream; exit 1"
+
+ssh $VpsHost $HealthCmd
+
+if ($LASTEXITCODE -ne 0) {
+    throw "TeamLink did not answer its health check after the restart."
+}
+
+Write-Host "TeamLink answers its health check" -ForegroundColor Green
+
+# The same check through the public address (warning only: DNS / nginx are not this script's to fix).
+try {
+    $Public = Invoke-WebRequest -Uri "https://teamlink.teamlinks.in/api/health" -UseBasicParsing -TimeoutSec 20
+    if ($Public.StatusCode -eq 200) {
+        Write-Host "Public address https://teamlink.teamlinks.in answers too" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: the public address answered $($Public.StatusCode). Check nginx." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "WARNING: could not reach https://teamlink.teamlinks.in/api/health from here ($($_.Exception.Message)). Check nginx / DNS." -ForegroundColor Yellow
+}
+
 
 # ------------------------------------------------------------
 # FINAL VERIFICATION
@@ -478,6 +609,30 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ------------------------------------------------------------
+} catch {
+    $Failure = $_.Exception.Message
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Red
+    Write-Host "DEPLOY FAILED while: $DeployStep" -ForegroundColor Red
+    Write-Host $Failure -ForegroundColor Red
+    Write-Host "============================================================" -ForegroundColor Red
+    Write-Host "Putting the PREVIOUS version back..." -ForegroundColor Yellow
+
+    $RolledBack = $false
+    try { $RolledBack = Invoke-VpsRollback -Stamp $Date } catch { $RolledBack = $false }
+
+    if ($RolledBack) {
+        Write-Host "ROLLED BACK. The live site is running the previous version again." -ForegroundColor Green
+        Write-Host "The failed release is kept on the VPS as backend-failed-$Date for inspection." -ForegroundColor Yellow
+    } else {
+        Write-Host "AUTOMATIC ROLLBACK DID NOT COMPLETE - fix by hand:" -ForegroundColor Red
+        Write-Host "  .\deploy-local-to-vps.ps1 -RollbackTo $Date" -ForegroundColor Red
+    }
+    Write-Host "Database backup taken before this deploy: $RemoteBackup" -ForegroundColor Yellow
+    throw "Deploy failed ($DeployStep): $Failure"
+}
+
+# ------------------------------------------------------------
 # SUCCESS
 # ------------------------------------------------------------
 
@@ -489,7 +644,7 @@ Write-Host ""
 
 Write-Host "Local code -> VPS          : DONE" -ForegroundColor Green
 
-if ($KeepVpsDatabase) {
+if ($KeepVps) {
     Write-Host "VPS database              : KEPT" -ForegroundColor Green
 } else {
     Write-Host "Local database -> VPS     : DONE" -ForegroundColor Green
@@ -503,6 +658,9 @@ Write-Host "PM2 save                  : DONE" -ForegroundColor Green
 Write-Host "VPS .env                  : PRESERVED" -ForegroundColor Green
 Write-Host "VPS backup                : $RemoteBackup" -ForegroundColor Yellow
 Write-Host "HRMS                      : NOT TOUCHED" -ForegroundColor Green
+Write-Host "Previous version kept at  : $OldBackend  (and $OldFrontend)" -ForegroundColor Yellow
+Write-Host "To go back to it          : .\deploy-local-to-vps.ps1 -RollbackTo $Date" -ForegroundColor Yellow
+Write-Host "Reminder (VPS .env)       : add CORS_ORIGINS / TRUST_PROXY=loopback on the VPS .env if not there yet (the script keeps the VPS .env as it is)" -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "TeamLink: https://teamlink.teamlinks.in" -ForegroundColor Cyan

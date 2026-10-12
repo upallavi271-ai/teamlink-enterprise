@@ -10,9 +10,11 @@ import {
 } from './Candidate360Tabs.jsx';
 import { LocationRequirementsPanel } from './CandidateReach.jsx';
 import './CandidateDrawer.css';
+import { DupBanner } from './duplicates/DupChip.jsx'; // dup_: red "Duplicate: resolve first" + Check duplicates
 // cand7_: the profile top + the other agents' mount points.
 import ProfileTop from './candidate/ProfileTop.jsx';
-import ProfileLeft from './candidate/ProfileLeft.jsx';
+import ConversationView from './messaging/ConversationView.jsx'; // omnichannel Conversation tab
+import ProfileLeft, { ResumeTabCard } from './candidate/ProfileLeft.jsx';
 import { RecordDocuments } from './candidate/CandidateRecord.jsx'; // ATS-100 B5
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot,
@@ -134,6 +136,7 @@ export default function CandidateDrawer({
                 {c.profileStatus === 'Archived' && (
                   <div className="notice amber" style={{ marginBottom: 10 }}>This person is archived — hidden from every list. Nothing was deleted.</div>
                 )}
+                <DupBanner dup={c.dup} candidateId={c.id} name={c.name} onChanged={changed} />
                 {c.duplicateHint && (
                   <div className="notice amber" style={{ marginBottom: 10 }}>
                     {`${c.duplicateHint.count} other profile(s) share this phone or email: ${c.duplicateHint.names.join(', ')}.`}
@@ -190,6 +193,8 @@ export default function CandidateDrawer({
               </>
             )}
 
+            {tab === 'conversation' && internal && <ConversationView audience="candidates" personId={c.id} name={c.name} applicationId={app ? app.id : undefined} requirementId={app ? app.requirementId : undefined} onChanged={changed} />}
+
             {tab === 'history' && (
               <div className="c360t-grid">
                 <div>
@@ -217,6 +222,8 @@ export default function CandidateDrawer({
             )}
             {/* ATS-100 B5: certifications + documents with a real file (upload / view / download / delete). */}
             {tab === 'documents' && <RecordDocuments c={c} internal={internal} />}
+            {/* The Resume card — its own tab, no longer on the left. */}
+            {tab === 'resume' && <ResumeTabCard c={c} />}
             </div>
             </div>
           </div>

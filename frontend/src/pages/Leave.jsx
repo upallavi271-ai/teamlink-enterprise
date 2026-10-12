@@ -535,7 +535,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                   <b>Holiday between two leave days</b><br />
                   <span className="cell-muted" style={{ fontSize: 11.5 }}>
                     {caps.sandwichLeave
-                      ? 'Counted as leave. Example: leave on Friday and Monday — Saturday and Sunday are leave too.'
+                      ? 'Counted as leave. Example: leave on Saturday and Monday — Sunday (the week off) is leave too.'
                       : 'Not counted. A holiday or weekly off stays a day off, even between two leave days.'}
                   </span>
                 </span>

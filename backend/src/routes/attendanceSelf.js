@@ -99,8 +99,8 @@ function sendTable(res, format, filename, headers, rows, sheet) {
   return res.send(toCsv(headers, rows));
 }
 
-const DAY_HEADERS = ['Date', 'Check-In', 'Check-Out', 'Total Hours', 'Status', 'Early Logout', 'Present', 'Leave', 'Absent (unpaid)', 'Paid', 'Method', 'Location Status', 'Verification', 'Regularization', 'Note', 'Result', 'Reason'];
-const dayCells = (d) => [d.date, d.checkIn || '', d.checkOut || '', d.hours ?? '', d.status, d.earlyLogout ? 'Yes' : '', d.present ?? '', d.leave ?? '', d.absent ?? '', d.paid ?? '', d.method || '', d.locationStatus || '', d.verification || '', d.regularization || '', d.note || '', d.kpi ? (D.KPI_LABEL[d.kpi] || d.kpi) : '', d.reason || ''];
+const DAY_HEADERS = ['Date', 'Check-In', 'Check-Out', 'Total Hours', 'Status', 'Early Logout', 'Present', 'Leave', 'Absent (unpaid)', 'Paid', 'Method', 'Location Status', 'Verification', 'Regularization', 'Note', 'Result', 'Reason', 'Late coming'];
+const dayCells = (d) => [d.date, d.checkIn || '', d.checkOut || '', d.hours ?? '', d.status, d.earlyLogout ? 'Yes' : '', d.present ?? '', d.leave ?? '', d.absent ?? '', d.paid ?? '', d.howText || d.method || '', d.locationStatus || '', d.verification || '', d.regularization || '', d.note || '', d.kpi ? (D.KPI_LABEL[d.kpi] || d.kpi) : '', d.reason || '', (d.late || d.lateExcused) ? (d.latePermissionText || 'Not explained') : ''];
 
 module.exports = function registerSelfAttendance(router, { getConfig, methodsOf, CHECKIN_ASSIGNABLE, isSuperAdmin, ownEmployee }) {
   // ---- readiness ------------------------------------------------------------
@@ -291,7 +291,9 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     if (D.eachDay(range.from, range.to).length > 366) return res.status(400).json({ error: 'Pick a range of at most one year.' });
     const cfg = await getConfig();
     const { days } = await D.loadDays(prisma, { employees: [own], from: range.from, to: range.to, cfg, preview: true });
-    const rows = days(own).filter((d) => !['Upcoming', 'Not Joined'].includes(d.status)).reverse();
+    // Notes (Late / Missing check-in / Missing check-out / No punches / Punch on a leave day) stay visible even when a leave covers the day.
+    const withNotes = (d) => { const n = D.notesOf(d); return { ...d, notes: n, noteText: n.map((k) => D.NOTE_LABEL[k]).join(' · ') }; };
+    const rows = days(own).filter((d) => !['Upcoming', 'Not Joined'].includes(d.status)).reverse().map(withNotes);
     if (req.query.format === 'csv' || req.query.format === 'xlsx') {
       return sendTable(res, req.query.format, `my-attendance-${range.from}_${range.to}`, DAY_HEADERS, rows.map(dayCells), 'My Attendance');
     }
@@ -318,7 +320,8 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     employees.forEach((e) => {
       days(e).forEach((d) => {
         if (['Upcoming', 'Not Joined'].includes(d.status)) return;
-        rows.push({ employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, designation: e.designation, ...d });
+        const n = D.notesOf(d);
+        rows.push({ employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, designation: e.designation, ...d, notes: n, noteText: n.map((k) => D.NOTE_LABEL[k]).join(' · ') });
       });
     });
     if (req.query.status) rows = rows.filter((r) => r.status === req.query.status);
@@ -373,8 +376,12 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     ]);
     const importedOf = new Map(imported.map((s) => [s.employeeId, s]));
     const rows = employees.map((e) => {
-      const dayRows = days(e).filter((d) => !['Upcoming', 'Not Joined', 'Left'].includes(d.status));
+      const allRows = days(e);
+      const dayRows = allRows.filter((d) => !['Upcoming', 'Not Joined', 'Left'].includes(d.status));
       const s = D.summarise(dayRows);
+      // THE ONE TILE DEFINITION (the Biometric list, the Calendar and the dashboard read the same): Present (incl. late / early /
+      // missing as notes) + Absent + Half day + On leave + Week off / Holiday = days. s (summarise) stays for payroll detail.
+      const tiles = D.tallyPerson(allRows);
       const attended = s.present + s.late + s.missingCheckOut + s.earlyLogout;
       const hoursWorked = Math.round(dayRows.reduce((n, d) => n + (Number(d.hours) || 0), 0) * 10) / 10;
       const imp = importedOf.get(e.id) || null;
@@ -382,6 +389,7 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
         employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, designation: e.designation,
         hrStatus: hrStatusOf(e.employmentStatus, e.user && e.user.status),
         lastDay: roll.lastDayOf.has(e.id) ? roll.lastDayOf.get(e.id) : null,
+        tiles, equation: D.equationText(tiles),
         ...s,
         attended,
         // Days attended (Present + Late + Early Logout + Missing Check-Out, every
@@ -392,6 +400,7 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
           month, cfg,
           records: monthRecords.filter((r) => r.employeeId === e.id),
           punches: monthPunches.filter((p) => p.employeeId === e.id),
+          excusedDates: new Set(dayRows.filter((d) => d.lateExcused).map((d) => d.date)),
         }).halfDayCut : null,
         imported: imp ? {
           present: imp.present, halfDay: imp.halfDay, weekOffs: imp.weekOffs, publicHolidays: imp.publicHolidays,
@@ -402,6 +411,8 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     const keys = ['workingDays', 'present', 'late', 'attended', 'halfDay', 'absent', 'onLeave', 'missingCheckIn', 'missingCheckOut', 'noRecord', 'noData', 'informed', 'weeklyOffs', 'holidays', 'lateArrivals', 'hoursWorked',
       'earlyLogout', 'earlyLogouts', 'halfDayHalfLeave', 'halfDayUnderReview', 'leaveUnderReview', 'halfLeaveAbsent', 'sandwichDays', 'presentDays', 'leaveDays', 'absentDays', 'pendingDays', 'paidDays'];
     const totals = Object.fromEntries(keys.map((k) => [k, Math.round(rows.reduce((n, r) => n + (r[k] || 0), 0) * 10) / 10]));
+    totals.tiles = D.addTallies(rows.map((r) => r.tiles));
+    totals.equation = D.equationText(totals.tiles);
     totals.lateCut = month ? rows.reduce((n, r) => n + (r.lateCut || 0), 0) : null;
     totals.attendancePct = totals.workingDays ? Math.round((totals.presentDays / totals.workingDays) * 1000) / 10 : 0;
     const impRows = rows.filter((r) => r.imported);
@@ -411,18 +422,23 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     if (req.query.format === 'csv' || req.query.format === 'xlsx') {
       await logAudit({ userId: req.user.id, action: `Attendance monthly summary exported (${req.query.format.toUpperCase()})`, entity: 'Attendance', toValue: `${periodLabel} · ${rows.length} employee(s)` });
       const withImp = !!importedTotals;
-      const headers = ['Period', 'Code', 'Name', 'Department', 'Designation', 'Employee Status', 'Left on (last attendance)', 'Working Days', 'Present', 'Late', 'Attended',
-        'Half Day', 'Absent', 'On Leave', 'Missing Check-In', 'Missing Check-Out', 'No device data', 'Week off', 'Holidays', 'Late Arrivals',
+      const headers = ['Period', 'Code', 'Name', 'Department', 'Designation', 'Employee Status', 'Left on (last attendance)',
+        'Days on the rolls', 'Present (incl. late / early / missing)', 'Absent', 'Half day', 'On leave', 'Week off / Holiday', 'No device data', 'Not checked in yet', 'Working days',
+        'of Present: Late', 'of Present: Early logout', 'of Present: Missing check-in', 'of Present: Missing check-out', 'Days with a punch', 'Punches received', 'Adds up to',
+        'Payroll detail: Working Days', 'Payroll detail: Present (status only)', 'Payroll detail: Late', 'Payroll detail: Attended',
+        'Payroll detail: Half Day', 'Payroll detail: Absent', 'Payroll detail: On Leave', 'Payroll detail: Missing Check-In', 'Payroll detail: Missing Check-Out', 'No device data (status)', 'Week off (status)', 'Holidays (status)', 'Late Arrivals (payroll)',
         'Hours Worked', 'Attendance %', 'Early Logout', 'Half Day + Half Leave', 'Under Review', 'Paid Days', 'Unpaid (Absent) Days', ...(month ? ['Late Half-day Cut (payroll)'] : []),
         ...(withImp ? ['Old HRMS: Present', 'Old HRMS: Half Day', 'Old HRMS: Week-offs', 'Old HRMS: Public Holidays', 'Old HRMS: Leaves', 'Old HRMS: Payable Days', 'Old HRMS: Total Hours'] : [])];
-      const line = (r) => [periodLabel, r.employeeCode, r.name, r.department || '', r.designation || '', r.hrStatus, r.lastDay || '', r.workingDays, r.present, r.late, r.attended,
+      const tl = (r) => [r.tiles.days, r.tiles.present, r.tiles.absent, r.tiles.halfDay, r.tiles.onLeave, r.tiles.offDay, r.tiles.noRecord, r.tiles.notYet, r.tiles.workingDays,
+        r.tiles.late, r.tiles.earlyLogout, r.tiles.missingCheckIn, r.tiles.missingCheckOut, r.tiles.punchDays, r.tiles.punchRows, r.equation];
+      const line = (r) => [periodLabel, r.employeeCode, r.name, r.department || '', r.designation || '', r.hrStatus, r.lastDay || '', ...tl(r), r.workingDays, r.present, r.late, r.attended,
         r.halfDay, r.absent, r.onLeave, r.missingCheckIn, r.missingCheckOut, r.noData, r.weeklyOffs, r.holidays, r.lateArrivals, r.hoursWorked, r.attendancePct,
         r.earlyLogout, r.halfDayHalfLeave, r.halfDayUnderReview + r.leaveUnderReview, r.paidDays, r.absentDays,
         ...(month ? [r.lateCut] : []),
         ...(withImp ? (r.imported ? [r.imported.present, r.imported.halfDay, r.imported.weekOffs, r.imported.publicHolidays, r.imported.leaves, r.imported.payableDays, r.imported.totalHours || ''] : ['', '', '', '', '', '', '']) : [])];
       const data = rows.map(line);
       data.push([]);
-      data.push(['TOTAL', '', `${rows.length} employee(s)`, '', '', '', '', totals.workingDays, totals.present, totals.late, totals.attended, totals.halfDay, totals.absent,
+      data.push(['TOTAL', '', `${rows.length} employee(s)`, '', '', '', '', ...tl({ tiles: totals.tiles, equation: totals.equation }), totals.workingDays, totals.present, totals.late, totals.attended, totals.halfDay, totals.absent,
         totals.onLeave, totals.missingCheckIn, totals.missingCheckOut, totals.noData, totals.weeklyOffs, totals.holidays, totals.lateArrivals, totals.hoursWorked, totals.attendancePct,
         totals.earlyLogout, totals.halfDayHalfLeave, totals.halfDayUnderReview + totals.leaveUnderReview, totals.paidDays, totals.absentDays,
         ...(month ? [totals.lateCut] : []),

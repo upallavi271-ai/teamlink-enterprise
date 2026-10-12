@@ -6,12 +6,17 @@ import { Panel, PanelPad, PanelHead, StatRow } from '../../components/proto.jsx'
 import FaceCheckIn from './FaceCheckIn.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
+import { HalfLeaveChip } from './DayReport.jsx';
+import { TellWhyDialog } from './LatePermission.jsx';
 import './attendance-self.css';
+
+// A half day, and where the leave for the other half stands (from the day's own status).
+const halfStateOf = (r) => (r.status === 'Half Day + Half Leave' || r.status === 'Half Leave + Absent' ? 'Approved' : r.status === 'Half Day, Under Review' ? 'Pending' : r.status === 'Half Day' ? 'None' : '');
 
 // The day list's own filters (the period is the Month / Year / Custom picker).
 const DAY_FIELDS = [
   { key: 'status', label: 'Status', get: (r) => r.status, primary: true },
-  { key: 'method', label: 'Method', get: (r) => r.method, primary: true },
+  { key: 'method', label: 'Check-in method', get: (r) => r.how || r.method, primary: true },
   { key: 'location', label: 'Location', allLabel: 'Any location status', get: (r) => r.locationStatus },
   { key: 'regularization', label: 'Regularization', allLabel: 'Any regularization', get: (r) => r.regularization },
 ];
@@ -178,9 +183,28 @@ function CheckInPanel() {
   );
 }
 
+// LATE COMING on a day: where the person's request stands, and ONE clear button when they have not explained yet.
+function LateChip({ r, windowDays, onTell }) {
+  if (!(r.late || r.lateExcused)) return null;
+  if (r.lateState === 'approved') return <div><span className="hl-chip tone-green" title="A manager approved. You stay Present and this is not counted as a late arrival.">{r.latePermissionText || 'Late (approved)'}</span></div>;
+  if (r.lateState === 'pending') return <div><span className="hl-chip tone-orange" title="Waiting for your approver. It still counts as late until it is approved.">{r.latePermissionText || 'Late - waiting for approval'}</span></div>;
+  if (r.lateState === 'rejected') return <div><span className="hl-chip tone-red" title="The reason was not accepted. It counts as late.">{r.latePermissionText || 'Late - rejected'}</span></div>;
+  const ago = Math.round((Date.parse(localToday() + 'T00:00:00Z') - Date.parse(r.date + 'T00:00:00Z')) / 86400000);
+  return (
+    <div>
+      <span className="hl-chip tone-red">{r.latePermissionText || 'Not explained'}</span>
+      {ago <= windowDays && <button type="button" className="btn btn-sm btn-primary att-tellwhy" onClick={() => onTell(r.date)}>Tell why I was late</button>}
+    </div>
+  );
+}
+
 export default function MyAttendance() {
   const [params, setParams] = useState({ month: thisMonth() });
   const [data, setData] = useState(null);
+  const [tellFor, setTellFor] = useState(null); // the date the "Tell why I was late" popup is open for
+  const [windowDays, setWindowDays] = useState(7);
+  const [reload, setReload] = useState(0);
+  useEffect(() => { api.get('/late-permissions/settings').then((r) => setWindowDays(r.data.pastDays)).catch(() => {}); }, []);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -189,7 +213,7 @@ export default function MyAttendance() {
     api.get('/attendance/my-days', { params })
       .then((r) => setData(r.data))
       .catch((e) => { setData(null); setError(e.response?.data?.error || 'Could not load your attendance.'); });
-  }, [params]);
+  }, [params, reload]);
 
   async function exportAs(format) {
     setBusy(true);
@@ -234,6 +258,12 @@ export default function MyAttendance() {
               ]} />
             </div>
           )}
+          {s && s.kpi && s.kpi.late > 0 && (
+            <div className="att-late-line" data-testid="my-late-chips">
+              <b>Late {s.kpi.late}</b> · Approved {s.lateApproved || 0} · Waiting {s.latePending || 0}{s.lateRejected ? ` · Rejected ${s.lateRejected}` : ''} · Not explained {s.lateNotExplained || 0}
+              <span className="small-muted"> — an approved late day stays Present and is not counted as a late arrival.</span>
+            </div>
+          )}
           {data && data.rows && data.rows.length > 0 && <ListFilterBar lf={lf} storageKey="my-attendance-days" noun="days" />}
         </div>
         <div className="tbl-wrap">
@@ -241,7 +271,7 @@ export default function MyAttendance() {
             <thead>
               <tr>
                 <th>Date</th><th>Check-In</th><th>Check-Out</th><th>Total Hours</th><th>Status</th>
-                <th>Method</th><th>Location</th><th>Regularization</th>
+                <th>Check-in method</th><th>Location</th><th>Regularization</th>
               </tr>
             </thead>
             <tbody>
@@ -251,8 +281,8 @@ export default function MyAttendance() {
                   <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
                   <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
                   <td className="cell-muted">{r.hours != null ? r.hours : '—'}</td>
-                  <td><DayStatus status={r.status} colour={r.colour} earlyLogout={r.earlyLogout} />{r.reason || r.note ? <div className="small-muted att-note">{r.reason || r.note}</div> : null}</td>
-                  <td className="cell-muted">{r.method || '—'}{r.verification ? <div className="small-muted att-note">{r.verification}</div> : null}</td>
+                  <td><DayStatus status={r.status} colour={r.colour} earlyLogout={r.earlyLogout} />{r.reason || r.note ? <div className="small-muted att-note">{r.reason || r.note}</div> : null}{(r.notes || []).map((k) => <span key={k} className="hl-chip tone-orange">{{ late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' }[k] || k}</span>)}{halfStateOf(r) ? <div><HalfLeaveChip state={halfStateOf(r)} half={r.leaveHalf ? (/first/i.test(r.leaveHalf) ? '1st half' : /second/i.test(r.leaveHalf) ? '2nd half' : '') : ''} /></div> : null}<LateChip r={r} windowDays={windowDays} onTell={setTellFor} /></td>
+                  <td className="cell-muted">{r.howText || r.method || '—'}{r.verification ? <div className="small-muted att-note">{r.verification}</div> : null}</td>
                   <td className="cell-muted">{r.locationStatus || '—'}</td>
                   <td className="cell-muted">{r.regularization || '—'}</td>
                 </tr>
@@ -265,6 +295,7 @@ export default function MyAttendance() {
         {page.total > 0 && <Pager page={page} noun="days" />}
         {data && data.from && <div className="small-muted" style={{ padding: '10px 18px' }}>{data.from} → {data.to} · {data.rows.length} day(s)</div>}
       </Panel>
+      {tellFor && <TellWhyDialog date={tellFor} kind="Explain" onClose={() => setTellFor(null)} onDone={() => setReload((n) => n + 1)} />}
     </div>
   );
 }

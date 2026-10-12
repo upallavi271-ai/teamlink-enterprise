@@ -29,6 +29,19 @@ function Row({ k, v }) {
   );
 }
 
+// The Resume card (user, 2026-10-09): it used to sit on the left of the page; it is
+// now the body of the "Resume" tab (C360_TABS in Candidate360Tabs.jsx). The card
+// itself — ResumePanel and its wrapper — is exactly what it was.
+export function ResumeTabCard({ c }) {
+  if (!c) return null;
+  return (
+    <section className="pfl-card pfl-resume">
+      <div className="pfl-label">Resume</div>
+      <ResumePanel candidateId={c.id} candidateName={c.name} candidatePhone={c.phone} candidateEmail={c.email} />
+    </section>
+  );
+}
+
 export default function ProfileLeft({
   c, user, internal, onChanged, onDeleted, slot,
 }) {
@@ -47,7 +60,8 @@ export default function ProfileLeft({
         {c.gender && <Row k="Gender" v={c.gender} />}
         <Row k="Current job" v={[c.currentDesignation, c.currentCompany].filter(Boolean).join(' · ')} />
         <Row k="Education" v={[c.education, c.specialization, c.institute].filter(Boolean).join(' · ')} />
-        <Row k="Source" v={[c.source, c.firstSource && c.firstSource !== c.source ? `first: ${c.firstSource}` : ''].filter(Boolean).join(' · ')} />
+        <Row k="Where from" v={c.sourceKey || [c.source, c.firstSource && c.firstSource !== c.source ? `first: ${c.firstSource}` : ''].filter(Boolean).join(' · ')} />
+        {c.sourceKey && c.sourceRaw && c.sourceRaw !== c.sourceKey && <Row k="Recorded as" v={c.sourceRaw} />}
         <Row k="Added" v={protoDate(c.createdAt)} />
       </section>
 
@@ -68,11 +82,6 @@ export default function ProfileLeft({
       {internal && <RecordCards c={c} internal={internal} />}
 
       {slot && <SpecialisationSlot {...slot} />}
-
-      <section className="pfl-card pfl-resume">
-        <div className="pfl-label">Resume</div>
-        <ResumePanel candidateId={c.id} candidateName={c.name} candidatePhone={c.phone} candidateEmail={c.email} />
-      </section>
 
       {internal && <ProfileTools c={c} user={user} onChanged={onChanged} onDeleted={onDeleted} />}
     </div>

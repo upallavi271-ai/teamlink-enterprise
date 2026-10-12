@@ -3,12 +3,13 @@
  *
  *   1  signed out: the chip row, "Log in to see your match", the link preview
  *   2  candidate Search Jobs: tap "Fresher" -> the results change, ?qf= in the URL
- *   3  the card carries the server's match line ("82% match · ✓ … · ✗ …")
+ *   3  the card carries the server's AI Match, once, top right, and a gap
+ *      line in words under the buttons ("⚠ SQL") with no percentage
  *   4  Share -> WhatsApp opens wa.me with the job, the company its card shows, and its link
- *   5  Apply -> the application form (0106) with only what is missing; submit
- *      applies; the one-click API stays idempotent
+ *   5  Apply -> applied at once (0118): the confirmation, no form; the
+ *      one-click API stays idempotent
  *   6  urgent + "3 days left" badges on the card
- *   7  an incomplete profile: the form asks for what is missing, and submitting applies
+ *   7  an incomplete profile applies at once too - nothing is asked first
  *   8  the urgent alert is in the candidate's bell, with its match
  *   9  the job page: full breakdown; the recruiter sees "Shared N times · M applies"
  *  10  a job past its last date: "Applications closed", and the server refuses
@@ -211,9 +212,11 @@ await check('2. tapping "Fresher" changes the results, and the URL carries it', 
 });
 
 await check('3. the card shows the server match line', async () => {
-  await cp.waitForSelector(`${cardFor(senior.id)} .tlpu-why`, { timeout: 8000 });
-  const line = await cp.$eval(`${cardFor(senior.id)} .tlpu-why`, (e) => e.textContent);
-  must(/✓ Java, Spring, AWS/.test(line) && /✓ 3 yrs/.test(line) && /✗ SQL/.test(line), 'line: ' + line);
+  await cp.waitForSelector(`${cardFor(senior.id)} .tlpu-gap`, { timeout: 8000 });
+  const line = await cp.$eval(`${cardFor(senior.id)} .tlpu-gap`, (e) => e.textContent);
+  must(/⚠ SQL/.test(line) && !/Java|Spring|AWS/.test(line) && !/%/.test(line), 'gap line: ' + line);
+  const pcts = (await cp.$eval(cardFor(senior.id), (e) => e.innerText)).match(/\d+\s*%/g) || [];
+  must(pcts.length === 1, 'percentages on the card: ' + pcts);
   const server = await cp.evaluate((id) => TL.api.get('/job-matches/explain?jobIds=' + id).then((r) => r.matches[0].score), senior.id);
   const shown = await cp.$eval(`${cardFor(senior.id)} .rj-score b`, (e) => e.textContent.trim()).catch(() => '');
   must(shown === server + '%', `card says ${shown}, server says ${server}%`);
@@ -236,9 +239,11 @@ await check('4. Share -> WhatsApp opens wa.me with the job, the company its card
   await popup.waitForURL(/wa\.me|whatsapp/, { timeout: 8000 }).catch(() => {});
   const wa = decodeURIComponent(popup.url().replace(/\+/g, ' '));
   must(/wa\.me\/\?text=/.test(popup.url()) || /whatsapp/.test(popup.url()), 'opened ' + popup.url());
-  must(wa.includes(senior.title) && wa.includes('I found this job opportunity') && wa.includes('View Job & Apply') && wa.includes(`/job/${senior.id}?ref=`), 'text: ' + wa);
+  /* the job-opportunity format (owner, 2026-10-06) */
+  must(wa.includes(`🏥 *${senior.title}*`) && wa.includes('Hi! 👋 We found a job opportunity that could be a great match for your profile!')
+    && wa.includes('*👉 Interested? Explore the complete job details and apply now:*') && wa.includes(`🔗 `) && wa.includes(`/job/${senior.id}?ref=`), 'text: ' + wa);
   /* the owner's share spec: the company the job card shows (never a name containing "client") */
-  must(wa.split(String.fromCharCode(10)).includes(`🏢 ${CLIENT}`), 'no company line in the share');
+  must(wa.split(String.fromCharCode(10)).includes(`🏢 *${CLIENT}*`), 'no company line in the share');
   for (const w of ['undefined', 'null', 'NaN']) must(!wa.includes(w), `"${w}" in the share`);
   await popup.close();
   await cp.evaluate(() => window.tlpuCloseSheet());
@@ -246,17 +251,16 @@ await check('4. Share -> WhatsApp opens wa.me with the job, the company its card
 
 const apps = (id) => cp.evaluate((j) => TL.api.get('/applications').then((r) => r.applications.filter((a) => a.jobId === j).length), id);
 
-await check('5. Apply opens the application form with only what is missing; submit applies; one-click stays idempotent', async () => {
+await check('5. Apply applies at once: the confirmation, no form; one-click stays idempotent', async () => {
   await cp.click(`${cardFor(senior.id)} .rj-btn.pri`, { trial: true, timeout: 4000 }).catch(async (e) => {
     await shot(cp, '05-blocked');
     throw new Error('the Apply button cannot be tapped: ' + String(e.message).split(String.fromCharCode(10)).slice(0, 6).join(' | '));
   });
   await cp.click(`${cardFor(senior.id)} .rj-btn.pri`);
-  await cp.waitForSelector('#tlafForm', { timeout: 8000 });
-  must(await cp.$('#tlafSummary'), 'a complete profile is not summarised');
-  await shot(cp, '05-apply-form');
-  const r = await completeApplyForm(cp);
-  must(r.state === 'done', 'form: ' + JSON.stringify(r));
+  const r = await completeApplyForm(cp, { timeout: 15000 });
+  await shot(cp, '05-applied');
+  must(r.state === 'done' && /^TL-APP-/.test(r.ref), 'apply: ' + JSON.stringify(r));
+  must(!(await cp.$('#tlafForm')), 'the application form opened');
   must(await apps(senior.id) === 1, 'not applied');
   must(/#\/candidate\/search/.test(await cp.evaluate(() => location.hash)), 'applying left the page');
   await closeApplyForm(cp);
@@ -265,10 +269,10 @@ await check('5. Apply opens the application form with only what is missing; subm
   must(await apps(senior.id) === 1, 'duplicate application');
 });
 
-await check('5b. the home page Easy Apply opens the same form, and Submit applies', async () => {
+await check('5b. the home page Easy Apply applies the same way, at once', async () => {
   await cp.evaluate((id) => { window.cpEasyApply(id); }, fresher.id);
-  const r = await completeApplyForm(cp);
-  must(r.state === 'done', 'form: ' + JSON.stringify(r));
+  const r = await completeApplyForm(cp, { timeout: 15000 });
+  must(r.state === 'done' && !(await cp.$('#tlafForm')), 'apply: ' + JSON.stringify(r));
   await closeApplyForm(cp);
   must(await apps(fresher.id) === 1, 'Submit did not apply');
 });
@@ -278,15 +282,20 @@ await check('8. the urgent-hiring alert is in the bell with the match', async ()
   await go(cp, '#/candidate/home');
   await cp.waitForTimeout(800);
   const html = await cp.evaluate(() => (typeof candidateBellHtml === 'function' ? candidateBellHtml() : ''));
-  must(/Urgent hiring/.test(html) && /% match/.test(html) && /Apply now/.test(html), 'bell: ' + html.replace(/<[^>]+>/g, ' ').slice(0, 300));
+  must(/Urgent hiring/.test(html) && /% AI Match/.test(html) && /Apply now/.test(html), 'bell: ' + html.replace(/<[^>]+>/g, ' ').slice(0, 300));
   must(!/\bclient\b/i.test(html.replace(/<[^>]+>/g, ' ')), 'the word client in the bell');
+  /* the full job-opportunity message, behind "View full message" */
+  must(/View full message/.test(html) && /URGENT HIRING/.test(html) && /What We(&#39;|')re Looking For|Interested\? Explore the complete job details/.test(html),
+    'no full message in the bell: ' + html.replace(/<[^>]+>/g, ' ').slice(0, 300));
+  must(!/undefined|\bnull\b|N\/A/.test(html.replace(/<[^>]+>/g, ' ')), 'a placeholder in the bell');
 });
 
 await check('9. the job page shows the full breakdown and Improve your match', async () => {
   await go(cp, '#/job/' + fresher.id);
   await cp.waitForSelector('.tlpu-jp .tlpu-kv', { timeout: 8000 });
   const t = await cp.$eval('.tlpu-jp', (e) => e.innerText);
-  must(/Your match · \d+%/.test(t) && /Skills/.test(t) && /Experience/.test(t) && /Location/.test(t) && /Salary/.test(t), 'panel: ' + t);
+  must(/🎯 \d+% AI Match/.test(t) && /Matched Skills/.test(t) && /Missing Skills/.test(t) && /Experience Match/.test(t)
+    && /Location Match/.test(t), 'panel: ' + t);
   must(/\+ SQL/.test(t), 'no Improve your match');
   await shot(cp, '09-job-page-breakdown');
 });
@@ -307,7 +316,7 @@ await check('10. past its last date: "Applications closed" on the page, and the 
 await cctx.close();
 
 /* ---------------- 7. the incomplete profile ---------------- */
-await check('7. an incomplete profile: the form asks for what is missing, and submitting applies', async () => {
+await check('7. an incomplete profile applies at once: nothing is asked, Complete Profile is offered', async () => {
   const ctx = await browser.newContext(PHONE);
   const p = await open(ctx, '#/');
   await asCand(p, partial.email, partial.pw);
@@ -318,14 +327,13 @@ await check('7. an incomplete profile: the form asks for what is missing, and su
     if (!b) return false; b.click(); return true;
   });
   must(clicked, 'no Apply button');
-  await p.waitForSelector('#tlafForm', { timeout: 6000 });
-  const asked = await p.evaluate(() => Array.from(document.querySelectorAll('#tlafForm [data-row]')).filter((r) => r.offsetParent && /^tlaf(Resume|Exp|Qual|Loc|Notice|Name|Mobile|Email)$/.test(r.getAttribute('data-row'))).map((r) => r.getAttribute('data-row')));
-  must(asked.includes('tlafResume'), 'the missing resume is not asked for: ' + asked.join(','));
-  await shot(p, '07-missing-fields-form');
-  const r = await completeApplyForm(p);
-  must(r.state === 'done', 'form: ' + JSON.stringify(r));
+  const r = await completeApplyForm(p, { timeout: 15000 });
+  await shot(p, '07-incomplete-profile-applied');
+  must(r.state === 'done', 'apply: ' + JSON.stringify(r));
+  must(!(await p.$('#tlafForm')), 'the application form opened for the missing fields');
+  must(await p.$('#tl1cDone'), 'no confirmation toast');
   const n = await p.evaluate((id) => TL.api.get('/applications').then((x) => x.applications.filter((a) => a.jobId === id).length), fresher.id);
-  must(n === 1, 'not applied after the form');
+  must(n === 1, 'not applied');
   await ctx.close();
 });
 

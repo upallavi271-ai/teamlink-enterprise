@@ -1,0 +1,170 @@
+/* ===========================================================================
+   THE NEAT JOBS LIST (2026-10-09) — Clients & Requirements -> Jobs.
+   "The requirements page is looking too clumsy": full client names, no
+   sideways scroll, one main button per row, a panel that never clips.
+   Scoped under .crq4-jobs / .crq4 so nothing else changes. Loaded after
+   crq4.css, jobs.css and reqrole.css.
+   =========================================================================== */
+
+/* --- more room: the module pages were capped at 1220px, which squeezed the
+   table on every big screen. Clients | Jobs | Agreements all get the same width. */
+main:has(> .crq4){max-width:1640px}
+
+/* --- where the panel lives ---------------------------------------------------
+   >= 1700px: beside the table (340px). Smaller: slides over the table. */
+.crq4-layout{grid-template-columns:minmax(0,1fr) 340px}
+.crq4-layout.crq4-noside{grid-template-columns:minmax(0,1fr)}
+.crq4-over{position:fixed;inset:0;z-index:80;display:flex;justify-content:flex-end}
+.crq4-over-back{position:absolute;inset:0;width:100%;border:0;padding:0;background:rgba(18,28,52,.32);cursor:default}
+.crq4-sheet{position:relative;width:min(410px,100vw);height:100%;overflow-y:auto;background:var(--paper,#fff);
+  box-shadow:-10px 0 30px rgba(18,28,52,.22);padding:12px;animation:crq4-sheet-in .16s ease-out}
+@keyframes crq4-sheet-in{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}
+.crq4-sheet .crq4-sticky{position:static}
+@media (max-width:560px){.crq4-sheet{width:100vw;padding:8px}}
+
+/* --- filter card: search first, then the filters, Clear last -------------------- */
+.crq4-search{order:-1;flex:2 1 220px;max-width:340px}
+.crq4-filters .pfb-clear{order:9;margin-left:auto}
+.crq4-filters .lph-facet{flex:1 1 112px;max-width:200px}
+
+/* --- list header: status chips, then [quick views] [Filters] ........ [Sort] ------ */
+.crq4-list-tools{gap:10px}
+.crq4-list-tools .lph-tabs .tabs{gap:8px}
+.crq4-list-tools .lph-tabs .tab{padding:6px 14px;font-size:13px}
+.crq4-list-tools .lph-tabs .tab .n{display:inline-block;margin-left:7px;padding:0 7px;border-radius:999px;font-size:12px;line-height:18px;
+  background:rgba(31,56,100,.09);opacity:1}
+.crq4-list-tools .lph-tabs .tab.active .n{background:rgba(255,255,255,.22)}
+.crq4-list-tools .lph-row{gap:10px 14px;align-items:center}
+.crq4-list-tools .jl-quick{order:1;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.crq4-list-tools .jl-quick-lbl{font-size:11.5px;font-weight:700;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.03em}
+.crq4-list-tools .jl-quick .reqq-chips{margin:0}
+.crq4-list-tools .lph-filters-btn{order:2}
+.crq4-list-tools .lph-sort{order:3;margin-left:auto}
+.crq4-list-tools .lph-sort > span{font-weight:600}
+
+/* --- the table: every column has room; names wrap instead of "..." ---------------- */
+.crq4-jobs .jobsws-table.jl-neat table{table-layout:auto;width:100%;min-width:0}
+.crq4-jobs .jobsws-table.jl-neat th,
+.crq4-jobs .jobsws-table.jl-neat td,
+.crq4-jobs .jobsws-table.jl-neat td.cell-muted{white-space:normal;overflow:visible;text-overflow:clip;max-width:none;min-width:0;
+  padding:9px 10px;vertical-align:middle;line-height:1.35}
+.crq4-jobs .jobsws-table.jl-neat thead th{font-size:11.5px;font-weight:700;color:var(--ink-soft);background:#F4F7FB;white-space:nowrap}
+.crq4-jobs .jobsws-table.jl-neat th .gd-help{display:none}
+.crq4-jobs .jobsws-table.jl-neat tbody td{height:62px;border-bottom:1px solid var(--line-soft)}
+.crq4-jobs .jobsws-table.jl-neat tbody tr:nth-child(even) td{background:#FAFBFD}
+.crq4-jobs .jobsws-table.jl-neat tbody tr.row-link:hover td{background:#F0F5FD}
+.crq4-jobs .jobsws-table.jl-neat tbody tr.crq4-current td{background:#EAF1FC}
+.crq4-jobs .jobsws-table.jl-neat tbody tr.is-selected td{background:var(--navy-tint,#e7edf7)}
+.crq4-jobs .jobsws-table.jl-neat tbody tr.crq4-current td:first-child{box-shadow:inset 3px 0 0 #1F5BD8}
+/* the first column is not pinned any more: the table fits, nothing slides under it */
+.crq4-jobs .jobsws-table.jl-neat th.sticky-col,
+.crq4-jobs .jobsws-table.jl-neat td.sticky-col{position:static;max-width:none;min-width:0}
+
+.crq4-jobs .jobsws-table.jl-neat [data-col="requirement"],.crq4-jobs .jobsws-table.jl-neat [data-col="position"]{width:26%;min-width:176px}
+.crq4-jobs .jobsws-table.jl-neat [data-col="client"]{width:19%;min-width:128px}
+.crq4-jobs .jobsws-table.jl-neat [data-col="department"]{width:9%;min-width:84px}
+.crq4-jobs .jobsws-table.jl-neat [data-col="tl"],.crq4-jobs .jobsws-table.jl-neat [data-col="recruiter"],.crq4-jobs .jobsws-table.jl-neat [data-col="bde"]{width:11%;min-width:96px}
+.crq4-jobs .jobsws-table.jl-neat [data-col="openings"]{width:6%;min-width:58px}
+.crq4-jobs .jobsws-table.jl-neat [data-col="status"]{width:12%;min-width:108px}
+.crq4-jobs .jobsws-table.jl-neat [data-col="nextAction"]{width:18%;min-width:136px}
+
+.jl-jobtxt{min-width:0}
+.jl-jobtop{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.jl-job .req-code{font-size:12px;font-weight:700;color:#14804A;background:#E8F6EF;border-radius:6px;padding:1px 7px}
+.jl-job .rr-type{margin-top:0}
+.jl-title{margin-top:3px;font-size:13px;font-weight:600;color:var(--ink);line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.jl-job .rr-assignee{margin-top:3px}
+.jl-client{font-size:12.5px;color:var(--ink);font-weight:500}
+.jl-client .rr-client-link{border-bottom:0;color:var(--ink)}
+.jl-client .rr-client-link:hover{color:#1A56DB;text-decoration:underline}
+.jl-deptline{margin-top:4px}
+.jl-dept{display:inline-block;font-size:11px;font-weight:700;line-height:1.5;padding:0 8px;border-radius:999px;white-space:nowrap}
+.jl-person{font-size:12.5px;color:var(--ink);font-weight:500}
+.jl-person-more{color:var(--ink-faint);font-weight:400}
+.jl-missing{font-size:12px;font-weight:600}
+.jl-missing-red{color:#B4413A}
+.jl-missing-amber{color:#A8620A}
+.jl-status .st-chip{font-size:11.5px;padding:2px 10px;white-space:normal;display:inline-block;max-width:100%;line-height:1.3;text-align:left}
+.jl-sub{margin-top:4px;font-size:11.5px;color:var(--ink-soft);line-height:1.3}
+.jl-sub.overdue{color:#C2362B;font-weight:600}
+.jl-sub.pending{color:#A8620A}
+.jl-sub.active{color:#14804A}
+.jl-act{white-space:normal}
+.jl-main{white-space:normal;line-height:1.2;min-height:30px;text-align:center}
+.jl-sec{display:flex;gap:12px;margin-top:3px;min-height:16px;visibility:hidden}
+.jobsws-table tr:hover .jl-sec,.jobsws-table tr:focus-within .jl-sec,.jobsws-table tr.crq4-current .jl-sec{visibility:visible}
+.jl-link{border:0;background:none;padding:0;font:inherit;font-size:12px;color:#1F5BD8;cursor:pointer}
+.jl-link:hover{text-decoration:underline}
+
+/* A little tighter on 1100-1280 windows so the table still fits without sideways scrolling. */
+@media (min-width:701px) and (max-width:1280px){
+  .crq4-jobs .jobsws-table.jl-neat th,
+  .crq4-jobs .jobsws-table.jl-neat td{padding:8px 7px;font-size:12px}
+  .crq4-jobs .jobsws-table.jl-neat [data-col="requirement"],.crq4-jobs .jobsws-table.jl-neat [data-col="position"]{min-width:150px}
+  .crq4-jobs .jobsws-table.jl-neat [data-col="client"]{min-width:112px}
+  .crq4-jobs .jobsws-table.jl-neat [data-col="tl"],.crq4-jobs .jobsws-table.jl-neat [data-col="recruiter"],.crq4-jobs .jobsws-table.jl-neat [data-col="bde"]{min-width:84px}
+  .crq4-jobs .jobsws-table.jl-neat [data-col="openings"]{min-width:50px}
+  .crq4-jobs .jobsws-table.jl-neat [data-col="status"]{min-width:98px}
+  .crq4-jobs .jobsws-table.jl-neat [data-col="nextAction"]{min-width:108px}
+  .jl-main{padding-left:8px;padding-right:8px;font-size:12px}
+}
+
+/* --- phone: every job is a card ----------------------------------------------------- */
+@media (max-width:700px){
+  .crq4-jobs .att-wide-top{display:none !important}
+  .crq4-jobs .jobsws-table{max-height:none;overflow:visible;border:0;background:none}
+  .crq4-jobs .jobsws-table table,.crq4-jobs .jobsws-table tbody,.crq4-jobs .jobsws-table tr,.crq4-jobs .jobsws-table td{display:block;width:100%}
+  .crq4-jobs .jobsws-table thead{display:none}
+  .crq4-jobs .jobsws-table tbody tr{margin:0 0 10px;padding:10px 12px 12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+  .crq4-jobs .jobsws-table tbody tr.crq4-current{box-shadow:inset 3px 0 0 #1F5BD8}
+  .crq4-jobs .jobsws-table tbody td,
+  .crq4-jobs .jobsws-table.jl-neat tbody td{height:auto;position:relative;display:block;padding:5px 0 5px 96px;min-height:24px;border:0;background:none !important;box-shadow:none !important}
+  .crq4-jobs .jobsws-table td.sticky-col{position:static}
+  .crq4-jobs .jobsws-table td::before{position:absolute;left:0;top:6px;width:88px;font-size:11.5px;font-weight:700;color:var(--ink-faint)}
+  .crq4-jobs .jobsws-table.jl-neat tbody td.jl-job,.crq4-jobs .jobsws-table.jl-neat tbody td.jl-act{padding-left:0}
+  .crq4-jobs .jobsws-table.jl-neat tbody td[data-col]{width:auto !important;min-width:0 !important;max-width:none !important}
+  .crq4-jobs .jobsws-table .jl-title{display:block;-webkit-line-clamp:unset}
+  .crq4-jobs .jobsws-table td.jl-job::before,.crq4-jobs .jobsws-table td.jl-act::before{display:none}
+  .crq4-jobs .jobsws-table td[data-col="client"]::before{content:'Client'}
+  .crq4-jobs .jobsws-table td[data-col="department"]::before{content:'Department'}
+  .crq4-jobs .jobsws-table td[data-col="tl"]::before{content:'Team lead'}
+  .crq4-jobs .jobsws-table td[data-col="recruiter"]::before{content:'Recruiter'}
+  .crq4-jobs .jobsws-table td[data-col="bde"]::before{content:'Client manager'}
+  .crq4-jobs .jobsws-table td[data-col="openings"]::before{content:'Openings'}
+  .crq4-jobs .jobsws-table td[data-col="status"]::before{content:'Status'}
+  .crq4-jobs .jobsws-table td[data-col="sla"]::before{content:'Age / SLA'}
+  .crq4-jobs .jobsws-table td[data-col="location"]::before{content:'Location'}
+  .crq4-jobs .jobsws-table td[data-col="priority"]::before{content:'Priority'}
+  .crq4-jobs .jobsws-table td.jl-act{margin-top:6px;flex-wrap:wrap;align-items:center}
+  .jl-main{min-height:40px;padding:0 16px}
+  .jl-sec{visibility:visible}
+  .jl-title{-webkit-line-clamp:3}
+}
+
+/* --- the Selected job panel: aligned rows, nothing clipped ----------------------------- */
+.crq4-sel{gap:10px;font-size:13px}
+.crq4-sel-top{gap:8px;flex-wrap:wrap}
+.crq4-sel-status{margin-left:auto}
+.crq4-sel-id b{font-size:12px}
+.crq4-sel-title{font-size:16px}
+.crq4-sel-line{gap:10px}
+.crq4-sel-main{font-weight:600;overflow-wrap:anywhere}
+.crq4-sel-dept{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px}
+.crq4-sel-kvs{border-top:1px solid var(--line-soft);padding-top:4px}
+.crq4-sel-kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);align-items:baseline}
+.crq4-sel-kv:last-child{border-bottom:0}
+.crq4-sel-kv > span:first-child{color:var(--ink-faint);font-size:12px}
+.crq4-sel-kv > span:last-child{text-align:left;font-weight:600;overflow-wrap:anywhere}
+.crq4-sel-next{padding:12px;gap:10px;align-items:flex-start}
+.crq4-sel-nextbody{flex:1;min-width:0;gap:4px}
+.crq4-sel-sentence{margin:0;font-size:13px;line-height:1.4;color:var(--ink);font-weight:500}
+.crq4-sel-nextbody .btn{margin-top:8px;height:34px;font-size:13px;padding:0 16px}
+.crq4-sel-btns{gap:8px}
+.crq4-sel-btns .btn{height:32px;font-size:12.5px}
+.crq4-sel-trail{border-top:1px solid var(--line-soft);padding-top:10px}
+
+/* --- overrides of the older one-line rules in crq4.css (names wrap, never "...") ---- */
+.crq4-jobs .jobsws-table .req-cell > .jl-jobtxt{display:block;min-width:0}
+.crq4-jobs .jobsws-table .jl-client .rr-client-link{display:inline;max-width:none;overflow:visible;text-overflow:clip;white-space:normal;vertical-align:baseline}
+.crq4-jobs .jobsws-table .jl-neat .jl-title,.crq4-jobs .jobsws-table.jl-neat .jl-title{white-space:normal}

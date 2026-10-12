@@ -27,7 +27,7 @@ const JOINED_STAGES = ['JOINED', 'HIRED'];
 const DRAFT_CODES = ['DRAFT', 'AGREEMENT_CHECK'];
 
 const DISPLAY_STATUSES = [
-  { key: 'draft', label: 'Draft', tone: 'amber', hint: 'Not live yet. Waits for the client agreement.' },
+  { key: 'draft', label: 'Draft', tone: 'amber', hint: 'Not live yet. A new job request waits here until it is checked and opened.' },
   { key: 'approved', label: 'Agreement Approved', tone: 'amber', hint: 'Live, but no recruiter on it yet.' },
   { key: 'assigned', label: 'Assigned', tone: 'blue', hint: 'A recruiter is on it. No people added yet.' },
   { key: 'open', label: 'Open', tone: 'blue', hint: 'People are being worked on this job.' },

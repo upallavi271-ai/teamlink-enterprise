@@ -89,6 +89,8 @@ function screeningOf(app, events) {
 // email (strong — "same person"), or the exact same name (possible — a hint
 // only; 24k real candidates share plenty of common names).
 async function findDuplicates(candidate) {
+  // dup_: the same rules as the duplicate flags (phone, e-mail, name + date of birth, resume, name + city …) when they are on.
+  try { const viaFlags = await require('./candidateDupes').findForScreening(candidate); if (viaFlags) return viaFlags; } catch { /* the older check below */ } // eslint-disable-line global-require
   const pk = phoneKeys(candidate.phone);
   const ek = emailKey(candidate.email);
   const or = [...pk.map((k) => ({ phone: { contains: k } })), ...(ek ? [{ email: { contains: ek } }] : [])];

@@ -26,6 +26,9 @@ const { logAudit } = require('../utils/audit');
 const VA = require('../utils/vendorAuth');
 const VP = require('../utils/vendorPortal');
 const VC = require('../utils/vendorConfig');
+const INVITE = require('../utils/vendorInvite');
+const INVOICES = require('../utils/vendorInvoices');
+const SIGNED = require('../utils/vendorSigned');
 
 const router = express.Router();
 const { str, ROUND } = VP;
@@ -178,6 +181,138 @@ router.post('/change-password', anyVendor, async (req, res) => {
   await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Password changed' });
   await logAudit({ action: 'Vendor password changed', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: 'Changed' });
   res.json({ ok: true, message: 'Password changed.' });
+});
+
+// ---- invite / reset link (public: no sign-in yet) ----------------------------
+// The link is single use and expiring (utils/vendorInvite.js). Every refusal
+// reads the same, so nothing leaks about which part was wrong.
+const BAD_LINK = 'This link is not valid or has expired. Ask your contact for a new one.';
+const acceptLimit = rateLimit({ bucket: 'vendor-invite', max: Number(process.env.VENDOR_INVITE_IP_MAX || 20), windowMs: 15 * 60000 });
+
+router.get('/invite/:token', acceptLimit, async (req, res) => {
+  const row = await INVITE.findUsable(req.params.token);
+  if (!row) return res.status(404).json({ error: BAD_LINK });
+  const vu = row.vendorUser;
+  return res.json({ valid: true, purpose: row.purpose, name: vu.name, email: vu.email, vendorName: vu.vendor.name, expiresAt: row.expiresAt });
+});
+
+router.post('/invite/accept', ipLimit, acceptLimit, async (req, res) => {
+  const b = req.body || {};
+  const row = await INVITE.findUsable(b.token);
+  if (!row) return res.status(400).json({ error: BAD_LINK, linkProblem: true });
+  const vu = row.vendorUser;
+  const newPassword = String(b.newPassword || '');
+  if (!newPassword) return res.status(400).json({ field: 'newPassword', error: 'Choose a password.' });
+  if (b.confirmPassword !== undefined && b.confirmPassword !== newPassword) return res.status(400).json({ field: 'confirmPassword', error: 'The two passwords do not match.' });
+  const weak = VC.vendorPasswordProblem(newPassword, { email: vu.email, name: vu.name });
+  if (weak) return res.status(400).json({ field: 'newPassword', error: weak });
+  for (const h of [vu.passwordHash, ...VC.parseHistory(vu.passwordHistory)]) {
+    // eslint-disable-next-line no-await-in-loop
+    if (h && await bcrypt.compare(newPassword, h)) return res.status(400).json({ field: 'newPassword', error: 'You used that password before. Choose a new one.' });
+  }
+  // The password is checked BEFORE the link is burned, so a typo does not cost the link;
+  // burning is atomic, so only one request can ever win.
+  const meta = VC.requestMeta(req);
+  if (!(await INVITE.consume(row, meta.ip))) return res.status(400).json({ error: BAD_LINK, linkProblem: true });
+  await prisma.vendorUser.update({
+    where: { id: vu.id },
+    data: {
+      passwordHash: await bcrypt.hash(newPassword, 10), passwordHistory: VC.pushHistory(vu.passwordHistory, vu.passwordHash),
+      mustChangePassword: false, tempPasswordExpiresAt: null, passwordChangedAt: new Date(), failedLoginAttempts: 0, lockedUntil: null,
+      lastLoginAt: new Date(), lastLoginIp: meta.ip,
+    },
+  });
+  await VA.revokeSessions(vu.id, row.purpose === 'reset' ? 'password reset by link' : 'invite accepted');
+  const { token } = await VA.createSession(vu, req);
+  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: row.purpose === 'reset' ? 'Password reset by link' : 'Invite accepted', status: 'password chosen by the vendor' });
+  await logAudit({ action: row.purpose === 'reset' ? 'Vendor password reset by link' : 'Vendor accepted invite', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: vu.vendor.name });
+  const fresh = await prisma.vendorUser.findUnique({ where: { id: vu.id } });
+  return res.json({ token, idleMinutes: VC.CFG.idleMinutes, vendor: meOf({ ...fresh, vendorName: vu.vendor.name }), message: 'Your password is set. Welcome.' });
+});
+
+// ---- profile (read only: Admin keeps the vendor record) ----------------------
+router.get('/profile', vendorOnly, async (req, res) => {
+  const v = await prisma.officeVendor.findUnique({ where: { id: req.vendor.vendorId } });
+  if (!v) return res.status(403).json({ error: 'Forbidden.' });
+  return res.json({
+    vendor: {
+      vendorCode: v.vendorCode || null, name: v.name, companyName: v.companyName || null, contactPerson: v.contactPerson || null, email: v.email || null,
+      phone: v.phone || null, address: v.address || null, gstin: v.gstin || null, pan: v.pan || null, category: v.category || null, paymentTerms: v.paymentTerms || null,
+    },
+    login: { name: req.vendor.name, email: req.vendor.email, lastLoginAt: req.vendor.row.lastLoginAt || null },
+    note: 'To change these details, ask your contact at the company.',
+  });
+});
+
+// ---- invoices + payments (own vendor only; vendorId comes from the session) -----
+router.get('/invoices', vendorOnly, async (req, res) => {
+  const out = await INVOICES.listVendorInvoices(req.vendor.vendorId, { forVendor: true });
+  const f = str((req.query || {}).status);
+  const s = str((req.query || {}).q).toLowerCase();
+  let rows = out.rows;
+  if (f === 'paid') rows = rows.filter((r) => r.paid);
+  else if (f === 'unpaid') rows = rows.filter((r) => !r.paid && !['REJECTED', 'WITHDRAWN'].includes(r.status));
+  if (s) rows = rows.filter((r) => [r.billNumber, r.billCode, r.description, r.assetCode, r.statusText].some((x) => String(x || '').toLowerCase().includes(s)));
+  return res.json({ rows, summary: out.summary, total: out.rows.length });
+});
+
+// ---- documents shared with this vendor ---------------------------------------
+router.get('/documents', vendorOnly, async (req, res) => {
+  const docs = await prisma.vendorSharedDocument.findMany({ where: { vendorId: req.vendor.vendorId, revokedAt: null }, orderBy: { createdAt: 'desc' } });
+  return res.json({ rows: docs.map((d) => ({ id: d.id, title: d.title, docType: d.docType, name: d.name, size: d.size, note: d.note, createdAt: d.createdAt })) });
+});
+
+// ---- signed, expiring downloads ----------------------------------------------
+// kind: shared (a document shared with the vendor) | bill (their bill file) |
+// supporting (a supporting file of their bill, with index) | asset-doc.
+async function resolveOwnedFile(vendor, kind, id, idx) {
+  if (kind === 'shared') {
+    const d = await prisma.vendorSharedDocument.findFirst({ where: { id: String(id || ''), vendorId: vendor.vendorId, revokedAt: null } });
+    return d ? { file: d.file, mime: d.mime, name: d.name, doc: d } : null;
+  }
+  if (kind === 'bill' || kind === 'supporting') {
+    const b = await prisma.vendorBillSubmission.findFirst({ where: { id: String(id || ''), vendorId: vendor.vendorId } });
+    if (!b) return null;
+    if (kind === 'bill') return b.documentFile ? { file: b.documentFile, mime: b.documentMime, name: b.documentName, assetId: b.assetId, billId: b.id } : null;
+    const sup = VP.parseDocs(b.supportingDocs)[Number(idx)];
+    return sup ? { file: sup.file, mime: sup.mime, name: sup.name, assetId: b.assetId, billId: b.id } : null;
+  }
+  if (kind === 'asset-doc') {
+    const d = await prisma.assetDocument.findUnique({ where: { id: String(id || '') } });
+    if (!d) return null;
+    const where = await VA.vendorAssetWhere(vendor);
+    const a = await prisma.asset.findFirst({ where: { AND: [{ id: d.assetId }, where] }, select: { id: true } });
+    if (!a || !(d.visibleToVendor || d.vendorId === vendor.vendorId)) return null;
+    return { file: d.file, mime: d.mime, name: d.name, assetId: d.assetId };
+  }
+  return null;
+}
+
+router.post('/download-link', vendorOnly, async (req, res) => {
+  const b = req.body || {};
+  const kind = str(b.kind);
+  const f = await resolveOwnedFile(req.vendor, kind, b.id, b.index);
+  if (!f) return res.status(403).json({ error: 'Forbidden. This file is not yours.' });
+  const { token, expiresAt } = SIGNED.sign({ k: kind, id: String(b.id), i: kind === 'supporting' ? Number(b.index) : undefined, vid: req.vendor.vendorId, vuid: req.vendor.userId, sid: req.vendor.sessionId });
+  return res.json({ url: `/api/vendor-portal/files/${token}`, expiresAt, expiresInSeconds: SIGNED.TTL_SECONDS, name: f.name });
+});
+
+// No Authorization header here (a browser tab opening the link cannot send one),
+// so EVERY check is repeated: signature + expiry, the session is still alive,
+// the login and vendor are still active, and the file still belongs to that vendor.
+router.get('/files/:token', ipLimit, async (req, res) => {
+  const c = SIGNED.verify(req.params.token);
+  const gone = () => res.status(403).json({ error: 'This download link has expired or is not valid. Open the list again and press the file once more.' });
+  if (!c) return gone();
+  const vendor = await VA.vendorForSession(c.sid, c.vuid);
+  if (!vendor || vendor.vendorId !== c.vid) return gone();
+  const f = await resolveOwnedFile(vendor, c.k, c.id, c.i);
+  if (!f) return gone();
+  await VP.auditReq(req, {
+    assetId: f.assetId || null, vendorId: vendor.vendorId, vendorUserId: vendor.userId, actorName: vendor.name, role: 'Vendor',
+    action: 'Document downloaded', documentName: f.name, billId: f.billId || null, status: `signed link (${c.k})`,
+  });
+  return sendStored(res, f.file, f.mime, f.name);
 });
 
 // ---- assets -----------------------------------------------------------------
@@ -489,6 +624,7 @@ async function createBill(req, res, a, parent) {
   const dup = await duplicateBill(req.vendor.vendorId, d.billNumber);
   if (dup) return res.status(409).json({ error: `You already sent bill number ${dup.billNumber} (${dup.billCode}). Use the bill number of this new bill.`, field: 'billNumber' });
   const similar = await similarBill(req.vendor.vendorId, d.billDate, d.amount);
+  const master = await prisma.officeVendor.findUnique({ where: { id: req.vendor.vendorId } });
   let st;
   try { st = storeFile(form.file); } catch (err) { return res.status(400).json({ error: fileError(err) }); }
   const by = byLine(req);
@@ -505,6 +641,7 @@ async function createBill(req, res, a, parent) {
           remarks: d.remarks,
           documentFile: st.billFile, documentName: st.billName, documentMime: st.billMime, documentSize: st.billSize,
           status: 'PENDING_REVIEW', submittedByName: by, source: 'Vendor Portal',
+          vendorNameSnap: master ? master.name : null, vendorGstinSnap: master ? master.gstin : null, vendorAddressSnap: master ? master.address : null,
           idempotencyKey: idem || null,
           parentSubmissionId: parent ? parent.id : null, version: parent ? (parent.version || 1) + 1 : 1,
         },

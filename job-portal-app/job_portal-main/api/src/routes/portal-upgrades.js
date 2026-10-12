@@ -34,10 +34,15 @@ import { wrap, badRequest, notFound, forbidden, ApiError, CODES } from '../error
 import { requireAuth, requireRole } from '../auth.js';
 import { toJob, toApplication } from '../shapes.js';
 import {
-  CHIP_SQL, parseChips, normaliseChipSettings, nearMeFilter, explainMatch, loadAiSettings,
+  CHIP_SQL, parseChips, normaliseChipSettings, nearMeFilter, explainMatch,
   missingForOneClick, newShareCode, shareText, shareLines, toPublicUrl, isLocalUrl, ogTags, SHARE_CHANNELS, endOfIstDay, escHtml,
 } from '../portal/core.js';
 import { kickUrgent } from '../portal/alerts.js';
+import { walkinCompletedError } from '../portal/walkin-jobs.js';
+import { feedRows, jsonLdScript } from '../publishing/feed.js';
+
+const PUBLISHING_ENGINE = { userId: '', role: 'admin', profileId: null };
+import { jobsPageScope, teamlinkOnly } from '../jobs/source-scope.js';
 
 const APPLY_PER_HOUR = () => Number(process.env.APPLY_RATE_PER_HOUR || 30);
 const SHARE_COOKIE = 'tl_share_ref';
@@ -170,6 +175,7 @@ export default function portalUpgradeRoutes() {
    */
   r.get('/jobs', wrap(async (req, res, next) => {
     if (req.query.quick === undefined) return next();
+    jobsPageScope(req);                 // 0113: TeamLink jobs only, or 400
     const chips = parseChips(req.query.quick);
     const idsOnly = req.query.ids === '1' || req.query.ids === 'true';
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, idsOnly ? 2000 : 200);
@@ -179,7 +185,7 @@ export default function portalUpgradeRoutes() {
     const km = Math.min(Math.max(Number(req.query.km) || 50, 5), 300);
 
     const out = await withUser(req.session, async (c) => {
-      const where = [], params = [];
+      const where = [teamlinkOnly()], params = [];
       if (q) { params.push(`%${q}%`); where.push(`(title ilike $${params.length} or $${params.length} = any(skills))`); }
       if (loc) { params.push(`%${loc}%`); where.push(`location ilike $${params.length}`); }
       for (const k of chips) if (CHIP_SQL[k]) where.push(CHIP_SQL[k]);
@@ -214,6 +220,7 @@ export default function portalUpgradeRoutes() {
    * ================================================================ */
 
   r.get('/job-matches/explain', requireAuth(), requireRole('candidate'), wrap(async (req, res) => {
+    jobsPageScope(req);
     const ids = [...new Set(String(req.query.jobIds || '').split(',').map((s) => s.trim()).filter(Boolean))];
     if (!ids.length) throw badRequest('Give jobIds, comma-separated.');
     if (ids.length > 50) throw badRequest('At most 50 jobs at a time.');
@@ -223,13 +230,13 @@ export default function portalUpgradeRoutes() {
       cand: (await c.query(`select * from candidates where id=$1`, [req.session.profileId])).rows[0],
       jobs: (await c.query(
         `select j.*, co.name as company_name from jobs j
-           left join companies co on co.id = j.company_id where j.id = any($1)`, [ids])).rows,
+           left join companies co on co.id = j.company_id
+          where j.id = any($1) and ${teamlinkOnly('j')}`, [ids])).rows,   // 0113: TeamLink jobs only are scored
     }));
     if (!data.cand) throw notFound('Your profile could not be found.');
-    const settings = await loadAiSettings();
     const byId = new Map(data.jobs.map((j) => [j.id, j]));
     res.json({
-      matches: ids.filter((id) => byId.has(id)).map((id) => explainMatch(byId.get(id), data.cand, settings)),
+      matches: ids.filter((id) => byId.has(id)).map((id) => explainMatch(byId.get(id), data.cand)),
       missing: ids.filter((id) => !byId.has(id)),
     });
   }));
@@ -282,6 +289,8 @@ export default function portalUpgradeRoutes() {
   async function applyGuards(req, jobId) {
     const state = await withUser(req.session, async (c) => ({
       job: (await c.query(`select * from portal_job_apply_state($1)`, [jobId])).rows[0],
+      /* 0137: a walk-in whose dates are over is refused before anything else */
+      walkinOver: (await c.query(`select walkin_completed($1) as d`, [jobId])).rows[0].d,
       lastHour: req.session.role === 'candidate'
         ? (await c.query(`select count(*)::int n from applications
                             where candidate_id = $1 and applied_at > now() - interval '1 hour'`,
@@ -289,6 +298,7 @@ export default function portalUpgradeRoutes() {
         : 0,
     }));
     const j = state.job;
+    if (state.walkinOver) throw walkinCompletedError(state.walkinOver);
     if (j && j.expires_at && new Date(j.expires_at) <= new Date()) {
       throw new ApiError(409, CODES.JOB_UNAVAILABLE, closedMessage(j.expires_at), { reason: 'expired' });
     }
@@ -327,10 +337,13 @@ export default function portalUpgradeRoutes() {
   /**
    * POST /api/applications/one-click { jobId, answers?, ref? }
    *
-   * Apply in one tap, on any open job, with the profile and resume on
-   * file. Refused with the list of what is missing when the profile is
-   * not complete. IDEMPOTENT: an application that already exists is
-   * returned as it is (200, existing:true), never duplicated or refused.
+   * Apply in one tap, on any open job, with whatever the profile and
+   * resume already hold. NOTHING on the profile is required to apply
+   * (0118): applying and completing the profile are two separate
+   * actions, so a profile with gaps still applies, and the answer lists
+   * what is missing (`profileMissing`) for the "complete your profile"
+   * hint. IDEMPOTENT: an application that already exists is returned as
+   * it is (200, existing:true), never duplicated or refused.
    *
    * The application itself is made by the ordinary POST /applications -
    * the request is handed on to it, so screening, notifications and the
@@ -358,11 +371,8 @@ export default function portalUpgradeRoutes() {
       res.json({ application: toApplication(had), existing: true });
       return;
     }
+    /* 0118: reported, never required. */
     const missing = missingForOneClick(pre.cand);
-    if (missing.length) {
-      throw new ApiError(422, CODES.VALIDATION_FAILED,
-        `Fill ${missing.length} thing${missing.length === 1 ? '' : 's'} to apply.`, { missing });
-    }
     await applyGuards(req, body.jobId);
     afterJson(res, (out) => creditShare(req, body.jobId, out));
 
@@ -371,6 +381,7 @@ export default function portalUpgradeRoutes() {
        on a one-click apply. */
     const json = res.json.bind(res);
     res.json = (out) => {
+      if (res.statusCode === 201 && out && out.application) out = { ...out, profileMissing: missing };
       if (res.statusCode === 409 && out && out.error && out.error.code === CODES.DUPLICATE_APPLICATION) {
         existing().then((row) => {
           if (!row) return json(out);
@@ -496,8 +507,17 @@ export function mountPublicJobPage(app, staticDir) {
 
       const url = shareLink(req, `/job/${encodeURIComponent(id)}`);
       const target = `/${ref ? `?ref=${encodeURIComponent(ref)}` : ''}#/job/${encodeURIComponent(id)}`;
+      /* 0112: the job's own id when it is public (what Save & Post checks
+         before it calls the portal posting "Posted"), and schema.org
+         JobPosting when it is published to the TeamLink website. */
+      let ld = '';
+      if (row) {
+        const listed = await withUser(PUBLISHING_ENGINE, (c) => feedRows(c, 'TEAMLINK_WEBSITE', { jobId: id })).catch(() => []);
+        if (listed.length) ld = '\n' + jsonLdScript(listed[0]);
+      }
       const head = (row
         ? ogTags(row, { url, image: shareLink(req, '/icons/icon-512.png'), company: sj.company })
+          + `\n<meta name="teamlink:job" content="${escHtml(id)}">` + ld
         : `<meta property="og:title" content="TeamLink - jobs"><meta property="og:url" content="${escHtml(url)}">`)
         + `\n<script>try{history.replaceState(null,'',${JSON.stringify(target)});}catch(e){location.replace(${JSON.stringify(target)});}</script>`;
 

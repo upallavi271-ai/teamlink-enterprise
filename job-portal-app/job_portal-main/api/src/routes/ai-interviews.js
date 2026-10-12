@@ -20,10 +20,37 @@ import { z } from 'zod';
 import { withUser } from '../db.js';
 import { wrap, badRequest, notFound, forbidden, ApiError } from '../errors.js';
 import { requireAuth, requireRole } from '../auth.js';
-import { planInterview, followUp, evaluate, interviewEngine, BLUEPRINT_TOTAL }
+import multer from 'multer';
+import { planInterview, decideFollowUp, evaluate, interviewEngine, BLUEPRINT_TOTAL }
   from '../ai/interview.js';
 import { toJob, toCandidate } from '../shapes.js';
 import { dispatchEvent } from '../notify/events.js';
+import { CODES } from '../errors.js';
+import { storeRecording, getStorage, RECORDING_MAX_BYTES } from '../storage.js';
+import { speechModes, sttEnabled, ttsEnabled, transcribe, synthesise } from '../ai/interview-speech.js';
+import { retakePolicy, questionSeconds, PAGE_STOPS, formatWhen } from '../interview/policy.js';
+import { afterSuspension, sendRetakeChangedEmail } from '../notify/interview-suspension.js';
+import { kickApplicationNotices } from '../notify/application-notices.js';
+
+/* Recordings are inspected in memory before anything is written, exactly
+   like a resume (routes/uploads.js). */
+const recordingUpload = () => multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: RECORDING_MAX_BYTES(), files: 1, fields: 10 },
+});
+
+/** Every candidate-side writer: the interview must be theirs and running. */
+function assertRunning(iv) {
+  if (!iv) throw notFound('That interview could not be found.');
+  if (iv.status === 'suspended') {
+    throw new ApiError(423, 'INTERVIEW_SUSPENDED',
+      'This interview has been suspended and the recruitment team will review '
+      + 'the session. It cannot be continued until a recruiter reopens it.');
+  }
+  if (iv.status !== 'in_progress' && iv.status !== 'warning_issued') {
+    throw badRequest('That interview is already finished.');
+  }
+}
 
 const newId = (p) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
@@ -105,6 +132,9 @@ const toAi = (r) => ({
   completedAt: r.completed_at ? new Date(r.completed_at).toISOString() : undefined,
 });
 
+/* 0133: what a candidate is told when the job (or the interview's date) is over */
+export const INTERVIEW_CLOSED_MESSAGE = 'You applied for this job, but the date is over, so you cannot attend the interview now.';
+
 export default function aiInterviewRoutes() {
   const r = Router();
 
@@ -153,7 +183,14 @@ export default function aiInterviewRoutes() {
         score: Number(a.score),
         commScore: a.comm_score == null ? null : Number(a.comm_score),
         detail: a.detail || undefined,
-        ...(isCandidate ? {} : { justification: a.justification || undefined }),
+        ...(isCandidate ? {} : {
+          justification: a.justification || undefined,
+          relevanceClass: a.relevance_class || undefined,
+          maxScore: a.max_score == null ? 100 : Number(a.max_score),
+          needsReview: !!a.needs_review,
+          reviewReason: a.review_reason || undefined,
+          lowTranscriptConfidence: a.transcription_confidence != null && Number(a.transcription_confidence) < 0.6,
+        }),
       });
     }
 
@@ -223,26 +260,129 @@ export default function aiInterviewRoutes() {
       if (!app) throw badRequest('You have no application to interview for.');
 
       /*
-       * A SUSPENDED INTERVIEW CANNOT BE WALKED AROUND BY STARTING A NEW ONE.
+       * A SUSPENDED INTERVIEW CANNOT BE WALKED AROUND, BUT IT IS NOT THE END.
        *
-       * Suspending the session and then letting the same candidate press
-       * "Start interview" again would make the whole rule cosmetic. The
-       * suspension stands until a recruiter reopens it, which issues a
-       * fresh interview row and a fresh link (migration 0059).
+       * The suspension stands until its retake time. After that the SAME
+       * application may start one new attempt - decided HERE, from the
+       * stored retake_available_at and the database's clock (UTC), never
+       * from the browser: a candidate who calls this early, or edits the
+       * page, is refused. One retake by default (INTERVIEW_MAX_ATTEMPTS);
+       * a recruiter's block overrides it; a recruiter can grant more. A
+       * second application for the same role is not a way round it - the
+       * attempts belong to the application.
        */
-      const stopped = (await c.query(
-        `select id from ai_interviews
-          where application_id=$1 and candidate_id=$2 and status='suspended'
-          order by suspended_at desc limit 1`,
-        [app.id, req.session.profileId])).rows[0];
-      if (stopped) {
-        throw new ApiError(423, 'INTERVIEW_SUSPENDED',
-          'Your interview for this role was suspended and the recruitment team is '
-          + 'reviewing the session. You cannot start it again until a recruiter reopens it.');
+      const policy = retakePolicy();
+      await c.query(`select ai_interview_expire_overdue()`);
+      const attempts = (await c.query(
+        `select id, status, attempt_number, suspended_at, suspension_message, retake_available_at, retake_blocked,
+                started_at, expires_at,
+                (retake_available_at is not null and now() >= retake_available_at) as retake_open
+           from ai_interviews
+          where application_id=$1 and candidate_id=$2
+          order by attempt_number desc`,
+        [app.id, req.session.profileId])).rows;
+      let last = attempts[0];
+
+      /*
+       * AN INTERVIEW THAT IS DONE IS NOT STARTED AGAIN.
+       *
+       * This route used to make a brand-new interview every time it was called,
+       * whatever state the last one was in: a candidate who had COMPLETED the
+       * interview could open it again and be welcomed afresh ("Thanks for
+       * joining...") from Question 1, and one in progress got a duplicate. Now:
+       *   completed / being marked   -> refused, with a plain message
+       *   expired                    -> refused (only a recruiter reopens it)
+       *   in progress                -> the SAME interview is handed back to carry on from
+       * Only a suspended interview whose retake is open (below), or a first
+       * interview, creates a new attempt.
+       */
+      if (last && ['completed', 'evaluating', 'evaluated'].includes(last.status)) {
+        throw new ApiError(409, 'INTERVIEW_ALREADY_COMPLETED',
+          'You have already completed this interview. Thank you — the recruitment team will review it and contact you about the next step.',
+          { attemptNumber: last.attempt_number });
+      }
+      if (last && last.status === 'expired') {
+        /* 0138: an attempt that ran out of ITS OWN time is reopened where the candidate left it while the
+           job's window is still open ("No deadline - Attend any time" means exactly that). Only a closed
+           window - the job closed, its date or the walk-in day passed - keeps it shut. */
+        const back = (await c.query(`select ai_interview_resume_expired($1,$2,$3) as ok`,
+          [last.id, req.session.profileId, DEADLINE_HOURS])).rows[0].ok;
+        if (back) {
+          const now = (await c.query(`select status, started_at, expires_at from ai_interviews where id=$1`, [last.id])).rows[0];
+          last = { ...last, ...now };
+        } else {
+          const w = (await c.query(`select * from ai_interview_window($1)`, [app.id])).rows[0];
+          if (w && !w.open) throw new ApiError(410, 'INTERVIEW_CLOSED', INTERVIEW_CLOSED_MESSAGE, { reason: w.reason });
+          throw new ApiError(410, 'INTERVIEW_EXPIRED',
+            'This interview has passed its deadline and can no longer be started. Please contact the recruiter if you need it reopened.');
+        }
+      }
+      if (last && (last.status === 'in_progress' || last.status === 'warning_issued')) {
+        const rows = (await c.query(
+          `select seq, category, section, question, justification from ai_interview_answers
+            where ai_interview_id=$1 order by seq`, [last.id])).rows;
+        const parts = (await c.query(
+          `select seq, part, question, kind, submitted_at from ai_interview_answer_parts where interview_id=$1`,
+          [last.id])).rows;
+        const questions = rows.map((r) => {
+          const meta = metaOf(r);
+          return { seq: r.seq, category: r.category, section: r.section || undefined, question: r.question,
+            expects: meta.expects, source: meta.source };
+        });
+        const pend = questions.find((q) => {
+          const main = parts.find((p) => p.seq === q.seq && p.part === 'main' && p.submitted_at);
+          const fu = parts.find((p) => p.seq === q.seq && p.part === 'followup');
+          return !main || (fu && !fu.submitted_at);
+        });
+        let resumeAt = null;
+        if (pend) {
+          const main = parts.find((p) => p.seq === pend.seq && p.part === 'main' && p.submitted_at);
+          const fu = parts.find((p) => p.seq === pend.seq && p.part === 'followup');
+          resumeAt = { seq: pend.seq, part: main ? 'followup' : 'main',
+            followUp: main && fu ? fu.question : null, kind: main && fu ? fu.kind : null };
+        }
+        const job = (await c.query(`select * from jobs where id=$1`, [app.job_id])).rows[0];
+        return { resumed: { id: last.id, app, job, questions, resumeAt, row: { started_at: last.started_at, expires_at: last.expires_at } } };
+      }
+
+      if (last && last.status === 'suspended') {
+        const suspendedCount = attempts.filter((a) => a.status === 'suspended').length;
+        const allowed = policy.maxAttempts + Number(app.extra_interview_attempts || 0);
+        const info = {
+          attemptNumber: last.attempt_number,
+          suspendedAt: last.suspended_at ? new Date(last.suspended_at).toISOString() : null,
+          reason: last.suspension_message || null,
+        };
+        if (last.retake_blocked || !last.retake_available_at || suspendedCount >= allowed) {
+          throw new ApiError(423, 'INTERVIEW_UNDER_REVIEW',
+            'Your interview is under recruiter review. You will be informed of the next steps.', info);
+        }
+        if (!last.retake_open) {
+          const at = new Date(last.retake_available_at);
+          throw new ApiError(423, 'INTERVIEW_RETAKE_WAIT',
+            `You can retake this interview after ${formatWhen(at)}.`,
+            { ...info, retakeAvailableAt: at.toISOString() });
+        }
+        /* open: fall through and create the next attempt (numbered by the database) */
+      }
+
+      /* 0133: OPEN ONLY WHILE THE JOB IS. Closed, its last date passed, a walk-in whose day is over, or the
+         interview's own date passed: refused before any question is written (and again inside
+         ai_interview_start, so the API cannot be used to skip it). A job with no date stays open.
+         Asked BEFORE reading the job: a candidate cannot read a closed or expired job at all, which used
+         to come out as "That job no longer exists". */
+      const win = (await c.query(`select * from ai_interview_window($1)`, [app.id])).rows[0];
+      if (win && !win.open) {
+        /* 0139: a walk-in that does not use the AI interview - said as that, not as "the date is over" */
+        if (win.reason === 'not_required') {
+          throw new ApiError(410, 'INTERVIEW_CLOSED', 'This walk-in does not include an AI interview - just attend the walk-in on its date.', { reason: win.reason });
+        }
+        throw new ApiError(410, 'INTERVIEW_CLOSED', INTERVIEW_CLOSED_MESSAGE, { reason: win.reason });
       }
 
       const job = (await c.query(`select * from jobs where id=$1`, [app.job_id])).rows[0];
       if (!job) throw notFound('That job no longer exists.');
+
       const cand = (await c.query(`select * from candidates where id=$1`,
         [req.session.profileId])).rows[0];
 
@@ -274,6 +414,18 @@ export default function aiInterviewRoutes() {
       return { id, app, job, questions, row };
     });
 
+    if (out.resumed) {
+      const x = out.resumed;
+      return res.status(200).json({
+        interviewId: x.id, applicationId: x.app.id, jobId: x.app.job_id, jobTitle: x.job ? x.job.title : '',
+        engine: interviewEngine(),
+        startedAt: x.row.started_at, expiresAt: x.row.expires_at, deadlineHours: DEADLINE_HOURS,
+        questionSeconds: questionSeconds(), speech: speechModes(),
+        blueprint: { intro: 2, jd: 5, resume: 5, behavioral: 3, total: x.questions.length },
+        questions: x.questions, resumed: true, resumeAt: x.resumeAt,
+      });
+    }
+
     res.status(201).json({
       interviewId: out.id,
       applicationId: out.app.id,
@@ -285,8 +437,47 @@ export default function aiInterviewRoutes() {
       startedAt: out.row ? out.row.started_at : null,
       expiresAt: out.row ? out.row.expires_at : null,
       deadlineHours: DEADLINE_HOURS,
+      // Seconds each question gets (never under 120). The server keeps the clock.
+      questionSeconds: questionSeconds(),
+      // Where speech is processed - the browser unless a server provider
+      // is configured. Modes only; no endpoint or key ever goes out.
+      speech: speechModes(),
       blueprint: { intro: 2, jd: 5, resume: 5, behavioral: 3, total: out.questions.length },
       questions: out.questions,
+    });
+  }));
+
+  /**
+   * POST /api/ai-interviews/:id/question-start
+   *
+   * The page calls this when the interviewer has FINISHED asking, so the
+   * candidate always gets the whole time. The first call fixes the deadline
+   * (server clock, UTC); every later call - a refresh, a retry after a
+   * dropped connection, a client with a wrong clock - gets the SAME deadline
+   * and the time that is really left.
+   */
+  r.post('/ai-interviews/:id/question-start', requireAuth(), wrap(async (req, res) => {
+    const b = parse(z.object({
+      seq: z.number().int().min(1).max(50),
+      part: z.enum(['main', 'followup']).optional().default('main'),
+    }), req.body);
+    if (req.session.role !== 'candidate') throw forbidden('Only the candidate can run their interview.');
+    const t = await withUser(req.session, async (c) => {
+      const iv = (await c.query(`select id from ai_interviews where id=$1 and candidate_id=$2`,
+        [req.params.id, req.session.profileId])).rows[0];
+      if (!iv) throw notFound('That interview could not be found.');
+      return (await c.query(`select * from ai_interview_question_start($1,$2,$3,$4,$5)`,
+        [iv.id, req.session.profileId, b.seq, b.part, questionSeconds()])).rows[0];
+    }).catch((err) => {
+      if (err && /not part of this interview|no follow-up/.test(String(err.message))) throw notFound('That question is not part of this interview.');
+      if (err && /not running|already finished|suspended/i.test(String(err.message))) throw new ApiError(423, 'INTERVIEW_NOT_RUNNING', 'This interview is not running.');
+      throw err;
+    });
+    res.json({
+      seq: b.seq, part: b.part, seconds: t.seconds,
+      startedAt: new Date(t.started_at).toISOString(),
+      deadlineAt: new Date(t.deadline_at).toISOString(),
+      remainingMs: Number(t.remaining_ms),
     });
   }));
 
@@ -298,11 +489,21 @@ export default function aiInterviewRoutes() {
    * scripted extra question.
    */
   r.post('/ai-interviews/:id/answer', requireAuth(), wrap(async (req, res) => {
+    /* No score, justification or decision field exists in this schema, so
+       nothing a candidate adds to the body can reach one (zod drops
+       unknown keys). */
     const b = parse(z.object({
       seq: z.number().int().min(1).max(50),
       transcript: z.string().max(20_000).optional().default(''),
       answered: z.boolean().optional(),
       voicedMs: z.number().int().min(0).max(3_600_000).optional(),
+      // 'followup' answers the one follow-up this question was given.
+      part: z.enum(['main', 'followup']).optional().default('main'),
+      // The question's time ran out: whatever was said so far is saved, an
+      // empty one as "unanswered". Never a violation.
+      autoSubmitted: z.boolean().optional().default(false),
+      // How sure the speech recogniser was, 0..1 (average over the answer).
+      confidence: z.number().min(0).max(1).optional(),
     }), req.body);
 
     const out = await withUser(req.session, async (c) => {
@@ -345,12 +546,23 @@ export default function aiInterviewRoutes() {
       const said = String(b.transcript || '').trim();
       const answered = b.answered !== undefined ? !!b.answered : !!said;
 
-      // Only the transcript is stored. The SCORE is computed at the end,
-      // over the whole interview, so one answer cannot be graded out of
-      // context and a client cannot post a score of its own.
-      await c.query(`select ai_interview_answer($1,$2,$3,$4,$5)`,
-        [req.params.id, req.session.profileId, b.seq, answered,
-         said.slice(0, 4000) || null]);
+      const parts = (await c.query(
+        `select part, question, kind, submitted_at from ai_interview_answer_parts
+          where interview_id=$1 and seq=$2`, [req.params.id, b.seq])).rows;
+      const offered = parts.find((p) => p.part === 'followup') || null;
+      if (b.part === 'followup' && !offered) {
+        throw badRequest('No follow-up was asked for that question.');
+      }
+
+      /* Only the transcript is stored. The SCORE is computed at the end,
+         over the whole interview, so one answer cannot be graded out of
+         context and a client cannot post a score of its own.
+
+         Idempotent: the same part posted again - a retry after a dropped
+         connection - replaces itself (0116). */
+      await c.query(`select ai_interview_part_save($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [req.params.id, req.session.profileId, b.seq, b.part, answered, said || null,
+         b.autoSubmitted, b.confidence == null ? null : b.confidence]);
 
       const job = (await c.query(`select * from jobs where id=$1`, [iv.job_id])).rows[0];
       const meta = metaOf(row);
@@ -359,26 +571,292 @@ export default function aiInterviewRoutes() {
           where ai_interview_id=$1 and seq > $2 order by seq limit 1`,
         [req.params.id, b.seq])).rows[0] || null;
 
-      return { iv, job, meta, next, said, answered, row };
+      return { iv, job, meta, next, said, answered, row, offered };
     });
 
-    // Outside the transaction: this may call a model, and an open
-    // transaction must never wait on a third party.
+    /* THE ONE FOLLOW-UP. Proposed outside the transaction - it may call a
+       model, and an open transaction must never wait on a third party -
+       and then offered through the database, which keeps at most one per
+       question. A retried main answer is handed the follow-up already on
+       file rather than a second one. An answer TO a follow-up never gets
+       another. */
     let follow = null;
-    if (out.answered && out.said) {
-      follow = await followUp({
-        question: { question: out.row.question, expects: out.meta.expects },
-        answer: out.said,
-        job: toJob(out.job),
-      }).catch(() => null);
+    let kind = null;
+    if (b.part === 'main') {
+      if (out.offered) {
+        follow = out.offered.question;
+        kind = out.offered.kind;
+      } else if (out.answered && out.said && !b.autoSubmitted) {   // out of time: no follow-up
+        const d = await decideFollowUp({
+          question: { question: out.row.question, expects: out.meta.expects },
+          answer: out.said,
+          job: toJob(out.job),
+        }).catch(() => null);
+        if (d && d.text) {
+          follow = await withUser(req.session, async (c) => (await c.query(
+            `select ai_interview_followup_offer($1,$2,$3,$4,$5) as q`,
+            [req.params.id, req.session.profileId, b.seq, d.text, d.kind])).rows[0].q)
+            .catch(() => null);
+          kind = follow ? d.kind : null;
+        }
+      }
     }
 
     res.json({
-      recorded: { seq: req.body.seq, answered: out.answered, chars: out.said.length },
+      recorded: { seq: b.seq, part: b.part, answered: out.answered, chars: out.said.length },
       followUp: follow,
+      followUpKind: kind,
+      // After a "no experience" reply the interview moves on whatever
+      // the candidate says next.
       next: out.next ? { seq: out.next.seq, category: out.next.category, question: out.next.question } : null,
       remaining: out.next ? 1 : 0,
     });
+  }));
+
+  /**
+   * GET /api/ai-interviews/:id/progress — where this interview has got to.
+   *
+   * What the screen needs to carry on after a dropped connection or a
+   * reload: the questions, which have been answered (and whether their
+   * follow-up was), and which recordings arrived. The SERVER is the
+   * record; the page's sessionStorage copy is only a convenience. No
+   * score, justification or decision is in this response.
+   */
+  r.get('/ai-interviews/:id/progress', requireAuth(), wrap(async (req, res) => {
+    if (req.session.role !== 'candidate') throw forbidden('Only the candidate can resume their interview.');
+    const out = await withUser(req.session, async (c) => {
+      const iv = (await c.query(
+        `select id, status, application_id, job_id, expires_at, started_at
+           from ai_interviews where id=$1 and candidate_id=$2`,
+        [req.params.id, req.session.profileId])).rows[0];
+      if (!iv) return null;
+      /* A question whose time ran out while the candidate was away is saved as
+         "unanswered, ran out of time" and the interview moves on. Not a
+         violation, not a suspension. */
+      if (iv.status === 'in_progress' || iv.status === 'warning_issued') {
+        await c.query(`select ai_interview_expire_questions($1,$2)`, [iv.id, req.session.profileId]);
+      }
+      const timers = (await c.query(`select * from ai_interview_clocks($1,$2)`, [iv.id, req.session.profileId])).rows;
+      const rows = (await c.query(
+        `select seq, category, section, question, justification
+           from ai_interview_answers where ai_interview_id=$1 order by seq`, [iv.id])).rows;
+      const parts = (await c.query(
+        `select seq, part, question, kind, answered, submitted_at
+           from ai_interview_answer_parts where interview_id=$1`, [iv.id])).rows;
+      const recs = (await c.query(
+        `select seq, part, size_bytes from ai_interview_recordings where interview_id=$1`, [iv.id])).rows;
+      return { iv, rows, parts, recs, timers };
+    });
+    if (!out) throw notFound('That interview could not be found.');
+
+    const running = out.iv.status === 'in_progress' || out.iv.status === 'warning_issued';
+    const expired = !!(out.iv.expires_at && new Date(out.iv.expires_at) < new Date());
+    const questions = out.rows.map((r) => {
+      const meta = running ? metaOf(r) : { expects: [], source: null };
+      const main = out.parts.find((p) => p.seq === r.seq && p.part === 'main' && p.submitted_at);
+      const fu = out.parts.find((p) => p.seq === r.seq && p.part === 'followup');
+      return {
+        seq: r.seq, category: r.category, section: r.section || undefined, question: r.question,
+        // the same planning fields the session handed out
+        expects: meta.expects, source: meta.source,
+        submitted: !!main,
+        followUp: fu ? { question: fu.question, kind: fu.kind, submitted: !!fu.submitted_at } : null,
+        recordings: out.recs.filter((x) => x.seq === r.seq).map((x) => x.part),
+      };
+    });
+    const pending = questions.find((q) => !q.submitted || (q.followUp && !q.followUp.submitted));
+    const pendingPart = pending ? (pending.submitted ? 'followup' : 'main') : null;
+    const clock = pending ? out.timers.find((t) => t.seq === pending.seq && t.part === pendingPart) : null;
+
+    res.json({
+      interviewId: out.iv.id,
+      applicationId: out.iv.application_id,
+      jobId: out.iv.job_id,
+      status: expired && running ? 'expired' : out.iv.status,
+      resumable: running && !expired,
+      expiresAt: out.iv.expires_at,
+      startedAt: out.iv.started_at,
+      speech: speechModes(),
+      questions,
+      // The question to carry on from, and whether it is its follow-up.
+      resumeAt: pending ? { seq: pending.seq, part: pendingPart } : null,
+      questionSeconds: questionSeconds(),
+      // The running question's clock, from the server: a refresh cannot add time.
+      clock: clock ? {
+        seq: clock.seq, part: clock.part, seconds: clock.seconds,
+        deadlineAt: new Date(clock.deadline_at).toISOString(),
+        remainingMs: Math.max(0, new Date(clock.deadline_at) - new Date(clock.server_now)),
+      } : null,
+    });
+  }));
+
+  /**
+   * POST /api/ai-interviews/:id/recordings — one answer's recording.
+   *
+   * Multipart, field `recording`, with `seq` and `part`. The same checks as
+   * a resume upload: signed-in, the candidate's own interview, a size
+   * limit, and the file identified by its bytes (WebM / MP4 / Ogg / WAV)
+   * rather than by what the browser called it. Stored through the same
+   * storage driver under a random key; nothing public is ever made.
+   */
+  r.post('/ai-interviews/:id/recordings', requireAuth(),
+    (req, res, next) => {
+      if (req.session.role !== 'candidate') return next(forbidden('Only the candidate can upload their own interview recording.'));
+      return recordingUpload().single('recording')(req, res, (err) => {
+        if (!err) return next();
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return next(new ApiError(413, CODES.FILE_TOO_LARGE,
+            `That recording is too large. The limit is ${Math.round(RECORDING_MAX_BYTES() / 1024 / 1024)}MB.`));
+        }
+        return next(new ApiError(400, CODES.UPLOAD_FAILED, 'That recording could not be uploaded.'));
+      });
+    },
+    wrap(async (req, res) => {
+      if (!req.file) throw badRequest('No recording was attached.');
+      const seq = Number(req.body?.seq);
+      const part = String(req.body?.part || 'main');
+      const durationMs = Number(req.body?.durationMs);
+      if (!Number.isInteger(seq) || seq < 1 || seq > 50) throw badRequest('That question number is not valid.');
+      if (!['main', 'followup'].includes(part)) throw badRequest('That answer part is not valid.');
+
+      // Whose interview, and is it still accepting answers - under the
+      // caller's own rights, BEFORE a byte is stored.
+      const iv = await withUser(req.session, async (c) => (await c.query(
+        `select id, status, completed_at, candidate_id from ai_interviews where id=$1 and candidate_id=$2`,
+        [req.params.id, req.session.profileId])).rows[0]);
+      if (!iv) throw notFound('That interview could not be found.');
+      const lateOk = iv.status === 'completed' && iv.completed_at
+        && Date.now() - new Date(iv.completed_at).getTime() < 2 * 3600 * 1000;
+      if (!lateOk) assertRunning(iv);
+
+      const stored = await storeRecording({
+        candidateId: req.session.profileId, interviewId: iv.id,
+        buffer: req.file.buffer, claimedMime: req.file.mimetype,
+      });
+      let replaced = null;
+      try {
+        replaced = await withUser(req.session, async (c) => (await c.query(
+          `select ai_interview_recording_add($1,$2,$3,$4,$5,$6,$7,$8,$9) as old`,
+          [iv.id, req.session.profileId, seq, part, stored.path, stored.mime, stored.size,
+           Number.isFinite(durationMs) && durationMs >= 0 ? Math.min(Math.round(durationMs), 3_600_000) : null,
+           stored.sha256])).rows[0].old);
+      } catch (err) {
+        await getStorage().remove(stored.path);     // never leave an orphan
+        if (/not part of this interview/.test(String(err.message))) throw notFound('That question is not part of this interview.');
+        if (/already finished|suspended/.test(String(err.message))) throw badRequest('That interview is no longer accepting answers.');
+        throw err;
+      }
+      if (replaced && replaced !== stored.path) await getStorage().remove(replaced);
+
+      /* Server speech-to-text, when configured: fills in an answer the
+         browser could not caption. Never overwrites words the candidate
+         already has on file, and a provider failure loses nothing - the
+         recording is stored either way. */
+      let transcribed = false;
+      if (sttEnabled() && !lateOk) {
+        try {
+          const have = await withUser(req.session, async (c) => (await c.query(
+            `select transcript, submitted_at from ai_interview_answer_parts
+              where interview_id=$1 and seq=$2 and part=$3`, [iv.id, seq, part])).rows[0]);
+          if (have && have.submitted_at && !String(have.transcript || '').trim()) {
+            const text = await transcribe(req.file.buffer, stored.mime);
+            if (text) {
+              await withUser(req.session, (c) => c.query(
+                `select ai_interview_part_save($1,$2,$3,$4,$5,$6)`,
+                [iv.id, req.session.profileId, seq, part, true, text]));
+              transcribed = true;
+            }
+          }
+        } catch (err) {
+          console.error('[interview] server speech-to-text failed:', err.message);
+        }
+      }
+
+      res.status(201).json({
+        recording: { seq, part, mime: stored.mime, size: stored.size },
+        transcribed,
+      });
+    }));
+
+  /**
+   * GET /api/ai-interviews/:id/recordings — what was recorded.
+   *
+   * Read under the caller's own RLS (0116 inherits the interview's
+   * visibility): the candidate, the recruiter and client for that
+   * company, a BDE, an admin. Another candidate, or a recruiter at
+   * another company, sees an empty list.
+   */
+  r.get('/ai-interviews/:id/recordings', requireAuth(), wrap(async (req, res) => {
+    const rows = await withUser(req.session, async (c) => (await c.query(
+      `select id, interview_id, candidate_id, job_id, application_id, seq, part, mime,
+              size_bytes, duration_ms, created_at
+         from ai_interview_recordings where interview_id=$1 order by seq, part`,
+      [req.params.id])).rows);
+    res.json({
+      recordings: rows.map((x) => ({
+        id: Number(x.id), interviewId: x.interview_id, candidateId: x.candidate_id,
+        jobId: x.job_id, applicationId: x.application_id, seq: x.seq, part: x.part,
+        mime: x.mime, size: Number(x.size_bytes),
+        durationMs: x.duration_ms == null ? null : Number(x.duration_ms),
+        createdAt: x.created_at,
+        // Same-origin, permission-checked on every request. Not a public URL.
+        url: `/api/ai-interviews/${encodeURIComponent(x.interview_id)}/recordings/${Number(x.id)}/file`,
+      })),
+    });
+  }));
+
+  /** The bytes, for a viewer RLS lets see the row. Logged for staff, like a resume. */
+  r.get('/ai-interviews/:id/recordings/:rid/file', requireAuth(), wrap(async (req, res) => {
+    const row = await withUser(req.session, async (c) => (await c.query(
+      `select id, interview_id, candidate_id, storage_path, mime from ai_interview_recordings
+        where id=$1 and interview_id=$2`, [Number(req.params.rid) || 0, req.params.id])).rows[0]);
+    if (!row) throw notFound('That recording could not be found.');
+    if (req.session.role !== 'candidate') {
+      await withUser(ENGINE_SESSION, (c) => c.query(
+        `insert into ai_interview_audit (interview_id, candidate_id, action, detail, actor_id, actor_role)
+         values ($1,$2,'recording.viewed',$3::jsonb,$4,$5)`,
+        [row.interview_id, row.candidate_id, JSON.stringify({ recordingId: Number(row.id) }),
+         req.session.userId || null, req.session.role])).catch(() => {});
+    }
+    const buf = await getStorage().get(row.storage_path);
+    res.setHeader('content-type', row.mime);
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('cache-control', 'private, no-store');
+    res.setHeader('content-disposition', `inline; filename="interview-${Number(row.id)}"`);
+    res.send(buf);
+  }));
+
+  /**
+   * GET /api/ai-interviews/:id/speech?seq=N&part=main — the question in a
+   * server voice. Only when INTERVIEW_TTS_PROVIDER is configured; the
+   * screen otherwise uses the browser's speechSynthesis and never calls
+   * this. The text spoken is the server's own question, never the
+   * caller's.
+   */
+  r.get('/ai-interviews/:id/speech', requireAuth(), wrap(async (req, res) => {
+    if (!ttsEnabled()) throw new ApiError(404, 'TTS_NOT_CONFIGURED', 'Server text-to-speech is not configured.');
+    const seq = Number(req.query.seq);
+    const part = String(req.query.part || 'main');
+    const text = await withUser(req.session, async (c) => {
+      const iv = (await c.query(`select id, status from ai_interviews where id=$1 and candidate_id=$2`,
+        [req.params.id, req.session.profileId])).rows[0];
+      assertRunning(iv);
+      if (part === 'followup') {
+        return (await c.query(`select question from ai_interview_answer_parts
+          where interview_id=$1 and seq=$2 and part='followup'`, [iv.id, seq])).rows[0]?.question;
+      }
+      return (await c.query(`select question from ai_interview_answers where ai_interview_id=$1 and seq=$2`,
+        [iv.id, seq])).rows[0]?.question;
+    });
+    if (!text) throw notFound('That question could not be found.');
+    const audio = await synthesise(text).catch((err) => {
+      console.error('[interview] server text-to-speech failed:', err.message);
+      throw new ApiError(502, 'TTS_FAILED', 'The interviewer voice is unavailable; the question is on screen.');
+    });
+    res.setHeader('content-type', audio.mime);
+    res.setHeader('cache-control', 'private, no-store');
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.send(audio.buffer);
   }));
 
   /**
@@ -399,7 +877,10 @@ export default function aiInterviewRoutes() {
         `select * from ai_interview_answers where ai_interview_id=$1 order by seq`,
         [req.params.id])).rows;
       const job = (await c.query(`select * from jobs where id=$1`, [iv.job_id])).rows[0];
-      return { iv, rows, job };
+      const parts = (await c.query(
+        `select seq, part, question, transcript from ai_interview_answer_parts
+          where interview_id=$1 and part='followup'`, [req.params.id])).rows;
+      return { iv, rows, job, parts };
     });
 
     if (loaded.iv.status === 'completed') {
@@ -426,6 +907,7 @@ export default function aiInterviewRoutes() {
       answers: loaded.rows.map((r) => ({
         seq: r.seq, category: r.category, section: r.section, question: r.question,
         answered: r.answered, transcript: r.answer_summary || '',
+        confidence: r.transcription_confidence == null ? null : Number(r.transcription_confidence),
         expects: metaOf(r).expects,
       })),
     });
@@ -438,12 +920,23 @@ export default function aiInterviewRoutes() {
         [loaded.iv.id, req.session.profileId,
          graded.technical, graded.behavioral, graded.communication, graded.overall,
          graded.contentScored, graded.feedback,
-         loaded.rows.map((r) => `Q: ${r.question}\nA: ${r.answer_summary || '[no response]'}`).join('\n\n'),
+         loaded.rows.map((r) => {
+           /* The follow-up is part of the record: what was asked, and what
+              was said to it. answer_summary already holds both answers'
+              words for grading. */
+           const fu = loaded.parts.find((p) => p.seq === r.seq);
+           return `Q: ${r.question}\nA: ${r.answer_summary || '[no response]'}`
+             + (fu ? `\nFollow-up: ${fu.question}\nA (follow-up): ${String(fu.transcript || '').trim() || '[no response]'}` : '');
+         }).join('\n\n'),
          JSON.stringify(graded.perQuestion.map((p) => ({
            seq: p.seq, score: p.score,
            commScore: p.commScore == null ? '' : p.commScore,
            justification: p.justification || null,
            detail: p.detail || null,
+           relevanceClass: p.relevanceClass || null,
+           maxScore: p.maxScore == null ? 100 : p.maxScore,
+           needsReview: !!p.needsReview,
+           reviewReason: p.reviewReason || null,
          }))),
          graded.jdRelevance == null ? null : graded.jdRelevance,
          graded.resumeRelevance == null ? null : graded.resumeRelevance]);
@@ -494,6 +987,8 @@ export default function aiInterviewRoutes() {
         // to announce it must not lose it.
         console.error('[interview] the result could not be recorded:', err.message);
       }
+      /* 0139: a walk-in applicant the score makes eligible - HR is told now (the database decided) */
+      kickApplicationNotices();
     }
 
     // Two events, because they answer different questions for the
@@ -526,12 +1021,20 @@ export default function aiInterviewRoutes() {
   r.post('/ai-interviews', requireAuth(), wrap(async (req, res) => {
     const b = parse(recordSchema, req.body);
 
-    // A candidate may only record their own session.
-    if (req.session.role === 'candidate' && req.session.profileId !== b.candidateId) {
-      throw forbidden('You can only submit your own interview.');
+    /* A CANDIDATE NEVER WRITES A SCORE.
+       This route takes per-question scores from the caller, which is
+       right for a recruiter keying in an interview held elsewhere and
+       wrong for the person being scored: the browser's own arithmetic
+       used to come through here when the server session could not be
+       planned. The candidate's interview is graded by /finish, from the
+       transcripts the server holds. */
+    if (req.session.role === 'candidate') {
+      throw forbidden(req.session.profileId !== b.candidateId
+        ? 'You can only submit your own interview.'
+        : 'Interview scores are calculated by TeamLink, not submitted by the candidate.');
     }
-    if (!['candidate', 'recruiter', 'admin'].includes(req.session.role)) {
-      throw forbidden('Only a candidate or recruiter can record an interview result.');
+    if (!['recruiter', 'admin'].includes(req.session.role)) {
+      throw forbidden('Only a recruiter can record an interview result.');
     }
 
     const id = newId('aiv');
@@ -629,7 +1132,7 @@ export default function aiInterviewRoutes() {
    */
   r.post('/ai-interviews/:id/integrity', requireAuth(), wrap(async (req, res) => {
     const b = parse(z.object({
-      type: z.enum(['additional_person', 'additional_voice']),
+      type: z.enum(['additional_person', 'additional_voice', 'left_interview', 'background_noise', 'camera_off']),
       confidence: z.number().min(0).max(1),
       evidence: z.record(z.any()).optional(),
     }), req.body);
@@ -656,22 +1159,30 @@ export default function aiInterviewRoutes() {
       agreeing: Number.isFinite(Number(ev.agreeing)) ? Number(ev.agreeing) : undefined,
       pitchHz: Number.isFinite(Number(ev.pitchHz)) ? Math.round(Number(ev.pitchHz)) : undefined,
       baselineHz: Number.isFinite(Number(ev.baselineHz)) ? Math.round(Number(ev.baselineHz)) : undefined,
-      questionSeq: Number.isFinite(Number(ev.questionSeq)) ? Number(ev.questionSeq) : undefined,
+      questionSeq: Number.isInteger(Number(ev.questionSeq)) && Number(ev.questionSeq) > 0 && Number(ev.questionSeq) < 100
+        ? Number(ev.questionSeq) : undefined,
       note: ev.note ? String(ev.note).slice(0, 300) : undefined,
     };
 
+    const policy = retakePolicy();
     const out = await withUser(ENGINE_SESSION, async (c) => (await c.query(
-      `select * from interview_integrity_report($1,$2,$3,$4::jsonb)`,
-      [iv.id, b.type, b.confidence, JSON.stringify(evidence)])).rows[0]);
+      `select * from interview_integrity_report($1,$2,$3,$4::jsonb,$5,$6,$7,$8)`,
+      [iv.id, b.type, b.confidence, JSON.stringify(evidence),
+       policy.delayMinutes, policy.maxAttempts, policy.deadlineHours, policy.incidentSeconds])).rows[0]);
+
+    /* The email goes only AFTER the suspension is saved, once (the claim
+       is the database's), and never holds up or undoes this answer. */
+    if (out.action === 'suspend') afterSuspension(iv.id);
 
     res.json({
       strike: Number(out.strike_no),
       of: 2,
-      action: out.action,                 // 'warn' | 'suspend' | 'suspended'
+      action: out.action,                 // 'warn' | 'noted' | 'suspend' | 'suspended' | 'ignored' (0136)
       message: out.message,
       interviewStatus: out.interview_status,
       integrityStatus: out.integrity_status,
-      mayContinue: out.action === 'warn',
+      retakeAvailableAt: out.retake_at ? new Date(out.retake_at).toISOString() : null,
+      mayContinue: out.action !== 'suspend' && out.action !== 'suspended',
     });
   }));
 
@@ -684,12 +1195,116 @@ export default function aiInterviewRoutes() {
    * Declared BEFORE `/ai-interviews/:id/integrity` because Express
    * matches in order and `integrity` would otherwise be read as an id.
    */
+  /**
+   * POST /api/ai-interviews/:id/stop
+   *
+   * The page's OWN detections - the tab left, the camera gone, continuous
+   * background noise. They used to end the interview on screen and tell the
+   * server nothing. They now report here and go through the same
+   * two-strike rule as a second person / voice: the FIRST warns and the
+   * interview continues, the second suspends - through the one shared
+   * suspend function, with a reason, a question number, an email and a
+   * retake time. A failed or missing report never suspends anything.
+   *
+   * The browser names what it saw; the server turns that into a code and
+   * the one sentence everybody reads. Only the candidate whose interview
+   * it is can do this, and only to a running one.
+   */
+  r.post('/ai-interviews/:id/stop', requireAuth(), wrap(async (req, res) => {
+    const b = parse(z.object({
+      kind: z.enum(['left_interview', 'background_noise', 'camera_lost', 'camera_off']),
+      questionSeq: z.number().int().min(1).max(99).optional(),
+      note: z.string().max(200).optional(),
+    }), req.body);
+    if (req.session.role !== 'candidate') throw forbidden('Only the candidate sitting an interview can stop it.');
+
+    const iv = await withUser(req.session, async (c) => (await c.query(
+      `select id, status, questions_answered from ai_interviews where id=$1 and candidate_id=$2`,
+      [req.params.id, req.session.profileId])).rows[0]);
+    if (!iv) throw notFound('That interview could not be found.');
+
+    const code = PAGE_STOPS[b.kind];
+    const q = b.questionSeq || (Number(iv.questions_answered || 0) + 1);
+    const policy = retakePolicy();
+    /* The same two-strike rule as a second person / a second voice: the first
+       occurrence WARNS and the interview carries on; a second one suspends. */
+    const out = await withUser(ENGINE_SESSION, async (c) => (await c.query(
+      `select * from interview_integrity_report($1,$2,$3,$4::jsonb,$5,$6,$7,$8)`,
+      [iv.id, code, 1, JSON.stringify({ detector: 'browser', questionSeq: q, note: b.note || undefined }),
+       policy.delayMinutes, policy.maxAttempts, policy.deadlineHours, policy.incidentSeconds])).rows[0]);
+    if (out.action === 'suspend') afterSuspension(iv.id);
+    res.json({
+      action: out.action,                  // 'warn' | 'noted' | 'suspend' | 'suspended' | 'ignored' (0136)
+      strike: Number(out.strike_no), of: 2,
+      suspended: out.action === 'suspend' || out.action === 'suspended',
+      firstTime: out.action === 'suspend',
+      mayContinue: out.action !== 'suspend' && out.action !== 'suspended',
+      message: out.message,
+      interviewStatus: out.interview_status,
+      retakeAvailableAt: out.retake_at ? new Date(out.retake_at).toISOString() : null,
+    });
+  }));
+
+  /**
+   * GET /api/ai-interviews/:id/suspension
+   *
+   * What the candidate's screen shows after a suspension: the one stored
+   * sentence and when the retake opens. Their own interview only.
+   */
+  r.get('/ai-interviews/:id/suspension', requireAuth(), wrap(async (req, res) => {
+    if (req.session.role !== 'candidate') throw forbidden('Only the candidate sitting an interview can read this.');
+    const row = await withUser(req.session, async (c) => (await c.query(
+      `select status, suspension_message, retake_available_at, retake_blocked, attempt_number
+         from ai_interviews where id=$1 and candidate_id=$2`, [req.params.id, req.session.profileId])).rows[0]);
+    if (!row) throw notFound('That interview could not be found.');
+    res.json({
+      suspended: row.status === 'suspended',
+      message: row.suspension_message || null,
+      retakeAvailableAt: row.retake_available_at && !row.retake_blocked ? new Date(row.retake_available_at).toISOString() : null,
+      attemptNumber: row.attempt_number,
+    });
+  }));
+
+  /**
+   * POST /api/ai-interviews/:id/retake
+   *
+   * The recruiter's control over the retake: block it, lift the block, or
+   * grant one more attempt. Recruiter or admin only, only on an interview
+   * their row-level access reaches, with a reason, and written to the
+   * interview's audit trail (who, when, why). A block overrides the
+   * automatic retake even after the wait.
+   */
+  r.post('/ai-interviews/:id/retake', requireAuth(), requireRole('recruiter', 'admin'), wrap(async (req, res) => {
+    const b = parse(z.object({
+      action: z.enum(['block', 'unblock', 'extra_attempt']),
+      reason: z.string().trim().min(3, 'Please give a reason.').max(1000),
+    }), req.body);
+    const seen = await withUser(req.session, async (c) => (await c.query(
+      `select id from ai_interviews where id=$1`, [req.params.id])).rows[0]);
+    if (!seen) throw notFound('That interview could not be found.');
+    const iv = await withUser(ENGINE_SESSION, async (c) => (await c.query(
+      `select * from interview_retake_control($1,$2,$3,$4)`,
+      [req.params.id, b.action, b.reason, req.session.userId || null])).rows[0]);
+    /* the candidate is told the new state (0136) - after the change is saved, never blocking it */
+    setImmediate(() => { sendRetakeChangedEmail(iv.id, b.action).catch(() => {}); });
+    res.json({
+      interview: {
+        id: iv.id, status: iv.status, attemptNumber: iv.attempt_number, retakeBlocked: iv.retake_blocked,
+        retakeAvailableAt: iv.retake_available_at ? new Date(iv.retake_available_at).toISOString() : null,
+      },
+    });
+  }));
+
   r.get('/ai-interviews/integrity', requireAuth(),
     requireRole('recruiter', 'bde', 'admin'), wrap(async (req, res) => {
       const rows = await withUser(req.session, async (c) => (await c.query(
         `select i.id, i.candidate_id, i.application_id, i.job_id, i.status,
                 i.integrity_status, i.integrity_strikes, i.suspended_at,
                 i.suspend_reason, i.reopened_at,
+                i.suspension_code, i.suspension_message, i.suspension_question_no, i.detection_count,
+                i.last_detection_at, i.attempt_number, i.retake_available_at, i.retake_blocked,
+                i.completed_at, i.overall_percentage,
+                (select count(*) from ai_interview_answers q where q.ai_interview_id = i.id and q.needs_review) as review_answers,
                 c.name as candidate_name, j.title as job_title,
                 (select count(*) from ai_interview_flags f
                   where f.interview_id = i.id and f.review_status = 'open'
@@ -697,8 +1312,8 @@ export default function aiInterviewRoutes() {
            from ai_interviews i
            join candidates c on c.id = i.candidate_id
            left join jobs j on j.id = i.job_id
-          where i.integrity_strikes > 0
-          order by coalesce(i.suspended_at, i.started_at, i.created_at) desc
+          where i.integrity_strikes > 0 or i.status = 'suspended' or i.suspension_code is not null or i.status = 'completed'
+          order by coalesce(i.completed_at, i.suspended_at, i.started_at, i.created_at) desc
           limit 100`)).rows);
 
       res.json({
@@ -714,8 +1329,21 @@ export default function aiInterviewRoutes() {
           strikes: Number(x.integrity_strikes || 0),
           suspendedAt: x.suspended_at,
           suspendReason: x.suspend_reason,
+          suspensionCode: x.suspension_code,
+          suspensionMessage: x.suspension_message,
+          suspensionQuestionNo: x.suspension_question_no,
+          detectionCount: Number(x.detection_count || 0),
+          lastDetectionAt: x.last_detection_at,
+          attemptNumber: x.attempt_number,
+          retakeAvailableAt: x.retake_available_at,
+          retakeBlocked: !!x.retake_blocked,
+          /* a suspended interview is under review, never rejected */
+          display: x.status === 'suspended' ? 'Under Recruiter Review' : null,
           reopenedAt: x.reopened_at,
           openFlags: Number(x.open_flags || 0),
+          completedAt: x.completed_at,
+          overallPercentage: x.overall_percentage == null ? null : Number(x.overall_percentage),
+          answersToReview: Number(x.review_answers || 0),
         })),
       });
     }));
@@ -734,9 +1362,23 @@ export default function aiInterviewRoutes() {
       const iv = (await c.query(
         `select id, status, integrity_status, integrity_strikes, suspended_at,
                 suspend_reason, reopened_at, reopen_reason, candidate_id,
-                application_id, job_id
+                application_id, job_id,
+                suspension_code, suspension_message, suspension_question_no, detection_count,
+                last_detection_at, attempt_number, retake_available_at, retake_blocked,
+                retake_block_reason, suspension_email_sent_at,
+                (retake_available_at is not null and now() >= retake_available_at) as retake_open
            from ai_interviews where id=$1`, [req.params.id])).rows[0];
       if (!iv) return null;
+      const answers = (await c.query(
+        `select a.seq, a.question, a.answered, a.answer_summary, a.score, a.max_score, a.comm_score, a.justification,
+                a.relevance_class, a.needs_review, a.review_reason, a.transcription_confidence,
+                coalesce((select bool_or(p.auto_submitted) from ai_interview_answer_parts p
+                           where p.interview_id = a.ai_interview_id and p.seq = a.seq and p.part = 'main'), false) as auto_submitted
+           from ai_interview_answers a where a.ai_interview_id = $1 order by a.seq`, [iv.id])).rows;
+      const attempts = iv.application_id ? (await c.query(
+        `select id, attempt_number, status, started_at, suspended_at, suspension_code, suspension_message,
+                suspension_question_no, completed_at, overall_percentage
+           from ai_interviews where application_id=$1 order by attempt_number`, [iv.application_id])).rows : [];
       const flags = (await c.query(
         `select id, flag_type, description, severity, strike_no, confidence,
                 confidence_band, detector, warning_message, status_after,
@@ -744,7 +1386,7 @@ export default function aiInterviewRoutes() {
            from ai_interview_flags
           where interview_id=$1 and strike_no is not null
           order by strike_no, occurred_at`, [req.params.id])).rows;
-      return { iv, flags };
+      return { iv, flags, attempts, answers };
     });
     if (!out) throw notFound('That interview could not be found.');
 
@@ -768,10 +1410,53 @@ export default function aiInterviewRoutes() {
       suspendReason: out.iv.suspend_reason,
       reopenedAt: out.iv.reopened_at,
       reopenReason: out.iv.reopen_reason,
+      suspensionCode: out.iv.suspension_code,
+      suspensionMessage: out.iv.suspension_message,
+      suspensionQuestionNo: out.iv.suspension_question_no,
+      detectionCount: Number(out.iv.detection_count || 0),
+      lastDetectionAt: out.iv.last_detection_at,
+      attemptNumber: out.iv.attempt_number,
+      retakeAvailableAt: out.iv.retake_available_at,
+      retakeOpen: !!out.iv.retake_open && !out.iv.retake_blocked,
+      retakeBlocked: !!out.iv.retake_blocked,
+      ...(staff ? { retakeBlockReason: out.iv.retake_block_reason, suspensionEmailSentAt: out.iv.suspension_email_sent_at } : {}),
+      /* a suspended interview is under review - never "rejected" or "failed" */
+      display: out.iv.status === 'suspended' ? 'Under Recruiter Review' : null,
+      /* Every attempt, kept: a retake never overwrites the one before it. The recruiter
+         sees ONE current score - the latest COMPLETED attempt's. A suspended attempt has none. */
+      ...(staff ? {
+        attempts: out.attempts.map((a) => ({
+          id: a.id, attemptNumber: a.attempt_number, status: a.status, startedAt: a.started_at,
+          suspendedAt: a.suspended_at, suspensionMessage: a.suspension_message,
+          suspensionQuestionNo: a.suspension_question_no,
+          score: (a.status === 'completed' || a.status === 'evaluated') && a.overall_percentage != null ? Number(a.overall_percentage) : null,
+        })),
+        currentScore: (() => {
+          const done = out.attempts.filter((a) => (a.status === 'completed' || a.status === 'evaluated') && a.overall_percentage != null);
+          return done.length ? Number(done[done.length - 1].overall_percentage) : null;
+        })(),
+      } : {}),
+      /* Per question, for the hiring side only: what was asked, what was said, how
+         relevant it was and why it scored what it did. No prompts, models or raw numbers. */
+      ...(staff ? {
+        questions: out.answers.map((a) => ({
+          seq: a.seq, question: a.question, transcript: a.answer_summary || '',
+          answered: !!a.answered, timedOut: !!a.auto_submitted,
+          relevanceClass: a.relevance_class || null,
+          score: out.iv.status === 'completed' || out.iv.status === 'evaluated' ? Number(a.score) : null,
+          maxScore: a.max_score == null ? 100 : Number(a.max_score),
+          communication: a.comm_score == null ? null : Number(a.comm_score),
+          reason: a.justification && !String(a.justification).startsWith('{') ? a.justification : null,
+          needsReview: !!a.needs_review, reviewReason: a.review_reason || null,
+          lowTranscriptConfidence: a.transcription_confidence != null && Number(a.transcription_confidence) < 0.6,
+        })),
+      } : {}),
       violations: out.flags.map((f) => ({
         id: Number(f.id),
         no: f.strike_no,
-        type: f.flag_type === 'additional_person' ? 'Additional Person' : 'Additional Voice',
+        type: ({ additional_person: 'Additional Person', additional_voice: 'Additional Voice',
+                 left_interview: 'Left the interview window', background_noise: 'Continuous background noise',
+                 camera_off: 'Camera off' })[f.flag_type] || 'Integrity flag',
         at: f.occurred_at,
         /* The word, and the number behind it. A recruiter reads "High";
            an argument about whether the threshold is right needs 0.91. */

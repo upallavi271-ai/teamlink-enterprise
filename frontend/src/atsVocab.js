@@ -8,6 +8,7 @@
 //
 // Every label here is the exact string the prototype shows. No screen may
 // derive a label by uppercasing or underscore-splitting a stored code.
+import { SOURCES, PICK_SOURCES } from './utils/candidateSource.js';
 
 export const STAGE_CODES = [
   'NEW',
@@ -388,13 +389,11 @@ export const CANDIDATE_EMPLOYMENT_TYPES = ['Full Time', 'Part Time', 'Contract',
 export const CANDIDATE_WORK_MODES = ['Work From Office', 'Hybrid', 'Remote'];
 export const CANDIDATE_EDUCATION = ['B.Tech', 'B.E', 'MCA', 'MBA', 'M.Tech', 'B.Sc', 'M.Sc', 'Diploma', 'Other'];
 
-export const CANDIDATE_SOURCES = [
-  'Direct', 'Referral', 'Campus', 'Job Portal', 'Naukri', 'Indeed', 'Shine', 'LinkedIn', 'TeamLink Website', 'Social Media',
-];
-export const CANDIDATE_FIRST_SOURCES = ['Direct', 'Referral', 'Job Portal', 'Naukri', 'Indeed', 'LinkedIn'];
-export const CANDIDATE_FILTER_SOURCES = [
-  'Job Portal', 'Naukri', 'Indeed', 'Shine', 'Referral', 'Direct', 'LinkedIn', 'TeamLink Website', 'Social Media',
-];
+// ONE clean source list (user, 2026-10-10): utils/candidateSource.js, a copy of the server's list. Copies, because
+// utils/specMaster.js replaces the contents when an Admin changes the Master lists.
+export const CANDIDATE_SOURCES = [...PICK_SOURCES];
+export const CANDIDATE_FIRST_SOURCES = [...PICK_SOURCES];
+export const CANDIDATE_FILTER_SOURCES = [...SOURCES];
 export const APPLICATION_METHODS = ['Manual', 'Auto-Apply'];
 
 export const CLIENT_INDUSTRIES = [

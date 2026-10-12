@@ -571,6 +571,9 @@ export default function Assets({ view, onOpen, onBack }) {
             / the assets one employee holds, and import with the compulsory
             sample (src/io/assets.js). Rights come from the server. */}
         <DataIoBar ioKey="assets" onImported={load} />
+        {/* The asset REPAIR HISTORY (src/io/assetRepairs.js): one row per repair,
+            matched to the asset by code / serial number, no duplicates on re-run. */}
+        <DataIoBar ioKey="asset-repairs" importLabel="Import repair history" exportLabel="Export repair history" showEmployeePicker={false} onImported={load} />
         {assetModals}
       </QaRow>
 

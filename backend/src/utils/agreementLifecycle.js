@@ -182,6 +182,8 @@ async function ownersAndAdmins(clientId) {
   const bdeOr = [
     ...(bdes.length ? [{ id: { in: bdes.map((b) => b.bdeId) } }] : []),
     ...(ownerName ? [{ name: ownerName, OR: [{ atsRole: 'BDE' }, { role: 'BDE' }] }] : []),
+    // The BDE TL works every client's agreement (2026-10-09): told too.
+    { atsRole: 'TL', OR: [{ atsDepartment: 'BDE' }, { atsScopeDepartments: { contains: 'BDE' } }] },
   ];
   const bdeUsers = bdeOr.length
     ? await prisma.user.findMany({ where: { status: 'Active', NOT: NOT_TEST_USER, OR: bdeOr }, select: { id: true } })
@@ -397,8 +399,24 @@ function startExpirySweep() {
   if (quarter.unref) quarter.unref();
 }
 
+// May this login make and send the agreement link for this client WITHOUT being
+// an Admin? (user, 2026-10-09: the BDE team gets the agreement ready and sends
+// it.) The client's own BDE - own client, or a desk client with no BDE yet - and
+// the BDE TL for any client. Editing the agreement and TeamLink's own seal stay
+// with the Admin.
+async function bdeMayLink(user, client) {
+  if (!user || !client) return false;
+  const scope = require('./scope'); // eslint-disable-line global-require
+  const access = await require('./agreementSigning').agreementAccess(user, client); // eslint-disable-line global-require
+  if (access.as === 'tl') return scope.isBdeTl(user);
+  if (access.as !== 'bde') return false;
+  const owner = String(client.bdeOwner || '').trim().toLowerCase();
+  const me = String(user.name || '').trim().toLowerCase();
+  return !owner || owner === me || (scope.atsScopeOf(user).bdeOwnClientIds || []).includes(client.id);
+}
+
 module.exports = {
-  signingUrl, contactsOf, dispatchSigningLink, describeDispatch, dispatchReasons,
+  bdeMayLink, signingUrl, contactsOf, dispatchSigningLink, describeDispatch, dispatchReasons,
   isExecuted, missingSeals, maybeAutoActivate, endOf, sweepExpiry, startExpirySweep, ownersAndAdmins,
   sweepSigningReminders, SIGN_REMINDER_DAYS, emailRenewal,
 };
