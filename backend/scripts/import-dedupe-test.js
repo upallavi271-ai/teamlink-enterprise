@@ -90,6 +90,32 @@ const XLSX = require(path.join(Z.BACK, 'node_modules/xlsx'));
     await Promise.all([upload('clients', 'commit', cb), upload('clients', 'commit', cb)]);
     const cafter = await prisma.client.count({ where: { name: { contains: `ZZTEST DDP` }, AND: [{ name: { contains: Z.RUN } }] } });
     Z.check('E3 the same clients file twice at the same moment adds none', cafter === cbefore, { cbefore, cafter });
+
+    // ============== requirements (founder 2026-10-24: "only the remaining ones come in") ==============
+    const rc = await prisma.client.create({ data: { name: cn('Req Client'), clientType: 'Direct', ownerDepartment: 'Medical', agreementStatus: 'ACTIVE', status: 'Active' } });
+    Z.made.clients.push(rc.id);
+    const rq = await prisma.requirement.create({ data: { title: cn('Staff Nurse'), clientId: rc.id, department: 'Medical', status: 'OPEN', openings: 2, location: 'Hyderabad', reqCode: `ZZDDP-${Z.RUN}-1` } });
+    Z.made.reqs.push(rq.id);
+    const rrow = (title, loc, openings, extra = {}) => ({ 'Requirement Title': title, 'Client Name': rc.name, Department: 'Medical', Location: loc, Openings: openings, ...extra });
+    const rb = sheet([
+      rrow(`  ${cn('staff nurse').toUpperCase()} `, 'Hyderabad', 2), // same job, written in capitals with spaces -> duplicate (certain)
+      rrow(cn('Staff Nurse.'), 'hyderabad', 5), // same job, same city, other openings -> duplicate (likely, same city)
+      rrow(cn('Staff Nurse'), 'Vijayawada', 2), // the same role in ANOTHER city is a different job -> comes in
+      rrow(cn('Lab Technician'), 'Hyderabad', 1), // a new role -> comes in
+    ], 'Requirements');
+    const rchk = await upload('requirements', 'check', rb);
+    Z.check('F1 requirements: the check names the 2 twins as duplicates and lets the 2 new ones in', rchk.status === 200 && rchk.body.totals.duplicate === 2 && rchk.body.totals.create === 2, rchk.body ? { totals: rchk.body.totals, rows: (rchk.body.results || []).map((r) => `${r.row}:${r.action}:${String(r.message || '').slice(0, 140)}`) } : rchk.text.slice(0, 300));
+    await upload('requirements', 'commit', rb);
+    const mine = await prisma.requirement.findMany({ where: { clientId: rc.id }, select: { id: true, title: true, location: true } });
+    mine.forEach((m) => { if (!Z.made.reqs.includes(m.id)) Z.made.reqs.push(m.id); });
+    Z.check('F2 after the import the client has 3 requirements (1 old + 2 new): no twin was made', mine.length === 3, mine.map((m) => `${m.title}|${m.location}`));
+    const rmsg = (rchk.body.results || []).filter((r) => r.action === 'duplicate').map((r) => r.message).join(' ');
+    Z.check('F3 the duplicate rows say which requirement they look like', /ZZDDP-/.test(rmsg) || /Staff Nurse/i.test(rmsg), rmsg.slice(0, 240));
+    const rbefore = mine.length;
+    await upload('requirements', 'commit', rb);
+    await Promise.all([upload('requirements', 'commit', rb), upload('requirements', 'commit', rb)]);
+    const rafter = await prisma.requirement.count({ where: { clientId: rc.id } });
+    Z.check('F4 the same requirements file again (and twice at once) adds nothing', rafter === rbefore, { rbefore, rafter });
   } catch (e) { Z.fail += 1; console.log('FAIL  crashed', e && e.stack ? e.stack.slice(0, 900) : e); } finally {
     await Z.cleanup().catch((e) => console.log('cleanup problem', String(e.message).slice(0, 160)));
     console.log(`\n${Z.pass} passed, ${Z.fail} failed`);

@@ -1233,8 +1233,9 @@ const RULES = {
   },
 
   requirements: {
-    // no Requirement Code in the sheet: the same title for the same client, twice in one file, is the same requirement
-    keyOf: (d, ix) => (d.reqCode ? ix.norm(d.reqCode) : `t|${ix.ckey(d._client)}|${ix.norm(d.title)}`),
+    // no Requirement Code in the sheet: the same title for the same client IN THE SAME CITY, twice in one file, is the same requirement
+    // (the same role in another city is a different job: 2026-10-24)
+    keyOf: (d, ix) => (d.reqCode ? ix.norm(d.reqCode) : `t|${ix.ckey(d._client)}|${ix.norm(d.title)}|${ix.norm(d.location || '')}`),
     // DUPLICATE = same requirement code, or the same job title for the same
     // client. Updated only with "Update existing" ticked, in scope.
     async guard(ctx, d, note) {
@@ -1243,8 +1244,27 @@ const RULES = {
       let dupBy = id && !isDry(id) ? 'code' : null;
       const clientId = ix.client.get(ix.ckey(d._client));
       if (!dupBy && clientId && !isDry(clientId) && d.title) {
-        const same = await prisma.requirement.findFirst({ where: { clientId, title: String(d.title).trim() }, select: { id: true, reqCode: true } });
+        // same title for the same client AND the same city (or no city on one of them): the same role in another city is a different job (2026-10-24)
+        const rows = await prisma.requirement.findMany({ where: { clientId, title: String(d.title).trim() }, select: { id: true, reqCode: true, location: true }, take: 50 });
+        const city = ix.norm(d.location || '');
+        const same = rows.find((r) => !city || !ix.norm(r.location || '') || ix.norm(r.location || '') === city);
         if (same) { id = same.id; dupBy = 'title'; d._sameCode = same.reqCode; }
+      }
+      // THE SMARTER TWIN CHECK (founder 2026-10-24: "when they import, duplicates must be detected and only the remaining ones come in"). The test
+      // above is an exact title; a real sheet writes "Staff nurse" / "staff nurse " / "Staff Nurse." for the same job. The same matcher the Add requirement
+      // form uses (utils/jobDupes.js: same client + same role + same city) decides: a CERTAIN twin, or a LIKELY twin in the SAME city (only the openings
+      // differ), is skipped and named. A same role in ANOTHER city is a different job and is imported (it shows on Duplicate jobs if it looks alike).
+      if (!dupBy && clientId && !isDry(clientId) && d.title) {
+        try {
+          const g = await require('../utils/jobDupGuard').guardCreate({ // eslint-disable-line global-require
+            clientId, title: d.title, specialisation: d.specialisation, location: d.location, openings: d.openings, experience: d.experience, salary: d.salary,
+            employmentType: d.employmentType, skills: d.skills, jobDescription: d.jobDescription, description: d.description, department: d.department,
+          }, { user, door: 'ATS import', silent: true });
+          const twin = (g.matches || []).find((m) => m.level === 'CERTAIN' || (m.level === 'LIKELY' && (m.reasons || []).some((r) => /same city/i.test(r))));
+          if (twin) {
+            return { skip: `looks like requirement ${twin.reqCode || twin.title} for ${d._client} (${(twin.reasons || []).slice(0, 3).join(', ')}) — skipped, nothing overwritten. If it is a different job, add it with Add requirement.`, duplicate: true };
+          }
+        } catch { /* the import goes on as before */ }
       }
       if (dupBy) {
         const what = dupBy === 'code' ? `requirement ${d.reqCode}` : `"${d.title}" for ${d._client}${d._sameCode ? ` (${d._sameCode})` : ''}`;
