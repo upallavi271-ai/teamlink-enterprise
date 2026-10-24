@@ -59,6 +59,21 @@ const linkOfNote = (n, kind) => {
   return { job: '/requirements', candidate: '/candidates', interview: '/interviews', agreement: '/clients' }[kind] || '/notifications';
 };
 
+// WHICH PRODUCT a line belongs to (founder 2026-10-24: the New button on the HRMS dashboard shows only HRMS news, the one on the ATS dashboard only
+// ATS news, and so on). The requirement / candidate / interview / agreement lines are ATS by their nature; a bell line is placed by its words and by
+// the page it opens. Anything that is neither money nor hiring (attendance, leave, tasks, announcements, password, exit ...) is HRMS.
+const ACCOUNTS_WORDS = /proof missing|accountant|invoice|\bbills?\b|payment|\bgst\b|\btds\b|vendor|expense|reimburs|outstanding|receivable|payable|\/accounts|\/invoices|\/expenses/;
+const ATS_WORDS = /interview|candidate|applicant|resume|requirement|\breq-\d|agreement|e-?sign|\bclients?\b|guarantee|\/clients|\/tax-billing|\/requirements|\/candidates|\/interviews/;
+function moduleOfNote(n, kind) {
+  if (['job', 'candidate', 'interview', 'agreement'].includes(kind) && ATS_WORDS.test(`${n.title || ''} ${n.message || ''}`.toLowerCase())) return 'ats';
+  const t = `${n.title || ''} ${n.message || ''}`.toLowerCase();
+  if (ACCOUNTS_WORDS.test(t)) return 'accounts';
+  if (ATS_WORDS.test(t)) return 'ats';
+  return 'hrms';
+}
+const MODULES = ['hrms', 'ats', 'accounts'];
+const moduleArg = (v) => (MODULES.includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : null);
+
 async function derived(user) {
   const out = [];
   const s = scope.atsScopeOf(user);
@@ -146,16 +161,18 @@ async function derived(user) {
   return out;
 }
 
-async function build(user) {
+// module = 'hrms' | 'ats' | 'accounts' keeps only that product's lines; no module = everything (the home Dashboard).
+async function build(user, module = null) {
   const [seen, mine, notes] = await Promise.all([
     loadSeen(user.id),
-    derived(user),
+    !module || module === 'ats' ? derived(user) : [],
     prisma.notification.findMany({ where: { userId: user.id, createdAt: { gte: new Date(Date.now() - 30 * DAY) } }, orderBy: { createdAt: 'desc' }, take: 60 }).catch(() => []),
   ]);
   const refs = mine.map((m) => m.ref).filter(Boolean);
   const items = [...mine];
   notes.forEach((n) => {
     const kind = kindOfNote(n);
+    if (module && moduleOfNote(n, kind) !== module) return;
     const hay = `${n.title || ''} ${n.message || ''}`;
     // A bell line about a job / person already listed above is the same news: show it once.
     if (['job', 'candidate'].includes(kind) && refs.some((r) => hay.includes(r))) return;
@@ -171,7 +188,7 @@ async function build(user) {
 
 router.get('/', async (req, res, next) => {
   try {
-    const { rows } = await build(req.user);
+    const { rows } = await build(req.user, moduleArg(req.query.module));
     const fresh = rows.filter((r) => !r.seen);
     const old = rows.filter((r) => r.seen).slice(0, 20);
     const byKind = {};
@@ -184,7 +201,8 @@ router.post('/seen', async (req, res, next) => {
   try {
     if (req.viewAs) return res.json({ ok: true, viewOnly: true });
     const b = req.body || {};
-    const { rows, seen } = await build(req.user);
+    const module = moduleArg(b.module);
+    const { rows, seen } = await build(req.user, module);
     const now = new Date().toISOString();
     const known = new Map(rows.map((r) => [r.key, r]));
     const keys = b.all ? rows.filter((r) => !r.seen).map((r) => r.key) : (Array.isArray(b.keys) ? b.keys.map(String).filter((k) => known.has(k)) : []);

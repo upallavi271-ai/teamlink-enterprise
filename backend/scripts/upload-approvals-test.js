@@ -167,7 +167,8 @@ async function climb(patchPath, wf, recordId, decision = 'Approved', note = unde
     Z.check('F1 any employee is offered the R&D team to send feedback to', opts.status === 200 && opts.body.department === 'R&D' && names.includes(rd1.id) && names.includes(rd2.id), [opts.status, opts.text.slice(0, 200)]);
     Z.check('F2 the list carries names and workload only (no phone, e-mail or salary)', !/phone|email|salary|mobile/i.test(JSON.stringify(opts.body.people)), opts.body.people[0]);
     const direct = await Z.call('POST', '/api/tasks', wTok, { name: `${TAGGED} direct`, startDate: day, assigneeId: rd1.id });
-    Z.check('F3 an ordinary employee still cannot hand a normal task to R&D (403)', direct.status === 403, [direct.status, direct.text.slice(0, 120)]);
+    madeTasks.push(direct.body && direct.body.id);
+    Z.check('F3 (2026-10-24: anyone can give a task to anyone) an ordinary employee can hand a normal task to R&D too (201)', direct.status === 201 && direct.body.assigneeId === rd1.id, [direct.status, direct.text.slice(0, 120)]);
     const fb = await Z.call('POST', '/api/tasks/feedback', wTok, { subject: `${TAGGED} slow page`, details: 'The attendance page takes a long time to open.', priority: 'High', assigneeId: rd1.id });
     madeTasks.push(fb.body && fb.body.id);
     Z.check('F4 the employee sends feedback to a named R&D person (201)', fb.status === 201 && fb.body.assigneeId === rd1.id && fb.body.department === 'R&D' && fb.body.assignedById === worker.id && fb.body.subTaskName === 'Feedback to R&D', [fb.status, fb.text.slice(0, 250)]);
@@ -188,7 +189,10 @@ async function climb(patchPath, wf, recordId, decision = 'Approved', note = unde
     const empty = await Z.call('POST', '/api/tasks/feedback', wTok, { subject: '', details: '' });
     Z.check('F11 an empty feedback is refused (400)', empty.status === 400, empty.status);
     const sneaky = await Z.call('PUT', `/api/tasks/${fb.body.id}`, wTok, { assigneeId: tl.id });
-    Z.check('F12 the sender cannot use their feedback task to reach people outside their own scope (403)', sneaky.status === 403, [sneaky.status, sneaky.text.slice(0, 140)]);
+    // (2026-10-24: anyone can give a task to anyone, so the old "outside their own scope" refusal no longer applies; the point that stays is
+    // that the feedback task is still the sender's own task to manage and nobody else can take it over)
+    const stranger = await Z.call('PUT', `/api/tasks/${fb.body.id}`, oTok, { name: `${TAGGED} hijacked` });
+    Z.check('F12 an unrelated employee cannot change somebody else\'s feedback task (403)', stranger.status === 403 && sneaky.status !== 500, [stranger.status, sneaky.status]);
 
     // ---- 4. THE DEVELOPER-TEAM ADMIN LOGIN ----------------------------------------------------------------------------------------------------
     const DEV_EMAIL = `zz-upa-dev-${Z.RUN}@example.test`;

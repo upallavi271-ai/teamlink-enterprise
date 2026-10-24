@@ -18,6 +18,7 @@ import ScrollTable from '../../components/ScrollTable.jsx';
 import './dashboard-drill.css';
 import '../attendance/half-leave-chip.css';
 import Combo from '../../components/Combo.jsx';
+import DrillExport, { useDrillRight } from '../../components/DrillExport.jsx';
 
 // The Half day list: where the leave for the other half stands, as a plain colour chip.
 const HL_TONE = { Approved: 'green', 'Pending approval': 'orange', Rejected: 'red', 'No leave applied': 'red' };
@@ -51,8 +52,11 @@ export function Tiles({ cells, drill, section, onPick }) {
   const isOn = (c) => !!drill && drill.section === section && drill.tile === c.tile && (drill.part || '') === (c.part || '') && (drill.scope || '') === (c.scope || '');
   // A chip may open another tile's list (p.tile): "Full day 1 -> On leave" opens the On leave people.
   const partOf = (c, p) => ({ ...c, tile: p.tile || c.tile, part: p.part });
+  // Up to 6 cards in one row; a longer row is split evenly (7 -> 4 + 3, 8 -> 4 + 4) so no card is left alone (founder 2026-10-24).
+  const n = cells.length;
+  const cols = n <= 6 ? Math.max(1, n) : Math.ceil(n / 2);
   return (
-    <div className="stat-row hd-tiles">
+    <div className="stat-row hd-tiles" style={{ '--hd-cols': cols }}>
       {cells.map((c) => (
         <div key={c.id || c.label} className={`stat-cell hd-tile${isOn(c) ? ' on' : ''}${c.tone ? ` tone-${c.tone}` : ''}`}>
           <button type="button" className="hd-tile-main" aria-pressed={isOn(c)} onClick={() => onPick(section, c, c.value)}
@@ -85,6 +89,7 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
   const [sort, setSort] = useState({ key: '', dir: 1 });
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState('');
+  const mayCsv = useDrillRight('hrms');
   const box = useRef(null);
   const seq = useRef(0);
   const query = { ...params, tile: drill.tile, ...(drill.part ? { part: drill.part } : {}), ...(drill.scope ? { scope: drill.scope } : {}) };
@@ -152,6 +157,14 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
         </div>
         <div className="hd-drill-actions">
           <button type="button" className="btn btn-sm btn-primary" disabled={!data || busy} onClick={excel}>{busy ? 'Making file…' : 'Excel'}</button>
+          <DrillExport
+            name={`hrms-${data ? data.title : drill.tile}`}
+            label="CSV"
+            allowed={mayCsv}
+            disabled={!data || !rows.length}
+            title="Download the list you see now (with your search and sort) as CSV"
+            build={() => ({ headers: cols.map((c) => c.label), rows: rows.map((r) => cols.map((c) => { const v = show(c, r[c.key]); return v === '—' ? '' : v; })) })}
+          />
           <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
       </div>

@@ -85,7 +85,7 @@ export default function AccountsReports() {
 
   const D = data.drill || { invoices: [], bills: [], bank: [] };
   const show = (where, title, kind, rows, note) => setDrill((d) => (d && d.title === title ? null : { where, title, kind, rows, note }));
-  const panel = (where) => (drill && drill.where === where ? <div className="acd" style={{ margin: '10px 0' }}><DrillPanel drill={drill} onClose={() => setDrill(null)} /></div> : null);
+  const panel = (where) => (drill && drill.where === where ? <div className="acd" style={{ margin: '10px 0' }}><DrillPanel drill={drill} onClose={() => setDrill(null)} canExport={canExport} /></div> : null);
   // A figure that opens its list.
   const Num = ({ where, title, kind = 'inv', rows, note, children }) => (
     <button type="button" className="link-btn" style={{ font: 'inherit', textDecoration: 'underline dotted', cursor: 'pointer', padding: 0 }} title="Click to see the list" onClick={() => show(where, title, kind, rows, note)}>{children}</button>

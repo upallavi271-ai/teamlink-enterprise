@@ -8,7 +8,7 @@ import { TeamLinkMark } from './Logo.jsx';
 // until it is changed (backend/src/utils/seedPasswords.js), so this screen is
 // the only way forward. It uses the normal change-password flow and rules.
 export default function ForcePasswordChange() {
-  const { user, logout } = useAuth();
+  const { user, logout, endSessionWithNotice } = useAuth();
   const [f, setF] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState({ field: '', text: '' });
@@ -19,9 +19,8 @@ export default function ForcePasswordChange() {
     if (f.newPassword !== f.confirmPassword) { setError({ field: 'confirmPassword', text: 'The two new passwords do not match.' }); return; }
     setBusy(true);
     try {
-      const res = await api.post('/auth/change-password', f);
-      if (res.data.token) { try { localStorage.setItem('tl_token', res.data.token); } catch { /* ignore */ } }
-      window.location.reload();
+      await api.post('/auth/change-password', f);
+      endSessionWithNotice('Your password is changed. Please sign in again with your new password.');
     } catch (err) {
       setError({ field: err.response?.data?.field || '', text: err.response?.data?.error || 'The password could not be changed.' });
       setBusy(false);

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import { Help } from '../ui/Guide.jsx';
+import DrillExport, { useDrillRight } from '../DrillExport.jsx';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import { Avatar } from '../atskit/AtsKit.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -441,6 +442,23 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
     if (opts.length < 2 && !fv[field]) return null;
     return <FacetSelect label={label} value={fv[field]} onChange={(v) => setFv({ ...fv, [field]: v })} options={opts} allLabel={allLabel} />;
   };
+  const mayExport = useDrillRight('ats');
+  // The file holds every requirement the board lists for the search / filters picked, group by group (not only the few shown per group).
+  async function buildFile() {
+    const rows = [];
+    const STEPS = ['On this requirement', 'Sent to client', 'Interview', 'Selected', 'Joined'];
+    for (const sec of SECTIONS) {
+      const s = d.sections[sec.key];
+      if (!s || !s.total) continue; // eslint-disable-line no-continue
+      const pages = Math.max(1, Math.ceil(s.total / 100));
+      for (let p = 1; p <= pages; p += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await api.get(LIST_URL, { params: { ...baseParams, d_view: undefined, d_per: undefined, d_bucket: sec.key, d_size: 100, d_page: p } });
+        (r.data.rows || []).forEach((x) => rows.push([sec.title, x.reqCode, x.title, x.client, x.department, x.tl, (x.recruiters || []).join(', '), dayOf(x.createdAt), x.ageDays, ...STEPS.map((_, i) => (x.steps || [])[i]), x.inProcess, x.late]));
+      }
+    }
+    return { headers: ['Group', 'Job ID', 'Requirement', 'Client', 'Department', 'Team lead', 'Recruiters', 'Opened', 'Days open', 'On this requirement', 'Sent to client', 'Interview', 'Selected', 'Joined', 'In process', 'Late'], rows };
+  }
   const firstOpen = d ? (d.sections.needs.total ? 'needs' : d.sections.progress.total ? 'progress' : d.sections.waiting.total ? 'waiting' : d.sections.idle.total ? 'idle' : 'needs') : 'needs';
 
   const body = (
@@ -463,6 +481,7 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
         {!inner && facetUi('tl', 'tl', 'Team lead', 'All team leads')}
         {!inner && facetUi('rec', 'rec', 'Recruiter', 'All recruiters')}
         {anyFilter && <button type="button" className="link-btn" onClick={clearAll}>Clear filters</button>}
+        {d && d.filtered > 0 && <DrillExport name={tlId ? 'Open requirements - team lead' : 'Open requirements'} allowed={mayExport} disabled={state.loading} build={buildFile} />}
         <span className="jb-density" role="group" aria-label="Row size">
           <button type="button" className={density === 'comfortable' ? 'on' : ''} aria-pressed={density === 'comfortable'} onClick={() => setDensityTo('comfortable')}>Comfortable</button>
           <button type="button" className={density === 'compact' ? 'on' : ''} aria-pressed={density === 'compact'} onClick={() => setDensityTo('compact')}>Compact</button>

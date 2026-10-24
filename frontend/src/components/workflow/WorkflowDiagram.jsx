@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { WORKFLOW_STAGE_GROUPS } from '../../atsVocab';
+import DrillExport, { useDrillRight } from '../DrillExport.jsx';
 import './WorkflowDiagram.css';
 
 const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString('en-IN'));
@@ -87,11 +88,27 @@ function DrillDown({ pick, onClose }) {
     return () => { live = false; };
   }, [pick.group]);
   const d = state.data;
+  const mayExport = useDrillRight('ats');
+  // The screen shows the newest 200; the file asks for up to 2000 and says when it is cut.
+  async function buildFile() {
+    const r = (await api.get('/ats/workflow/list', { params: { group: pick.group, limit: 2000 } })).data;
+    const rows = r.rows || [];
+    const note = r.total > rows.length ? `The list has ${fmt(r.total)} rows; the file holds the newest ${fmt(rows.length)}.` : '';
+    if (r.entity === 'invoice') {
+      return { note, headers: ['Invoice', 'Client', 'Candidate', 'Amount', 'Received', 'Status', 'Due'], rows: rows.map((x) => [x.invoiceNumber, x.client, x.candidate, x.amount, x.receivedAmount, x.status, x.dueDate]) };
+    }
+    return {
+      note,
+      headers: ['Candidate', 'Requirement', 'Requirement ID', 'Department', 'Client', 'Hiring', 'Stage', 'Guarantee ends', 'Joining status', 'Next action', 'Updated'],
+      rows: rows.map((x) => [x.candidate, x.requirement, x.reqCode, x.department, x.client, `${x.hiring || ''}${x.preAts ? ' · Job Portal' : ''}`, x.stageLabel, x.guaranteeEnds, x.joiningStatus, x.preAts && ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(x.stage) ? 'Send to ATS' : x.nextAction, x.updatedAt ? String(x.updatedAt).slice(0, 10) : '']),
+    };
+  }
   return (
     <div className="card wfd-drill" id="wfd-drill">
       <div className="wfd-drill-head">
         <b>{pick.label}</b>
         {d && <span className="small-muted">{` · ${fmt(d.total)} ${d.entity === 'invoice' ? 'invoice(s)' : 'candidate(s)'}${d.total > d.rows.length ? ` — newest ${d.rows.length} shown` : ''}`}</span>}
+        {d && d.rows.length > 0 && <DrillExport name={pick.label} allowed={mayExport} build={buildFile} />}
         <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
       </div>
       {state.loading && <div className="small-muted">Loading…</div>}

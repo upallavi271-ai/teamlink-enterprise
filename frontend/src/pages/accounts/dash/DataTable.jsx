@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import ScrollSync from '../../../components/accounts/ScrollSync.jsx';
 import Pager, { usePaged } from '../../../components/Pager.jsx';
+import DrillExport, { useDrillRight } from '../../../components/DrillExport.jsx';
 
 // ---------------------------------------------------------------------------
 // One wide table for the Accounts Dashboard: its own search, click-to-sort
@@ -12,11 +13,16 @@ import Pager, { usePaged } from '../../../components/Pager.jsx';
 //   rows     the rows (already filtered by the page filters)
 //   search   (r) -> text the box searches; omit to hide the box
 //   expand   { isOpen(r), toggle(r), render(r) } — a row opens in place
+//   Every table has an Export button (the Accounts Dashboard export right) that saves the rows shown - search and sort applied -
+//   as a CSV. exportName names the file (default: the noun); canExport overrides the right (the Reports page passes its own).
+//   A column's value is col.exportValue(r), else col.get(r), else r[col.key]; a column with none of those (a button column) is left out.
 // ---------------------------------------------------------------------------
 export default function DataTable({
   columns, rows, rowKey = (r) => r.id, search, placeholder = 'Search this table…', noun = 'rows',
-  empty = 'Nothing to show for these filters.', foot, expand, initialSort, pageSize = 25, rowClass,
+  empty = 'Nothing to show for these filters.', foot, expand, initialSort, pageSize = 25, rowClass, exportName, canExport,
 }) {
+  const dashRight = useDrillRight('accounts');
+  const mayExport = canExport === undefined ? dashRight : canExport;
   const [q, setQ] = useState('');
   const [sort, setSort] = useState(initialSort || null); // { key, dir }
   const list = useMemo(() => {
@@ -48,10 +54,19 @@ export default function DataTable({
 
   return (
     <div>
-      {(search || list.length > pageSize) && (
+      {(search || list.length > pageSize || mayExport) && (
         <div className="acd-tt">
           {search && <input type="search" value={q} placeholder={placeholder} onChange={(e) => setQ(e.target.value)} aria-label={placeholder} />}
           <span className="acd-tt-n">{list.length.toLocaleString('en-IN')} {noun}</span>
+          <DrillExport
+            name={exportName || noun}
+            allowed={mayExport}
+            disabled={!list.length}
+            build={() => {
+              const cols = columns.filter((c) => c.exportValue || c.get || (list[0] && c.key in list[0]));
+              return { headers: cols.map((c) => c.label), rows: list.map((r) => cols.map((c) => (c.exportValue ? c.exportValue(r) : c.get ? c.get(r) : r[c.key]))) };
+            }}
+          />
         </div>
       )}
       <ScrollSync className="acd-tbl" deps={[columns.length, page.slice.length, expand && page.slice.filter((r) => expand.isOpen(r)).length]}>

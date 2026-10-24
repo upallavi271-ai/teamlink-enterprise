@@ -599,7 +599,7 @@ export default function AtsHome() {
             </button>
           </div>
         </header>
-        <NewItems />
+        <NewItems module="ats" />
         {(f.department || extraChips.length > 0) && (
           <div className="av4-chips">
             {f.department && <button type="button" className="btn btn-sm ah-dept-all" onClick={() => setF({ ...f, department: '' })}>✕ All departments</button>}
@@ -641,7 +641,7 @@ export default function AtsHome() {
           ? <Link className="btn btn-primary" to={data.main.to}>{data.main.label} →</Link>
           : <button type="button" className="btn btn-primary" onClick={() => setDrill(data.main.drill)}>{data.main.label} →</button>)}
       </div>
-      <NewItems />
+      <NewItems module="ats" />
       {/* Row 1: the department chooser (2+ departments). "Your area" is in the top bar. */}
       {showDept && (
       <div className={`ah-deptbar${f.department ? ' is-picked' : ''}`}>

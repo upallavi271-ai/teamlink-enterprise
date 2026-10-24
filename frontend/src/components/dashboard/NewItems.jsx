@@ -31,7 +31,9 @@ function ago(at) {
   return `${d} day${d === 1 ? '' : 's'} ago`;
 }
 
-export default function NewItems() {
+// `module` ('hrms' | 'ats' | 'accounts') keeps only that product's news (founder 2026-10-24): the HRMS dashboard's New button lists HRMS lines
+// only, the ATS dashboard's lists ATS lines only. Nothing else about the button changes. No module = everything (the home Dashboard).
+export default function NewItems({ module = null }) {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(false);
@@ -39,7 +41,7 @@ export default function NewItems() {
   const [kind, setKind] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(() => api.get('/new-items').then((r) => setData(r.data)).catch(() => setData((d) => d || false)), []);
+  const load = useCallback(() => api.get('/new-items', { params: module ? { module } : {} }).then((r) => setData(r.data)).catch(() => setData((d) => d || false)), [module]);
   useEffect(() => {
     load();
     const t = setInterval(load, 90000);
@@ -57,7 +59,7 @@ export default function NewItems() {
 
   async function mark(keys, all = false) {
     setBusy(true);
-    try { await api.post('/new-items/seen', all ? { all: true } : { keys }); } catch { /* the list reloads below */ }
+    try { await api.post('/new-items/seen', { ...(all ? { all: true } : { keys }), ...(module ? { module } : {}) }); } catch { /* the list reloads below */ }
     await load();
     setBusy(false);
   }

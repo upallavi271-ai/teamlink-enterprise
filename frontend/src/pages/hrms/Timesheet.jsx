@@ -14,6 +14,7 @@ import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.
 import './timesheet-priority.css';
 import './timesheet-tasks.css';
 import { TaskForm, GivenToMe, IGave, useTaskDialogs, PRI_WORD, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
+import IdeasBox from './IdeasBox.jsx';
 
 // Timesheet — "Track and assign work".
 //
@@ -235,6 +236,7 @@ export default function Timesheet({ standalone = false }) {
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn" onClick={openReports}>Task Reports</button>
             <button className="btn" onClick={() => { setError(''); setNotice(''); setFeedbackOpen(true); }} disabled={!options} title="Send feedback to the R&D team">💬 Feedback to R&D</button>
+            <IdeasBox />
             <button className="btn btn-primary" onClick={() => { setError(''); setNotice(''); setNewOpen(true); }} disabled={!options}>+ New task</button>
           </span>
         </div>

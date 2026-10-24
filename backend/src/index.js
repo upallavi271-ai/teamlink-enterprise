@@ -308,6 +308,8 @@ app.use('/api/lms', lmsRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/documents', documentRoutes);
+// Employee ideas for the R&D team: 4 a month, every idea unique (routes/ideas.js).
+app.use('/api/ideas', require('./routes/ideas'));
 app.use('/api/announcements', announcementRoutes);
 // The shared Send-to picker's options, audience preview and AI Assist.
 app.use('/api/audience', require('./routes/audience'));

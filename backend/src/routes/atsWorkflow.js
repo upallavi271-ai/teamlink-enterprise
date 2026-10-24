@@ -50,7 +50,7 @@ router.get('/list', async (req, res, next) => {
     if (g.entity === 'invoice' && !(await can(req.user, 'accounts', 'accounts', 'Invoices', 'view'))) {
       return res.status(403).json({ error: 'Invoice details are for the Accounts desk — the count is shown on the diagram.' });
     }
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 200)); // the list's Export button asks for the most
     const out = await listWorkflowGroup(req.user, group, { limit, fresh: req.query.fresh === '1' });
     return res.json(out);
   } catch (err) { return next(err); }

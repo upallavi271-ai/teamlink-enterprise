@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import DashboardExport from '../../components/dashboard/DashboardExport.jsx';
-import NewItems from '../../components/dashboard/NewItems.jsx'; // the New button (2026-10-13)
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, QaRow } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, can } from '../../permissions';
 import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
@@ -13,6 +12,7 @@ import DateRangePicker, { useDateRange, rangeParams } from '../../components/Dat
 import ChartFromSpec from '../../components/charts/ChartFromSpec.jsx';
 import { Tiles, DrillPanel } from './DashboardDrill.jsx';
 // Recruiter joinings (2026-10-05): Super Admin's month-end popup + a recruiter's own figure.
+import NewItems from '../../components/dashboard/NewItems.jsx'; // the New button (2026-10-13), HRMS lines only (2026-10-24)
 import RecruiterJoiningsPopup from '../../components/recruiterJoinings/RecruiterJoiningsPopup.jsx';
 import MyJoiningsCard from '../../components/recruiterJoinings/MyJoiningsCard.jsx';
 import { isSuperAdmin } from '../../permissions';
@@ -296,7 +296,7 @@ function HrDashboard() {
       {(data.charts || []).length > 0 && (
         <>
           <SectionLabel>{`Charts — ${p.name} (attendance charts are person-days: every day of the range added up)`}</SectionLabel>
-          <div className="tlc-grid2">
+          <div className="tlc-grid2 hd-charts">
             {data.charts.map((c) => <ChartFromSpec key={c.id} spec={c} />)}
           </div>
         </>
@@ -471,7 +471,7 @@ export default function HrmsDashboard() {
   return (
     <div>
       <div className="page-head"><div><h1>HRMS Dashboard</h1><div className="page-sub">Employee &amp; Workforce Management</div></div></div>
-      <NewItems />
+      <NewItems module="hrms" />
 
       {/* FIRST LOGIN. A new employee used to land here with nothing telling
           them a profile was waiting to be filled in. The banner says so, and

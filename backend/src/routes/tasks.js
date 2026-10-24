@@ -16,12 +16,11 @@
 //                                right is given HERE, to tasks only
 //                                (teamLeadOf). A Manager / Assistant Manager
 //                                stays view-only (permissions.js viewOnlyAllows).
-//                                A recruiter and a plain employee do NOT have
-//                                it, so their Assign To offers only themselves.
-//   WHICH other people           utils/scope.js employeeWhere(me) — the same
-//                                department scope every other list obeys,
-//                                narrowed to the team when the login carries
-//                                an explicit atsScopeTeams.
+//                                (SINCE 2026-10-24 that is no longer asked for GIVING: everyone can
+//                                give a task to anyone, see assignable() below.)
+//   WHICH other people           ANYONE active in the company (founder rule 2026-10-24).
+//                                What a LEAD can edit / see of other people's tasks
+//                                still follows utils/scope.js employeeWhere(me).
 //
 // Scope is re-resolved from the database on every request (middleware/auth.js),
 // so editing a user's scope on Administration → Users changes what they can
@@ -89,10 +88,7 @@ async function quiet(p) {
 // people are whoever utils/scope.js employeeWhere() gives them: their own team
 // (or department when no team is set) plus the people who report to them.
 const teamLeadOf = (me) => scopeOf(me).hrmsRole === 'TL';
-// May this login hand tasks to / manage the tasks of other people?
-async function mayGive(me) {
-  return teamLeadOf(me) || can(me, 'hrms', 'hrms', 'Employee Services', 'create');
-}
+// May this login manage (edit / re-date / cancel) the tasks of other people? (GIVING a task to anyone is open to everyone since 2026-10-24.)
 async function mayManageOthers(me) {
   return teamLeadOf(me) || can(me, 'hrms', 'hrms', 'Employee Services', 'edit');
 }
@@ -251,24 +247,10 @@ async function assignable(me) {
     self: true,
   };
 
-  const canAssignOthers = await mayGive(me);
-  if (!canAssignOthers) {
-    return {
-      canAssignOthers: false,
-      people: [self],
-      reason: 'Your role assigns work to yourself only.',
-    };
-  }
-
-  const s = scopeOf(me);
-  // Exited / relieved people and the system account are never offered work.
-  const and = [employeeWhere(me), { userId: { not: null } }, { employmentStatus: { notIn: EXITED } }, NOT_SYSTEM_EMPLOYEE];
-  // "A TL to their team." When a login carries an EXPLICIT team scope, hold it
-  // to that team; a lead with no configured team keeps their whole department.
-  const explicitTeams = csv(me.atsScopeTeams);
-  if (!s.global && explicitTeams.length) {
-    and.push({ OR: [{ team: { in: explicitTeams } }, { id: me.employeeId || '__none__' }] });
-  }
+  // FOUNDER RULE 2026-10-24: ANYONE can give a task to ANYONE (a recruiter to a TL, anybody to the Super Admin ...). Neither the
+  // create right nor the department/team scope narrows this list any more; only exited people and the system account are left out.
+  // (What the giver can then SEE of the task is still decided by visibleWhere / taskRights below: the giver always sees what they gave.)
+  const and = [{ userId: { not: null } }, { employmentStatus: { notIn: EXITED } }, NOT_SYSTEM_EMPLOYEE];
 
   const employees = await prisma.employee.findMany({
     where: { AND: and },
@@ -296,9 +278,7 @@ async function assignable(me) {
   return {
     canAssignOthers: true,
     people,
-    reason: s.global
-      ? 'Your role assigns work across every department.'
-      : `Your role assigns work within ${(s.departments.join(', ') || 'your own records')}${explicitTeams.length ? ` · team ${explicitTeams.join(', ')}` : ''}.`,
+    reason: 'You can give a task to anyone in the company.',
   };
 }
 

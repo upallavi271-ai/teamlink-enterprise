@@ -66,8 +66,18 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
+  // After the person changes their own password: end this session AT ONCE and show the sign-in page with a note, so the next
+  // sign-in is with the new password. (The server has already ended the older sessions; the fresh token it hands back is dropped.)
+  function endSessionWithNotice(notice) {
+    try {
+      localStorage.removeItem('tl_token');
+      sessionStorage.setItem('tl_login_notice', notice || '');
+    } catch { /* storage blocked: the sign-in page still opens, just without the note */ }
+    setUser(null);
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, chooseLogin, logout, switchWorkspace }}>
+    <AuthContext.Provider value={{ user, loading, login, chooseLogin, logout, endSessionWithNotice, switchWorkspace }}>
       {children}
     </AuthContext.Provider>
   );

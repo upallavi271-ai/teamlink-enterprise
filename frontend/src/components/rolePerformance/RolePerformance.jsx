@@ -10,6 +10,7 @@ import api from '../../api';
 import Combo from '../Combo.jsx';
 import Pager, { usePaged } from '../Pager.jsx';
 import { Modal } from '../proto.jsx';
+import DrillExport from '../DrillExport.jsx';
 import './rp.css';
 
 const errText = (e, fallback) => (e && e.response && e.response.data && e.response.data.error) || fallback;
@@ -45,8 +46,23 @@ function DrillDialog({ spec, filters, onClose }) {
     return () => ctl.abort();
   }, [spec, filters, page]);
   const pages = data ? Math.max(1, Math.ceil(data.total / data.size)) : 1;
+  // The file holds EVERY candidate behind the number: all the pages are read, not just the one on the screen.
+  async function buildFile() {
+    const all = [];
+    const first = data;
+    const last = Math.max(1, Math.ceil(first.total / first.size));
+    for (let p = 1; p <= last; p += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = p === page ? first : (await api.get('/role-performance/drill', { params: { ...filters, ...spec.params, page: p } })).data;
+      all.push(...r.rows);
+    }
+    return {
+      headers: ['Candidate', 'Client', 'Requirement', 'Credited to', 'Employee code', 'Generated on', 'Step now', 'Selected on', 'Joined on', 'Role', 'Department', 'Why credited'],
+      rows: all.map((r) => [r.candidate, r.client, r.job, r.employee, r.employeeCode, r.generationDate, r.step, r.selectionDate, r.joiningDate, r.role, r.department, [r.creditBasis, r.seatBasis].filter(Boolean).join(' | ')]),
+    };
+  }
   return (
-    <Modal title={spec.title} onClose={onClose} wide footer={<button className="btn btn-sm" onClick={onClose}>Close</button>}>
+    <Modal title={spec.title} onClose={onClose} wide footer={<><DrillExport name={spec.title} disabled={!data || !data.rows.length} build={buildFile} /> <button className="btn btn-sm" onClick={onClose}>Close</button></>}>
       <div className="rpf">
         {error && <div className="rpf-error">{error}</div>}
         {!data && !error && <div className="rpf-empty">Loading...</div>}

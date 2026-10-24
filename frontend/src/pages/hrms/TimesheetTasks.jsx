@@ -275,7 +275,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
 
         {canGive && (
           <div className="field"><span>Give to</span>
-            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search my team by name" aria-label="Search my team" style={{ marginBottom: 8 }} />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search anyone by name" aria-label="Search people" style={{ marginBottom: 8 }} />
             {depts.length > 1 && (
               <div className="tt-chips" role="group" aria-label="Department">
                 <button type="button" className={`tt-chip${!dept ? ' on' : ''}`} onClick={() => setDept('')}>All departments <b>{base.filter((p) => !team || p.team === team).length}</b></button>
@@ -292,7 +292,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                 ))}
               </div>
             )}
-            <div className="tt-people" role="group" aria-label="My team">
+            <div className="tt-people" role="group" aria-label="People">
               {shown.slice(0, 300).map((p) => (
                 <label key={p.userId} className={`tt-person${picked.has(p.userId) ? ' on' : ''}`}>
                   <input type="checkbox" checked={picked.has(p.userId)} onChange={() => toggle(p.userId)} />
@@ -302,7 +302,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                   </span>
                 </label>
               ))}
-              {!shown.length && <div className="small-muted" style={{ padding: 12 }}>{people.length ? 'Nobody matches. Clear the search or the filters.' : 'There is nobody in your team yet.'}</div>}
+              {!shown.length && <div className="small-muted" style={{ padding: 12 }}>{people.length ? 'Nobody matches. Clear the search or the filters.' : 'There is nobody to give a task to yet.'}</div>}
             </div>
             <div className="tt-bar" style={{ marginTop: 8 }}>
               <button type="button" className="btn btn-sm" onClick={toggleShown} disabled={!shown.length}>{allShownOn ? 'Untick everyone shown' : `Tick everyone shown (${shown.length})`}</button>
@@ -312,7 +312,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
             {errs.assignee && <p className="error-text">{errs.assignee}</p>}
           </div>
         )}
-        {!canGive && !editing && <div className="small-muted" style={{ marginBottom: 12 }}>This task is for you. Only your lead can give tasks to other people.</div>}
+        {!canGive && !editing && <div className="small-muted" style={{ marginBottom: 12 }}>This task is for you.</div>}
         {editing && <div className="small-muted" style={{ marginBottom: 12 }}>Given to {task.assigneeName}. To move it to someone else, use "Give to someone else" on the task.</div>}
 
         <div className="field"><span>How urgent</span>

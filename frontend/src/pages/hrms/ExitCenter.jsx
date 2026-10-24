@@ -20,7 +20,7 @@ import './ExitCenter.css';
 const STATE_CLS = { done: 'exc-done', current: 'exc-now', todo: 'exc-todo', skipped: 'exc-skip', rejected: 'exc-bad' };
 const STATE_MARK = { done: '✓', current: '●', todo: '○', skipped: '–', rejected: '✗' };
 const STAGE_CLS = { waiting: 'pending', notice: 'applied', ready: 'pending', relieved: 'active', rejected: 'rejected', withdrawn: 'rejected' };
-const REASONS = ['Handover finished early', 'Company asked for a different date', 'Employee asked for a different date'];
+const REASONS = ['Handover finished early', 'Company asked for a different date', 'Employee asked for a different date', 'The date was entered wrongly'];
 const dmy = (iso) => {
   if (!/^\d{4}-\d{2}-\d{2}/.test(String(iso || ''))) return iso || '—';
   const [y, m, d] = String(iso).slice(0, 10).split('-');
@@ -45,15 +45,26 @@ export function ExitChip({ stage, label, onClick }) {
 }
 
 // ---- Edit exit date --------------------------------------------------------------------
+// HR (Internal HR: Divya, Purna) and the Super Admin fix the resignation date, the notice period and the exit date here (founder 2026-10-24).
 function EditDateModal({ record, onClose, onSaved }) {
   const current = record.lastWorkingDate || '';
+  const curRes = record.resignationDate || '';
+  const curDays = record.noticeDays == null ? '' : String(record.noticeDays);
   const [date, setDate] = useState(current);
+  const [resDate, setResDate] = useState(curRes);
+  const [days, setDays] = useState(curDays);
+  const [recalc, setRecalc] = useState(false);
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [warnings, setWarnings] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState('');
+  const noticeEndOf = (from, n) => { if (!from || n === '' || Number.isNaN(Number(n))) return ''; const d = new Date(`${from}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + Number(n)); return d.toISOString().slice(0, 10); };
+  const startOrDaysMoved = (resDate && resDate !== curRes) || (days !== '' && days !== curDays);
+  const suggested = noticeEndOf(resDate, days);
+  // Picking "move the last working day to resigned on + notice days" fills the date for them to see (they can still change it).
+  useEffect(() => { if (recalc && suggested) setDate(suggested); }, [recalc, suggested]);
 
   useEffect(() => {
     if (!date || date === current || date === checked) return undefined;
@@ -68,21 +79,36 @@ function EditDateModal({ record, onClose, onSaved }) {
   async function save() {
     setBusy(true); setError('');
     try {
-      const r = await api.put(`/resignations/exit/${record.id}/date`, { date, reason, note: note || undefined });
+      const body = { reason, note: note || undefined };
+      if (resDate && resDate !== curRes) body.resignationDate = resDate;
+      if (days !== '' && days !== curDays) body.noticeDays = Number(days);
+      if (date && date !== current) body.lastWorkingDate = date;
+      const r = await api.put(`/resignations/exit/${record.id}/dates`, body);
       onSaved(r.data);
-    } catch (e) { setError(err(e, 'Could not save the date')); } finally { setBusy(false); }
+    } catch (e) { setError(err(e, 'Could not save the dates')); } finally { setBusy(false); }
   }
-  const can = date && date !== current && reason.trim().length >= 3 && !busy;
+  const changed = (date && date !== current) || (resDate && resDate !== curRes) || (days !== '' && days !== curDays);
+  const can = changed && reason.trim().length >= 3 && !busy;
   return (
     <Modal
-      title="Edit exit date" onClose={onClose}
-      footer={(<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!can} onClick={save}>{busy ? 'Saving…' : 'Save new date'}</button></>)}
+      title="Edit resignation, notice and exit dates" onClose={onClose}
+      footer={(<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!can} onClick={save}>{busy ? 'Saving…' : 'Save the dates'}</button></>)}
     >
       <div className="exc-form">
-        <div className="exc-now-date">Now: <b>{current ? dmy(current) : 'not set'}</b></div>
-        <label className="exc-label" htmlFor="exc-date">New last working day</label>
-        <input id="exc-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        <label className="exc-label">Why is it changing? <span className="exc-req">(needed)</span></label>
+        <div className="exc-now-date">Now: resigned on <b>{curRes ? dmy(curRes) : 'not set'}</b> · notice <b>{curDays === '' ? 'not set' : `${curDays} days`}</b> · last working day <b>{current ? dmy(current) : 'not set'}</b></div>
+        <label className="exc-label" htmlFor="exc-resdate">Resigned on</label>
+        <input id="exc-resdate" type="date" value={resDate} onChange={(e) => setResDate(e.target.value)} />
+        <label className="exc-label" htmlFor="exc-days">Notice period (days)</label>
+        <input id="exc-days" type="number" min="0" max="365" value={days} onChange={(e) => setDays(e.target.value)} />
+        {startOrDaysMoved && suggested && (
+          <label className="exc-hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={recalc} onChange={(e) => setRecalc(e.target.checked)} />
+            Also move the last working day to {dmy(suggested)} (resigned on + notice days)
+          </label>
+        )}
+        <label className="exc-label" htmlFor="exc-date">Last working day (exit date)</label>
+        <input id="exc-date" type="date" value={date} onChange={(e) => { setRecalc(false); setDate(e.target.value); }} />
+        <label className="exc-label">Why are the dates changing? <span className="exc-req">(needed)</span></label>
         <div className="exc-quick">
           {REASONS.map((r) => <button type="button" key={r} className={`btn btn-sm${reason === r ? ' btn-primary' : ''}`} onClick={() => setReason(r)}>{r}</button>)}
         </div>
@@ -91,7 +117,7 @@ function EditDateModal({ record, onClose, onSaved }) {
         <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: agreed with the TL on Monday" />
         {warnings.map((w) => <div key={w} className="exc-warn" role="status">{w}</div>)}
         {error && <div className="error-text" role="alert">{error}</div>}
-        <div className="exc-hint">Attendance, leave, payroll, the seat, reports and the employee record follow the new date straight away.</div>
+        <div className="exc-hint">Attendance, leave, payroll, the seat, reports and the employee record follow the new last working day straight away. Every change is written down with who made it and why.</div>
       </div>
     </Modal>
   );
@@ -209,6 +235,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
           <div className="exc-dates">
             <div><span>Last working day</span><b>{v.lastWorkingDate ? dmy(v.lastWorkingDate) : 'Not set yet'}</b>{v.daysLeft != null && <em>{v.daysLeft >= 0 ? `${v.daysLeft} day(s) to go` : `${-v.daysLeft} day(s) ago`}</em>}</div>
             <div><span>Resigned on</span><b>{v.resignationDate ? dmy(v.resignationDate) : '—'}</b></div>
+            <div><span>Notice period</span><b>{v.noticeDays != null ? `${v.noticeDays} days` : '—'}</b></div>
             {v.finalApprover && !v.simple && <div><span>Final approver</span><b>{v.finalApprover}</b></div>}
           </div>
 
@@ -229,7 +256,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
           {warnings.map((w) => <div key={w} className="exc-warn" role="status">{w}</div>)}
 
           <div className="exc-actions">
-            {a.canEditDate && <button className="btn btn-sm" onClick={() => setEditDate(true)}>Edit exit date</button>}
+            {a.canEditDate && <button className="btn btn-sm" onClick={() => setEditDate(true)}>Edit dates</button>}
             {a.canFinalize && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => { if (window.confirm(`Finish ${v.employee.name}'s exit now? They become ${status}.`)) run(() => api.post(`${base}/finalize`, { status })); }}>Finish exit</button>}
             {a.canFinalize && (
               <Combo value={status} onChange={(e) => setStatus(e.target.value)} title="Final status"><option>Relieved</option><option>Exited</option></Combo>
@@ -435,7 +462,7 @@ export function ExitProfileRow({ employee, canEditDate, leaving, onChanged }) {
         {info ? <ExitChip stage={info.stage} label={info.stageLabel} onClick={() => setOpen({ edit: false })} /> : <span className="small-muted">No exit on record</span>}
         <span className="exc-profile-btns">
           {info && <button type="button" className="btn btn-sm" onClick={() => setOpen({ edit: false })}>Open exit record</button>}
-          {info && canEditDate && <button type="button" className="btn btn-sm" onClick={() => setOpen({ edit: true })}>Edit exit date</button>}
+          {info && canEditDate && <button type="button" className="btn btn-sm" onClick={() => setOpen({ edit: true })}>Edit dates</button>}
           {!info && canEditDate && <button type="button" className="btn btn-sm btn-primary" onClick={() => setBare(true)}>Set last working day</button>}
         </span>
       </span>

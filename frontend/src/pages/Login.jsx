@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { TeamLinkMark } from '../components/Logo.jsx';
@@ -17,6 +17,12 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  // Set by AuthContext.endSessionWithNotice() right after a password change; shown once.
+  const [notice] = useState(() => {
+    try { return sessionStorage.getItem('tl_login_notice') || ''; } catch { return ''; }
+  });
+  // (read first, cleared after the page has shown: React may run the initializer twice in development)
+  useEffect(() => { try { sessionStorage.removeItem('tl_login_notice'); } catch { /* storage blocked */ } }, []);
   const [busy, setBusy] = useState(false);
   // "Choose your account": the same password opens more than one separate login on this email.
   const [choice, setChoice] = useState(null);
@@ -147,6 +153,7 @@ export default function Login() {
           <div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div>
         </div>
 
+        {notice && <div className="notice green" role="status" style={{ display: 'block', marginBottom: 12 }}>{notice}</div>}
         <div className="small-muted" style={{ marginBottom: 16 }}>
           Sign in with your email. Your access follows your login.
         </div>

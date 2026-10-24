@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import Modal from '../Modal.jsx';
+import DrillExport, { useDrillRight, areaOfList } from '../DrillExport.jsx';
 import { ChartCard, BarChart, DataTable } from '../charts';
 import './dashboard.css';
 
@@ -605,10 +606,38 @@ function DrillTable({ rows, openDrill, pctCols }) {
 }
 
 // ---- THE DRILL PANEL — the rows behind one count ------------------------------
+// What the Export button writes for each kind of list: the same columns the table shows, one plain value per cell.
+const day = (v) => (v ? String(v).slice(0, 10) : '');
+const DRILL_EXPORT = {
+  app: [['Candidate', (r) => r.candidate], ['Recruiter', (r) => r.recruiter], ['Requirement', (r) => r.requirement], ['Requirement ID', (r) => r.reqCode], ['Client', (r) => r.client], ['Stage', (r) => r.stageLabel],
+    ['Status / due', (r) => (r.guaranteeEnds ? `Guarantee ends ${day(r.guaranteeEnds)}` : (r.note || (r.due ? `${TONE_WORD[r.tone] || 'Due'} ${day(r.due)}` : '')))], ['Resume score', (r) => r.resumeScore], ['AI score', (r) => r.aiScore], ['Idle days', (r) => r.idleDays], ['Updated', (r) => day(r.updatedAt)]],
+  req: [['Requirement', (r) => r.title], ['Client', (r) => r.client], ['Status', (r) => r.status], ['Openings', (r) => r.openings]],
+  inv: [['Invoice', (r) => r.invoiceNumber], ['Client', (r) => r.client], ['Invoice date', (r) => day(r.invoiceDate)], ['Due', (r) => day(r.dueDate)], ['Days overdue', (r) => r.daysOverdue], ['Status', (r) => r.status], ['Before GST', (r) => r.amount], ['Outstanding', (r) => r.outstanding]],
+  emp: [['Employee', (r) => r.name], ['Department', (r) => r.department], ['Designation', (r) => r.designation], ['Today', (r) => r.status]],
+  client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || 'Not signed'], ['BDE owner', (r) => r.owner], ['Open requirements', (r) => r.openJobs]],
+  user: [['User', (r) => r.name], ['Role', (r) => r.role], ['Last sign-in', (r) => (r.at ? new Date(r.at).toISOString().replace('T', ' ').slice(0, 16) : '')]],
+  pay: [['Date', (r) => day(r.date)], ['Invoice', (r) => r.invoiceNumber], ['Client', (r) => r.client], ['Method', (r) => r.method], ['Reference', (r) => r.reference], ['Amount', (r) => r.amount]],
+  accjoin: [['Candidate', (r) => r.candidate], ['Client', (r) => r.client], ['Requirement', (r) => r.requirement], ['Joined', (r) => day(r.joiningDate)], ['Guarantee ends', (r) => day(r.guaranteeEnds)], ['CTC', (r) => r.offeredCtc], ['Fee %', (r) => r.feePercent], ['Billing', (r) => r.billing]],
+};
+DRILL_EXPORT.workflow = DRILL_EXPORT.app;
+
 export function DrillPanel({ listUrl, params, setId, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const mayExport = useDrillRight(areaOfList(listUrl));
+  // The screen shows up to 300 rows; the file asks the server for the whole list (up to 2000) and says so when it is cut.
+  async function buildFile() {
+    const kind = data.kind === 'workflow' ? 'app' : data.kind;
+    const cols = DRILL_EXPORT[kind] || DRILL_EXPORT.app;
+    const r = await api.get(listUrl, { params: { ...params, set: setId, limit: 2000 } });
+    const got = r.data.rows || [];
+    return {
+      headers: cols.map((c) => c[0]),
+      rows: got.map((row) => cols.map((c) => c[1](row))),
+      note: r.data.total > got.length ? `The list has ${fmt(r.data.total)} rows; the file holds the first ${fmt(got.length)}.` : '',
+    };
+  }
   useEffect(() => {
     let alive = true;
     setData(null); setError('');
@@ -624,6 +653,7 @@ export function DrillPanel({ listUrl, params, setId, onClose }) {
         {error && <div className="notice red" style={{ margin: 12 }}>{error}</div>}
         {!data && !error && <div className="small-muted" style={{ padding: 16 }}>Loading…</div>}
         {data && rows.length === 0 && <div className="small-muted" style={{ padding: 16 }}>Nothing in this list right now.</div>}
+        {data && rows.length > 0 && <div style={{ padding: '8px 12px' }}><DrillExport name={data.title} allowed={mayExport} build={buildFile} /></div>}
         {data && rows.length > 0 && (data.kind === 'app' || data.kind === 'workflow') && (
           <table className="rdb-tbl">
             <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Stage</th><th>Status / due</th><th>Updated</th></tr></thead>

@@ -448,7 +448,7 @@ async function timelineOf({ record, employee, detail, steps, day, simple }) {
 }
 
 function eventsOf(audits) {
-  const WANT = /^(Exit date changed|Exit early release|Exit finalized WITHOUT|Exit sent back|Exit approval finished|Resignation (approved|rejected)|Direct Super Admin)/;
+  const WANT = /^(Exit date changed|Exit dates edited|Exit early release|Exit finalized WITHOUT|Exit sent back|Exit approval finished|Resignation (approved|rejected)|Direct Super Admin)/;
   return audits.filter((a) => WANT.test(a.action)).map((a) => ({
     id: a.id, action: a.action, by: a.actorName || 'System', at: a.createdAt, from: a.fromValue, to: a.toValue, reason: a.reason || null,
   })).reverse();
@@ -537,6 +537,7 @@ async function buildView(req, ctx) {
     reason: detail ? (detail.reason === 'Other' && detail.reasonOther ? `Other: ${detail.reasonOther}` : detail.reason) : record.title,
     comments: own ? null : (detail ? detail.comments : record.detail),
     resignationDate: detail ? detail.resignationDate : null,
+    noticeDays: detail && detail.noticePeriodDays != null ? detail.noticePeriodDays : null,
     requestedLastWorkingDate: detail ? detail.requestedLastWorkingDate : null,
     lastWorkingDate: lwd,
     daysLeft: lwd && SERVING.includes(record.status) ? Math.ceil((new Date(`${lwd}T00:00:00Z`) - new Date(`${day}T00:00:00Z`)) / 86400000) : null,
@@ -685,6 +686,86 @@ router.put('/:id/date', async (req, res, next) => {
     const out = await exitDate.setExitDate({ employeeId: ctx.employee.id, date: req.body && req.body.date, reason, note: clean(req.body && req.body.note, 200), user: req.user, source: 'UI' });
     await notifyDateChange({ ctx, from: out.from, to: out.to, reason, by: req.user });
     res.json({ ...(await buildView(req, await loadExit(req.params.id))), warnings: out.warnings });
+  } catch (err) { next(err); }
+});
+
+// ---- EDIT ALL THE EXIT DATES AT ONCE (founder, 2026-10-24) -------------------------------------------------
+// "HR (Divya, Purna) and Super Admin Vasu sir must be able to fix the notice period, exit and resignation dates as they see fit."
+// The people who may: the HR desk = Super Admin, Admin, HR and the Internal HR delegates (utils/hrSuper.js escalates Divya and Purna to
+// Super Admin power), exactly the rule the single "Edit exit date" already used. Three things can change here, any of them alone:
+//   resignationDate   when the person resigned                       (ResignationDetail.resignationDate)
+//   noticeDays        the notice period in days                      (ResignationDetail.noticePeriodDays)
+//   lastWorkingDate   the exit date                                  (through utils/exitDate.js setExitDate: attendance, leave, payroll, seat, F&F follow)
+// recalculate:true (and no explicit lastWorkingDate) moves the exit date to resignation date + notice days. A reason is always needed, every
+// field that moved gets its own audit row (old -> new, who, why), the people around the exit are told.
+router.put('/:id/dates', async (req, res, next) => {
+  try {
+    if (!desk(req.user)) return plain(res, 403, 'Only HR or the Super Admin can change these dates.');
+    const ctx = await loadExit(req.params.id);
+    if (!ctx) return plain(res, 404, 'Exit not found');
+    if (['Rejected', 'Withdrawn'].includes(ctx.record.status)) return plain(res, 409, `This exit is ${ctx.record.status.toLowerCase()}, so it has no dates to change.`);
+    if (!ctx.detail) return plain(res, 409, 'This exit has no resignation form to change.');
+    const b = req.body || {};
+    const reason = clean(b.reason, 300);
+    if (!reason || reason.length < 3) return plain(res, 400, 'Say why the dates are changing (at least a few words).');
+
+    const { record, employee, detail } = ctx;
+    const curRes = exitDate.isoDay(detail.resignationDate);
+    const curDays = detail.noticePeriodDays != null ? detail.noticePeriodDays : null;
+    const curLwd = exitDate.dateOf(record, detail);
+    const blank = (v) => v === undefined || v === null || String(v).trim() === '';
+    const newRes = blank(b.resignationDate) ? curRes : String(b.resignationDate).trim();
+    let newDays = curDays;
+    if (!blank(b.noticeDays)) {
+      const n = Number(b.noticeDays);
+      if (!Number.isInteger(n) || n < 0 || n > 365) return plain(res, 400, 'The notice period is a whole number of days, 0 to 365.');
+      newDays = n;
+    }
+    if (newRes && !exitDate.realDate(newRes)) return plain(res, 400, 'Pick the resignation date as a real date.');
+    let newLwd = blank(b.lastWorkingDate) ? curLwd : String(b.lastWorkingDate).trim();
+    if (blank(b.lastWorkingDate) && b.recalculate && newRes && newDays != null) newLwd = exitFlow.noticeEnd(newRes, newDays);
+    if (newLwd && !exitDate.realDate(newLwd)) return plain(res, 400, 'Pick the last working day as a real date.');
+
+    const joined = employee.dateOfJoining ? new Date(employee.dateOfJoining).toISOString().slice(0, 10) : null;
+    if (joined && newRes && newRes < joined) return plain(res, 400, `The resignation date cannot be before the joining date (${exitDate.dmy(joined)}).`);
+    if (newRes && newLwd && newLwd < newRes) return plain(res, 400, `The last working day cannot be before the resignation date (${exitDate.dmy(newRes)}).`);
+
+    const resChanged = !!newRes && newRes !== curRes;
+    const daysChanged = newDays !== curDays;
+    const lwdChanged = !!newLwd && newLwd !== curLwd;
+    if (!resChanged && !daysChanged && !lwdChanged) return plain(res, 400, 'Nothing is different from what is saved.');
+
+    const by = req.user;
+    const actorName = by.name || by.email;
+    const row = (field, label, from, to) => logAudit({
+      userId: by.id, actorName, action: 'Exit dates edited', entity: 'EmployeeRecord', entityId: record.id,
+      field, fieldLabel: label, fromValue: from == null || from === '' ? '(none)' : String(from), toValue: String(to), reason,
+    });
+    // The resignation date and the notice days first: the last working day check reads the resignation date it finds in the database.
+    if (resChanged || daysChanged) {
+      await prisma.resignationDetail.update({
+        where: { id: detail.id },
+        data: { ...(resChanged ? { resignationDate: newRes } : {}), ...(daysChanged ? { noticePeriodDays: newDays } : {}) },
+      });
+      if (resChanged) await row('resignationDate', 'Resignation date', curRes, newRes);
+      if (daysChanged) await row('noticeDays', 'Notice period (days)', curDays, newDays);
+    }
+    let warnings = [];
+    if (lwdChanged) {
+      const out = await exitDate.setExitDate({ employeeId: employee.id, date: newLwd, reason, user: by, source: 'UI' });
+      warnings = out.warnings || [];
+      await notifyDateChange({ ctx, from: out.from, to: out.to, reason, by });
+    } else if (resChanged || daysChanged) {
+      try {
+        const around = await exitFlow.peopleAround(employee);
+        const sas = await exitFlow.superAdmins({ allowTest: exitFlow.isTest(employee.name, employee.email) });
+        const team = [around.tl, around.hr];
+        if (!isSA(by)) team.push(...sas.map((s) => s.id));
+        const bits = [resChanged ? `resignation date ${curRes ? exitDate.dmy(curRes) : 'not set'} to ${exitDate.dmy(newRes)}` : null, daysChanged ? `notice period ${curDays == null ? 'not set' : `${curDays} days`} to ${newDays} days` : null].filter(Boolean).join(' and ');
+        await exitFlow.tell({ userIds: team, title: `Exit dates changed: ${employee.name}`, message: `${employee.name}'s ${bits} (by ${actorName}). Reason: ${reason}`, link: exitFlow.exitLink(record.id), key: `${record.id}:dates:${Date.now()}`, email: false, exceptUserId: by.id });
+      } catch (e) { console.error('[exitCenter] dates notice failed:', e && e.message); } // eslint-disable-line no-console
+    }
+    return res.json({ ...(await buildView(req, await loadExit(req.params.id))), warnings });
   } catch (err) { next(err); }
 });
 

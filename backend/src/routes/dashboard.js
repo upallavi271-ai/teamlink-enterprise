@@ -1554,7 +1554,7 @@ router.get('/ats/role/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     const { view } = pickView(req);
     if (view === 'overview') return res.status(400).json({ error: 'Pick a board first' });
     const b = await roleDash.buildBoard(req.user, view, req);
-    const out = await roleDash.drillRows(req.user, b, String(req.query.set || ''), { limit: Math.min(500, Number(req.query.limit) || 300) });
+    const out = await roleDash.drillRows(req.user, b, String(req.query.set || ''), { limit: Math.min(2000, Number(req.query.limit) || 300) });
     if (!out) return res.status(404).json({ error: 'That list is not on your dashboard' });
     return res.json(out);
   } catch (err) {
@@ -1906,7 +1906,8 @@ router.get('/accounts/desk', ...ACCOUNTS_GUARDS, async (req, res, next) => {
 router.get('/accounts/desk/list', ...ACCOUNTS_GUARDS, async (req, res, next) => {
   try {
     const b = await roleDash.accountsDesk(req.user);
-    const out = await roleDash.drillRows(req.user, b, String(req.query.set || ''));
+    // ?limit= lets the list's Export button fetch the whole list (the screen asks for the default 300).
+    const out = await roleDash.drillRows(req.user, b, String(req.query.set || ''), { limit: Math.min(2000, Number(req.query.limit) || 300) });
     if (!out) return res.status(404).json({ error: 'That list is not on your dashboard' });
     return res.json(out);
   } catch (err) { return next(err); }
@@ -1920,7 +1921,7 @@ router.get('/admin-desk', ...ADMIN_GUARDS, async (req, res, next) => {
 router.get('/admin-desk/list', ...ADMIN_GUARDS, async (req, res, next) => {
   try {
     const b = await roleDash.buildBoard(req.user, 'admin', req);
-    const out = await roleDash.drillRows(req.user, b, String(req.query.set || ''));
+    const out = await roleDash.drillRows(req.user, b, String(req.query.set || ''), { limit: Math.min(2000, Number(req.query.limit) || 300) });
     if (!out) return res.status(404).json({ error: 'That list is not on your dashboard' });
     return res.json(out);
   } catch (err) { return next(err); }

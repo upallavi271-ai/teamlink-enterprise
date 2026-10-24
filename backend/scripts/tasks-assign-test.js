@@ -4,12 +4,12 @@
 //
 //   cd backend && TL_API=http://localhost:4011 node scripts/tasks-assign-test.js
 //
-//   A  who may be picked: a TL sees only their own team, never another team,
-//      never an exited person; the BDE TL only the BDE desk
+//   A  who may be picked: SINCE 2026-10-24 (founder: "anyone can give a task to anyone") everybody
+//      in the company, never an exited person
 //   B  creating: one person (201), many people (one task each), another team's
-//      member (403, nothing written), exited (403)
-//   C  rights table: Employee / Recruiter cannot give to others; Manager is
-//      view-only; STL / HR / Admin by scope
+//      member (201 since 2026-10-24), exited (403)
+//   C  rights table: since 2026-10-24 Employee / Recruiter / Manager / STL / TL / HR / Admin can all
+//      give a task to anyone
 //   D  assignee experience: sees it, bell, may only change progress, hours
 //      (only the assignee), done + note, the giver hears
 //   E  the giver: extend, reassign (both hear), cancel with a reason, hours
@@ -114,12 +114,12 @@ async function cleanup() {
     const pickA = (optA.body.assignable || []).map((p) => p.name);
     check('A1 TL: canGive is true', optA.body.canGive === true && optA.body.canAssignOthers === true, optA.body);
     check('A2 TL sees own team members + self', [a1, a2, a3, rec, tlA].every((p) => pickA.includes(p.name)), pickA);
-    check('A3 TL does not see another team (B1, TL B), another department, a manager', ![b1, tlB, med, mgr, stl, adm].some((p) => pickA.includes(p.name)), pickA);
+    check('A3 (2026-10-24) a TL is offered everybody: another team, another department, a manager', [b1, tlB, med, mgr, stl, adm].every((p) => pickA.includes(p.name)), pickA.slice(0, 5));
     check('A4 exited and disabled people are never listed', !pickA.includes(gone.name) && !pickA.includes(noLogin.name), pickA);
     check('A5 list carries department/team/open-task counts for the cascade', (optA.body.assignable || []).every((p) => 'open' in p && 'department' in p && 'team' in p));
     const optB = await call(bdeTl.u, 'GET', '/tasks/options');
     const pickB = (optB.body.assignable || []).map((p) => p.name);
-    check('A6 BDE TL picks only the BDE desk', pickB.includes(bde1.name) && !pickB.includes(a1.name) && !pickB.includes(med.name), pickB);
+    check('A6 (2026-10-24) the BDE TL is offered everybody too, not only the BDE desk', pickB.includes(bde1.name) && pickB.includes(a1.name) && pickB.includes(med.name), pickB.slice(0, 5));
 
     // ================= B - creating ========================================
     const due = day(5);
@@ -129,9 +129,9 @@ async function cleanup() {
     check('B2 task defaults: Not Started, department of the assignee, priority kept', t1 && t1.status === 'Not Started' && t1.department === 'Education' && t1.priority === 'High' && t1.assignedById === tlA.u.id, t1);
     const before = await prisma.task.count({ where: { assignedById: tlA.u.id } });
     const c2 = track(await call(tlA.u, 'POST', '/tasks', { name: 'ZZTEST other team', assigneeIds: [b1.u.id], startDate: day(0) }));
-    check('B3 another team\'s member is refused (403)', c2.status === 403, c2.body);
+    check('B3 (2026-10-24) another team\'s member is accepted (201)', c2.status === 201 && c2.body.created === 1, c2.body);
     const c2b = track(await call(tlA.u, 'POST', '/tasks', { name: 'ZZTEST mixed', assigneeIds: [a1.u.id, b1.u.id], startDate: day(0) }));
-    check('B4 a mixed list is refused as a whole and nothing is written', c2b.status === 403 && (await prisma.task.count({ where: { assignedById: tlA.u.id } })) === before, c2b.body);
+    check('B4 (2026-10-24) a mixed list (own team + another team) is accepted, one task each', c2b.status === 201 && c2b.body.created === 2 && (await prisma.task.count({ where: { assignedById: tlA.u.id } })) === before + 3, c2b.body);
     const c3 = track(await call(tlA.u, 'POST', '/tasks', { name: 'ZZTEST exited', assigneeIds: [gone.u.id], startDate: day(0) }));
     check('B5 an exited person is refused (403)', c3.status === 403, c3.body);
     const c4 = track(await call(tlA.u, 'POST', '/tasks', { name: 'ZZTEST team drive', description: 'Everyone does it', assigneeIds: [a1.u.id, a2.u.id, a3.u.id], startDate: day(0), endDate: day(3) }));
@@ -145,31 +145,31 @@ async function cleanup() {
     const legacy = track(await call(tlA.u, 'POST', '/tasks', { name: 'ZZTEST old style', department: 'Education', status: 'Not Started', assigneeId: a2.u.id, startDate: day(0) }));
     check('B10 the old single-assignee call still works', legacy.status === 201 && legacy.body.assigneeId === a2.u.id, legacy.body);
     const outsideOld = track(await call(tlA.u, 'POST', '/tasks', { name: 'ZZTEST old outside', department: 'Education', status: 'Not Started', assigneeId: b1.u.id, startDate: day(0) }));
-    check('B11 the old single-assignee call is also refused for another team (403)', outsideOld.status === 403, outsideOld.body);
+    check('B11 (2026-10-24) the old single-assignee call also works for another team (201)', outsideOld.status === 201, outsideOld.body);
 
     // ================= C - the rights table ================================
     const eSelf = track(await call(a1.u, 'POST', '/tasks', { name: 'ZZTEST my own list', assigneeIds: [a1.u.id], startDate: day(0) }));
     check('C1 Employee can create a task for themselves', eSelf.status === 201, eSelf.body);
     const eOther = track(await call(a1.u, 'POST', '/tasks', { name: 'ZZTEST for a friend', assigneeIds: [a2.u.id], startDate: day(0) }));
-    check('C2 Employee cannot give a task to someone else (403)', eOther.status === 403, eOther.body);
+    check('C2 (2026-10-24) an Employee can give a task to someone else (201)', eOther.status === 201, eOther.body);
     const rOther = track(await call(rec.u, 'POST', '/tasks', { name: 'ZZTEST recruiter gives', assigneeIds: [a2.u.id], startDate: day(0) }));
     const rSelf = track(await call(rec.u, 'POST', '/tasks', { name: 'ZZTEST recruiter own', assigneeIds: [rec.u.id], startDate: day(0) }));
-    check('C3 Recruiter cannot give to others (403) but can plan their own', rOther.status === 403 && rSelf.status === 201, [rOther.status, rSelf.status]);
+    check('C3 (2026-10-24) a Recruiter can give to others and plan their own', rOther.status === 201 && rSelf.status === 201, [rOther.status, rSelf.status]);
     const optE = await call(a1.u, 'GET', '/tasks/options');
-    check('C4 Employee options: canGive false, only themselves offered', optE.body.canGive === false && (optE.body.assignable || []).length === 1, optE.body.assignable);
+    check('C4 (2026-10-24) Employee options: canGive true and everybody is offered', optE.body.canGive === true && (optE.body.assignable || []).length > 5, (optE.body.assignable || []).length);
     const mTry = track(await call(mgr.u, 'POST', '/tasks', { name: 'ZZTEST manager gives', assigneeIds: [a1.u.id], startDate: day(0) }));
-    check('C5 Manager is view-only by the permission matrix (403) - flagged to main', mTry.status === 403, mTry.body);
+    check('C5 (2026-10-24) a Manager can give a task too (201)', mTry.status === 201, mTry.body);
     const sTry = track(await call(stl.u, 'POST', '/tasks', { name: 'ZZTEST stl gives', assigneeIds: [a1.u.id, b1.u.id], startDate: day(0) }));
     check('C6 STL (Education) can give to both Education teams', sTry.status === 201 && sTry.body.created === 2, sTry.body);
     const sOut = track(await call(stl.u, 'POST', '/tasks', { name: 'ZZTEST stl outside', assigneeIds: [med.u.id], startDate: day(0) }));
-    check('C7 STL cannot give to another department (403)', sOut.status === 403, sOut.body);
+    check('C7 (2026-10-24) an STL can give to another department (201)', sOut.status === 201, sOut.body);
     const aTry = track(await call(adm.u, 'POST', '/tasks', { name: 'ZZTEST admin gives', assigneeIds: [med.u.id, a1.u.id, bde1.u.id], startDate: day(0) }));
     check('C8 Admin can give across departments', aTry.status === 201 && aTry.body.created === 3, aTry.body);
     const hTry = track(await call(hr.u, 'POST', '/tasks', { name: 'ZZTEST hr gives', assigneeIds: [med.u.id, b1.u.id], startDate: day(0) }));
     check('C9 HR can give company-wide', hTry.status === 201 && hTry.body.created === 2, hTry.body);
     const bTry = track(await call(bdeTl.u, 'POST', '/tasks', { name: 'ZZTEST bde desk', assigneeIds: [bde1.u.id], startDate: day(0) }));
     const bOut = track(await call(bdeTl.u, 'POST', '/tasks', { name: 'ZZTEST bde outside', assigneeIds: [a1.u.id], startDate: day(0) }));
-    check('C10 BDE TL gives to the BDE desk only', bTry.status === 201 && bOut.status === 403, [bTry.status, bOut.status]);
+    check('C10 (2026-10-24) the BDE TL gives to the BDE desk and to anybody else (201)', bTry.status === 201 && bOut.status === 201, [bTry.status, bOut.status]);
 
     // ================= D - the assignee ====================================
     const mine = await call(a1.u, 'GET', '/tasks');
@@ -256,7 +256,9 @@ async function cleanup() {
     check('E10 audit: Given to ' + a2.name + ' -> ' + a3.name, reAud.some((a) => a.field === 'assignee' && a.fromValue === a2.name && a.toValue === a3.name), reAud.map((a) => `${a.field}:${a.fromValue}->${a.toValue}`));
     check('E11 both people were told (old: moved; new: new task)', (await notes(a2.u, 'Task moved to someone else')).length === 1 && (await notes(a3.u, 'New task from')).length >= 2);
     const reOut = await call(tlA.u, 'POST', `/tasks/${tB.id}/reassign`, { assigneeId: b1.u.id });
-    check('E12 reassigning outside the team is refused (403)', reOut.status === 403, reOut.body);
+    check('E12 (2026-10-24) reassigning to another team is allowed (200)', reOut.status === 200, reOut.body);
+    // put it back with A3 so the hours checks below still test a task of team A
+    await call(tlA.u, 'POST', `/tasks/${tB.id}/reassign`, { assigneeId: a3.u.id });
     const keep = await call(tlA.u, 'GET', `/tasks/${tB.id}/hours`);
     check('E13 hours already worked stay with the task after the move (2h by ' + a2.name + ')', keep.body.logged === 2 && keep.body.entries[0].byName === a2.name, keep.body);
     const a2NoLog = await call(a2.u, 'POST', `/tasks/${tB.id}/hours`, { hours: 1, date: day(0) });
@@ -330,7 +332,7 @@ async function cleanup() {
     const g2 = await call(tlB.u, 'GET', '/tasks');
     check('G2 the other TL\'s list has none of team A\'s tasks', !(g2.body || []).some((t) => [a1, a2, a3].some((p) => p.u.id === t.assigneeId) && t.assignedById === tlA.u.id));
     const g3 = await call(tlA.u, 'GET', '/tasks');
-    check('G3 team A\'s TL sees team A\'s tasks, none for the other team', (g3.body || []).some((t) => t.id === t1.id) && !(g3.body || []).some((t) => t.assigneeId === b1.u.id && t.assignedById === tlA.u.id));
+    check('G3 team A\'s TL sees team A\'s tasks (and now the ones they gave to anybody)', (g3.body || []).some((t) => t.id === t1.id) && (g3.body || []).some((t) => t.assigneeId === b1.u.id && t.assignedById === tlA.u.id));
     const ex1 = await call(tlA.u, 'GET', '/tasks/export?format=csv&given=1', undefined, true);
     const csvText = ex1.buf.toString('utf8');
     check('G4 export (CSV) of "tasks I gave" is 200 and has team A\'s tasks and hours columns', ex1.status === 200 && /ZZTEST call 20 leads/.test(csvText) && /Hours logged/.test(csvText) && /Estimated hours/.test(csvText), csvText.slice(0, 300));

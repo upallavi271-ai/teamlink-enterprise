@@ -45,7 +45,7 @@ const invCols = [
 const billCols = [
   { key: 'category', label: 'Category', render: (r) => <b>{r.category}</b> },
   { key: 'vendor', label: 'Vendor', render: (r) => r.vendor || '—' },
-  { key: 'billNumber', label: 'Bill no', render: (r) => r.billNumber || <span className="small-muted">{r.code || '—'}</span> },
+  { key: 'billNumber', label: 'Bill no', exportValue: (r) => r.billNumber || r.code || '', render: (r) => r.billNumber || <span className="small-muted">{r.code || '—'}</span> },
   { key: 'date', label: 'Bill date', render: (r) => fmtD(r.date) },
   { key: 'base', label: 'Before GST', num: true, render: (r) => money(r.base), foot: sumOf('base') },
   { key: 'gst', label: 'GST', num: true, render: (r) => money(r.gst), foot: sumOf('gst') },
@@ -66,7 +66,8 @@ const bankCols = [
   { key: 'state', label: 'State', render: (r) => <span className={`acd-pill ${r.state === 'Reconciled' ? 'green' : r.state === 'Unmatched' ? 'red' : 'amber'}`}>{r.state}</span> },
 ];
 
-export function DrillPanel({ drill, onClose, extraCols = [] }) {
+// canExport: the page may pass its own answer (the Reports page uses its Reports export right); else the Accounts Dashboard export right.
+export function DrillPanel({ drill, onClose, extraCols = [], canExport }) {
   if (!drill) return null;
   const inv = drill.kind === 'inv';
   const bank = drill.kind === 'bank';
@@ -85,6 +86,8 @@ export function DrillPanel({ drill, onClose, extraCols = [] }) {
         noun={bank ? 'statement lines' : inv ? 'invoices' : 'bills'}
         empty="Nothing here for these filters."
         foot
+        exportName={drill.title}
+        canExport={canExport}
         initialSort={inv ? { key: 'invoiceDate', dir: 'desc' } : { key: 'date', dir: 'desc' }}
       />
     </div>

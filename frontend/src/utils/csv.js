@@ -15,7 +15,8 @@ export function downloadCsv(filename, headers, rows) {
   // A CSV built in the browser never touches the server, so an Internal HR login (utils/hrSuper.js) reports it here:
   // the Super Admins are told. Anyone else: the server answers 204 and does nothing.
   api.post('/admin/hr-sensitive/client-export', { name: filename, rows: Array.isArray(rows) ? rows.length : null, page: typeof window !== 'undefined' ? window.location.pathname : '' }).catch(() => {});
-  const blob = new Blob([toCsv(headers, rows)], { type: 'text/csv;charset=utf-8' });
+  // The byte-order mark makes Excel read names in any language (and the rupee sign) correctly.
+  const blob = new Blob(['﻿', toCsv(headers, rows)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

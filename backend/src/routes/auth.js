@@ -388,7 +388,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
   }
   const out = await changeOwnPassword(req, currentPassword, newPassword);
   if (out.status !== 200) return res.status(out.status).json({ field: out.field, error: out.error });
-  return res.json({ ok: true, message: 'Password changed. Use the new password the next time you sign in.', token: out.token || undefined });
+  return res.json({ ok: true, message: 'Password changed. Sign in again with your new password.', token: out.token || undefined });
 });
 
 // ---- FORGOT PASSWORD (public: the person cannot sign in) -----------------------

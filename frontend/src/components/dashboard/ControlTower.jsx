@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
+import DrillExport, { useDrillRight } from '../DrillExport.jsx';
 import './controlTower.css';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,20 @@ function Drawer({ panel, onClose }) {
   const sortBy = (c) => { if (!c.sort) return; setState((s) => ({ ...s, sort: c.sort, dir: s.sort === c.sort && s.dir === 'desc' ? 'asc' : (s.sort === c.sort ? 'desc' : 'asc'), page: 1 })); };
   const rows = (data && data.rows) || [];
   const cols = (data && data.columns) || [];
+  const mayExport = useDrillRight('admin');
+  // The file holds every page of the list for the search / filter picked (not only the page on the screen).
+  async function buildFile() {
+    const base = { set: panel.set, stage: panel.stage || undefined, month: panel.month || undefined, open: panel.open || undefined, q: qDeb || panel.q || undefined, filter: state.filter || undefined, sort: state.sort || undefined, dir: state.sort ? state.dir : undefined };
+    const all = [];
+    const last = Math.max(1, (data && data.pages) || 1);
+    for (let p = 1; p <= last; p += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = p === data.page ? data : (await api.get('/dashboard/control-tower/list', { params: { ...base, page: p } })).data;
+      all.push(...(r.rows || []));
+    }
+    const plain = (c, v) => (v === null || v === undefined || v === '' ? '' : c.type === 'date' ? String(v).slice(0, 10) : c.type === 'datetime' ? String(v).replace('T', ' ').slice(0, 16) : c.type === 'status' ? String(v).replace(/_/g, ' ') : v);
+    return { headers: cols.map((c) => c.label), rows: all.map((r) => cols.map((c) => plain(c, r.c[c.key]))) };
+  }
   return (
     <div className="ct-drawer-wrap" role="presentation">
       <button type="button" className="ct-backdrop" aria-label="Close the details" onClick={onClose} tabIndex={-1} />
@@ -96,6 +111,7 @@ function Drawer({ panel, onClose }) {
             </label>
           ))}
           <span className="ct-d-count">{data ? `${num(data.total)} record${data.total === 1 ? '' : 's'}` : ''}{busy ? ' · loading…' : ''}</span>
+          {data && rows.length > 0 && <DrillExport name={data.title || panel.title} allowed={mayExport} disabled={busy} build={buildFile} />}
         </div>
         <div className="ct-d-body">
           {error && <div className="notice red"><span>{error} <button type="button" className="link-btn" onClick={load}>Try again</button></span></div>}
