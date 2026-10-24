@@ -36,18 +36,18 @@ for i in 1 2 3 4 5 6 7 8 9 10; do curl -s -m 2 http://127.0.0.1:48010/api/health
 # ---- a git remote with the 3 apps ----
 git init -q --bare "$T/remote.git"; git clone -q "$T/remote.git" "$T/dev" 2>/dev/null
 cd "$T/dev"; git config user.email d@x; git config user.name dev; git checkout -q -b main 2>/dev/null
-mkdir -p backend/src backend/prisma frontend/src/pages job-portal-app/job_portal-main/api job-portal-app/embed green-start-app/gs-api/src green-start-app/green-start-web/src green-start-app/run
+mkdir -p backend/src backend/prisma frontend/src/pages job-portal-app/job_portal-main/api job-portal-app/embed green-start-app/gs-api/src green-start-app/green-start-web/src green-start-helpers/run
 echo '{"name":"b"}' > backend/package.json; echo '{"l":1}' > backend/package-lock.json; echo 'v1' > backend/src/a.js; echo 'x' > backend/prisma/schema.prisma
 echo '{"name":"f"}' > frontend/package.json; echo 'inv' > frontend/src/pages/Invoices.jsx
 echo '{"name":"p"}' > job-portal-app/job_portal-main/package.json; echo '{}' > job-portal-app/job_portal-main/api/package.json; echo e > job-portal-app/embed/e.js
-echo '{"name":"gs"}' > green-start-app/gs-api/package.json; echo g1 > green-start-app/gs-api/src/main.ts; echo w1 > green-start-app/green-start-web/src/app.ts; echo gate1 > green-start-app/run/gate.mjs
+echo '{"name":"gs"}' > green-start-app/gs-api/package.json; echo g1 > green-start-app/gs-api/src/main.ts; echo w1 > green-start-app/green-start-web/src/app.ts; echo gate1 > green-start-helpers/run/gate.mjs
 git add -A; git commit -qm base; git push -q origin main
 cd "$T"
 # ---- the "live" side as the last manual deploy left it ----
 mkdir -p live/backend/src; echo old > live/backend/src/a.js; echo 'SECRET=1' > live/backend/.env; echo db > live/backend/prisma/dev.db; echo '{"l":1}' > live/backend/package-lock.json; mkdir -p live/backend/node_modules; echo 'inv-old' > live/frontend/src/pages/Invoices.jsx
 echo gate0 > gs/run/gate.mjs; touch gs/gs-api/.env
 touch key
-run() { LIVE=$T/live GS=$T/gs SRC=$T/src STATE=$T/state REPO=$T/remote.git KEY=$T/key PORT=48010 GS_API_PORT=48020 PM2_NAME=tl-test GS_USER=root PATH=$T/bin:$PATH bash "$SCRIPT" "$@" 2>&1; }
+run() { VPS_EDITS=${VPS_EDITS:-1} LIVE=$T/live GS=$T/gs SRC=$T/src STATE=$T/state REPO=$T/remote.git KEY=$T/key PORT=48010 GS_API_PORT=48020 PM2_NAME=tl-test GS_USER=root PATH=$T/bin:$PATH bash "$SCRIPT" "$@" 2>&1; }
 
 # ---- T1: dry run changes nothing ----
 out=$(DRY_RUN=1 run);
@@ -74,7 +74,7 @@ ok "T4 PC change deployed: backend v2 live, Green Start web rebuilt" "$([ "$(cat
 echo 'vps-edit' > $T/live/backend/src/a.js; echo 'brand new' > $T/live/backend/src/new-on-vps.js; echo gate-vps > $T/gs/run/gate.mjs
 : > $T/calls.log; out=$(run)
 git -C $T/dev pull -q origin main
-ok "T5 VPS edits reached GitHub (a.js, new file, Green Start gate.mjs)" "$([ "$(cat $T/dev/backend/src/a.js)" = vps-edit ] && [ -f $T/dev/backend/src/new-on-vps.js ] && [ "$(cat $T/dev/green-start-app/run/gate.mjs)" = gate-vps ] && echo 1 || echo 0)" "$out"
+ok "T5 VPS edits reached GitHub (a.js, new file, Green Start gate.mjs)" "$([ "$(cat $T/dev/backend/src/a.js)" = vps-edit ] && [ -f $T/dev/backend/src/new-on-vps.js ] && [ "$(cat $T/dev/green-start-helpers/run/gate.mjs)" = gate-vps ] && echo 1 || echo 0)" "$out"
 ok "T5b the commit says VPS-edit and was NOT deployed again" "$(git -C $T/dev log -1 --format=%s | grep -q '^VPS-edit' && ! grep -q 'pm2 stop' $T/calls.log && echo 1 || echo 0)" "$(git -C $T/dev log -1 --format=%s) / $(cat $T/calls.log)"
 : > $T/calls.log; out=$(run)
 ok "T5c second run: no edit reported again" "$(echo "$out" | grep -q 'edited on the VPS' && echo 0 || echo 1)" "$out"

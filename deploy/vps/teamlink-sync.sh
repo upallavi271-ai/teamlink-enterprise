@@ -44,11 +44,19 @@ MODE=${1:-normal}     # normal | accept-github (a VPS edit that clashes: keep th
 CONFLICTS=""
 SUBS=${SUBS:-"job-portal-app/job_portal-main green-start-app"}   # the git submodules this server uses
 SUBS_BAD=""
+SUBBRANCH=${SUBBRANCH:-main}                    # the branch of the two sub repos that the main repo follows
+GH_PREFIX=${GH_PREFIX:-git@github.com:}         # .gitmodules lists https://github.com/... ; this server fetches them over ssh with the same key instead
+# VPS_EDITS=0 (default) = ONE WAY: code goes PC -> GitHub -> VPS only. A file changed directly on the VPS is never sent back to GitHub.
+# VPS_EDITS=1 = step 1 is on: such edits of the TeamLink folders (backend/, frontend/, ...) are pushed to GitHub. Edits of the two sub repos are never pushed.
+VPS_EDITS=${VPS_EDITS:-0}
 
 mkdir -p "$STATE" "$STATE/base" "$STATE/backups"
 LOG=$STATE/sync.log
 export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=20"
 export GIT_TERMINAL_PROMPT=0
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="url.${GH_PREFIX}.insteadOf"
+export GIT_CONFIG_VALUE_0="https://github.com/"
 
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG" >&2; }
 status() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" > "$STATE/STATUS"; }
@@ -84,10 +92,41 @@ sync_subs() {
 sub_used() { case " $SUBS " in *" $1 "*) return 0;; esac; return 1; }
 # files that changed in the Green Start submodule between two main-repo commits (paths start with green-start-app/, like before it was a submodule)
 gs_changed_files() {   # old_main_commit new_main_commit
-  local o n; o=$(g rev-parse -q --verify "$1:green-start-app" 2>/dev/null); n=$(g rev-parse -q --verify "$2:green-start-app" 2>/dev/null)
+  local o="" n; [ -n "$1" ] && o=$(g rev-parse -q --verify "$1:green-start-app" 2>/dev/null); n=$(g rev-parse -q --verify "$2:green-start-app" 2>/dev/null)
   [ -n "$n" ] || return 0
   if [ -n "$o" ] && git -C "$SRC/green-start-app" cat-file -e "$o^{commit}" 2>/dev/null; then git -C "$SRC/green-start-app" diff --name-only "$o" "$n"
   else git -C "$SRC/green-start-app" ls-tree -r --name-only "$n"; fi | sed 's#^#green-start-app/#'
+}
+
+# STEP 1b: the main repo follows the newest commit of each sub repo (branch $SUBBRANCH), so a push to Green Start or to the Job Portal reaches the
+# main repo and then this server by itself. Only a change to something that gets deployed moves the pin (docs / notes do not).
+# Only the MAIN repo is written to (a one-line pointer commit); the sub repos are only read.
+sg() { git -C "$SRC/$1" "${@:2}"; }                                                 # sg <submodule folder> <git args...>
+deployable() {   # <submodule folder> : keeps (from stdin) the file paths whose change must reach the VPS
+  if [ "$1" = "green-start-app" ]; then grep -E '^green-start-app/(gs-api|green-start-web)/'; else grep -Ev '/(docs|\.claude)/|\.md$'; fi
+}
+bump_subs() {
+  local s cur latest files moved=""
+  for s in $SUBS; do
+    [ -e "$SRC/$s/.git" ] || continue
+    sg "$s" fetch --quiet origin "$SUBBRANCH" 2>>"$LOG" || { log "cannot reach the repo of $s (offline?) - will try again"; continue; }
+    cur=$(sg "$s" rev-parse HEAD); latest=$(sg "$s" rev-parse "origin/$SUBBRANCH")
+    [ "$cur" = "$latest" ] && continue
+    sg "$s" merge-base --is-ancestor "$cur" "$latest" 2>/dev/null || { log "$s: the commit the main repo pins is not an ancestor of $SUBBRANCH in its repo - left alone"; continue; }
+    files=$(sg "$s" diff --name-only "$cur" "$latest" | sed "s#^#$s/#" | deployable "$s")
+    [ -n "$files" ] || continue                  # only docs / notes changed: the main repo keeps its pin
+    if [ "$DRY" = 1 ]; then log "[dry-run] would move the pin of $s from ${cur:0:8} to ${latest:0:8} ($(echo "$files" | wc -l) deployable file(s))"; continue; fi
+    sg "$s" checkout --quiet --detach "$latest" && g add "$s" && moved="$moved ${s##*/}@${latest:0:7}"
+  done
+  [ -n "$moved" ] || return 0
+  g commit -q -m "Update submodule(s):$moved" || return 0
+  if ! g pull --quiet --rebase origin "$BRANCH" 2>>"$LOG"; then
+    g rebase --abort 2>/dev/null; g reset --hard --quiet "origin/$BRANCH"; sync_subs
+    log "could not move the pin(s) now (the main repo changed at the same moment) - will try again"; return 1
+  fi
+  if g push --quiet origin "$BRANCH" 2>>"$LOG"; then log "the main repo now pins:$moved"
+  else g reset --hard --quiet "origin/$BRANCH"; sync_subs; log "push failed (offline?) - will try again"; return 1; fi
+  sync_subs
 }
 
 # ---- what each app is, where it lives on the VPS, and what is never copied -------------------------------------------------
@@ -214,6 +253,7 @@ push_vps_edits() {
   if [ -n "$(g status --porcelain)" ]; then g reset --hard --quiet "origin/$BRANCH"; g clean -fdq; fi
   if [ "$(g rev-parse HEAD)" != "$(g rev-parse origin/$BRANCH)" ]; then g merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null || g reset --hard --quiet "origin/$BRANCH"; fi
   sync_subs || true      # (the sub repos' folders are only read here: their VPS edits are reported, not pushed)
+  [ "$VPS_EDITS" = 1 ] || return 0       # one-way mode: nothing edited on the VPS is sent to GitHub
   EDITS_FOUND=0
   collect_edits teamlink-backend  "$LIVE/backend"  backend  "$STATE/exclude-backend.txt"
   collect_edits teamlink-frontend "$LIVE/frontend" frontend "$STATE/exclude-frontend.txt"
@@ -310,6 +350,9 @@ deploy_teamlink() {   # new commit
     rm -f "$LIVE/backend/prisma/dev.db-wal" "$LIVE/backend/prisma/dev.db-shm"
     cp "$OLDB/prisma/dev.db" "$LIVE/backend/prisma/dev.db"
     for f in dev.db-wal dev.db-shm; do if [ -f "$OLDB/prisma/$f" ]; then cp "$OLDB/prisma/$f" "$LIVE/backend/prisma/$f"; fi; done
+    # whatever else lives in the old backend folder and is not part of the package (state files, extra data folders) STAYS as it was
+    # (never the code folders, never node_modules; the database sidecar files were handled above)
+    rsync -a --ignore-existing --exclude=node_modules --exclude=/src --exclude=/scripts --exclude=/test-fixtures --exclude=/prisma/migrations --exclude='*.db-wal' --exclude='*.db-shm' --exclude='*.db-journal' "$OLDB/" "$LIVE/backend/"
     if [ "$portal" = 1 ]; then
       R=$LIVE; mkdir -p "$R/job-portal-app"
       if [ -d "$R/job-portal-app/job_portal-main" ]; then tar -czf "$BK/job-portal-code.tar.gz" -C "$R/job-portal-app" --exclude=node_modules --exclude=var --exclude=run . ; fi
@@ -334,7 +377,8 @@ deploy_teamlink() {   # new commit
   local rc=$?
   if [ $rc -eq 0 ] && health_teamlink; then
     log "TeamLink is healthy on ${1:0:8}"
-    rsync -ac --delete --exclude-from="$STATE/exclude-backend.txt"  "$PKG/backend/"  "$STATE/base/teamlink-backend/"
+    # the base is what is LIVE now (the package plus the data that stayed), so data files are never mistaken for VPS code edits
+    rsync -ac --delete --exclude-from="$STATE/exclude-backend.txt"  "$LIVE/backend/"  "$STATE/base/teamlink-backend/"
     rsync -ac --delete --exclude-from="$STATE/exclude-frontend.txt" "$PKG/frontend/" "$STATE/base/teamlink-frontend/"
     if [ "$portal" = 1 ]; then
       rsync -ac --delete "$PKG/job-portal-app/job_portal-main/" "$STATE/base/jobportal-main/"
@@ -404,7 +448,7 @@ deploy_if_new() {
   local ok=1
   # NOT "func || ok=0": inside an || list bash switches set -e off for the whole function, and a failed build would go unnoticed
   if echo " $paths " | grep -Eq ' (backend|frontend|job-portal-app) '; then deploy_teamlink "$new"; [ $? -eq 0 ] || ok=0; fi
-  if [ $ok = 1 ] && sub_used green-start-app && echo " $paths " | grep -Eq ' (green-start-app|green-start-helpers) '; then deploy_greenstart "$new" "${old:-$new}"; [ $? -eq 0 ] || ok=0; fi
+  if [ $ok = 1 ] && sub_used green-start-app && echo " $paths " | grep -Eq ' (green-start-app|green-start-helpers) '; then deploy_greenstart "$new" "$old"; [ $? -eq 0 ] || ok=0; fi
   if [ "$DRY" = 1 ]; then return 0; fi
   if [ $ok = 1 ]; then echo "$new" > "$STATE/deployed-commit"; rm -f "$STATE/failed-commit" "$STATE/ALERT"; status "deployed ${new:0:8}"; log "DONE: ${new:0:8} is live"
   else echo "$new" > "$STATE/failed-commit"; status "FAILED on ${new:0:8} (see sync.log)"; fi
@@ -418,4 +462,5 @@ fi
 push_vps_edits; rc=$?
 if [ $rc -eq 2 ]; then status "BLOCKED: see ALERT ($STATE/ALERT). Deploys are on hold until it is resolved."; exit 0; fi
 if [ "$MODE" != normal ]; then rm -f "$STATE/ALERT"; log "resolved with $MODE"; fi
+[ $rc -eq 0 ] && bump_subs
 deploy_if_new
