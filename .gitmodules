@@ -1,0 +1,10 @@
+[submodule "job-portal-app/job_portal-main"]
+	path = job-portal-app/job_portal-main
+	url = https://github.com/srvanthim084-afk/job_portal.git
+	branch = main
+	ignore = untracked
+[submodule "green-start-app"]
+	path = green-start-app
+	url = https://github.com/greenstart127-ui/Omni-channel---Greenstart.git
+	branch = main
+	ignore = untracked

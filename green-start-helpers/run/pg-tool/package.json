@@ -1,0 +1,7 @@
+{
+  "name": "green-start-local-postgres",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TeamLink local helper (NOT part of the Green Start zip): runs a portable PostgreSQL 16 from this folder, no Windows service.",
+  "dependencies": { "embedded-postgres": "16.14.0-beta.17" }
+}

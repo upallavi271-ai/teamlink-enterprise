@@ -302,8 +302,19 @@ function partC() {
   const mod = require(SUP_PATH); // eslint-disable-line global-require
   const conf = mod.buildRedisConf({ port: 6379, password: 'x'.repeat(48), dataDir: 'C:\\a\\b', logFile: 'C:\\a\\log.txt' });
   check('C1 buildRedisConf: bind 127.0.0.1 only, protected mode, never 0.0.0.0, password, 256 MB, no append file', /^bind 127\.0\.0\.1$/m.test(conf) && /^protected-mode yes$/m.test(conf) && !/0\.0\.0\.0|^bind .*::/m.test(conf) && /^requirepass x{48}$/m.test(conf) && /^maxmemory 256mb$/m.test(conf) && /^appendonly no$/m.test(conf));
-  const manifest = fs.readFileSync(path.join(APP, 'run', 'SHA256-manifest-zip.txt'), 'utf8').split(/\r?\n/).filter(Boolean);
+  // 2026-10-24: green-start-app is a git SUBMODULE (docs/SUBMODULES.md): "untouched" now means the working files equal the commit the main repo pins
+  // (git diff HEAD empty, tracked files only; runtime data in run/ is not tracked). The old zip manifest is only used on a PC without the submodule.
   let bad = 0; let missing = 0; let n = 0;
+  const gitOut = (args) => require('child_process').spawnSync('git', ['-C', APP, ...args], { encoding: 'utf8' }); // eslint-disable-line global-require
+  const inSub = fs.existsSync(path.join(APP, '.git')) && gitOut(['rev-parse', '--is-inside-work-tree']).stdout.trim() === 'true';
+  let manifest = [];
+  if (inSub) {
+    n = gitOut(['ls-files']).stdout.split('\n').filter(Boolean).length;
+    const d = gitOut(['diff', 'HEAD', '--name-status']).stdout.split('\n').filter(Boolean);
+    bad = d.filter((l) => !l.startsWith('D')).length; missing = d.length - bad;
+  } else {
+    manifest = fs.readFileSync(path.join(APP, 'run', 'SHA256-manifest-zip.txt'), 'utf8').split(/\r?\n/).filter(Boolean);
+  }
   for (const line of manifest) {
     const m = /^([0-9A-Fa-f]{64})\s+(.+)$/.exec(line);
     if (!m) continue;
@@ -312,7 +323,7 @@ function partC() {
     if (!fs.existsSync(f)) { missing += 1; continue; }
     if (crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex').toUpperCase() !== m[1].toUpperCase()) bad += 1;
   }
-  check(`C2 the Green Start product source is byte-identical to the zip: ${n} files checked against the manifest`, n >= 1800 && bad === 0 && missing === 0, { n, bad, missing });
+  check(`C2 the Green Start product source is untouched (the pinned submodule commit, or the zip manifest): ${n} files checked`, n >= 1800 && bad === 0 && missing === 0, { n, bad, missing });
   const ps1 = fs.readFileSync(path.join(APP, 'run', 'get-redis.ps1'), 'utf8');
   check('C3 get-redis.ps1: official GitHub URL as variables, key-press confirm, zip + redis-server.exe check, SHA-256, -Sha256, no service / registry / PATH', /\$Version = '5\.0\.14\.1'/.test(ps1) && /github\.com\/tporadowski\/redis\/releases\/download/.test(ps1) && /ReadKey/.test(ps1) && /redis-server\.exe/.test(ps1) && /Get-FileHash/.test(ps1) && /\[string\]\$Sha256/.test(ps1) && !/New-Service|sc\.exe|HKLM|HKCU|SetEnvironmentVariable|\$env:Path\s*=/i.test(ps1));
   const sup = fs.readFileSync(SUP_PATH, 'utf8');

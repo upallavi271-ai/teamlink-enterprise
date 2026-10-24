@@ -12,6 +12,14 @@
 #   STEP 2  GitHub -> VPS : when main has a new commit, the apps whose folders changed are rebuilt and restarted
 #                           (backup first, health check after, automatic rollback if it fails).
 #
+#   SUBMODULES (2026-10-24): job-portal-app/job_portal-main and green-start-app are git SUBMODULES of this repo (the founder's Job Portal and
+#   Green Start repos, other GitHub accounts). This script therefore (a) runs  git submodule update  after every checkout of the clone,
+#   (b) works out what changed in Green Start by comparing the two pinned commits INSIDE the submodule (the main repo only sees one pointer),
+#   (c) never pushes a VPS edit of those two folders (it only reports it: copy the change into that sub repo by hand), and
+#   (d) takes Green Start's TeamLink-owned helper files (gate.mjs, seed scripts ...) from green-start-helpers/run in THIS repo.
+#   The Green Start repo is PRIVATE: the VPS needs read access to it (token or deploy key, see docs/SUBMODULES.md). SUBS=job-portal-app/job_portal-main
+#   (an environment setting) makes this script ignore Green Start until that access exists.
+#
 #   Never touched: databases, .env files, uploads, node_modules, logs, the Job Portal's var/ (its live database).
 #   Pause it:  touch /opt/teamlink-sync/PAUSE      Resume:  rm /opt/teamlink-sync/PAUSE
 #   Look:      tail -50 /opt/teamlink-sync/sync.log        Status:  cat /opt/teamlink-sync/STATUS
@@ -34,6 +42,8 @@ DRY=${DRY_RUN:-0}
 STAMP=$(date +%Y-%m-%d-%H%M%S)
 MODE=${1:-normal}     # normal | accept-github (a VPS edit that clashes: keep the GitHub version) | accept-vps (keep the VPS version)
 CONFLICTS=""
+SUBS=${SUBS:-"job-portal-app/job_portal-main green-start-app"}   # the git submodules this server uses
+SUBS_BAD=""
 
 mkdir -p "$STATE" "$STATE/base" "$STATE/backups"
 LOG=$STATE/sync.log
@@ -60,6 +70,25 @@ if [ ! -d "$SRC/.git" ]; then
 fi
 g config user.name "TeamLink VPS" >/dev/null; g config user.email "vps@teamlinks.in" >/dev/null
 g config core.autocrlf false >/dev/null
+
+# Bring each submodule folder of the clone to the commit the main repo pins. A sub repo that cannot be read is reported (SUBS_BAD), never fatal here.
+sync_subs() {
+  SUBS_BAD=""
+  g submodule sync --quiet >/dev/null 2>&1
+  local s
+  for s in $SUBS; do
+    g submodule update --init --force --quiet -- "$s" >>"$LOG" 2>&1 || { SUBS_BAD="$SUBS_BAD $s"; alert "cannot read the sub repo $s (private? the VPS needs read access, see docs/SUBMODULES.md): its code was NOT updated"; }
+  done
+  [ -z "$SUBS_BAD" ]
+}
+sub_used() { case " $SUBS " in *" $1 "*) return 0;; esac; return 1; }
+# files that changed in the Green Start submodule between two main-repo commits (paths start with green-start-app/, like before it was a submodule)
+gs_changed_files() {   # old_main_commit new_main_commit
+  local o n; o=$(g rev-parse -q --verify "$1:green-start-app" 2>/dev/null); n=$(g rev-parse -q --verify "$2:green-start-app" 2>/dev/null)
+  [ -n "$n" ] || return 0
+  if [ -n "$o" ] && git -C "$SRC/green-start-app" cat-file -e "$o^{commit}" 2>/dev/null; then git -C "$SRC/green-start-app" diff --name-only "$o" "$n"
+  else git -C "$SRC/green-start-app" ls-tree -r --name-only "$n"; fi | sed 's#^#green-start-app/#'
+}
 
 # ---- what each app is, where it lives on the VPS, and what is never copied -------------------------------------------------
 # name | repo folder (in the clone) | live folder | exclude file
@@ -150,6 +179,16 @@ collect_edits() {   # app  live_dir  repo_dir  exclude_file  [extra rsync args..
   local list
   list=$(rsync -rcn --itemize-changes --exclude=package-lock.json --exclude='*.tsbuildinfo' --exclude-from="$exc" "$@" "$live/" "$base/" 2>/dev/null | awk '/^>f/ {sub(/^[^ ]+ /,""); print}')
   [ -z "$list" ] && return 0
+  case "$repo" in   # a sub repo belongs to another GitHub account: report once per change, never commit it into this repo
+    job-portal-app/job_portal-main*|green-start-app*)
+      local h; h=$(echo "$list" | md5sum | cut -c1-12)
+      if [ "$(cat "$STATE/subedit-$app" 2>/dev/null)" != "$h" ]; then
+        [ "$DRY" = 1 ] || echo "$h" > "$STATE/subedit-$app"
+        alert "edited on the VPS ($app): $(echo "$list" | wc -l) file(s) in the sub repo $repo - NOT pushed (separate GitHub repo). Copy the change into that repo by hand: $(echo "$list" | head -3 | tr '
+' ' ')"
+      fi
+      return 0 ;;
+  esac
   EDITS_FOUND=1
   log "edited on the VPS ($app): $(echo "$list" | wc -l) file(s): $(echo "$list" | head -3 | tr '\n' ' ')"
   [ "$DRY" = 1 ] && return 0
@@ -174,6 +213,7 @@ push_vps_edits() {
   # start from the newest GitHub state so the copied files land on top of it
   if [ -n "$(g status --porcelain)" ]; then g reset --hard --quiet "origin/$BRANCH"; g clean -fdq; fi
   if [ "$(g rev-parse HEAD)" != "$(g rev-parse origin/$BRANCH)" ]; then g merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null || g reset --hard --quiet "origin/$BRANCH"; fi
+  sync_subs || true      # (the sub repos' folders are only read here: their VPS edits are reported, not pushed)
   EDITS_FOUND=0
   collect_edits teamlink-backend  "$LIVE/backend"  backend  "$STATE/exclude-backend.txt"
   collect_edits teamlink-frontend "$LIVE/frontend" frontend "$STATE/exclude-frontend.txt"
@@ -181,7 +221,7 @@ push_vps_edits() {
   collect_edits jobportal-embed   "$LIVE/job-portal-app/embed" job-portal-app/embed "$STATE/exclude-portal.txt"
   collect_edits greenstart-api    "$GS/gs-api"          green-start-app/gs-api          "$STATE/exclude-gs.txt"
   collect_edits greenstart-web    "$GS/green-start-web" green-start-app/green-start-web "$STATE/exclude-gs.txt"
-  collect_edits greenstart-run    "$GS/run"             green-start-app/run             "$STATE/exclude-gs.txt"
+  collect_edits greenstart-run    "$GS/run"             green-start-helpers/run         "$STATE/exclude-gs.txt"   # TeamLink-owned helper files (not in the Green Start repo)
   if [ -n "$CONFLICTS" ]; then
     g reset --hard --quiet "origin/$BRANCH"; g clean -fdq
     alert "VPS edit CLASHES with a newer GitHub change in:$CONFLICTS . Nothing was pushed or deployed. Keep GitHub's version: teamlink-sync.sh accept-github   Keep the VPS version: teamlink-sync.sh accept-vps"
@@ -310,14 +350,14 @@ health_gs() { for i in 1 2 3 4 5 6 7 8 9 10 11 12; do if curl -s -m 4 -o /dev/nu
 
 deploy_greenstart() {   # new commit  old commit
   local new=$1 old=$2 BK="$STATE/backups/greenstart-$STAMP"
-  local changed; changed=$(g diff --name-only "$old" "$new" -- green-start-app 2>/dev/null)
+  local changed; changed=$(gs_changed_files "$old" "$new")   # inside the submodule (the main repo diff would show just one pointer line)
   if [ "$DRY" = 1 ]; then log "[dry-run] Green Start: $(echo "$changed" | grep -c .) changed file(s) would be deployed"; return 0; fi
   log "Green Start deploy of ${new:0:8} starting"
   mkdir -p "$BK"
   tar -czf "$BK/gs-code.tar.gz" -C "$GS" --exclude=node_modules --exclude=.env --exclude=uploads gs-api/src gs-api/dist gs-api/package.json gs-api/package-lock.json green-start-web/src green-start-web/dist run 2>/dev/null
   (
     set -e
-    local_api=$SRC/green-start-app/gs-api; local_web=$SRC/green-start-app/green-start-web; local_run=$SRC/green-start-app/run
+    local_api=$SRC/green-start-app/gs-api; local_web=$SRC/green-start-app/green-start-web; local_run=$SRC/green-start-helpers/run   # helper files: main repo, not the submodule
     rsync -ac --exclude-from="$STATE/exclude-gs.txt" "$local_api/" "$GS/gs-api/"
     rsync -ac --exclude-from="$STATE/exclude-gs.txt" "$local_web/" "$GS/green-start-web/"
     # only the helper files that already live in run/ on the server (gate, local bind, seed scripts); the rest of run/ is for the PC
@@ -353,14 +393,15 @@ deploy_if_new() {
   [ "$new" = "$(cat "$STATE/failed-commit" 2>/dev/null)" ] && { status "waiting: ${new:0:8} failed before; push a new commit to try again"; return 0; }
   if g log -1 --format=%B "$new" | grep -qi '\[skip deploy\]'; then log "commit ${new:0:8} says [skip deploy]"; [ "$DRY" = 1 ] || echo "$new" > "$STATE/deployed-commit"; return 0; fi
   g reset --hard --quiet "origin/$BRANCH"
+  if ! sync_subs; then status "waiting: cannot read the sub repo(s)$SUBS_BAD - give the VPS read access (docs/SUBMODULES.md) or set SUBS= without it"; return 0; fi
   local paths
-  if [ -z "$old" ] || ! g cat-file -e "$old^{commit}" 2>/dev/null; then paths="backend frontend job-portal-app green-start-app"
+  if [ -z "$old" ] || ! g cat-file -e "$old^{commit}" 2>/dev/null; then paths="backend frontend job-portal-app green-start-app green-start-helpers"
   else paths=$(g diff --name-only "$old" "$new" | cut -d/ -f1 | sort -u | tr '\n' ' '); fi
   log "new commit ${new:0:8} on $BRANCH (was ${old:0:8}); changed areas: ${paths:-none}"
   local ok=1
   # NOT "func || ok=0": inside an || list bash switches set -e off for the whole function, and a failed build would go unnoticed
   if echo " $paths " | grep -Eq ' (backend|frontend|job-portal-app) '; then deploy_teamlink "$new"; [ $? -eq 0 ] || ok=0; fi
-  if [ $ok = 1 ] && echo " $paths " | grep -q ' green-start-app '; then deploy_greenstart "$new" "${old:-$new}"; [ $? -eq 0 ] || ok=0; fi
+  if [ $ok = 1 ] && sub_used green-start-app && echo " $paths " | grep -Eq ' (green-start-app|green-start-helpers) '; then deploy_greenstart "$new" "${old:-$new}"; [ $? -eq 0 ] || ok=0; fi
   if [ "$DRY" = 1 ]; then return 0; fi
   if [ $ok = 1 ]; then echo "$new" > "$STATE/deployed-commit"; rm -f "$STATE/failed-commit" "$STATE/ALERT"; status "deployed ${new:0:8}"; log "DONE: ${new:0:8} is live"
   else echo "$new" > "$STATE/failed-commit"; status "FAILED on ${new:0:8} (see sync.log)"; fi

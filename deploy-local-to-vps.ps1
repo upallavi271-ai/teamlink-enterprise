@@ -286,6 +286,10 @@ Write-Host "Frontend copied" -ForegroundColor Green
 # Sent: job_portal-main + embed (code only). NEVER sent: var (the portal's live
 # database on the VPS), node_modules (installed on the VPS), run (pid/log/heartbeat),
 # job_portal-v11 (the staged upgrade), the v10 backup folder.
+#
+# 2026-10-24: job-portal-appjob_portal-main is now a git SUBMODULE (the Job Portal repo), so a `.git` FILE (a pointer to ...gitmodules)
+# sits inside it. It is excluded below (as a file AND as a folder) so it never reaches the VPS. Before packaging, make sure the folder holds the
+# commit this repo pins:  git submodule update --init --recursive  (see docs/SUBMODULES.md). Green Start is not sent by this script.
 # ------------------------------------------------------------
 
 $LocalPortal = "$LocalRoot\job-portal-app"
@@ -294,7 +298,7 @@ if (Test-Path "$LocalPortal\job_portal-main\package.json") {
     Write-Host "Copying job portal (code only)..." -ForegroundColor Yellow
     robocopy "$LocalPortal\job_portal-main" "$TempRoot\job-portal-app\job_portal-main" /E `
         /XD node_modules "$LocalPortal\job_portal-main\var" .git `
-        /XF "*.log" "*.pid" "*.tmp" ".env" ".env.*" | Out-Null
+        /XF "*.log" "*.pid" "*.tmp" ".env" ".env.*" ".git" | Out-Null
     if ($LASTEXITCODE -gt 7) { throw "Job portal copy failed. Robocopy exit code: $LASTEXITCODE" }
     robocopy "$LocalPortal\embed" "$TempRoot\job-portal-app\embed" /E /XF "*.log" | Out-Null
     if ($LASTEXITCODE -gt 7) { throw "Job portal embed copy failed. Robocopy exit code: $LASTEXITCODE" }
