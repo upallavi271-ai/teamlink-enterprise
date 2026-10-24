@@ -207,7 +207,8 @@ async function climb(patchPath, wf, recordId, decision = 'Approved', note = unde
     const mk = spawnSync(process.execPath, [path.join(Z.BACK, 'scripts', 'create-developer-login.js'), '--apply', '--db', sandboxDb, '--email', DEV_EMAIL, '--name', DEV_NAME, '--out', path.join(require('os').tmpdir(), `upa-dev-${Z.RUN}`)], { encoding: 'utf8', env: { ...process.env, TL_NEW_PASSWORD: PW } });
     const dev = await prisma.user.findFirst({ where: { email: DEV_EMAIL } });
     if (dev) Z.made.users.push(dev.id);
-    Z.check('G3 the apply creates an ADMIN login', mk.status === 0 && dev && dev.role === 'ADMIN' && dev.hrmsRole === 'ADMIN' && dev.atsRole === 'ADMIN' && dev.status === 'Active', mk.stdout + mk.stderr);
+    // (founder, later on 2026-10-24: "Super Admin and developer are one person" -> the developer login is a SUPER ADMIN)
+    Z.check('G3 the apply creates a SUPER ADMIN login', mk.status === 0 && dev && dev.role === 'SUPER_ADMIN' && dev.hrmsRole === 'SUPER_ADMIN' && dev.atsRole === 'SUPER_ADMIN' && dev.accountsRole === 'SUPER_ADMIN' && dev.status === 'Active', mk.stdout + mk.stderr);
     Z.check('G4 it has NO employee record (so it is not headcount)', !!dev && !(await prisma.employee.findFirst({ where: { userId: dev.id } })) && (await prisma.employee.count()) === empBefore);
     Z.check('G5 the password is stored hashed, never in the output', !!dev && dev.passwordHash !== PW && !(mk.stdout + mk.stderr).includes(PW));
     const again2 = spawnSync(process.execPath, [path.join(Z.BACK, 'scripts', 'create-developer-login.js'), '--apply', '--db', sandboxDb, '--email', DEV_EMAIL], { encoding: 'utf8', env: { ...process.env, TL_NEW_PASSWORD: PW } });
