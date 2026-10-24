@@ -207,6 +207,23 @@ redis
 EOF
 }
 write_excludes
+# A relative require() whose file name differs only by letter case works on Windows and crashes on Linux ("Cannot find module './routes/followUps'").
+# Run on the VPS BEFORE the app is stopped: any relative require() in backend/src that does not resolve here stops the deploy.
+cat > "$STATE/check-requires.js" <<'EOF'
+const fs = require('fs'), path = require('path');
+let bad = 0;
+const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+const resolves = (t) => [t, t + '.js', t + '.cjs', t + '.json', t + '.node'].some(isFile) || (isDir(t) && (isFile(path.join(t, 'index.js')) || isFile(path.join(t, 'package.json'))));
+const check = (f) => {
+  const s = fs.readFileSync(f, 'utf8'), re = /require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
+  let m;
+  while ((m = re.exec(s))) if (!resolves(path.resolve(path.dirname(f), m[1]))) { console.log(f + ': cannot find ' + m[1]); bad++; }
+};
+const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/\.c?js$/.test(e.name)) check(p); } };
+walk(process.argv[2] || 'src');
+if (bad) { console.log(bad + ' relative require(s) point at a file that does not exist here (a letter-case difference?)'); process.exit(1); }
+EOF
 
 # ---- STEP 1: edits made directly on the VPS -> GitHub ------------------------------------------------------------------------
 # Compare each live folder with the copy of what the last deploy put there ($STATE/base/<app>).
@@ -347,6 +364,7 @@ deploy_teamlink() {   # new commit
   fi
   [ -d "$PKG/job-portal-app/job_portal-main/var" ] && { alert "the Job Portal database folder (var) was in the package: stopped"; return 1; }
   [ -f "$PKG/frontend/src/pages/Invoices.jsx" ] || { alert "package check failed (Invoices.jsx missing): stopped"; return 1; }
+  local reqs; reqs=$(cd "$PKG/backend" && node "$STATE/check-requires.js" src 2>&1) || { alert "package check failed: the new backend would crash on start (nothing was stopped): $(echo "$reqs" | head -3 | tr '\n' ' ')"; return 1; }
   [ "$portal" = 1 ] && keep_live_migration_bytes "$PKG/job-portal-app/job_portal-main/supabase/migrations" "$LIVE/job-portal-app/job_portal-main/supabase/migrations"
   if [ "$DRY" = 1 ]; then log "[dry-run] TeamLink package built: backend $(du -sh "$PKG/backend" | cut -f1), frontend $(du -sh "$PKG/frontend" | cut -f1), portal=$portal. Nothing was stopped or replaced."; return 0; fi
 

@@ -136,4 +136,13 @@ cd $T/dev_omni; git pull -q origin main; echo g9 > gs-api/src/main.ts; git commi
 ok "S13 one-way: the hotfix on the VPS was NOT pushed to GitHub" "$([ "$(G $T/remote.git show main:backend/src/a.js)" != hotfix ] && echo 1 || echo 0)" "$out"
 ok "S13b one-way: the Green Start repo still flowed into main (pin moved) and onto the VPS (g9 live)" "$(mainmsg | grep -q '^Update submodule(s):.*green-start-app@' && [ "$(pin green-start-app)" = "$(subhead omni)" ] && [ "$(cat $T/gs/gs-api/src/main.ts)" = g9 ] && echo 1 || echo 0)" "$(mainmsg) / $out"
 
+# ---- S14: a require() that only works on Windows (letter case) must stop the deploy BEFORE the app is touched ----
+cd $T/dev; git pull -q origin main; mkdir -p backend/src/routes; echo 'module.exports = 1' > backend/src/routes/followups.js; printf "const f = require('./routes/followUps');\n" > backend/src/index.js
+git add -A; git commit -qm "bad letter case in a require"; git push -q origin main; cd $T
+: > $T/calls.log; out=$(VPS_EDITS=0 run)
+ok "S14 letter-case require: ALERT 'would crash on start', the app was NOT stopped" "$([ -f $T/state/ALERT ] && grep -q 'would crash on start' $T/state/ALERT && ! grep -q 'pm2 stop' $T/calls.log && echo 1 || echo 0)" "$out"
+cd $T/dev; printf "const f = require('./routes/followups');\n" > backend/src/index.js; git commit -qam "fix the letter case"; git pull -q --rebase origin main; git push -q origin main; cd $T
+: > $T/calls.log; out=$(VPS_EDITS=0 run)
+ok "S14b after the fix the deploy goes through" "$(grep -q 'pm2 restart' $T/calls.log && [ ! -f $T/state/ALERT ] && echo 1 || echo 0)" "$out"
+
 echo; echo "$pass passed, $fail failed"; rm -rf "$T/pkg"; [ "$fail" = 0 ]
